@@ -75,7 +75,7 @@ export default function Apps() {
     <section className="flex flex-col">
       <PageHero
         title="Apps"
-        description="Per-application_name aggregate of client counters. Polled every 1.5 s through /api/apps. Same identity that appears in Clients → App column."
+        description="Which application_name is generating the load and which is generating the errors. One row per app — clients live, queries / transactions / errors cumulative. Sort by errors per 1k queries to surface a misbehaving worker."
       />
       <SectionHeader
         title="Aggregates"

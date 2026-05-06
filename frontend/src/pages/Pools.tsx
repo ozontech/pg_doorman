@@ -156,7 +156,7 @@ export default function Pools() {
     <section className="flex flex-col">
       <PageHero
         title="Pools"
-        description="Per-pool table backed by /api/pools, polled every 1.5 s. Each row inlines mini-sparklines for the four signals operators care about; click a row to open the full pool detail page (/pools/:id)."
+        description="One row per pool. Saturation, query latency p95, waiting clients, error count — the four signals that say whether the pool is healthy. Severity column reads from the threshold engine; click a row for the full pool drill-down."
       />
       <SectionHeader
         title="Filter & sort"

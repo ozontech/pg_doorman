@@ -1,6 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Options } from "uplot";
+import type uPlot from "uplot";
 import { Chart } from "./Chart";
+import type { ChartEvent } from "./Sparkline";
 
 interface AreaChartProps {
   /** First entry is the time axis; remaining are stacked numeric series. */
@@ -11,6 +13,7 @@ interface AreaChartProps {
   fills: string[];
   height?: number;
   syncKey?: string;
+  events?: ChartEvent[];
 }
 
 /**
@@ -18,7 +21,15 @@ interface AreaChartProps {
  * cumulative series before passing them in, so each band paints on top of
  * the previous one.
  */
-export function AreaChart({ data, labels, fills, height = 200, syncKey }: AreaChartProps) {
+export function AreaChart({
+  data,
+  labels,
+  fills,
+  height = 200,
+  syncKey,
+  events,
+}: AreaChartProps) {
+  const [hover, setHover] = useState<{ ts: number; values: number[] } | null>(null);
   const stacked = useMemo<[number[], ...number[][]]>(() => {
     const xs = data[0];
     const cumulative: number[][] = [];
@@ -34,7 +45,10 @@ export function AreaChart({ data, labels, fills, height = 200, syncKey }: AreaCh
     () => ({
       width: 1024,
       height,
-      cursor: syncKey ? { sync: { key: syncKey } } : undefined,
+      cursor: {
+        sync: syncKey ? { key: syncKey } : undefined,
+        points: { size: 4 },
+      },
       legend: { show: false },
       scales: { y: { range: (_u, _min, max) => [0, max] } },
       axes: [
@@ -51,8 +65,56 @@ export function AreaChart({ data, labels, fills, height = 200, syncKey }: AreaCh
           // Paint on top — uPlot draws series in order; we already stacked.
         })),
       ],
+      hooks: {
+        setCursor: [
+          (u: uPlot) => {
+            const idx = u.cursor.idx;
+            if (idx == null || idx < 0) {
+              setHover(null);
+              return;
+            }
+            const xs = u.data[0] as number[];
+            const ts = xs[idx];
+            if (ts == null) {
+              setHover(null);
+              return;
+            }
+            // Reverse the cumulative stacking so each label sees its own
+            // value rather than the running total.
+            const values: number[] = [];
+            let prev = 0;
+            for (let i = 1; i < u.data.length; i++) {
+              const v = (u.data[i] as number[])[idx];
+              values.push(v - prev);
+              prev = v;
+            }
+            setHover({ ts, values });
+          },
+        ],
+        draw: events && events.length > 0
+          ? [
+              (u: uPlot) => {
+                const ctx = u.ctx;
+                ctx.save();
+                ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
+                ctx.setLineDash([]);
+                ctx.lineWidth = 1;
+                for (const ev of events) {
+                  const xPx = u.valToPos(ev.ts, "x", true);
+                  if (!Number.isFinite(xPx)) continue;
+                  if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
+                  ctx.beginPath();
+                  ctx.moveTo(xPx, u.bbox.top);
+                  ctx.lineTo(xPx, u.bbox.top + u.bbox.height);
+                  ctx.stroke();
+                }
+                ctx.restore();
+              },
+            ]
+          : [],
+      },
     }),
-    [labels, fills, height, syncKey],
+    [labels, fills, height, syncKey, events],
   );
 
   // Static legend above the canvas. uPlot's built-in legend renders inline
@@ -76,6 +138,21 @@ export function AreaChart({ data, labels, fills, height = 200, syncKey }: AreaCh
         ))}
       </div>
       <Chart data={stacked} options={options} />
+      <div className="mt-1 px-2 text-xs text-text-dim tabular">
+        {hover ? (
+          <span className="flex flex-wrap gap-x-4">
+            <span>{new Date(hover.ts * 1000).toLocaleTimeString()}</span>
+            {labels.map((l, i) => (
+              <span key={l}>
+                <span style={{ color: fills[i] }}>{l}</span>{" "}
+                <span className="text-text">{Math.round(hover.values[i] ?? 0)}</span>
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span>hover for per-bucket values</span>
+        )}
+      </div>
     </div>
   );
 }

@@ -23,7 +23,7 @@ export default function ConfigState() {
     <section className="flex flex-col">
       <PageHero
         title="Config & state"
-        description="Read-only inspection of the running pooler. Each section opens on demand and polls its own endpoint at 5–15 s — collapsed sections do not poll."
+        description="The running pooler config and its derived state — auth-query cache, pool scaling counters, coordinator limits, sockets, log level. Read-only: this is what you would otherwise dump from the admin protocol when triaging."
       />
       <Collapsible id="config-config" title="config" defaultOpen>
         <ConfigPanel />

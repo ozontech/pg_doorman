@@ -93,7 +93,7 @@ export default function Clients() {
     <section className="flex flex-col">
       <PageHero
         title="Clients"
-        description="Every connected client. Polled at 1.5 s through /api/clients with server-side filtering, sorting, and pagination — none of the search work happens in the browser."
+        description="One row per connected client (driver session). Use the filter row to find the app or peer behind a stuck query, the sort header to surface long-running or error-spewing clients, and the State column to spot anyone waiting on a backend checkout."
       />
       <SectionHeader
         title="Filters"

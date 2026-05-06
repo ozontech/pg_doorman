@@ -4,6 +4,7 @@ import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
+import { prettySql } from "../lib/prettySql";
 import type { InternerDto, InternerTopDto, PreparedDto, PreparedTextDto } from "../types";
 
 const POLL_MS = 3000;
@@ -16,7 +17,7 @@ export default function Caches() {
     <section className="flex flex-col">
       <PageHero
         title="Caches"
-        description="Two backend caches that affect connection efficiency: per-pool prepared statements and the global query interner that deduplicates SQL text."
+        description="Two caches that decide whether a query reaches PostgreSQL with a Parse round-trip or with a single Bind. Prepared statements live per pool — low hit rate means more parses; the query interner deduplicates SQL text process-wide and warns when an app churns anonymous statements."
       />
       <div className="flex items-center gap-1 border-b border-border bg-surface px-6">
         <TabButton active={tab === "prepared"} onClick={() => setTab("prepared")}>Prepared</TabButton>
@@ -145,15 +146,28 @@ function PreparedTab() {
                 </tr>
                 {cell && (
                   <tr className="border-b border-border bg-surface-2">
-                    <td colSpan={8} className="px-4 py-2">
+                    <td colSpan={8} className="px-4 py-3">
                       {cell.loading && <span className="text-xs text-text-dim">loading SQL…</span>}
                       {cell.error && (
                         <span className="text-xs text-danger">SQL fetch failed: {cell.error}</span>
                       )}
                       {cell.text && (
-                        <pre className="whitespace-pre-wrap break-all font-mono text-xs text-text">
-{cell.text}
-                        </pre>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-text-dim">
+                            <span>SQL · {key}</span>
+                            <button
+                              type="button"
+                              className="border border-border-strong px-2 py-0.5 text-text-muted hover:text-accent"
+                              onClick={() => navigator.clipboard?.writeText(cell.text!)}
+                              title="Copy raw SQL to clipboard"
+                            >
+                              copy
+                            </button>
+                          </div>
+                          <pre className="overflow-x-auto whitespace-pre border border-border bg-bg p-3 font-mono text-xs leading-relaxed text-text">
+{prettySql(cell.text)}
+                          </pre>
+                        </div>
                       )}
                     </td>
                   </tr>

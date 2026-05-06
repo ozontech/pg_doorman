@@ -103,7 +103,7 @@ export default function Logs() {
     <section className="flex h-screen flex-col">
       <PageHero
         title="Logs"
-        description="Live tail of the in-memory LogTap, admin-only. The tap activates on the first request and stops itself 30 s after the last poll, so the buffer footprint is zero when nobody is reading."
+        description="Live pooler log without ssh-ing onto the host. Filter by level or by any text — module, client id (#c123), SQLSTATE, message fragment. The tap turns itself off 30 s after you leave the page, so it costs nothing when nobody is reading."
       />
       <SectionHeader
         title="Stream"

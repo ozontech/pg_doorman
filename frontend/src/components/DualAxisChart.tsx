@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Options } from "uplot";
 import type uPlot from "uplot";
 import { Chart } from "./Chart";
+import type { ChartEvent } from "./Sparkline";
 
 interface DualAxisChartProps {
   /** [time, leftSeries, rightSeries] */
@@ -15,6 +16,7 @@ interface DualAxisChartProps {
   rightCrit?: number;
   height?: number;
   syncKey?: string;
+  events?: ChartEvent[];
 }
 
 export function DualAxisChart({
@@ -28,12 +30,17 @@ export function DualAxisChart({
   rightCrit,
   height = 200,
   syncKey,
+  events,
 }: DualAxisChartProps) {
+  const [hover, setHover] = useState<{ ts: number; left: number; right: number } | null>(null);
   const options: Options = useMemo(
     () => ({
       width: 1024,
       height,
-      cursor: syncKey ? { sync: { key: syncKey } } : undefined,
+      cursor: {
+        sync: syncKey ? { key: syncKey } : undefined,
+        points: { size: 4 },
+      },
       legend: { show: false },
       scales: {
         y: { auto: true },
@@ -55,9 +62,26 @@ export function DualAxisChart({
         { label: rightLabel, stroke: rightStroke, width: 1.5, scale: "y2" },
       ],
       hooks: {
+        setCursor: [
+          (u: uPlot) => {
+            const idx = u.cursor.idx;
+            if (idx == null || idx < 0) {
+              setHover(null);
+              return;
+            }
+            const xs = u.data[0] as number[];
+            const ts = xs[idx];
+            const left = (u.data[1] as number[])[idx];
+            const right = (u.data[2] as number[])[idx];
+            if (ts == null) {
+              setHover(null);
+              return;
+            }
+            setHover({ ts, left, right });
+          },
+        ],
         draw: [
           (u: uPlot) => {
-            if (rightWarn === undefined && rightCrit === undefined) return;
             const ctx = u.ctx;
             const drawLine = (yVal: number, color: string) => {
               const yPx = u.valToPos(yVal, "y2", true);
@@ -74,6 +98,22 @@ export function DualAxisChart({
             };
             if (rightWarn !== undefined) drawLine(rightWarn, "rgb(245 165 36 / 0.6)");
             if (rightCrit !== undefined) drawLine(rightCrit, "rgb(229 72 77 / 0.6)");
+            if (events && events.length > 0) {
+              ctx.save();
+              ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
+              ctx.setLineDash([]);
+              ctx.lineWidth = 1;
+              for (const ev of events) {
+                const xPx = u.valToPos(ev.ts, "x", true);
+                if (!Number.isFinite(xPx)) continue;
+                if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
+                ctx.beginPath();
+                ctx.moveTo(xPx, u.bbox.top);
+                ctx.lineTo(xPx, u.bbox.top + u.bbox.height);
+                ctx.stroke();
+              }
+              ctx.restore();
+            }
           },
         ],
       },
@@ -88,6 +128,7 @@ export function DualAxisChart({
       rightCrit,
       height,
       syncKey,
+      events,
     ],
   );
 
@@ -123,6 +164,21 @@ export function DualAxisChart({
         )}
       </div>
       <Chart data={data} options={options} />
+      <div className="mt-1 px-2 text-xs text-text-dim tabular">
+        {hover ? (
+          <span className="flex flex-wrap gap-x-4">
+            <span>{new Date(hover.ts * 1000).toLocaleTimeString()}</span>
+            <span style={{ color: leftStroke }}>
+              {leftLabel} <span className="text-text">{Math.round(hover.left)}</span>
+            </span>
+            <span style={{ color: rightStroke }}>
+              {rightLabel} <span className="text-text">{Math.round(hover.right)}</span>
+            </span>
+          </span>
+        ) : (
+          <span>hover for value at cursor</span>
+        )}
+      </div>
     </div>
   );
 }

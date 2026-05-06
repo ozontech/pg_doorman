@@ -359,7 +359,7 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Aggregate health, traffic, and saturation across every pool. Refreshes every 1.5 seconds."
+        description="Whole-pooler heartbeat. Health pill on top says whether anything is breaching threshold; the process bar tells you the pooler itself is alive; Golden signals show latency, traffic, errors, saturation; the rest is the breakdown an operator opens during an incident."
       />
       <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
         <HealthPill
@@ -428,6 +428,7 @@ export default function Overview() {
             labels={["active", "idle", "waiting"]}
             fills={["rgb(45 194 107 / 0.55)", "rgb(138 147 164 / 0.45)", "rgb(245 165 36 / 0.55)"]}
             syncKey="overview"
+            events={chartEvents}
           />
         </Card>
         {heatmapRows.length > 0 && (
@@ -464,6 +465,7 @@ export default function Overview() {
             rightWarn={30_000}
             rightCrit={300_000}
             syncKey="overview"
+            events={chartEvents}
           />
         </Card>
         {top5Errors.labels.length > 0 && (
@@ -486,6 +488,7 @@ export default function Overview() {
                 "rgb(45 194 107 / 0.5)",
               ]}
               syncKey="overview"
+              events={chartEvents}
             />
           </Card>
         )}
