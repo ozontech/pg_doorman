@@ -121,3 +121,18 @@ export interface ClientsDto {
   offset: number;
   clients: ClientDto[];
 }
+
+export interface PreparedRowDto {
+  pool: string;
+  hash: string;
+  name: string;
+  count_used: number;
+  hits: number;
+  misses: number;
+  kind: string;
+}
+
+export interface PreparedDto {
+  ts: number;
+  prepared: PreparedRowDto[];
+}
