@@ -8,6 +8,7 @@ import PoolDetail from "./pages/PoolDetail";
 import Clients from "./pages/Clients";
 import Apps from "./pages/Apps";
 import Caches from "./pages/Caches";
+import Wall from "./pages/Wall";
 import Logs from "./pages/Logs";
 import ConfigState from "./pages/ConfigState";
 
@@ -29,6 +30,7 @@ export default function App() {
                 <Route path="/caches" element={<Caches />} />
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/config" element={<ConfigState />} />
+                <Route path="/wall" element={<Wall />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </AuthGate>

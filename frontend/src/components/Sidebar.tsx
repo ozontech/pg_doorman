@@ -8,6 +8,7 @@ const NAV: { to: string; label: string }[] = [
   { to: "/caches", label: "Caches" },
   { to: "/logs", label: "Logs" },
   { to: "/config", label: "Config" },
+  { to: "/wall", label: "War room" },
 ];
 
 export function Sidebar() {

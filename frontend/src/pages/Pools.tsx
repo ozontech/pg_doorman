@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { PageHero } from "../components/PageHero";
@@ -79,9 +79,59 @@ export default function Pools() {
   }, [poll.data?.ts]);
 
   const navigate = useNavigate();
-  const [filters, setFilters] = useState<Filters>({ query: "", severity: "all" });
-  const [sortKey, setSortKey] = useState<SortKey>("saturation");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // URL-state for filters/sort. Operators can paste "/pools?severity=critical&q=app@db"
+  // straight into Slack during an incident — every control on the page is a
+  // search-param. Local React state mirrors the URL so the inputs stay
+  // responsive while the URL updates on commit.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialFilters: Filters = {
+    query: searchParams.get("q") ?? "",
+    severity: ((searchParams.get("severity") as Severity | null) ??
+      ("all" as const)) as Filters["severity"],
+  };
+  const initialSortKey = (searchParams.get("sort") as SortKey | null) ?? "saturation";
+  const initialSortDir = (searchParams.get("dir") as SortDir | null) ?? "desc";
+  const [filters, setFiltersState] = useState<Filters>(initialFilters);
+  const [sortKey, setSortKeyState] = useState<SortKey>(initialSortKey);
+  const [sortDir, setSortDirState] = useState<SortDir>(initialSortDir);
+
+  const syncUrl = (next: { filters?: Filters; sortKey?: SortKey; sortDir?: SortDir }) => {
+    const f = next.filters ?? filters;
+    const sk = next.sortKey ?? sortKey;
+    const sd = next.sortDir ?? sortDir;
+    const sp = new URLSearchParams(searchParams);
+    if (f.query) sp.set("q", f.query);
+    else sp.delete("q");
+    if (f.severity !== "all") sp.set("severity", f.severity);
+    else sp.delete("severity");
+    if (sk !== "saturation") sp.set("sort", sk);
+    else sp.delete("sort");
+    if (sd !== "desc") sp.set("dir", sd);
+    else sp.delete("dir");
+    setSearchParams(sp, { replace: true });
+  };
+  const setFilters = (
+    update: Filters | ((prev: Filters) => Filters),
+  ) => {
+    setFiltersState((prev) => {
+      const value = typeof update === "function" ? update(prev) : update;
+      syncUrl({ filters: value });
+      return value;
+    });
+  };
+  const setSortKey = (key: SortKey) => {
+    setSortKeyState(key);
+    syncUrl({ sortKey: key });
+  };
+  const setSortDir = (
+    update: SortDir | ((prev: SortDir) => SortDir),
+  ) => {
+    setSortDirState((prev) => {
+      const value = typeof update === "function" ? update(prev) : update;
+      syncUrl({ sortDir: value });
+      return value;
+    });
+  };
 
   const evaluated: Row[] = useMemo(() => {
     if (!poll.data) return [];
