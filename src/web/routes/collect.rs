@@ -8,17 +8,24 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::pool::get_all_pools;
+use crate::app::log_level;
+use crate::config::get_config;
+use crate::pool::{get_all_pools, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 use crate::stats::pool::PoolStats;
 use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
 use crate::web::routes::dto::{
-    ClientDto, ClientFilters, ClientSort, ClientsDto, ConnectionsDto, DatabaseDto, DatabasesDto,
-    OverviewDto, PoolDto, PoolsDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder,
-    StatsDto, StatsRowDto, UserDto, UsersDto, VersionDto,
+    AuthQueryDto, AuthQueryRowDto, ClientDto, ClientFilters, ClientSort, ClientsDto, ConfigDto,
+    ConfigEntry, ConnectionsDto, DatabaseDto, DatabasesDto, LogLevelDto, OverviewDto,
+    PoolCoordinatorDto, PoolCoordinatorRowDto, PoolDto, PoolScalingDto, PoolScalingRowDto,
+    PoolsDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto, StatsRowDto,
+    UserDto, UsersDto, VersionDto,
 };
+
+#[cfg(target_os = "linux")]
+use crate::web::routes::dto::{SocketsDto, TcpCounts, UnixStreamCounts};
 
 fn cnt(counter: &AtomicUsize) -> u64 {
     counter.load(Ordering::Relaxed) as u64
@@ -492,6 +499,206 @@ pub fn collect_users() -> UsersDto {
     }
 }
 
+/// Returns `true` for configuration keys whose value should be masked in
+/// `/api/config`. A key is secret if its trailing path segment (after the
+/// last `.`) is exactly `password` or `secret`, or has any of the suffixes
+/// `_password`, `_secret`, `_token`, `_key`.
+///
+/// The trailing-segment matching is so that `pools.foo.users.bar.password`
+/// is recognised as secret, not just top-level `password`.
+fn is_secret_key(key: &str) -> bool {
+    let last_segment = key.rsplit('.').next().unwrap_or(key);
+    matches!(last_segment, "password" | "secret")
+        || last_segment.ends_with("_password")
+        || last_segment.ends_with("_secret")
+        || last_segment.ends_with("_token")
+        || last_segment.ends_with("_key")
+}
+
+pub fn collect_config() -> ConfigDto {
+    // Mirrors `show_config` in src/admin/show.rs:429 for the immutables list
+    // (these are the only fields that require a restart to change).
+    const IMMUTABLES: &[&str] = &["host", "port", "connect_timeout"];
+
+    let config = get_config();
+    let flat: std::collections::HashMap<String, String> = (&config).into();
+
+    let mut entries: Vec<ConfigEntry> = flat
+        .into_iter()
+        .map(|(key, value)| {
+            let value = if is_secret_key(&key) {
+                "***".to_string()
+            } else {
+                value
+            };
+            let changeable = if IMMUTABLES.iter().any(|c| *c == key) {
+                "no"
+            } else {
+                "yes"
+            };
+            ConfigEntry {
+                key,
+                value,
+                default: "-",
+                changeable,
+            }
+        })
+        .collect();
+
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+
+    ConfigDto {
+        ts: now_unix_ms(),
+        config: entries,
+    }
+}
+
+pub fn collect_log_level() -> LogLevelDto {
+    LogLevelDto {
+        ts: now_unix_ms(),
+        log_level: log_level::get_log_level(),
+    }
+}
+
+pub fn collect_auth_query() -> AuthQueryDto {
+    let states = AUTH_QUERY_STATE.load();
+    let dynamic = DYNAMIC_POOLS.load();
+
+    let mut pools: Vec<AuthQueryRowDto> = states
+        .iter()
+        .map(|(pool_name, state)| {
+            let cache_entries = state.cache_len() as u64;
+            let dyn_current = dynamic.iter().filter(|id| id.db == *pool_name).count() as u64;
+            let s = state.stats.snapshot();
+            AuthQueryRowDto {
+                database: pool_name.clone(),
+                cache_entries,
+                cache_hits: s.cache_hits,
+                cache_misses: s.cache_misses,
+                cache_refetches: s.cache_refetches,
+                cache_rate_limited: s.cache_rate_limited,
+                auth_success: s.auth_success,
+                auth_failure: s.auth_failure,
+                executor_queries: s.executor_queries,
+                executor_errors: s.executor_errors,
+                dynamic_pools_current: dyn_current,
+                dynamic_pools_created: s.dynamic_pools_created,
+                dynamic_pools_destroyed: s.dynamic_pools_destroyed,
+            }
+        })
+        .collect();
+
+    pools.sort_by(|a, b| a.database.cmp(&b.database));
+
+    AuthQueryDto {
+        ts: now_unix_ms(),
+        pools,
+    }
+}
+
+pub fn collect_pool_scaling() -> PoolScalingDto {
+    let mut entries: Vec<_> = get_all_pools()
+        .iter()
+        .map(|(id, pool)| (id.clone(), pool.database.scaling_stats()))
+        .collect();
+    entries.sort_by(|a, b| (&a.0.db, &a.0.user).cmp(&(&b.0.db, &b.0.user)));
+
+    let pools = entries
+        .into_iter()
+        .map(|(id, snapshot)| PoolScalingRowDto {
+            user: id.user.clone(),
+            database: id.db.clone(),
+            inflight: snapshot.inflight_creates as u64,
+            creates: snapshot.creates_started,
+            gate_waits: snapshot.burst_gate_waits,
+            gate_budget_ex: snapshot.burst_gate_budget_exhausted,
+            antic_notify: snapshot.anticipation_wakes_notify,
+            antic_timeout: snapshot.anticipation_wakes_timeout,
+            create_fallback: snapshot.create_fallback,
+            replenish_def: snapshot.replenish_deferred,
+        })
+        .collect();
+
+    PoolScalingDto {
+        ts: now_unix_ms(),
+        pools,
+    }
+}
+
+pub fn collect_pool_coordinator() -> PoolCoordinatorDto {
+    let coordinators = COORDINATORS.load();
+    let mut databases: Vec<PoolCoordinatorRowDto> = coordinators
+        .iter()
+        .map(|(db, coordinator)| {
+            let stats = coordinator.stats();
+            let config = coordinator.config();
+            PoolCoordinatorRowDto {
+                database: db.clone(),
+                max_db_conn: config.max_db_connections as u64,
+                current: stats.total_connections as u64,
+                reserve_size: config.reserve_pool_size as u64,
+                reserve_used: stats.reserve_in_use as u64,
+                evictions: stats.evictions_total,
+                reserve_acq: stats.reserve_acquisitions_total,
+                exhaustions: stats.exhaustions_total,
+            }
+        })
+        .collect();
+
+    databases.sort_by(|a, b| a.database.cmp(&b.database));
+
+    PoolCoordinatorDto {
+        ts: now_unix_ms(),
+        databases,
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn collect_sockets() -> Result<SocketsDto, &'static str> {
+    use crate::stats::socket::{get_socket_states_count, TcpStateCount, UnixStreamStateCount};
+
+    let info = get_socket_states_count(std::process::id())
+        .map_err(|_| "failed to read socket states from /proc")?;
+
+    fn tcp(c: &TcpStateCount) -> TcpCounts {
+        TcpCounts {
+            established: c.established as u64,
+            syn_sent: c.syn_sent as u64,
+            syn_recv: c.syn_recv as u64,
+            fin_wait1: c.fin_wait1 as u64,
+            fin_wait2: c.fin_wait2 as u64,
+            time_wait: c.time_wait as u64,
+            close: c.close as u64,
+            close_wait: c.close_wait as u64,
+            last_ack: c.last_ack as u64,
+            listen: c.listen as u64,
+            closing: c.closing as u64,
+            new_syn_recv: c.new_syn_recv as u64,
+            bound_inactive: c.bound_inactive as u64,
+        }
+    }
+
+    fn unix_stream(c: &UnixStreamStateCount) -> UnixStreamCounts {
+        UnixStreamCounts {
+            free: c.free as u64,
+            unconnected: c.unconnected as u64,
+            connecting: c.connecting as u64,
+            connected: c.connected as u64,
+            disconnecting: c.disconnecting as u64,
+        }
+    }
+
+    Ok(SocketsDto {
+        ts: now_unix_ms(),
+        tcp: tcp(&info.tcp),
+        tcp6: tcp(&info.tcp6),
+        unix_stream: unix_stream(&info.unix_stream),
+        unix_dgram: info.unix_dgram as u64,
+        unix_seq_packet: info.unix_seq_packet as u64,
+        unknown: info.unknown as u64,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -940,5 +1147,51 @@ mod tests {
         // Without saturating_sub this would underflow into u64::MAX.
         let dto = super::connections_from_raw(10, 8, 5, 0);
         assert_eq!(dto.errors, 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Secret-key masking
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn is_secret_key_top_level_password() {
+        assert!(super::is_secret_key("password"));
+        assert!(super::is_secret_key("admin_password"));
+        assert!(super::is_secret_key("server_password"));
+    }
+
+    #[test]
+    fn is_secret_key_top_level_secret() {
+        assert!(super::is_secret_key("secret"));
+        assert!(super::is_secret_key("talos_jwt_secret"));
+    }
+
+    #[test]
+    fn is_secret_key_token_and_key_suffixes() {
+        assert!(super::is_secret_key("api_token"));
+        assert!(super::is_secret_key("private_key"));
+    }
+
+    #[test]
+    fn is_secret_key_nested_password_path() {
+        assert!(super::is_secret_key("pools.main.users.alice.password"));
+        assert!(super::is_secret_key("users.app.api_token"));
+    }
+
+    #[test]
+    fn is_secret_key_does_not_match_unrelated_keys() {
+        assert!(!super::is_secret_key("host"));
+        assert!(!super::is_secret_key("port"));
+        assert!(!super::is_secret_key("connect_timeout"));
+        assert!(!super::is_secret_key("pool_mode"));
+        assert!(!super::is_secret_key("max_connections"));
+    }
+
+    #[test]
+    fn is_secret_key_does_not_match_partial_substring() {
+        // Substring "password" elsewhere in the key should not trigger masking.
+        // Only exact equals or exact suffix counts.
+        assert!(!super::is_secret_key("password_check_attempts"));
+        assert!(!super::is_secret_key("not_a_secret_check"));
     }
 }

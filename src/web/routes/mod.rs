@@ -6,13 +6,19 @@
 pub mod collect;
 pub mod dto;
 
+pub(crate) mod auth_query;
 pub(crate) mod clients;
+pub(crate) mod config;
 pub(crate) mod connections;
 pub(crate) mod databases;
+pub(crate) mod log_level;
 pub(crate) mod overview;
+pub(crate) mod pool_coordinator;
+pub(crate) mod pool_scaling;
 pub(crate) mod pools;
 pub(crate) mod query;
 pub(crate) mod servers;
+pub(crate) mod sockets;
 pub(crate) mod stats;
 pub(crate) mod users;
 pub(crate) mod version;

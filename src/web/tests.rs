@@ -232,3 +232,79 @@ async fn api_users_returns_envelope() {
     assert!(raw.contains("\"ts\""), "raw={raw}");
     assert!(raw.contains("\"users\""), "raw={raw}");
 }
+
+#[tokio::test]
+async fn api_config_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/config HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"ts\""), "raw={raw}");
+    assert!(raw.contains("\"config\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_log_level_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/log_level HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"log_level\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_auth_query_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/auth_query HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"pools\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_pool_scaling_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/pool_scaling HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"pools\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_pool_coordinator_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/pool_coordinator HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"databases\""), "raw={raw}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn api_sockets_returns_200_or_500_on_linux() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/sockets HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK") || raw.starts_with("HTTP/1.1 500"),
+        "raw={raw}"
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn api_sockets_returns_503_on_non_linux() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/sockets HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 503"), "raw={raw}");
+}

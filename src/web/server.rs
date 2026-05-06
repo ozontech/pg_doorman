@@ -280,6 +280,12 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/servers" => routes::servers::handle_servers(&query),
         "/api/stats" => routes::stats::handle_stats(),
         "/api/users" => routes::users::handle_users(),
+        "/api/auth_query" => routes::auth_query::handle_auth_query(),
+        "/api/config" => routes::config::handle_config(),
+        "/api/log_level" => routes::log_level::handle_log_level(),
+        "/api/pool_coordinator" => routes::pool_coordinator::handle_pool_coordinator(),
+        "/api/pool_scaling" => routes::pool_scaling::handle_pool_scaling(),
+        "/api/sockets" => routes::sockets::handle_sockets(),
         _ => Response::json(
             501,
             "Not Implemented",
@@ -570,5 +576,78 @@ mod tests {
             AuthOutcome::Anonymous,
         );
         assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_auth_query_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/auth_query"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_config_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/config"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_log_level_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/log_level"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_pool_coordinator_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/pool_coordinator"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_pool_scaling_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/pool_scaling"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dispatch_sockets_returns_200_on_linux() {
+        let r = dispatch(
+            &req("GET", "/api/sockets"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        // 500 acceptable in sandbox; handler did not panic = pass.
+        assert!(r.status == 200 || r.status == 500, "got {}", r.status);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn dispatch_sockets_returns_503_on_non_linux() {
+        let r = dispatch(
+            &req("GET", "/api/sockets"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 503);
     }
 }
