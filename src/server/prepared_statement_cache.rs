@@ -357,6 +357,13 @@ struct CacheEntry {
     /// bit 1 = seen as anonymous. At least one bit is always set after
     /// construction (`CacheEntry::new`); bits only ever flip from 0 to 1.
     kind_flags: AtomicU8,
+    /// Cumulative count of Parse-time has_prepared_statement(server_name) hits
+    /// for this hash. Approximate per-pool counter — see plan for the LRU
+    /// eviction caveat.
+    hit_count: AtomicU64,
+    /// Cumulative count of Parse-time has_prepared_statement(server_name)
+    /// misses for this hash.
+    miss_count: AtomicU64,
 }
 
 impl CacheEntry {
@@ -373,6 +380,8 @@ impl CacheEntry {
             parse,
             count_used,
             kind_flags: AtomicU8::new(bits),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
         }
     }
 
@@ -545,10 +554,9 @@ impl PreparedStatementCache {
         total
     }
 
-    /// Returns a list of all entries in the cache, including the derived
-    /// `CacheEntryKind` reflecting whether clients have used this hash via
-    /// named statements, anonymous statements, or both.
-    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64, CacheEntryKind)> {
+    /// Returns all entries with stats. Tuple is
+    /// `(hash, parse, count_used, kind, hit_count, miss_count)`.
+    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64, CacheEntryKind, u64, u64)> {
         self.cache
             .iter()
             .map(|entry| {
@@ -557,9 +565,27 @@ impl PreparedStatementCache {
                     entry.parse.clone(),
                     entry.count_used,
                     entry.kind(),
+                    entry.hit_count.load(Ordering::Relaxed),
+                    entry.miss_count.load(Ordering::Relaxed),
                 )
             })
             .collect()
+    }
+
+    /// Atomically increments the hit counter on the entry for `hash`.
+    /// Silently no-ops when the entry was evicted or never inserted —
+    /// keeps the hot path lock-free.
+    pub fn record_hit(&self, hash: u64) {
+        if let Some(entry) = self.cache.get(&hash) {
+            entry.hit_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Same as `record_hit`, but for misses.
+    pub fn record_miss(&self, hash: u64) {
+        if let Some(entry) = self.cache.get(&hash) {
+            entry.miss_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Marks the hash as most recently used if it exists
@@ -895,6 +921,28 @@ mod tests {
         // Intentionally use a hash that is not interned — must not panic.
         super::record_query_count(0xDEADC0DE, false);
         super::record_query_count(0xDEADC0DE, true);
+    }
+
+    #[test]
+    fn record_hit_no_op_when_hash_absent() {
+        let cache = PreparedStatementCache::new(8, 1);
+        cache.record_hit(0xDEADBEEF);
+        cache.record_miss(0xDEADBEEF);
+        // No panic = pass; counters unobservable on absent hash.
+    }
+
+    #[test]
+    fn record_hit_increments_existing_entry() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt", "SELECT 1");
+        cache.get_or_insert(&parse, 0x1111, Some("stmt"));
+        cache.record_hit(0x1111);
+        cache.record_hit(0x1111);
+        cache.record_miss(0x1111);
+        let entries = cache.get_entries();
+        let row = entries.iter().find(|e| e.0 == 0x1111).unwrap();
+        assert_eq!(row.4, 2, "hits");
+        assert_eq!(row.5, 1, "misses");
     }
 
     #[test]

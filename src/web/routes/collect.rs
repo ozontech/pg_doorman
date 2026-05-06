@@ -24,7 +24,8 @@ use crate::web::routes::dto::{
     OverviewDto, PoolCoordinatorDto, PoolCoordinatorRowDto, PoolDto, PoolScalingDto,
     PoolScalingRowDto, PoolsDto, PreparedDto, PreparedRowDto, PreparedTextDto, ServerDto,
     ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto, StatsRowDto, TopClientBy,
-    TopClientFilters, TopClientRowDto, TopClientsDto, TopQueriesDto, TopQueryBy, TopQueryFilters,
+    TopClientFilters, TopClientRowDto, TopClientsDto, TopPreparedBy, TopPreparedDto,
+    TopPreparedFilters, TopPreparedRowDto, TopQueriesDto, TopQueryBy, TopQueryFilters,
     TopQueryRowDto, UserDto, UsersDto, VersionDto,
 };
 
@@ -709,12 +710,14 @@ pub fn collect_prepared() -> PreparedDto {
         let Some(cache) = pool.prepared_statement_cache.as_ref() else {
             continue;
         };
-        for (hash, parse, count_used, kind) in cache.get_entries() {
+        for (hash, parse, count_used, kind, hits, misses) in cache.get_entries() {
             prepared.push(PreparedRowDto {
                 pool: identifier.to_string(),
                 hash: hash.to_string(),
                 name: parse.name.clone(),
                 count_used,
+                hits,
+                misses,
                 kind: kind.as_str().to_string(),
             });
         }
@@ -755,7 +758,7 @@ pub fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
         let Some(cache) = pool.prepared_statement_cache.as_ref() else {
             continue;
         };
-        for (h, parse, _count, kind) in cache.get_entries() {
+        for (h, parse, _count, kind, _hits, _misses) in cache.get_entries() {
             if h == hash {
                 return Some(PreparedTextDto {
                     ts: now_unix_ms(),
@@ -769,6 +772,42 @@ pub fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
         }
     }
     None
+}
+
+pub fn collect_top_prepared(filters: &TopPreparedFilters) -> TopPreparedDto {
+    let n = clamp_top_clients_n(filters.n);
+
+    let mut rows: Vec<TopPreparedRowDto> = Vec::new();
+    for (identifier, pool) in get_all_pools().iter() {
+        let Some(cache) = pool.prepared_statement_cache.as_ref() else {
+            continue;
+        };
+        for (hash, parse, count_used, kind, hits, misses) in cache.get_entries() {
+            rows.push(TopPreparedRowDto {
+                pool: identifier.to_string(),
+                hash: hash.to_string(),
+                name: parse.name.clone(),
+                count_used,
+                hits,
+                misses,
+                kind: kind.as_str().to_string(),
+            });
+        }
+    }
+
+    rows.sort_by(|a, b| match filters.by {
+        TopPreparedBy::Hits => b.hits.cmp(&a.hits),
+        TopPreparedBy::Misses => b.misses.cmp(&a.misses),
+    });
+
+    let prepared: Vec<_> = rows.into_iter().take(n as usize).collect();
+
+    TopPreparedDto {
+        ts: now_unix_ms(),
+        by: filters.by.as_str().to_string(),
+        n,
+        prepared,
+    }
 }
 
 /// Clamps the user-supplied `?n=` parameter to a sensible range.

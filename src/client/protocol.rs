@@ -263,7 +263,18 @@ where
 
         // Check if server already has this prepared statement
         // For async clients with unique names, this will always be false (new unique name)
-        if server.has_prepared_statement(&server_stmt_name) {
+        let server_has_it = server.has_prepared_statement(&server_stmt_name);
+        if let Some(cache) = pool.prepared_statement_cache.as_ref() {
+            // Per-CacheEntry hit/miss for /api/top/prepared. Silent no-op
+            // when the entry was evicted between register_parse_to_cache and
+            // here — same lock-free policy as /api/top/queries.
+            if server_has_it {
+                cache.record_hit(hash);
+            } else {
+                cache.record_miss(hash);
+            }
+        }
+        if server_has_it {
             // For async clients, always send Parse to get real ParseComplete from server
             if self.prepared.async_client {
                 debug!(

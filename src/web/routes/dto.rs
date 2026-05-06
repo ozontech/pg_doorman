@@ -447,6 +447,12 @@ pub struct PreparedRowDto {
     pub hash: String,
     pub name: String,
     pub count_used: u64,
+    /// Cumulative Parse-time hits — server already had this prepared statement
+    /// when the client asked. Per-pool, per-CacheEntry. Lost on LRU eviction.
+    pub hits: u64,
+    /// Cumulative Parse-time misses — server lacked this prepared statement,
+    /// requiring a fresh Parse to PostgreSQL. Per-pool, per-CacheEntry.
+    pub misses: u64,
     /// One of "named", "anonymous", "mixed" — `CacheEntryKind::as_str`.
     pub kind: String,
 }
@@ -646,4 +652,48 @@ pub struct PreparedTextDto {
     pub name: String,
     pub query: String,
     pub kind: String,
+}
+
+/// `GET /api/top/prepared?by=hits|misses&n=20` — Top-N prepared statements
+/// across all pools, sorted by cumulative hit or miss count. Public; no SQL
+/// preview — for the body use admin-only `/api/prepared/text/{hash}`.
+#[derive(Debug, Serialize)]
+pub struct TopPreparedDto {
+    pub ts: u64,
+    pub by: String,
+    pub n: u64,
+    pub prepared: Vec<TopPreparedRowDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopPreparedRowDto {
+    pub pool: String,
+    pub hash: String,
+    pub name: String,
+    pub count_used: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub kind: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum TopPreparedBy {
+    #[default]
+    Hits,
+    Misses,
+}
+
+impl TopPreparedBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TopPreparedBy::Hits => "hits",
+            TopPreparedBy::Misses => "misses",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TopPreparedFilters {
+    pub by: TopPreparedBy,
+    pub n: u64,
 }
