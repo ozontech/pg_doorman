@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
+import { DualAxisChart } from "../components/DualAxisChart";
 import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
 import { Sparkline } from "../components/Sparkline";
@@ -29,6 +30,7 @@ interface OverviewSamplePoint {
   active_clients: number;
   idle_clients: number;
   waiting_clients: number;
+  oldest_active_age_max_ms: number;
 }
 
 interface RawTotals {
@@ -95,6 +97,10 @@ export default function Overview() {
       active_clients: ov.active_clients,
       idle_clients: ov.idle_clients,
       waiting_clients: ov.waiting_clients,
+      oldest_active_age_max_ms: pools.pools.reduce(
+        (m, p) => Math.max(m, p.max_active_age_ms),
+        0,
+      ),
     });
     const errSnap: PoolSnap = {};
     const satSnap: PoolSatSnap = {};
@@ -150,6 +156,64 @@ export default function Overview() {
     const waiting = sampleHistory.history.map((s) => s.waiting_clients);
     return [xs, active, idle, waiting];
   }, [sampleHistory.history]);
+
+  // Top 5 pools by errors-per-second over the last 30 s window. We compute
+  // each pool's eps by walking poolErrorsHistory and taking the average over
+  // the last SUSTAIN points; the resulting AreaChart paints the last sample
+  // window with each pool's eps as a stacked band.
+  const top5Errors = useMemo(() => {
+    const ids = poolsPoll.data ? poolsPoll.data.pools.map((p) => p.id) : [];
+    const recent = poolErrorsHistory.history.slice(-20);
+    const epsById = new Map<string, number>();
+    for (const id of ids) {
+      let prev: PoolHistoryPoint | undefined;
+      let max = 0;
+      for (const snap of recent) {
+        const cur = snap[id];
+        if (!cur) continue;
+        if (prev) {
+          const dt = (cur.ts - prev.ts) / 1000;
+          if (dt > 0) {
+            const eps = Math.max(0, (cur.errors_total - prev.errors_total) / dt);
+            if (eps > max) max = eps;
+          }
+        }
+        prev = cur;
+      }
+      epsById.set(id, max);
+    }
+    const top = ids
+      .map((id) => ({ id, eps: epsById.get(id) ?? 0 }))
+      .filter((x) => x.eps > 0)
+      .sort((a, b) => b.eps - a.eps)
+      .slice(0, 5);
+    if (top.length === 0) return { labels: [] as string[], data: [[]] as [number[], ...number[][]] };
+    const xs = poolErrorsHistory.history.map((snap) => {
+      const anyKey = top.find((t) => snap[t.id])?.id;
+      return anyKey ? snap[anyKey].ts / 1000 : 0;
+    });
+    const series = top.map(({ id }) => {
+      const out: number[] = [];
+      let prev: PoolHistoryPoint | undefined;
+      for (const snap of poolErrorsHistory.history) {
+        const cur = snap[id];
+        if (!cur || !prev) {
+          out.push(0);
+          prev = cur ?? prev;
+          continue;
+        }
+        const dt = (cur.ts - prev.ts) / 1000;
+        const eps = dt > 0 ? Math.max(0, (cur.errors_total - prev.errors_total) / dt) : 0;
+        out.push(eps);
+        prev = cur;
+      }
+      return out;
+    });
+    return {
+      labels: top.map((t) => t.id),
+      data: [xs, ...series] as [number[], ...number[][]],
+    };
+  }, [poolErrorsHistory.history, poolsPoll.data]);
 
   // Pool fill heatmap rows: one per current pool, last HEATMAP_CELLS cells of
   // saturation. Pads with `null` on the left when history is shorter.
@@ -234,10 +298,48 @@ export default function Overview() {
         />
       </section>
       {heatmapRows.length > 0 && <Heatmap rows={heatmapRows} />}
+      <section className="border-b border-border">
+        <div className="px-4 py-2 text-xs text-text-muted uppercase tracking-wide">
+          Wait queue (left) vs oldest-active-age ms (right, log)
+        </div>
+        <DualAxisChart
+          data={[
+            seriesXs,
+            sampleHistory.history.map((s) => s.waiting_clients),
+            sampleHistory.history.map((s) => Math.max(1, s.oldest_active_age_max_ms)),
+          ]}
+          leftLabel="waiting"
+          rightLabel="oldest-active ms"
+          leftStroke="rgb(91 140 255)"
+          rightStroke="rgb(245 165 36)"
+          rightLogScale
+          rightWarn={30_000}
+          rightCrit={300_000}
+          syncKey="overview"
+        />
+      </section>
+      {top5Errors.labels.length > 0 && (
+        <section className="border-b border-border">
+          <div className="px-4 py-2 text-xs text-text-muted uppercase tracking-wide">
+            Top {top5Errors.labels.length} pools by error rate (last 30 s)
+          </div>
+          <AreaChart
+            data={top5Errors.data}
+            labels={top5Errors.labels}
+            fills={[
+              "rgb(229 72 77 / 0.55)",
+              "rgb(245 165 36 / 0.55)",
+              "rgb(177 140 245 / 0.55)",
+              "rgb(91 140 255 / 0.5)",
+              "rgb(45 194 107 / 0.45)",
+            ]}
+            syncKey="overview"
+          />
+        </section>
+      )}
       <p className="px-4 py-3 text-xs text-text-dim">
-        Phase 6a-2: Connection breakdown + pool fill heatmap landed. Dual-axis
-        wait + oldest-active-age, top-5 errors, and the resource detail row
-        follow in 6a-3.
+        Phase 6a-3 done. Resource detail (memory/sockets/interner) lands in
+        6a-4 once the polled endpoints are wired into a collapsed section.
       </p>
     </div>
   );
