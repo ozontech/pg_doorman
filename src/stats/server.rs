@@ -569,6 +569,11 @@ impl ServerStats {
         self.address.name()
     }
 
+    /// Returns the current application name for this server connection.
+    pub fn application_name(&self) -> String {
+        self.application_name.lock().clone()
+    }
+
     /// Returns the server connection timestamp.
     pub fn connect_time(&self) -> quanta::Instant {
         self.connect_time

@@ -2,10 +2,10 @@
 //!
 //! Each function reads from project-wide global state (POOLS,
 //! get_client_stats(), get_server_stats(), connection counters) and assembles
-//! a Serializable DTO. No I/O, no Mutex acquisition outside what the global
-//! reads already do internally.
+//! a serializable DTO. Locking is limited to brief Mutex acquisitions for
+//! fields that lack a lock-free getter (server application_name).
 
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::pool::get_all_pools;
@@ -14,11 +14,13 @@ use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
-
-use crate::web::routes::dto::{OverviewDto, PoolDto, PoolsDto, VersionDto};
+use crate::web::routes::dto::{
+    ClientDto, ClientFilters, ClientSort, ClientsDto, OverviewDto, PoolDto, PoolsDto, ServerDto,
+    ServerFilters, ServerSort, ServersDto, SortOrder, VersionDto,
+};
 
 fn cnt(counter: &AtomicUsize) -> u64 {
-    counter.load(std::sync::atomic::Ordering::Relaxed) as u64
+    counter.load(Ordering::Relaxed) as u64
 }
 
 pub fn now_unix_ms() -> u64 {
@@ -82,12 +84,8 @@ pub fn collect_overview() -> OverviewDto {
         }
     }
     for stats in server_states.values() {
-        prepared_hits_total += stats
-            .prepared_hit_count
-            .load(std::sync::atomic::Ordering::Relaxed);
-        prepared_misses_total += stats
-            .prepared_miss_count
-            .load(std::sync::atomic::Ordering::Relaxed);
+        prepared_hits_total += stats.prepared_hit_count.load(Ordering::Relaxed);
+        prepared_misses_total += stats.prepared_miss_count.load(Ordering::Relaxed);
     }
 
     OverviewDto {
@@ -166,5 +164,630 @@ pub fn collect_pools() -> PoolsDto {
     PoolsDto {
         ts: now_unix_ms(),
         pools,
+    }
+}
+
+// MAX_LIMIT capped at 1000 rows because at typical pooler scale (few thousand
+// clients) this is enough for first-page UX; increase if operator feedback
+// demands it.
+const MAX_LIMIT: u64 = 1000;
+
+pub fn collect_clients(filters: &ClientFilters) -> ClientsDto {
+    let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
+    collect_clients_from(snapshot, filters)
+}
+
+/// Pure inner logic for `collect_clients` — operates on a pre-built snapshot
+/// so it can be called from unit tests without touching global state.
+fn collect_clients_from(
+    snapshot: Vec<std::sync::Arc<crate::stats::ClientStats>>,
+    filters: &ClientFilters,
+) -> ClientsDto {
+    let mut rows: Vec<ClientDto> = snapshot
+        .iter()
+        .filter(|s| client_matches(s, filters))
+        .map(client_to_dto)
+        .collect();
+
+    let total = rows.len() as u64;
+
+    rows.sort_by(|a, b| {
+        let ord = match filters.sort {
+            ClientSort::QueriesTotal => a.queries_total.cmp(&b.queries_total),
+            ClientSort::ErrorsTotal => a.errors_total.cmp(&b.errors_total),
+            ClientSort::AgeSeconds => a.age_seconds.cmp(&b.age_seconds),
+            ClientSort::CurrentQueryAgeMs => a.current_query_age_ms.cmp(&b.current_query_age_ms),
+        };
+        match filters.order {
+            SortOrder::Asc => ord,
+            SortOrder::Desc => ord.reverse(),
+        }
+    });
+
+    let limit = filters.limit.clamp(1, MAX_LIMIT);
+    let offset = filters.offset;
+    let page: Vec<_> = rows
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
+
+    ClientsDto {
+        ts: now_unix_ms(),
+        total,
+        limit,
+        offset,
+        clients: page,
+    }
+}
+
+fn client_matches(s: &crate::stats::ClientStats, f: &ClientFilters) -> bool {
+    let pool_name = s.pool_name();
+    let user = s.username();
+    let app = s.application_name();
+    let state = s.state_to_string();
+
+    if let Some(p) = &f.pool {
+        let id = format!("{}@{}", user, pool_name);
+        if id != *p {
+            return false;
+        }
+    }
+    if let Some(db) = &f.database {
+        if pool_name != *db {
+            return false;
+        }
+    }
+    if let Some(u) = &f.user {
+        if user != *u {
+            return false;
+        }
+    }
+    if !f.application_name.is_empty() && !f.application_name.contains(&app) {
+        return false;
+    }
+    if !f.state.is_empty() && !f.state.contains(&state) {
+        return false;
+    }
+    true
+}
+
+fn client_to_dto(s: &std::sync::Arc<crate::stats::ClientStats>) -> ClientDto {
+    let age_seconds = s.connect_time().elapsed().as_secs();
+    ClientDto {
+        client_id: format!("#c{}", s.connection_id()),
+        database: s.pool_name(),
+        user: s.username(),
+        application_name: s.application_name(),
+        addr: s.ipaddr(),
+        tls: s.tls(),
+        state: s.state_to_string(),
+        wait: s.wait_to_string(),
+        wait_ms: s.wait_ms().unwrap_or(0),
+        transactions_total: s.transaction_count.load(Ordering::Relaxed),
+        queries_total: s.query_count.load(Ordering::Relaxed),
+        errors_total: s.error_count.load(Ordering::Relaxed),
+        age_seconds,
+        current_query_age_ms: s.current_query_age_ms().unwrap_or(0),
+    }
+}
+
+pub fn collect_servers(filters: &ServerFilters) -> ServersDto {
+    let snapshot: Vec<_> = get_server_stats().values().cloned().collect();
+    collect_servers_from(snapshot, filters)
+}
+
+/// Pure inner logic for `collect_servers` — operates on a pre-built snapshot
+/// so it can be called from unit tests without touching global state.
+fn collect_servers_from(
+    snapshot: Vec<std::sync::Arc<crate::stats::ServerStats>>,
+    filters: &ServerFilters,
+) -> ServersDto {
+    let mut rows: Vec<ServerDto> = snapshot
+        .iter()
+        .filter(|s| server_matches(s, filters))
+        .map(server_to_dto)
+        .collect();
+
+    let total = rows.len() as u64;
+
+    rows.sort_by(|a, b| {
+        let ord = match filters.sort {
+            ServerSort::AgeSeconds => a.age_seconds.cmp(&b.age_seconds),
+            ServerSort::QueriesTotal => a.queries_total.cmp(&b.queries_total),
+            ServerSort::ErrorsTotal => a.errors_total.cmp(&b.errors_total),
+            ServerSort::ActiveAgeMs => a.active_age_ms.cmp(&b.active_age_ms),
+        };
+        match filters.order {
+            SortOrder::Asc => ord,
+            SortOrder::Desc => ord.reverse(),
+        }
+    });
+
+    let limit = filters.limit.clamp(1, MAX_LIMIT);
+    let offset = filters.offset;
+    let page: Vec<_> = rows
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
+
+    ServersDto {
+        ts: now_unix_ms(),
+        total,
+        limit,
+        offset,
+        servers: page,
+    }
+}
+
+fn server_matches(s: &crate::stats::ServerStats, f: &ServerFilters) -> bool {
+    let pool_name = s.pool_name();
+    let user = s.username();
+
+    if let Some(p) = &f.pool {
+        let id = format!("{}@{}", user, pool_name);
+        if id != *p {
+            return false;
+        }
+    }
+    if let Some(db) = &f.database {
+        if pool_name != *db {
+            return false;
+        }
+    }
+    if let Some(u) = &f.user {
+        if user != *u {
+            return false;
+        }
+    }
+    true
+}
+
+fn server_to_dto(s: &std::sync::Arc<crate::stats::ServerStats>) -> ServerDto {
+    let age_seconds = s.connect_time().elapsed().as_secs();
+    let application_name = s.application_name();
+    ServerDto {
+        server_id: s.server_id(),
+        process_id: s.process_id(),
+        database: s.pool_name(),
+        user: s.username(),
+        application_name,
+        tls: s.tls(),
+        state: s.state_to_string(),
+        wait: s.wait_to_string(),
+        age_seconds,
+        active_age_ms: s.active_age_ms().unwrap_or(0),
+        transactions_total: s.transaction_count.load(Ordering::Relaxed),
+        queries_total: s.query_count.load(Ordering::Relaxed),
+        errors_total: s.error_count.load(Ordering::Relaxed),
+        bytes_sent: s.bytes_sent.load(Ordering::Relaxed),
+        bytes_received: s.bytes_received.load(Ordering::Relaxed),
+        prepared_hits_total: s.prepared_hit_count.load(Ordering::Relaxed),
+        prepared_misses_total: s.prepared_miss_count.load(Ordering::Relaxed),
+        prepared_cache_size: s.prepared_cache_size.load(Ordering::Relaxed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stats::{client::ClientStats, server::ServerStats};
+    use crate::utils::clock;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    // ---------------------------------------------------------------------------
+    // Fixture helpers
+    // ---------------------------------------------------------------------------
+
+    fn make_client(
+        connection_id: u64,
+        db: &str,
+        user: &str,
+        app: &str,
+        queries: u64,
+        errors: u64,
+    ) -> Arc<ClientStats> {
+        let stats = Arc::new(ClientStats::new(
+            connection_id,
+            app,
+            user,
+            db,
+            "127.0.0.1",
+            clock::now(),
+            false,
+        ));
+        stats.query_count.store(queries, Ordering::Relaxed);
+        stats.error_count.store(errors, Ordering::Relaxed);
+        stats
+    }
+
+    fn make_server(db: &str, user: &str) -> Arc<ServerStats> {
+        let address = crate::config::Address {
+            pool_name: db.to_string(),
+            username: user.to_string(),
+            ..crate::config::Address::default()
+        };
+        Arc::new(ServerStats::new(address, clock::now()))
+    }
+
+    fn default_client_filters() -> ClientFilters {
+        ClientFilters {
+            limit: 100,
+            offset: 0,
+            sort: ClientSort::QueriesTotal,
+            order: SortOrder::Asc,
+            pool: None,
+            database: None,
+            user: None,
+            application_name: vec![],
+            state: vec![],
+        }
+    }
+
+    fn default_server_filters() -> ServerFilters {
+        ServerFilters {
+            limit: 100,
+            offset: 0,
+            sort: ServerSort::AgeSeconds,
+            order: SortOrder::Asc,
+            pool: None,
+            database: None,
+            user: None,
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Client filter tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn client_filter_by_pool_exact_match() {
+        // pool filter uses the "user@db" composite id.
+        let clients = vec![
+            make_client(1, "db1", "alice", "app", 0, 0),
+            make_client(2, "db2", "bob", "app", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.pool = Some("alice@db1".to_string());
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.clients[0].user, "alice");
+    }
+
+    #[test]
+    fn client_filter_by_database_only() {
+        let clients = vec![
+            make_client(1, "prod", "alice", "app", 0, 0),
+            make_client(2, "staging", "alice", "app", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.database = Some("prod".to_string());
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.clients[0].database, "prod");
+    }
+
+    #[test]
+    fn client_filter_by_user_only() {
+        let clients = vec![
+            make_client(1, "db", "alice", "app", 0, 0),
+            make_client(2, "db", "bob", "app", 0, 0),
+            make_client(3, "db", "alice", "app2", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.user = Some("alice".to_string());
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 2);
+        assert!(result.clients.iter().all(|c| c.user == "alice"));
+    }
+
+    #[test]
+    fn client_filter_application_name_or_semantics() {
+        // A row matches if its app_name is in the filter list (OR).
+        let clients = vec![
+            make_client(1, "db", "alice", "pgadmin", 0, 0),
+            make_client(2, "db", "bob", "psql", 0, 0),
+            make_client(3, "db", "carol", "other", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.application_name = vec!["pgadmin".to_string(), "psql".to_string()];
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 2);
+        let apps: Vec<_> = result
+            .clients
+            .iter()
+            .map(|c| c.application_name.as_str())
+            .collect();
+        assert!(apps.contains(&"pgadmin"));
+        assert!(apps.contains(&"psql"));
+    }
+
+    #[test]
+    fn client_filter_state_or_semantics() {
+        // Default state for a fresh ClientStats is "idle".
+        let clients = vec![
+            make_client(1, "db", "alice", "app", 0, 0),
+            make_client(2, "db", "bob", "app", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.state = vec!["idle".to_string()];
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 2);
+
+        // Filter for a state that no client is in returns nothing.
+        f.state = vec!["active".to_string()];
+        let clients2 = vec![make_client(10, "db", "alice", "app", 0, 0)];
+        let result2 = collect_clients_from(clients2, &f);
+        assert_eq!(result2.total, 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Client sort tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn client_sort_queries_total_asc() {
+        let clients = vec![
+            make_client(1, "db", "u", "a", 30, 0),
+            make_client(2, "db", "u", "a", 10, 0),
+            make_client(3, "db", "u", "a", 20, 0),
+        ];
+        let mut f = default_client_filters();
+        f.sort = ClientSort::QueriesTotal;
+        f.order = SortOrder::Asc;
+        let result = collect_clients_from(clients, &f);
+        let counts: Vec<u64> = result.clients.iter().map(|c| c.queries_total).collect();
+        assert_eq!(counts, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn client_sort_queries_total_desc() {
+        let clients = vec![
+            make_client(1, "db", "u", "a", 30, 0),
+            make_client(2, "db", "u", "a", 10, 0),
+            make_client(3, "db", "u", "a", 20, 0),
+        ];
+        let mut f = default_client_filters();
+        f.sort = ClientSort::QueriesTotal;
+        f.order = SortOrder::Desc;
+        let result = collect_clients_from(clients, &f);
+        let counts: Vec<u64> = result.clients.iter().map(|c| c.queries_total).collect();
+        assert_eq!(counts, vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn client_sort_errors_total_asc() {
+        let clients = vec![
+            make_client(1, "db", "u", "a", 0, 5),
+            make_client(2, "db", "u", "a", 0, 1),
+            make_client(3, "db", "u", "a", 0, 3),
+        ];
+        let mut f = default_client_filters();
+        f.sort = ClientSort::ErrorsTotal;
+        f.order = SortOrder::Asc;
+        let result = collect_clients_from(clients, &f);
+        let errs: Vec<u64> = result.clients.iter().map(|c| c.errors_total).collect();
+        assert_eq!(errs, vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn client_sort_errors_total_desc() {
+        let clients = vec![
+            make_client(1, "db", "u", "a", 0, 5),
+            make_client(2, "db", "u", "a", 0, 1),
+            make_client(3, "db", "u", "a", 0, 3),
+        ];
+        let mut f = default_client_filters();
+        f.sort = ClientSort::ErrorsTotal;
+        f.order = SortOrder::Desc;
+        let result = collect_clients_from(clients, &f);
+        let errs: Vec<u64> = result.clients.iter().map(|c| c.errors_total).collect();
+        assert_eq!(errs, vec![5, 3, 1]);
+    }
+
+    #[test]
+    fn client_sort_age_seconds_asc() {
+        // All fixtures share the same clock::now() so ages will all be 0.
+        // The sort should be stable and return all rows without panicking.
+        let clients = vec![
+            make_client(1, "db", "u", "a", 0, 0),
+            make_client(2, "db", "u", "a", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.sort = ClientSort::AgeSeconds;
+        f.order = SortOrder::Asc;
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 2);
+    }
+
+    #[test]
+    fn client_sort_current_query_age_ms_desc() {
+        // Clients not in ACTIVE state return current_query_age_ms == 0.
+        let clients = vec![
+            make_client(1, "db", "u", "a", 0, 0),
+            make_client(2, "db", "u", "a", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.sort = ClientSort::CurrentQueryAgeMs;
+        f.order = SortOrder::Desc;
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 2);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Client pagination tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn client_pagination_offset_beyond_total_returns_empty() {
+        let clients = vec![
+            make_client(1, "db", "u", "a", 0, 0),
+            make_client(2, "db", "u", "a", 0, 0),
+        ];
+        let mut f = default_client_filters();
+        f.offset = 10; // beyond total of 2
+        f.limit = 100;
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.total, 2);
+        assert!(result.clients.is_empty());
+    }
+
+    #[test]
+    fn client_pagination_limit_clamped_to_max_limit() {
+        let clients: Vec<_> = (0..5)
+            .map(|i| make_client(i, "db", "u", "a", 0, 0))
+            .collect();
+        let mut f = default_client_filters();
+        f.limit = MAX_LIMIT + 9999; // above cap
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.limit, MAX_LIMIT);
+    }
+
+    #[test]
+    fn client_pagination_limit_one() {
+        let clients: Vec<_> = (0..5)
+            .map(|i| make_client(i, "db", "u", "a", 0, 0))
+            .collect();
+        let mut f = default_client_filters();
+        f.limit = 1;
+        let result = collect_clients_from(clients, &f);
+        assert_eq!(result.clients.len(), 1);
+        assert_eq!(result.total, 5);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Server filter tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn server_filter_by_pool() {
+        let servers = vec![make_server("db1", "alice"), make_server("db2", "bob")];
+        let mut f = default_server_filters();
+        f.pool = Some("alice@db1".to_string());
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.servers[0].database, "db1");
+    }
+
+    #[test]
+    fn server_filter_by_database() {
+        let servers = vec![
+            make_server("prod", "alice"),
+            make_server("staging", "alice"),
+        ];
+        let mut f = default_server_filters();
+        f.database = Some("prod".to_string());
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.servers[0].database, "prod");
+    }
+
+    #[test]
+    fn server_filter_by_user() {
+        let servers = vec![make_server("db", "alice"), make_server("db", "bob")];
+        let mut f = default_server_filters();
+        f.user = Some("alice".to_string());
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.servers[0].user, "alice");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Server sort tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn server_sort_queries_total_asc() {
+        let servers = vec![
+            make_server("db", "u"),
+            make_server("db", "u"),
+            make_server("db", "u"),
+        ];
+        servers[0].query_count.store(30, Ordering::Relaxed);
+        servers[1].query_count.store(10, Ordering::Relaxed);
+        servers[2].query_count.store(20, Ordering::Relaxed);
+        let mut f = default_server_filters();
+        f.sort = ServerSort::QueriesTotal;
+        f.order = SortOrder::Asc;
+        let result = collect_servers_from(servers, &f);
+        let counts: Vec<u64> = result.servers.iter().map(|s| s.queries_total).collect();
+        assert_eq!(counts, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn server_sort_queries_total_desc() {
+        let servers = vec![
+            make_server("db", "u"),
+            make_server("db", "u"),
+            make_server("db", "u"),
+        ];
+        servers[0].query_count.store(30, Ordering::Relaxed);
+        servers[1].query_count.store(10, Ordering::Relaxed);
+        servers[2].query_count.store(20, Ordering::Relaxed);
+        let mut f = default_server_filters();
+        f.sort = ServerSort::QueriesTotal;
+        f.order = SortOrder::Desc;
+        let result = collect_servers_from(servers, &f);
+        let counts: Vec<u64> = result.servers.iter().map(|s| s.queries_total).collect();
+        assert_eq!(counts, vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn server_sort_errors_total_asc() {
+        let servers = vec![make_server("db", "u"), make_server("db", "u")];
+        servers[0].error_count.store(5, Ordering::Relaxed);
+        servers[1].error_count.store(1, Ordering::Relaxed);
+        let mut f = default_server_filters();
+        f.sort = ServerSort::ErrorsTotal;
+        f.order = SortOrder::Asc;
+        let result = collect_servers_from(servers, &f);
+        let errs: Vec<u64> = result.servers.iter().map(|s| s.errors_total).collect();
+        assert_eq!(errs, vec![1, 5]);
+    }
+
+    #[test]
+    fn server_sort_active_age_ms_desc() {
+        // Servers not in ACTIVE state return active_age_ms == 0.
+        let servers = vec![make_server("db", "u"), make_server("db", "u")];
+        let mut f = default_server_filters();
+        f.sort = ServerSort::ActiveAgeMs;
+        f.order = SortOrder::Desc;
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.total, 2);
+    }
+
+    #[test]
+    fn server_sort_age_seconds_desc() {
+        let servers = vec![make_server("db", "u"), make_server("db", "u")];
+        let mut f = default_server_filters();
+        f.sort = ServerSort::AgeSeconds;
+        f.order = SortOrder::Desc;
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.total, 2);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Server pagination tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn server_pagination_offset_beyond_total_returns_empty() {
+        let servers = vec![make_server("db", "u"), make_server("db", "u")];
+        let mut f = default_server_filters();
+        f.offset = 10;
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.total, 2);
+        assert!(result.servers.is_empty());
+    }
+
+    #[test]
+    fn server_pagination_limit_clamped_to_max_limit() {
+        let servers: Vec<_> = (0..5).map(|_| make_server("db", "u")).collect();
+        let mut f = default_server_filters();
+        f.limit = MAX_LIMIT + 9999;
+        let result = collect_servers_from(servers, &f);
+        assert_eq!(result.limit, MAX_LIMIT);
     }
 }

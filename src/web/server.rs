@@ -262,12 +262,20 @@ fn is_admin_only(path: &str) -> bool {
 
 fn route_api(req: &ParsedRequest<'_>) -> Response {
     use crate::web::routes;
-    // strip query string for matching
-    let path = req.path.split('?').next().unwrap_or(req.path);
+    use crate::web::routes::query::parse_query;
+
+    let (path, query_str) = match req.path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (req.path, ""),
+    };
+    let query = parse_query(query_str);
+
     match path {
         "/api/version" => routes::version::handle_version(),
         "/api/overview" => routes::overview::handle_overview(),
         "/api/pools" => routes::pools::handle_pools(),
+        "/api/clients" => routes::clients::handle_clients(&query),
+        "/api/servers" => routes::servers::handle_servers(&query),
         _ => Response::json(
             501,
             "Not Implemented",
@@ -488,5 +496,35 @@ mod tests {
         assert!(!is_admin_only("/api/overview"));
         assert!(!is_admin_only("/api/pools"));
         assert!(!is_admin_only("/api/prepared"));
+    }
+
+    #[test]
+    fn dispatch_clients_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/clients"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_clients_with_query_params_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/clients?limit=10&sort=errors_total"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_servers_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/servers"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
     }
 }

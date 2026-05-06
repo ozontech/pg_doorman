@@ -148,3 +148,35 @@ async fn api_overview_still_404_when_ui_inactive() {
     .await;
     assert!(raw.starts_with("HTTP/1.1 404"), "raw={raw}");
 }
+
+#[tokio::test]
+async fn api_clients_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/clients HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"clients\""), "raw={raw}");
+    assert!(raw.contains("\"total\""), "raw={raw}");
+    assert!(raw.contains("\"limit\":100"), "raw={raw}");
+    assert!(raw.contains("\"offset\":0"), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_clients_with_query_params() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/clients?limit=50&offset=10&sort=age_seconds&order=asc HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"limit\":50"), "raw={raw}");
+    assert!(raw.contains("\"offset\":10"), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_servers_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/servers HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"servers\""), "raw={raw}");
+}
