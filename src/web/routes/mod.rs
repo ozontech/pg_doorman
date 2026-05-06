@@ -12,6 +12,7 @@ pub(crate) mod clients;
 pub(crate) mod config;
 pub(crate) mod connections;
 pub(crate) mod databases;
+pub(crate) mod events;
 pub(crate) mod interner;
 pub(crate) mod interner_top;
 pub(crate) mod log_level;

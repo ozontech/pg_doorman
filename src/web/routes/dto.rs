@@ -642,6 +642,27 @@ pub struct TopQueryFilters {
     pub n: u64,
 }
 
+/// `GET /api/events?since=<seq>&max=<N>` — admin command timeline used
+/// for vertical-line annotations on the Overview graphs. Bounded ring
+/// buffer; oldest events drop silently when full.
+#[derive(Debug, Serialize)]
+pub struct EventsDto {
+    pub ts: u64,
+    /// Sequence number to poll with on the next request to receive only
+    /// events newer than this batch. Equal to `since` when nothing new.
+    pub next_seq: u64,
+    pub events: Vec<EventEntryDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EventEntryDto {
+    pub seq: u64,
+    pub ts_ms: u64,
+    /// One of `"RELOAD"`, `"PAUSE"`, `"RESUME"`, `"RECONNECT"`.
+    pub target: String,
+    pub message: String,
+}
+
 /// `GET /api/prepared/text/{hash}` — admin-only body of a single prepared
 /// statement. Returns 404 when the hash is not present in any pool's cache.
 #[derive(Debug, Serialize)]

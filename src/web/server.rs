@@ -298,6 +298,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/top/prepared" => routes::top_prepared::handle_top_prepared(&query),
         "/api/top/queries" => routes::top_queries::handle_top_queries(&query),
         "/api/apps" => routes::apps::handle_apps(&query),
+        "/api/events" => routes::events::handle_events(&query),
         _ => Response::json(
             501,
             "Not Implemented",
@@ -757,6 +758,16 @@ mod tests {
     fn dispatch_apps_returns_200() {
         let r = dispatch(
             &req("GET", "/api/apps"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_events_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/events"),
             &opts(true, true),
             AuthOutcome::Anonymous,
         );

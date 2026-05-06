@@ -426,3 +426,12 @@ async fn api_top_prepared_returns_envelope() {
     assert!(raw.contains("\"by\":\"hits\""), "raw={raw}");
     assert!(raw.contains("\"prepared\""), "raw={raw}");
 }
+
+#[tokio::test]
+async fn api_events_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/events HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"events\""), "raw={raw}");
+    assert!(raw.contains("\"next_seq\""), "raw={raw}");
+}

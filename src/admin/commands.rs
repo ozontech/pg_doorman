@@ -20,6 +20,7 @@ where
     info!("Reloading config");
 
     reload_config(client_server_map).await?;
+    crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
 
     get_config().show();
 
@@ -165,6 +166,7 @@ where
             }
         }
         pool.database.pause();
+        crate::admin::events::push_event("PAUSE", format!("pool {identifier} paused"));
         info!("PAUSE: paused pool {}", identifier);
     }
 
@@ -193,6 +195,7 @@ where
             }
         }
         pool.database.resume();
+        crate::admin::events::push_event("RESUME", format!("pool {identifier} resumed"));
         info!("RESUME: resumed pool {}", identifier);
     }
 
@@ -222,6 +225,10 @@ where
             }
         }
         let new_epoch = pool.database.reconnect();
+        crate::admin::events::push_event(
+            "RECONNECT",
+            format!("pool {identifier} reconnected (epoch={new_epoch})"),
+        );
         info!(
             "RECONNECT: reconnected pool {} (new epoch: {})",
             identifier, new_epoch

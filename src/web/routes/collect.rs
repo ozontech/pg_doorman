@@ -8,6 +8,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::admin::events::get_events_since;
 use crate::app::log_level;
 use crate::config::get_config;
 use crate::pool::{get_all_pools, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
@@ -20,13 +21,13 @@ use crate::stats::{
 use crate::web::routes::dto::{
     AppFilters, AppRowDto, AppSort, AppsDto, AuthQueryDto, AuthQueryRowDto, ClientDto,
     ClientFilters, ClientSort, ClientsDto, ConfigDto, ConfigEntry, ConnectionsDto, DatabaseDto,
-    DatabasesDto, InternerDto, InternerKindDto, InternerTopDto, InternerTopRowDto, LogLevelDto,
-    OverviewDto, PoolCoordinatorDto, PoolCoordinatorRowDto, PoolDto, PoolScalingDto,
-    PoolScalingRowDto, PoolsDto, PreparedDto, PreparedRowDto, PreparedTextDto, ServerDto,
-    ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto, StatsRowDto, TopClientBy,
-    TopClientFilters, TopClientRowDto, TopClientsDto, TopPreparedBy, TopPreparedDto,
-    TopPreparedFilters, TopPreparedRowDto, TopQueriesDto, TopQueryBy, TopQueryFilters,
-    TopQueryRowDto, UserDto, UsersDto, VersionDto,
+    DatabasesDto, EventEntryDto, EventsDto, InternerDto, InternerKindDto, InternerTopDto,
+    InternerTopRowDto, LogLevelDto, OverviewDto, PoolCoordinatorDto, PoolCoordinatorRowDto,
+    PoolDto, PoolScalingDto, PoolScalingRowDto, PoolsDto, PreparedDto, PreparedRowDto,
+    PreparedTextDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto,
+    StatsRowDto, TopClientBy, TopClientFilters, TopClientRowDto, TopClientsDto, TopPreparedBy,
+    TopPreparedDto, TopPreparedFilters, TopPreparedRowDto, TopQueriesDto, TopQueryBy,
+    TopQueryFilters, TopQueryRowDto, UserDto, UsersDto, VersionDto,
 };
 
 #[cfg(target_os = "linux")]
@@ -992,6 +993,29 @@ pub fn collect_interner_top(n: u64) -> InternerTopDto {
         ts: now_unix_ms(),
         n,
         entries,
+    }
+}
+
+pub fn collect_events(since: u64, max: u64) -> EventsDto {
+    // Cap max at 1000 — protects against accidental ?max=10000 over the wire.
+    const HARD_CAP: usize = 1000;
+    let max_n = (max.min(HARD_CAP as u64) as usize).max(1);
+    let (entries, next_seq) = get_events_since(since, max_n);
+
+    let events: Vec<EventEntryDto> = entries
+        .into_iter()
+        .map(|e| EventEntryDto {
+            seq: e.seq,
+            ts_ms: e.ts_ms,
+            target: e.target.to_string(),
+            message: e.message,
+        })
+        .collect();
+
+    EventsDto {
+        ts: now_unix_ms(),
+        next_seq,
+        events,
     }
 }
 
