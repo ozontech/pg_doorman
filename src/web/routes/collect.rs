@@ -24,7 +24,8 @@ use crate::web::routes::dto::{
     OverviewDto, PoolCoordinatorDto, PoolCoordinatorRowDto, PoolDto, PoolScalingDto,
     PoolScalingRowDto, PoolsDto, PreparedDto, PreparedRowDto, PreparedTextDto, ServerDto,
     ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto, StatsRowDto, TopClientBy,
-    TopClientFilters, TopClientRowDto, TopClientsDto, UserDto, UsersDto, VersionDto,
+    TopClientFilters, TopClientRowDto, TopClientsDto, TopQueriesDto, TopQueryBy, TopQueryFilters,
+    TopQueryRowDto, UserDto, UsersDto, VersionDto,
 };
 
 #[cfg(target_os = "linux")]
@@ -952,6 +953,66 @@ pub fn collect_interner_top(n: u64) -> InternerTopDto {
         ts: now_unix_ms(),
         n,
         entries,
+    }
+}
+
+pub fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
+    let n = clamp_top_clients_n(filters.n);
+
+    let mut rows: Vec<TopQueryRowDto> = Vec::new();
+
+    for (hash, entry) in named_snapshot() {
+        let count = entry.count();
+        let total_duration_us = entry.total_duration_us();
+        let avg_duration_ms = if count == 0 {
+            0.0
+        } else {
+            total_duration_us as f64 / count as f64 / 1_000.0
+        };
+        let preview: String = entry.text().chars().take(120).collect();
+        rows.push(TopQueryRowDto {
+            hash: format!("{:#x}", hash),
+            kind: "named".to_string(),
+            query: preview,
+            count,
+            total_duration_us,
+            avg_duration_ms,
+        });
+    }
+    for (hash, entry) in anon_snapshot() {
+        let count = entry.count();
+        let total_duration_us = entry.total_duration_us();
+        let avg_duration_ms = if count == 0 {
+            0.0
+        } else {
+            total_duration_us as f64 / count as f64 / 1_000.0
+        };
+        let preview: String = entry.text().chars().take(120).collect();
+        rows.push(TopQueryRowDto {
+            hash: format!("{:#x}", hash),
+            kind: "anonymous".to_string(),
+            query: preview,
+            count,
+            total_duration_us,
+            avg_duration_ms,
+        });
+    }
+
+    rows.sort_by(|a, b| match filters.by {
+        TopQueryBy::Count => b.count.cmp(&a.count),
+        TopQueryBy::Duration => b
+            .avg_duration_ms
+            .partial_cmp(&a.avg_duration_ms)
+            .unwrap_or(std::cmp::Ordering::Equal),
+    });
+
+    let queries: Vec<_> = rows.into_iter().take(n as usize).collect();
+
+    TopQueriesDto {
+        ts: now_unix_ms(),
+        by: filters.by.as_str().to_string(),
+        n,
+        queries,
     }
 }
 

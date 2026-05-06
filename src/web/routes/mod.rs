@@ -26,5 +26,6 @@ pub(crate) mod servers;
 pub(crate) mod sockets;
 pub(crate) mod stats;
 pub(crate) mod top_clients;
+pub(crate) mod top_queries;
 pub(crate) mod users;
 pub(crate) mod version;

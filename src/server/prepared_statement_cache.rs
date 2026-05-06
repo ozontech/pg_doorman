@@ -41,6 +41,14 @@ const GC_STATE_MARKED: u8 = 1;
 pub struct NamedEntry {
     text: Arc<str>,
     gc_state: AtomicU8,
+    /// Cumulative count of Bind events that referenced this hash.
+    /// Used by `/api/top/queries?by=count`. Approximate: see plan.
+    count: AtomicU64,
+    /// Cumulative microseconds spent across all Sync's that ended a batch
+    /// whose last Bind referenced this hash. Approximate per-batch
+    /// attribution — multi-Bind batches give the entire duration to the
+    /// last hash. See plan for the trade-off.
+    total_duration_us: AtomicU64,
 }
 
 impl NamedEntry {
@@ -48,6 +56,8 @@ impl NamedEntry {
         Self {
             text,
             gc_state: AtomicU8::new(GC_STATE_ACTIVE),
+            count: AtomicU64::new(0),
+            total_duration_us: AtomicU64::new(0),
         }
     }
 
@@ -58,6 +68,16 @@ impl NamedEntry {
     pub fn text(&self) -> &Arc<str> {
         &self.text
     }
+
+    /// Approximate count of Bind references. Used by `/api/top/queries`.
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    /// Approximate cumulative execution time in microseconds.
+    pub fn total_duration_us(&self) -> u64 {
+        self.total_duration_us.load(Ordering::Relaxed)
+    }
 }
 
 /// Entry in the anonymous interner. Bounded by per-entry TTL over
@@ -66,6 +86,8 @@ pub struct AnonEntry {
     text: Arc<str>,
     last_used: AtomicU64,
     gc_state: AtomicU8,
+    count: AtomicU64,
+    total_duration_us: AtomicU64,
 }
 
 impl AnonEntry {
@@ -74,6 +96,8 @@ impl AnonEntry {
             text,
             last_used: AtomicU64::new(now_ms),
             gc_state: AtomicU8::new(GC_STATE_ACTIVE),
+            count: AtomicU64::new(0),
+            total_duration_us: AtomicU64::new(0),
         }
     }
 
@@ -88,6 +112,14 @@ impl AnonEntry {
 
     pub fn idle_ms(&self, now_ms: u64) -> u64 {
         now_ms.saturating_sub(self.last_used.load(Ordering::Relaxed))
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    pub fn total_duration_us(&self) -> u64 {
+        self.total_duration_us.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
@@ -112,6 +144,31 @@ pub fn now_monotonic_ms() -> u64 {
     use std::time::Instant;
     static START: Lazy<Instant> = Lazy::new(Instant::now);
     START.elapsed().as_millis() as u64
+}
+
+/// Increments the Bind-count atomic on the interner entry that owns `hash`.
+/// No-op if the entry has been GC'd or not yet inserted; we accept the
+/// resulting count gap to keep the hot path lock-free.
+pub fn record_query_count(hash: u64, is_anonymous: bool) {
+    if is_anonymous {
+        if let Some(entry) = ANON_INTERNER.get(&hash) {
+            entry.count.fetch_add(1, Ordering::Relaxed);
+        }
+    } else if let Some(entry) = NAMED_INTERNER.get(&hash) {
+        entry.count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Adds `micros` to the cumulative duration on the interner entry. Same
+/// no-op-on-miss policy as `record_query_count`.
+pub fn record_query_duration_us(hash: u64, is_anonymous: bool, micros: u64) {
+    if is_anonymous {
+        if let Some(entry) = ANON_INTERNER.get(&hash) {
+            entry.total_duration_us.fetch_add(micros, Ordering::Relaxed);
+        }
+    } else if let Some(entry) = NAMED_INTERNER.get(&hash) {
+        entry.total_duration_us.fetch_add(micros, Ordering::Relaxed);
+    }
 }
 
 /// Interns the query string into the matching half of the interner.
@@ -819,5 +876,36 @@ mod tests {
             gc_sweep_anon(u64::MAX);
         }
         assert!(anon_entry_for_test(0x105).is_some());
+    }
+
+    #[test]
+    #[serial(query_interner)]
+    fn record_query_count_increments_named_entry() {
+        reset_interners_for_test();
+        let _ = intern_query("select 100", 0xC0FFEE, false);
+        super::record_query_count(0xC0FFEE, false);
+        super::record_query_count(0xC0FFEE, false);
+        let snap = super::named_snapshot();
+        let (_, e) = snap.iter().find(|(h, _)| *h == 0xC0FFEE).unwrap();
+        assert!(e.count() >= 2);
+    }
+
+    #[test]
+    fn record_query_count_no_op_on_unknown_hash() {
+        // Intentionally use a hash that is not interned — must not panic.
+        super::record_query_count(0xDEADC0DE, false);
+        super::record_query_count(0xDEADC0DE, true);
+    }
+
+    #[test]
+    #[serial(query_interner)]
+    fn record_query_duration_us_accumulates() {
+        reset_interners_for_test();
+        let _ = intern_query("select 200", 0xD00D00, false);
+        super::record_query_duration_us(0xD00D00, false, 100);
+        super::record_query_duration_us(0xD00D00, false, 250);
+        let snap = super::named_snapshot();
+        let (_, e) = snap.iter().find(|(h, _)| *h == 0xD00D00).unwrap();
+        assert_eq!(e.total_duration_us(), 350);
     }
 }

@@ -462,6 +462,14 @@ where
                     statement_name: server_name,
                 });
 
+                // /api/top/queries instrumentation. Accept the cache miss /
+                // race where the interner entry has been GC'd between intern
+                // and Bind — the no-op behaviour in record_query_count is
+                // intended to keep the hot path lock-free.
+                let is_anonymous = client_given_name.is_empty();
+                crate::server::record_query_count(cached.hash, is_anonymous);
+                self.prepared.last_bound_for_top = Some((cached.hash, is_anonymous));
+
                 Ok(())
             }
             None => {

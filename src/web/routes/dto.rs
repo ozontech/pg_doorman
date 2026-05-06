@@ -588,6 +588,54 @@ pub struct AppFilters {
     pub order: SortOrder,
 }
 
+/// `GET /api/top/queries` — Top-N interner-tracked queries by count or
+/// average duration. See plan for accuracy notes (Bind-counted, batch-
+/// level duration attribution).
+#[derive(Debug, Serialize)]
+pub struct TopQueriesDto {
+    pub ts: u64,
+    pub by: String,
+    pub n: u64,
+    pub queries: Vec<TopQueryRowDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopQueryRowDto {
+    /// `0x<hex>` form of the FxHash, matching `/api/interner/top`.
+    pub hash: String,
+    /// `"named"` or `"anonymous"`.
+    pub kind: String,
+    /// First 120 characters of the interned text (UTF-8 safe).
+    pub query: String,
+    pub count: u64,
+    pub total_duration_us: u64,
+    /// Average duration in milliseconds: `total_duration_us / count / 1000`.
+    /// Returns `0.0` when count is 0 (entry interned but never Bound).
+    pub avg_duration_ms: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum TopQueryBy {
+    #[default]
+    Count,
+    Duration,
+}
+
+impl TopQueryBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TopQueryBy::Count => "count",
+            TopQueryBy::Duration => "duration",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TopQueryFilters {
+    pub by: TopQueryBy,
+    pub n: u64,
+}
+
 /// `GET /api/prepared/text/{hash}` — admin-only body of a single prepared
 /// statement. Returns 404 when the hash is not present in any pool's cache.
 #[derive(Debug, Serialize)]

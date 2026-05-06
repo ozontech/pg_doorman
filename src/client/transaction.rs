@@ -384,6 +384,12 @@ where
         server.set_async_mode(false);
         server.set_expected_responses(0);
 
+        // Defensively clear any pending extended-protocol attribution.
+        // A simple query is opaque to the interner; whatever last_bound_for_top
+        // held was from a prior extended batch and would otherwise leak its
+        // hash into the next Sync.
+        self.prepared.last_bound_for_top = None;
+
         self.execute_server_roundtrip(Some(message), server).await?;
         self.stats.query();
         server.stats.query(
@@ -485,10 +491,16 @@ where
         server.has_pending_cache_entries = false;
 
         self.stats.query();
-        server.stats.query(
-            query_start_at.elapsed().as_micros() as u64,
-            self.server_parameters.get_application_name(),
-        );
+        // /api/top/queries duration accounting. The whole batch's elapsed
+        // time is attributed to the last Bind's hash; multi-Bind batches
+        // give the duration to whichever Bind was last (approximation).
+        let micros = query_start_at.elapsed().as_micros() as u64;
+        if let Some((hash, anon)) = self.prepared.last_bound_for_top.take() {
+            crate::server::record_query_duration_us(hash, anon, micros);
+        }
+        server
+            .stats
+            .query(micros, self.server_parameters.get_application_name());
 
         self.buffer.clear();
         // Reset batch state for next batch
