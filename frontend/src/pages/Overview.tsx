@@ -174,8 +174,14 @@ export default function Overview() {
     }
     poolErrorsHistory.push(errSnap);
     poolSatHistory.push(satSnap);
+    // The history-building effect intentionally watches ONLY the overview
+    // and pools timestamps so it fires on the master cadence. Adding the
+    // scaling/coord polls here makes the effect re-enter mid-interval, which
+    // pushes a new history point with `dt ≈ 50 ms` and `delta == 0`,
+    // producing a 0/peak/0/peak square wave on the qps/tps sparkline. Their
+    // data is read snapshot-style on each fire instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overviewPoll.data?.ts, poolsPoll.data?.ts, scalingPoll.data?.ts, coordPoll.data?.ts]);
+  }, [overviewPoll.data?.ts, poolsPoll.data?.ts]);
 
   const poolHistoryForEngine: PoolHistory = useMemo(() => {
     const map: PoolHistory = new Map();
