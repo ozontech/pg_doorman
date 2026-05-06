@@ -941,6 +941,32 @@ pub(crate) fn resolve_server_cache_size(
         .unwrap_or(pool_cache_size)
 }
 
+/// Pure helper that decides the per-client Anonymous LRU size from a
+/// general config and an already-extracted per-pool override. Pulled
+/// out so the unit tests can exercise the resolution table without
+/// touching global pool state.
+pub(crate) fn resolve_client_anon_cache_size_inner(
+    general: &General,
+    pool_override: Option<usize>,
+) -> usize {
+    if let Some(explicit) = general.client_anonymous_prepared_cache_size {
+        return explicit;
+    }
+    pool_override.unwrap_or(general.prepared_statements_cache_size)
+}
+
+/// Resolve the per-client Anonymous LRU size for a connection coming
+/// in on `pool_name`. Looks up the pool's
+/// `prepared_statements_cache_size` override and feeds it into the
+/// pure helper above. Falls back to general defaults when the pool
+/// is not in static config — admin connections, dynamic auth_query
+/// pools that have not been registered yet — matching pre-3.7
+/// behaviour for those paths.
+pub fn resolve_client_anon_cache_size(pool_name: &str, general: &General) -> usize {
+    let pool_override = get_pool_config(pool_name).and_then(|p| p.prepared_statements_cache_size);
+    resolve_client_anon_cache_size_inner(general, pool_override)
+}
+
 /// Get the connection pool
 pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
     (*(*POOLS.load()))
@@ -1083,5 +1109,32 @@ mod tests {
         // positive pool cache; resolve must return 0 in that case.
         assert_eq!(resolve_server_cache_size(8192, Some(0), None), 0);
         assert_eq!(resolve_server_cache_size(8192, Some(0), Some(1024)), 0);
+    }
+
+    // --- resolve_client_anon_cache_size_inner tests ---
+
+    #[test]
+    fn anon_cache_inherits_general_when_no_overrides() {
+        let g = General::test_with_cache_sizes(8192, None);
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, None), 8192);
+    }
+
+    #[test]
+    fn anon_cache_uses_pool_override_when_no_explicit() {
+        let g = General::test_with_cache_sizes(8192, None);
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, Some(1024)), 1024);
+    }
+
+    #[test]
+    fn anon_cache_explicit_wins_over_pool_override() {
+        let g = General::test_with_cache_sizes(8192, Some(256));
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, Some(1024)), 256);
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, None), 256);
+    }
+
+    #[test]
+    fn anon_cache_explicit_zero_disables_lru_regardless_of_pool() {
+        let g = General::test_with_cache_sizes(8192, Some(0));
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, Some(1024)), 0);
     }
 }

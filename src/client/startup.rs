@@ -402,9 +402,8 @@ where
         ));
 
         let config = get_config();
-        let anon_cache_size = config.general.resolve_client_anon_cache_size(
-            crate::pool::get_pool_config(&pool_name).and_then(|p| p.prepared_statements_cache_size),
-        );
+        let anon_cache_size =
+            crate::pool::resolve_client_anon_cache_size(&pool_name, &config.general);
         Ok(Client {
             read: BufReader::new(read),
             write,

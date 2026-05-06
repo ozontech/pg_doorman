@@ -16,7 +16,7 @@ use crate::config::{get_config, BackendAuthMethod};
 use crate::errors::Error;
 use crate::messages::config_socket::configure_tcp_socket;
 use crate::messages::Parse;
-use crate::pool::{get_pool, get_pool_config, ClientServerMap, ConnectionPool};
+use crate::pool::{get_pool, resolve_client_anon_cache_size, ClientServerMap, ConnectionPool};
 use crate::server::ServerParameters;
 use crate::stats::ClientStats;
 
@@ -46,15 +46,6 @@ fn restore_backend_auth_if_pending(
             }
         }
     }
-}
-
-/// Per-pool override for the resolved Anonymous LRU size. Returned `None`
-/// when the pool isn't in static config — the resolver falls back to the
-/// general-level `prepared_statements_cache_size`, matching the
-/// pre-3.7 behaviour for dynamic auth_query pools that haven't been
-/// registered yet.
-fn pool_anon_override(pool_name: &str) -> Option<usize> {
-    get_pool_config(pool_name).and_then(|p| p.prepared_statements_cache_size)
 }
 
 const MIGRATION_MAGIC: u32 = 0x50474D47; // "PGMG"
@@ -485,9 +476,7 @@ pub async fn reconstruct_client(
         &state.pool_name,
     );
 
-    let anon_cache_size = config
-        .general
-        .resolve_client_anon_cache_size(pool_anon_override(&state.pool_name));
+    let anon_cache_size = resolve_client_anon_cache_size(&state.pool_name, &config.general);
 
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
@@ -594,9 +583,7 @@ pub async fn reconstruct_tls_client(
         &state.pool_name,
     );
 
-    let anon_cache_size = config
-        .general
-        .resolve_client_anon_cache_size(pool_anon_override(&state.pool_name));
+    let anon_cache_size = resolve_client_anon_cache_size(&state.pool_name, &config.general);
 
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
