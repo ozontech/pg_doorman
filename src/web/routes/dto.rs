@@ -718,3 +718,32 @@ pub struct TopPreparedFilters {
     pub by: TopPreparedBy,
     pub n: u64,
 }
+
+/// `GET /api/logs?since=&max=&level=&target=` — admin-only live tail
+/// over the in-memory LogTap ring (spec section 8.6 + 9).
+#[derive(Debug, Serialize)]
+pub struct LogsDto {
+    pub ts: u64,
+    pub tap_active: bool,
+    pub tap_capacity_entries: u64,
+    pub tap_used_entries: u64,
+    /// Sequence number to poll with on the next request.
+    pub next_seq: u64,
+    /// Records lost from the ring before `since` (consumer evicted older
+    /// entries because the buffer is full). Operator falling behind sees
+    /// this grow.
+    pub dropped_before: u64,
+    /// Cumulative drops since the tap was activated. Includes evict-drops
+    /// (consumer ring overflow) and burst-drops (producer try_send full).
+    pub dropped_total: u64,
+    pub entries: Vec<LogEntryDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LogEntryDto {
+    pub seq: u64,
+    pub ts_ms: u64,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}

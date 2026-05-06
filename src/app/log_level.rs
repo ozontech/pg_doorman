@@ -68,6 +68,7 @@ impl Log for LogLevelController {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             self.inner.log(record);
+            crate::web::log_tap::push(record);
         }
     }
 

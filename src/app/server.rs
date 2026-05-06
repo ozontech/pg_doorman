@@ -385,6 +385,11 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             tokio::task::spawn(async move {
                 start_web_server(&host, opts).await;
             });
+            // LogTap stays off until /api/logs is hit; the reaper turns it
+            // back off when nobody is polling, so spawn it once here.
+            if ui_active && config.web.log_tap_max_entries > 0 {
+                tokio::task::spawn(crate::web::log_tap::run_reaper());
+            }
         }
 
         // Signal readiness to parent process (for binary upgrade in foreground mode)

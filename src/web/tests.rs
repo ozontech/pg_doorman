@@ -86,14 +86,32 @@ async fn api_admin_route_returns_401_without_auth() {
 }
 
 #[tokio::test]
-async fn api_admin_route_with_auth_returns_501() {
+async fn api_logs_admin_returns_envelope_or_disabled() {
     let port = spawn_server(opts(true, true)).await;
     let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
     let req = format!(
         "GET /api/logs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic {creds}\r\n\r\n"
     );
     let raw = send(port, &req).await;
-    assert!(raw.starts_with("HTTP/1.1 501"), "raw={raw}");
+    // 200 when log_tap_max_entries > 0 (default 8192); 503 when an operator
+    // explicitly disabled the tap. Both are valid contract outcomes.
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK") || raw.starts_with("HTTP/1.1 503"),
+        "raw={raw}"
+    );
+    if raw.starts_with("HTTP/1.1 200 OK") {
+        for field in [
+            "\"ts\"",
+            "\"tap_active\"",
+            "\"tap_capacity_entries\"",
+            "\"next_seq\"",
+            "\"entries\"",
+        ] {
+            assert!(raw.contains(field), "missing {field} in {raw}");
+        }
+    } else {
+        assert!(raw.contains("log_tap_disabled"), "raw={raw}");
+    }
 }
 
 #[tokio::test]

@@ -5,6 +5,7 @@
 //! Auth, routes, log_tap, and static_assets are added in subsequent phases.
 
 pub mod auth;
+pub mod log_tap;
 pub mod metrics;
 pub mod routes;
 pub mod server;

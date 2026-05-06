@@ -16,6 +16,7 @@ pub(crate) mod events;
 pub(crate) mod interner;
 pub(crate) mod interner_top;
 pub(crate) mod log_level;
+pub(crate) mod logs;
 pub(crate) mod overview;
 pub(crate) mod pool_coordinator;
 pub(crate) mod pool_scaling;

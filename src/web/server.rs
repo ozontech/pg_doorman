@@ -120,6 +120,23 @@ async fn handle_connection(stream: TcpStream, opts: WebServerOptions) {
         &opts.admin_password,
     );
 
+    // /api/logs needs an async handler because it talks to the LogTap consumer
+    // task via mpsc + oneshot; the rest of the API stays sync. Pre-screen
+    // ui_active and admin auth here so dispatch() never sees the path on the
+    // success branch — on auth failure or inactive UI we fall through to
+    // dispatch() which already returns the right 401/404.
+    if opts.ui_active
+        && parsed.method == "GET"
+        && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
+        && auth == AuthOutcome::Admin
+    {
+        let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
+        let query = crate::web::routes::query::parse_query(query_str);
+        let response = crate::web::routes::logs::handle_logs(&query).await;
+        let _ = response.write(&mut writer).await;
+        return;
+    }
+
     let response = dispatch(&parsed, &opts, auth);
     let _ = response.write(&mut writer).await;
 }
@@ -470,15 +487,9 @@ mod tests {
             .any(|(k, _)| *k == "WWW-Authenticate"));
     }
 
-    #[test]
-    fn dispatch_admin_path_with_admin_auth_returns_501() {
-        let r = dispatch(
-            &req("GET", "/api/logs"),
-            &opts(true, true),
-            AuthOutcome::Admin,
-        );
-        assert_eq!(r.status, 501);
-    }
+    // Note: the admin-success path for /api/logs is handled by the bypass
+    // in `handle_connection` (async handler over LogTap mpsc), not by
+    // `dispatch`. Integration tests in src/web/tests.rs cover that route.
 
     #[test]
     fn dispatch_401_on_anonymous_public_when_ui_anonymous_false() {
