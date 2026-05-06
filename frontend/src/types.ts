@@ -96,3 +96,28 @@ export interface SocketsDto {
   tcp6: TcpCounts;
   unix_stream: UnixStreamCounts;
 }
+
+export interface ClientDto {
+  client_id: string;
+  database: string;
+  user: string;
+  application_name: string;
+  addr: string;
+  tls: boolean;
+  state: string;
+  wait: string;
+  wait_ms: number;
+  transactions_total: number;
+  queries_total: number;
+  errors_total: number;
+  age_seconds: number;
+  current_query_age_ms: number;
+}
+
+export interface ClientsDto {
+  ts: number;
+  total: number;
+  limit: number;
+  offset: number;
+  clients: ClientDto[];
+}
