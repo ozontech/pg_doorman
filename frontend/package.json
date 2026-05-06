@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/write-source-hash.mjs",
+    "build": "vite build && node scripts/post-build.mjs && node scripts/write-source-hash.mjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

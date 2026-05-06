@@ -1,11 +1,17 @@
 @import "tailwindcss";
 
-/* Self-hosted IBM Plex via @fontsource — both packages register @font-face declarations on import. */
-@import "@fontsource/ibm-plex-sans/400.css";
-@import "@fontsource/ibm-plex-sans/500.css";
-@import "@fontsource/ibm-plex-sans/600.css";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
+/* Self-hosted IBM Plex via @fontsource. Limit subsets to latin and cyrillic
+   (no `*-ext` or vietnamese) so the bundle ships ~half the font files. */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/cyrillic-400.css";
+@import "@fontsource/ibm-plex-sans/cyrillic-500.css";
+@import "@fontsource/ibm-plex-sans/cyrillic-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/cyrillic-400.css";
+@import "@fontsource/ibm-plex-mono/cyrillic-500.css";
 
 @theme {
   /* Surface — values from design-system.md §4.1 (verbatim) */
