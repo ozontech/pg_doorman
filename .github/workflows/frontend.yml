@@ -11,6 +11,9 @@ on:
       - "frontend/**"
       - ".github/workflows/frontend.yml"
 
+permissions:
+  contents: read
+
 jobs:
   lint-typecheck-build:
     name: lint + typecheck + dist sync
