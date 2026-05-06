@@ -199,6 +199,18 @@ export default function PoolDetail() {
           <KV label="epoch" value={String(pool.epoch)} />
         </Section>
 
+        <Section title="TLS & fallback">
+          <KV
+            label="fallback active"
+            value={pool.fallback_active ? "yes (Patroni cooldown)" : "no"}
+          />
+          <KV
+            label="TLS handshake errors total"
+            value={pool.tls_handshake_errors_total.toLocaleString()}
+          />
+          <KV label="TLS backend connections" value={String(pool.tls_backend_connections)} />
+        </Section>
+
         <Section title="Errors by SQLSTATE">
           <SqlstateBreakdown errors={pool.errors_by_sqlstate} />
         </Section>

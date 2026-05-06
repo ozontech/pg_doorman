@@ -66,6 +66,12 @@ export interface PoolDto {
   errors_by_sqlstate?: Record<string, number>;
   paused: boolean;
   epoch: number;
+  // Patroni-assisted fallback flag (mirror of the prometheus gauge).
+  fallback_active: boolean;
+  // Cumulative count of failed backend TLS handshakes for this pool.
+  tls_handshake_errors_total: number;
+  // Live TLS-encrypted backend connections held by the pool.
+  tls_backend_connections: number;
 }
 
 export interface PoolsDto {

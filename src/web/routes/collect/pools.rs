@@ -1,5 +1,8 @@
 use crate::pool::get_all_pools;
 use crate::stats::pool::PoolStats;
+use crate::web::metrics::{
+    FALLBACK_ACTIVE, SHOW_SERVER_TLS_CONNECTIONS, SHOW_SERVER_TLS_HANDSHAKE_ERRORS,
+};
 use crate::web::routes::dto::{PoolDto, PoolsDto};
 
 use super::now_unix_ms;
@@ -15,6 +18,21 @@ pub(crate) fn collect_pools() -> PoolsDto {
         };
         let address = pool.address();
         let errors_by_sqlstate = address.stats.errors_by_sqlstate_snapshot();
+        let pool_id = format!("{}@{}", identifier.user, identifier.db);
+        // The Prometheus accessors return zero for labels that have not
+        // been touched yet — `with_label_values` will lazily create the
+        // metric. That is acceptable: the pool is real, the counter is just
+        // empty, and downstream consumers see `0` instead of a missing key.
+        let fallback_active = FALLBACK_ACTIVE
+            .with_label_values(&[pool_id.as_str()])
+            .get()
+            > 0.5;
+        let tls_handshake_errors_total = SHOW_SERVER_TLS_HANDSHAKE_ERRORS
+            .with_label_values(&[pool_id.as_str()])
+            .get();
+        let tls_backend_connections = SHOW_SERVER_TLS_CONNECTIONS
+            .with_label_values(&[pool_id.as_str()])
+            .get() as u64;
         let dto = PoolDto {
             id: format!("{}@{}", identifier.user, identifier.db),
             user: identifier.user.clone(),
@@ -44,6 +62,9 @@ pub(crate) fn collect_pools() -> PoolsDto {
             paused: stats.paused,
             // TODO: epoch wiring in phase 3e (no epoch field on PoolSettings yet).
             epoch: 0,
+            fallback_active,
+            tls_handshake_errors_total,
+            tls_backend_connections,
         };
         pools.push(dto);
     }

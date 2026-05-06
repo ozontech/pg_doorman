@@ -112,6 +112,17 @@ pub(crate) struct PoolDto {
 
     pub paused: bool,
     pub epoch: u64,
+
+    /// Patroni-assisted fallback flag. Mirrors the `pg_doorman_fallback_active`
+    /// gauge — `true` when the local backend is in cooldown and the pool is
+    /// routing through a fallback host discovered via Patroni `/cluster`.
+    pub fallback_active: bool,
+    /// Cumulative count of TLS handshake errors against the backend for this
+    /// pool. Mirrors `pg_doorman_server_tls_handshake_errors_total`.
+    pub tls_handshake_errors_total: u64,
+    /// Live TLS-encrypted backend connections held by the pool. Mirrors
+    /// `pg_doorman_server_tls_connections`.
+    pub tls_backend_connections: u64,
 }
 
 #[derive(Debug, Serialize)]
