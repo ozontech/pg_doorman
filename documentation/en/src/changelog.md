@@ -1,5 +1,96 @@
 # Changelog
 
+### 3.7.0
+
+#### ACTION REQUIRED before upgrading to 3.7.0
+
+- **SQLSTATE for missing prepared statements changed from `58000` to
+  `26000`.** Any `Bind` or `Describe` referencing a prepared statement
+  that pg_doorman cannot resolve now returns SQLSTATE `26000`
+  (`invalid_sql_statement_name`), matching native PostgreSQL.
+  Audit dashboards, log searches, alert rules, and retry middleware
+  that filter on `58000` for this condition (Splunk saved searches,
+  Grafana log alerts, custom retry policies). Drivers that auto-retry
+  on `26000` (pgjdbc, pgx with `cache_describe`) now do so;
+  drivers that closed the connection on `58000` will no longer.
+- **Migration format v1 is no longer accepted.** Upgrades from a
+  pg_doorman that emitted v1 (3.5.0–3.5.x) must hop through
+  3.6.x first; from 3.4 and earlier no migration support existed,
+  so the upgrade is unaffected.
+- **`client_prepared_statements_cache_size` is deprecated.** It
+  remains a serde alias of `client_anonymous_prepared_cache_size`,
+  with a `WARN` at startup. Planned for removal in 3.9; rename in
+  configs now.
+- **Anonymous prepared statements have a TTL by default.** The
+  query interner evicts an anonymous entry after
+  `query_interner_anon_idle_ttl_seconds` (default 60) of idle time.
+  Drivers like pgjdbc and `pgx` with `cache_describe` re-issue
+  `Parse` transparently when the next `Bind` returns SQLSTATE
+  `26000`. If your driver relies on cross-batch unnamed prepared
+  statements without a re-Parse, set
+  `query_interner_anon_idle_ttl_seconds: 0` to keep the pre-3.7
+  unbounded behaviour.
+
+#### Added
+
+- The query interner is split into NAMED (passive `Arc::strong_count`
+  GC) and ANON (idle TTL). Two general knobs control the GC:
+  `query_interner_gc_interval_seconds` (default 60, restart-only) and
+  `query_interner_anon_idle_ttl_seconds` (default 60; `0` disables
+  TTL and restores pre-3.7 unbounded behaviour; live-reloadable).
+  A two-cycle mark-and-sweep grace prevents eviction of entries
+  touched between cycles.
+- `SHOW INTERNER` reports entries and bytes per kind;
+  `SHOW INTERNER N` lists the top N by interned text length with
+  hash, kind, idle_ms, and a 120-character preview; `RESET INTERNER`
+  clears both halves (diagnostics-only).
+- Prometheus interner metrics:
+  `pg_doorman_query_interner_entries{kind}`,
+  `_bytes{kind}`, `_evictions_total{kind, reason}`,
+  `_synthetic_misses_total`, `_gc_duration_seconds`.
+- `server_prepared_statements_cache_size` (general + per-pool)
+  sizes the per-backend server-level prepared-statement LRU.
+  When unset, inherits `prepared_statements_cache_size`.
+- `client_anonymous_prepared_cache_size` bounds the Anonymous part
+  of the per-client cache; named statements remain unbounded. The
+  knob is now optional and inherits `prepared_statements_cache_size`
+  when unset (`0` still means unlimited).
+- `kind` column appended to `SHOW PREPARED_STATEMENTS`
+  (`named` / `anonymous` / `mixed`).
+- `SHOW POOLS_MEMORY` gains `client_named_count`,
+  `client_anonymous_count`, and `client_anonymous_evictions_alive`
+  (a gauge of evictions across currently connected clients; the
+  authoritative cumulative counter lives in Prometheus as
+  `pg_doorman_clients_prepared_anonymous_evictions_total`). The
+  matching gauges `pg_doorman_clients_prepared_named_entries` /
+  `..._anonymous_entries` round out the surface.
+
+#### Changed
+
+- The per-client prepared-statement cache is split into Named
+  (unbounded) and Anonymous (LRU). Fixes a bug where the previous
+  combined LRU could evict a Named entry and cause the next `Bind`
+  to fail with `prepared statement does not exist`.
+- `Bind` against an anonymous prepared statement that is no longer
+  cached anywhere (interner, pool, client) now returns SQLSTATE
+  `26000` (`invalid_sql_statement_name`) instead of `58000`,
+  matching native PostgreSQL. Standard drivers re-issue `Parse`
+  transparently.
+
+#### Deprecated
+
+- `client_prepared_statements_cache_size` is renamed to
+  `client_anonymous_prepared_cache_size`. The old name remains a
+  serde alias and logs a `WARN` at startup; rename it in your
+  config.
+
+#### Removed
+
+- Migration format v1 is no longer accepted. Upgrades from versions
+  that emitted v1 (3.4 and earlier) must hop through a 3.5–3.6
+  binary first; `deserialize_state` returns `unsupported version 1`
+  otherwise.
+
 ### 3.6.5 <small>May 4, 2026</small>
 
 #### Fix: stuck `cl_active/sv_active` after large DataRow client disconnect under pressure

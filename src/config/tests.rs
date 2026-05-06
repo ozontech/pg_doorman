@@ -1767,3 +1767,64 @@ fn legacy_hba_bypass_quiet_when_pg_hba_present() {
     // pg_hba takes precedence and has explicit local rules — no silent bypass.
     assert!(!legacy_hba_bypassed_by_unix_socket(&general));
 }
+
+#[test]
+fn deprecated_general_keys_yaml_detects_old_field_under_general() {
+    let yaml = r#"
+general:
+  host: "0.0.0.0"
+  client_prepared_statements_cache_size: 1024
+"#;
+    let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+    let found = find_deprecated_general_keys_yaml(&value);
+    assert_eq!(found, vec!["client_prepared_statements_cache_size"]);
+}
+
+#[test]
+fn deprecated_general_keys_yaml_detects_old_field_at_root() {
+    // YAML configs sometimes place `general` keys at the document root
+    // (used in tests like `old_field_is_aliased_to_new_field`).
+    let yaml = r#"
+host: "0.0.0.0"
+client_prepared_statements_cache_size: 1024
+"#;
+    let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+    let found = find_deprecated_general_keys_yaml(&value);
+    assert_eq!(found, vec!["client_prepared_statements_cache_size"]);
+}
+
+#[test]
+fn deprecated_general_keys_yaml_returns_empty_when_absent() {
+    let yaml = r#"
+general:
+  host: "0.0.0.0"
+  client_anonymous_prepared_cache_size: 1024
+"#;
+    let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+    let found = find_deprecated_general_keys_yaml(&value);
+    assert!(found.is_empty());
+}
+
+#[test]
+fn deprecated_general_keys_toml_detects_old_field() {
+    let toml_input = r#"
+[general]
+host = "0.0.0.0"
+client_prepared_statements_cache_size = 2048
+"#;
+    let value: toml::Value = toml_input.parse().unwrap();
+    let found = find_deprecated_general_keys_toml(&value);
+    assert_eq!(found, vec!["client_prepared_statements_cache_size"]);
+}
+
+#[test]
+fn deprecated_general_keys_toml_returns_empty_when_absent() {
+    let toml_input = r#"
+[general]
+host = "0.0.0.0"
+client_anonymous_prepared_cache_size = 2048
+"#;
+    let value: toml::Value = toml_input.parse().unwrap();
+    let found = find_deprecated_general_keys_toml(&value);
+    assert!(found.is_empty());
+}

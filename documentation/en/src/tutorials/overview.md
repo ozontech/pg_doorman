@@ -40,6 +40,7 @@ PgDoorman does not implement statement mode. See [Pool Modes](../concepts/pool-m
 
 - **Admin console** — a PostgreSQL-compatible endpoint for `SHOW POOLS`, `SHOW CLIENTS`, `RELOAD`, `PAUSE`, `UPGRADE`, etc.
 - **Prometheus `/metrics`** — built-in HTTP endpoint with per-pool latency percentiles, prepared-statement counters, fallback state, and TLS metrics.
+- **Prepared-statement cache visibility** — `SHOW INTERNER` and `SHOW POOLS_MEMORY` expose interner footprint and per-client Named / Anonymous counts, with matching Prometheus gauges.
 - **`pg_doorman -t`** — validate the config without starting the server.
 - **`pg_doorman generate --host …`** — emit a starter config by introspecting an existing PostgreSQL.
 

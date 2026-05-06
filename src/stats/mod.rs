@@ -43,7 +43,7 @@ pub mod socket;
 // -----------------------------------------------------------------------------
 use crate::stats::print_all_stats::print_all_stats;
 pub use address::AddressStats;
-pub use client::ClientStats;
+pub use client::{ClientStats, PreparedCacheSnapshot};
 pub use connections::{
     CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
     TOTAL_CONNECTION_COUNTER,

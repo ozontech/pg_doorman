@@ -21,10 +21,11 @@ use super::SHOW_SOCKETS;
 use super::{
     AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
     COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
-    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS, SHOW_POOLS_BYTES,
-    SHOW_POOLS_CLIENT, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_QUERIES_COUNTER,
-    SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER,
-    SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
+    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
+    SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
+    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS,
+    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
     SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
     SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
     SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
@@ -122,9 +123,35 @@ fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     SHOW_CLIENT_CACHE_BYTES
         .with_label_values(&[user, database])
         .set(stats.client_prepared_bytes as f64);
+    SHOW_CLIENT_PREPARED_NAMED_ENTRIES
+        .with_label_values(&[user, database])
+        .set(stats.client_named_count as f64);
+    SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES
+        .with_label_values(&[user, database])
+        .set(stats.client_anonymous_count as f64);
+
+    // Anonymous LRU evictions are no longer aggregated here. The IntCounter
+    // is bumped at the eviction site via `observe_anonymous_eviction`, which
+    // survives client disconnect — the previous polling-delta approach lost
+    // history when an alive client's contribution dropped from the
+    // PoolStats sum.
+
     SHOW_ASYNC_CLIENTS_COUNT
         .with_label_values(&[user, database])
         .set(stats.async_clients_count as f64);
+}
+
+/// Increment the cumulative Anonymous LRU eviction counter for a single
+/// (user, database) pair.
+///
+/// Called from the eviction site (`process_parse_immediate`) so the counter
+/// is monotonic across client disconnects — the IntCounterVec entry lives in
+/// the global Prometheus registry, not in any per-client state.
+#[inline]
+pub fn observe_anonymous_eviction(user: &str, database: &str) {
+    SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL
+        .with_label_values(&[user, database])
+        .inc();
 }
 
 fn update_server_metrics() {
@@ -529,4 +556,45 @@ fn update_pool_scaling_metrics() {
     }
 
     prev.retain(|(_, user, db), _| !stale_pairs.contains(&(user.clone(), db.clone())));
+}
+
+/// Called by the GC tokio task on every sweep tick. Updates the interner
+/// gauges (entries, bytes per kind), increments eviction counters, and
+/// observes the sweep duration in the histogram. The byte totals come
+/// straight from `GcStats` so we don't traverse the DashMaps a second
+/// time after the sweep already walked them.
+pub fn record_interner_gc(
+    named: crate::server::GcStats,
+    anon: crate::server::GcStats,
+    elapsed_seconds: f64,
+) {
+    super::QUERY_INTERNER_EVICTIONS_TOTAL
+        .with_label_values(&["named", "gc_passive"])
+        .inc_by(named.evicted);
+    super::QUERY_INTERNER_EVICTIONS_TOTAL
+        .with_label_values(&["anonymous", "ttl_expired"])
+        .inc_by(anon.evicted);
+
+    super::QUERY_INTERNER_ENTRIES
+        .with_label_values(&["named"])
+        .set(crate::server::named_len() as i64);
+    super::QUERY_INTERNER_ENTRIES
+        .with_label_values(&["anonymous"])
+        .set(crate::server::anon_len() as i64);
+    super::QUERY_INTERNER_BYTES
+        .with_label_values(&["named"])
+        .set(named.bytes as i64);
+    super::QUERY_INTERNER_BYTES
+        .with_label_values(&["anonymous"])
+        .set(anon.bytes as i64);
+
+    super::QUERY_INTERNER_GC_DURATION_SECONDS.observe(elapsed_seconds);
+}
+
+/// Increments the synthetic-miss counter — called from the protocol
+/// path when pg_doorman returns SQLSTATE 26000 to a client because the
+/// anonymous prepared statement it referred to is no longer in any of
+/// the caches (interner, pool cache, client cache).
+pub fn record_synthetic_miss() {
+    super::QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL.inc();
 }

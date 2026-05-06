@@ -10,13 +10,13 @@ use tokio::sync::mpsc;
 use std::ffi::c_void;
 
 use crate::client::buffer_pool::PooledBuffer;
-use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
+use crate::client::core::{CachedStatement, Client, PreparedStatementKey, PreparedStatementKeyRef};
 use crate::client::util::PREPARED_STATEMENT_COUNTER;
 use crate::config::{get_config, BackendAuthMethod};
 use crate::errors::Error;
 use crate::messages::config_socket::configure_tcp_socket;
 use crate::messages::Parse;
-use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
+use crate::pool::{get_pool, resolve_client_anon_cache_size, ClientServerMap, ConnectionPool};
 use crate::server::ServerParameters;
 use crate::stats::ClientStats;
 
@@ -256,11 +256,11 @@ fn serialize_prepared_state(buf: &mut BytesMut, prepared: &PreparedStatementStat
     buf.put_u32(cache_entries.len() as u32);
     for (key, cached) in &cache_entries {
         match key {
-            PreparedStatementKey::Named(name) => {
+            PreparedStatementKeyRef::Named(name) => {
                 buf.put_u8(0);
                 put_str(buf, name);
             }
-            PreparedStatementKey::Anonymous(hash) => {
+            PreparedStatementKeyRef::Anonymous(hash) => {
                 buf.put_u8(1);
                 buf.put_u64(*hash);
             }
@@ -314,7 +314,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
         )));
     }
     let version = buf.get_u16();
-    if version != 1 && version != MIGRATION_VERSION {
+    if version != MIGRATION_VERSION {
         return Err(Error::ClientError(format!(
             "migration: unsupported version {version}"
         )));
@@ -401,8 +401,9 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
     require(&buf, 1)?;
     let use_tls = buf.get_u8() != 0;
 
-    // v2: backend auth state (ScramPassthrough ClientKey, Md5 hash)
-    let backend_auth = if version >= 2 && buf.remaining() > 0 {
+    // Backend auth state (ScramPassthrough ClientKey, Md5 hash); absent when
+    // the migrating client never reached an authenticated backend.
+    let backend_auth = if buf.remaining() > 0 {
         let tag = buf.get_u8();
         match tag {
             1 => {
@@ -423,7 +424,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
             _ => None,
         }
     } else {
-        None // v1 format: no auth state
+        None
     };
 
     Ok(DeserializedState {
@@ -475,12 +476,14 @@ pub async fn reconstruct_client(
         &state.pool_name,
     );
 
+    let anon_cache_size = resolve_client_anon_cache_size(&state.pool_name, &config.general);
+
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
         state.async_client,
         &state.prepared_entries,
         pool.as_ref(),
-        config.general.client_prepared_statements_cache_size,
+        anon_cache_size,
     );
 
     let application_name = state
@@ -580,12 +583,14 @@ pub async fn reconstruct_tls_client(
         &state.pool_name,
     );
 
+    let anon_cache_size = resolve_client_anon_cache_size(&state.pool_name, &config.general);
+
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
         state.async_client,
         &state.prepared_entries,
         pool.as_ref(),
-        config.general.client_prepared_statements_cache_size,
+        anon_cache_size,
     );
 
     let application_name = state
@@ -653,7 +658,15 @@ fn reconstruct_prepared_state(
     for entry in entries {
         let parse = Parse::from_parts(&entry.query, &entry.param_types);
         let hash = entry.hash;
-        let Some(shared_parse) = pool.register_parse_to_cache(hash, &parse) else {
+        // Forward the client-given name from the deserialised blob so that the
+        // pool cache's seen_as_named / seen_as_anonymous flags survive the
+        // binary upgrade. Anonymous keys carry no name; pass `None`.
+        let client_given_name: Option<&str> = match &entry.key {
+            PreparedStatementKey::Named(name) => Some(name.as_str()),
+            PreparedStatementKey::Anonymous(_) => None,
+        };
+        let Some(shared_parse) = pool.register_parse_to_cache(hash, &parse, client_given_name)
+        else {
             continue;
         };
         let async_name = if async_client {
@@ -669,7 +682,12 @@ fn reconstruct_prepared_state(
             hash,
             async_name,
         };
-        prepared.cache.put(entry.key.clone(), cached);
+        // Replay-evictions during reconstruction are an artefact of the new
+        // LRU cap vs the size of the migration blob, not real workload
+        // pressure on the running pooler. Drop the outcome instead of
+        // bumping per-client and Prometheus counters; the operator only
+        // wants to see evictions caused by live traffic.
+        let _ = prepared.cache.put(entry.key.clone(), cached);
     }
     prepared
 }
@@ -1120,6 +1138,24 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_rejects_v1_format() {
+        // v1 used to be accepted alongside MIGRATION_VERSION; after dropping
+        // legacy support the validator must reject it explicitly.
+        let mut buf = BytesMut::new();
+        buf.put_u32(MIGRATION_MAGIC);
+        buf.put_u16(1);
+        buf.put_slice(&[0; 13]); // fill to HEADER_SIZE
+        let Err(err) = deserialize_state(buf) else {
+            panic!("expected v1 format to be rejected");
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported version 1"),
+            "expected v1-rejection error, got: {msg}"
+        );
+    }
+
+    #[test]
     fn deserialize_rejects_truncated_header() {
         let buf = BytesMut::from(&[0u8; 5][..]);
         assert!(deserialize_state(buf).is_err());
@@ -1249,6 +1285,52 @@ mod tests {
         let state = deserialize_state(buf).unwrap();
         assert_eq!(state.addr.ip().to_string(), "::1");
         assert_eq!(state.addr.port(), 5433);
+    }
+
+    /// Mirrors the call-site in PreparedStatementCache::get_or_insert at
+    /// the slow path: an Anonymous entry rebuilt by reconstruct_prepared_state
+    /// goes through `parse.clone().intern_query(hash, is_anonymous)` with
+    /// is_anonymous=true, so the text must land in ANON_INTERNER, not NAMED.
+    #[test]
+    #[serial_test::serial(query_interner)]
+    fn migration_path_routes_anonymous_to_anon_interner() {
+        use crate::server::{anon_entry_for_test, named_entry_for_test, reset_interners_for_test};
+
+        reset_interners_for_test();
+        let parse = Parse::from_parts("select 99::int", &[]);
+        let hash: u64 = 0xCAFE;
+        let _interned = parse.clone().intern_query(hash, true);
+
+        assert!(
+            anon_entry_for_test(hash).is_some(),
+            "must land in ANON_INTERNER"
+        );
+        assert!(
+            named_entry_for_test(hash).is_none(),
+            "must NOT land in NAMED_INTERNER"
+        );
+    }
+
+    /// Mirror for the named branch: Named entry from migration goes into
+    /// NAMED_INTERNER.
+    #[test]
+    #[serial_test::serial(query_interner)]
+    fn migration_path_routes_named_to_named_interner() {
+        use crate::server::{anon_entry_for_test, named_entry_for_test, reset_interners_for_test};
+
+        reset_interners_for_test();
+        let parse = Parse::from_parts("select 100::int", &[]);
+        let hash: u64 = 0xBEEF;
+        let _interned = parse.clone().intern_query(hash, false);
+
+        assert!(
+            named_entry_for_test(hash).is_some(),
+            "must land in NAMED_INTERNER"
+        );
+        assert!(
+            anon_entry_for_test(hash).is_none(),
+            "must NOT land in ANON_INTERNER"
+        );
     }
 
     #[test]

@@ -41,6 +41,7 @@
 
 - [Binary Upgrade](tutorials/binary-upgrade.md)
 - [Signals and Reload](operations/signals.md)
+- [Monitoring the Query Interner](operations/monitoring-interner.md)
 - [Troubleshooting](tutorials/troubleshooting.md)
 
 # Observability

@@ -30,6 +30,7 @@ pub(crate) const SHOW_SUBCOMMANDS: &[&str] = &[
     "pool_coordinator",
     "pool_scaling",
     "prepared_statements",
+    "interner",
     "clients",
     "servers",
     "connections",
@@ -49,10 +50,10 @@ use commands::{pause, reconnect, reload, resume, shutdown};
 #[cfg(target_os = "linux")]
 use show::show_sockets;
 use show::{
-    show_auth_query, show_clients, show_config, show_connections, show_databases, show_help,
-    show_lists, show_log_level, show_pool_coordinator, show_pool_scaling, show_pools,
-    show_pools_extended, show_pools_memory, show_prepared_statements, show_servers, show_stats,
-    show_users, show_version,
+    reset_interner, show_auth_query, show_clients, show_config, show_connections, show_databases,
+    show_help, show_interner, show_interner_top, show_lists, show_log_level, show_pool_coordinator,
+    show_pool_scaling, show_pools, show_pools_extended, show_pools_memory,
+    show_prepared_statements, show_servers, show_stats, show_users, show_version,
 };
 
 /// Handle admin client.
@@ -103,7 +104,7 @@ where
             reconnect(stream, db).await
         }
         "SHOW" => {
-            if query_parts.len() != 2 {
+            if query_parts.len() < 2 {
                 warn!("unsupported admin subcommand for SHOW: {query_parts:?}");
                 error_response(
                     stream,
@@ -121,6 +122,10 @@ where
                     "POOLS_EXTENDED" => show_pools_extended(stream).await,
                     "POOLS_MEMORY" | "POOL_MEMORY" => show_pools_memory(stream).await,
                     "PREPARED_STATEMENTS" => show_prepared_statements(stream).await,
+                    "INTERNER" => match query_parts.get(2).and_then(|s| s.parse::<usize>().ok()) {
+                        Some(n) => show_interner_top(stream, n).await,
+                        None => show_interner(stream).await,
+                    },
                     "CLIENTS" => show_clients(stream).await,
                     "SERVERS" => show_servers(stream).await,
                     "CONNECTIONS" => show_connections(stream).await,
@@ -146,6 +151,19 @@ where
                         .await
                     }
                 }
+            }
+        }
+        "RESET" => {
+            if query_parts.len() == 2 && query_parts[1].eq_ignore_ascii_case("INTERNER") {
+                reset_interner(stream).await
+            } else {
+                warn!("unsupported admin RESET target: {query_parts:?}");
+                error_response(
+                    stream,
+                    "Unsupported RESET target — only RESET INTERNER is supported",
+                    "58000",
+                )
+                .await
             }
         }
         _ => {

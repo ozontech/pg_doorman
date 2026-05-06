@@ -407,6 +407,12 @@ impl ConnectionPool {
                     false => 0,
                 };
 
+                let server_prepared_statements_cache_size = resolve_server_cache_size(
+                    prepared_statements_cache_size,
+                    pool_config.server_prepared_statements_cache_size,
+                    config.general.server_prepared_statements_cache_size,
+                );
+
                 let application_name = pool_config
                     .application_name
                     .clone()
@@ -423,7 +429,7 @@ impl ConnectionPool {
                     client_server_map.clone(),
                     pool_config.cleanup_server_connections,
                     pool_config.log_client_parameter_status_changes,
-                    prepared_statements_cache_size,
+                    server_prepared_statements_cache_size,
                     application_name,
                     config.general.max_concurrent_creates,
                     pool_config
@@ -574,6 +580,12 @@ impl ConnectionPool {
                                 false => 0,
                             };
 
+                        let server_prepared_statements_cache_size = resolve_server_cache_size(
+                            prepared_statements_cache_size,
+                            pool_config.server_prepared_statements_cache_size,
+                            config.general.server_prepared_statements_cache_size,
+                        );
+
                         let application_name = pool_config
                             .application_name
                             .clone()
@@ -591,7 +603,7 @@ impl ConnectionPool {
                             client_server_map.clone(),
                             pool_config.cleanup_server_connections,
                             pool_config.log_client_parameter_status_changes,
-                            prepared_statements_cache_size,
+                            server_prepared_statements_cache_size,
                             application_name,
                             config.general.max_concurrent_creates,
                             pool_config
@@ -781,15 +793,25 @@ impl ConnectionPool {
         &self.address
     }
 
-    /// Register a parse statement to the pool's cache and return the rewritten parse
+    /// Register a parse statement to the pool's cache and return the rewritten parse.
     ///
-    /// Do not pass an anonymous parse statement to this function
+    /// `client_given_name` is the original Parse name from the client. `None`
+    /// indicates an anonymous prepared statement (PostgreSQL's empty Parse
+    /// name); `Some(name)` carries the client-supplied identifier. It is
+    /// forwarded to the pool cache so each entry tracks whether it was ever
+    /// Parse'd as a named statement, an anonymous one, or both — surfaced via
+    /// `CacheEntryKind`.
     #[inline(always)]
-    pub fn register_parse_to_cache(&self, hash: u64, parse: &Parse) -> Option<Arc<Parse>> {
+    pub fn register_parse_to_cache(
+        &self,
+        hash: u64,
+        parse: &Parse,
+        client_given_name: Option<&str>,
+    ) -> Option<Arc<Parse>> {
         // We should only be calling this function if the cache is enabled
         self.prepared_statement_cache
             .as_ref()
-            .map(|cache| cache.get_or_insert(parse, hash))
+            .map(|cache| cache.get_or_insert(parse, hash, client_given_name))
     }
 
     /// Promote a prepared statement hash in the LRU
@@ -895,6 +917,56 @@ fn build_fallback_state(
     }
 }
 
+/// Resolve the per-backend prepared-statement LRU size for a pool.
+///
+/// Resolution order (most specific wins):
+/// 1. `pool_override` (per-pool `server_prepared_statements_cache_size`)
+/// 2. `general_override` (general-level `server_prepared_statements_cache_size`)
+/// 3. fallback to `pool_cache_size` — the resolved
+///    `prepared_statements_cache_size` for that pool, preserving the
+///    behaviour from before this knob existed.
+///
+/// Returns 0 when `pool_cache_size` is 0: the pool-level cache is
+/// disabled, so a per-backend LRU adds no value.
+pub(crate) fn resolve_server_cache_size(
+    pool_cache_size: usize,
+    pool_override: Option<usize>,
+    general_override: Option<usize>,
+) -> usize {
+    if pool_cache_size == 0 {
+        return 0;
+    }
+    pool_override
+        .or(general_override)
+        .unwrap_or(pool_cache_size)
+}
+
+/// Pure helper that decides the per-client Anonymous LRU size from a
+/// general config and an already-extracted per-pool override. Pulled
+/// out so the unit tests can exercise the resolution table without
+/// touching global pool state.
+pub(crate) fn resolve_client_anon_cache_size_inner(
+    general: &General,
+    pool_override: Option<usize>,
+) -> usize {
+    if let Some(explicit) = general.client_anonymous_prepared_cache_size {
+        return explicit;
+    }
+    pool_override.unwrap_or(general.prepared_statements_cache_size)
+}
+
+/// Resolve the per-client Anonymous LRU size for a connection coming
+/// in on `pool_name`. Looks up the pool's
+/// `prepared_statements_cache_size` override and feeds it into the
+/// pure helper above. Falls back to general defaults when the pool
+/// is not in static config — admin connections, dynamic auth_query
+/// pools that have not been registered yet — matching pre-3.7
+/// behaviour for those paths.
+pub fn resolve_client_anon_cache_size(pool_name: &str, general: &General) -> usize {
+    let pool_override = get_pool_config(pool_name).and_then(|p| p.prepared_statements_cache_size);
+    resolve_client_anon_cache_size_inner(general, pool_override)
+}
+
 /// Get the connection pool
 pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
     (*(*POOLS.load()))
@@ -906,8 +978,7 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
 /// Returns the Pool config if the database exists in configuration.
 /// Used by auth_query to find auth_query config when user is not in static config.
 pub fn get_pool_config(db: &str) -> Option<crate::config::Pool> {
-    let config = get_config();
-    config.pools.get(db).cloned()
+    crate::config::config_arc().pools.get(db).cloned()
 }
 
 /// Get a pointer to all configured pools.
@@ -991,5 +1062,78 @@ mod tests {
     fn spare_large_values() {
         assert_eq!(compute_spare(1000, Some(100), 200), 800);
         assert_eq!(compute_spare(1000, Some(999), 1), 1);
+    }
+
+    // --- resolve_server_cache_size tests ---
+
+    #[test]
+    fn server_cache_size_defaults_to_pool_size() {
+        // Neither override is set → inherit pool_cache_size.
+        assert_eq!(resolve_server_cache_size(8192, None, None), 8192);
+    }
+
+    #[test]
+    fn server_cache_size_general_override_takes_effect() {
+        // General override applied when pool override absent.
+        assert_eq!(resolve_server_cache_size(8192, None, Some(1024)), 1024);
+    }
+
+    #[test]
+    fn server_cache_size_pool_override_wins_over_general() {
+        // Per-pool override is the most specific level.
+        assert_eq!(
+            resolve_server_cache_size(8192, Some(2048), Some(1024)),
+            2048
+        );
+    }
+
+    #[test]
+    fn server_cache_size_pool_override_wins_over_inheritance() {
+        assert_eq!(resolve_server_cache_size(8192, Some(2048), None), 2048);
+    }
+
+    #[test]
+    fn server_cache_size_zero_pool_disables_server_lru() {
+        // pool_cache_size=0 means caches are off; server LRU is forced to 0
+        // regardless of overrides.
+        assert_eq!(resolve_server_cache_size(0, None, None), 0);
+        assert_eq!(resolve_server_cache_size(0, Some(1024), None), 0);
+        assert_eq!(resolve_server_cache_size(0, None, Some(1024)), 0);
+        assert_eq!(resolve_server_cache_size(0, Some(2048), Some(1024)), 0);
+    }
+
+    #[test]
+    fn server_cache_size_explicit_zero_per_pool_allowed() {
+        // Operators may explicitly disable the per-backend LRU even with a
+        // positive pool cache; resolve must return 0 in that case.
+        assert_eq!(resolve_server_cache_size(8192, Some(0), None), 0);
+        assert_eq!(resolve_server_cache_size(8192, Some(0), Some(1024)), 0);
+    }
+
+    // --- resolve_client_anon_cache_size_inner tests ---
+
+    #[test]
+    fn anon_cache_inherits_general_when_no_overrides() {
+        let g = General::test_with_cache_sizes(8192, None);
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, None), 8192);
+    }
+
+    #[test]
+    fn anon_cache_uses_pool_override_when_no_explicit() {
+        let g = General::test_with_cache_sizes(8192, None);
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, Some(1024)), 1024);
+    }
+
+    #[test]
+    fn anon_cache_explicit_wins_over_pool_override() {
+        let g = General::test_with_cache_sizes(8192, Some(256));
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, Some(1024)), 256);
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, None), 256);
+    }
+
+    #[test]
+    fn anon_cache_explicit_zero_disables_lru_regardless_of_pool() {
+        let g = General::test_with_cache_sizes(8192, Some(0));
+        assert_eq!(resolve_client_anon_cache_size_inner(&g, Some(1024)), 0);
     }
 }

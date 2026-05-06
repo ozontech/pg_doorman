@@ -152,13 +152,13 @@ impl Parse {
         self
     }
 
-    /// Interns the query string using the global interner.
-    /// This ensures that identical query texts share the same Arc<str> allocation,
-    /// even when Arc<Parse> is evicted from the pool cache.
-    /// Should be called after computing the hash.
-    pub fn intern_query(mut self, hash: u64) -> Self {
+    /// Interns the query string into the matching interner half. `is_anonymous`
+    /// routes the text into the anonymous interner (TTL-bounded) or the named
+    /// interner (passive `strong_count` GC). Should be called after computing
+    /// the hash.
+    pub fn intern_query(mut self, hash: u64, is_anonymous: bool) -> Self {
         use crate::server::intern_query;
-        self.query = intern_query(&self.query, hash);
+        self.query = intern_query(&self.query, hash, is_anonymous);
         self
     }
 

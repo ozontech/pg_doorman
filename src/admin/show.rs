@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
 
@@ -166,6 +167,7 @@ where
         ("name", DataType::Text),
         ("query", DataType::Text),
         ("count_used", DataType::Numeric),
+        ("kind", DataType::Text),
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
@@ -173,13 +175,14 @@ where
     for (identifier, pool) in get_all_pools().iter() {
         if let Some(cache) = pool.prepared_statement_cache.as_ref() {
             let entries = cache.get_entries();
-            for (hash, parse, last_used) in entries {
+            for (hash, parse, last_used, kind) in entries {
                 res.put(data_row(&[
                     identifier.to_string(),
                     hash.to_string(),
                     parse.name.clone(),
                     parse.query().to_string(),
                     last_used.to_string(),
+                    kind.as_str().to_string(),
                 ]));
             }
         }
@@ -187,6 +190,128 @@ where
 
     res.put(command_complete("SHOW"));
     // ReadyForQuery
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Aggregate of the global query interner, grouped by kind. Two rows
+/// (named, anonymous) with entry counts and uncompressed byte totals.
+pub async fn show_interner<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    use crate::server::{anon_snapshot, named_snapshot};
+
+    let columns = vec![
+        ("kind", DataType::Text),
+        ("entries", DataType::Numeric),
+        ("bytes", DataType::Numeric),
+    ];
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let named = named_snapshot();
+    let anon = anon_snapshot();
+    let named_bytes: u64 = named.iter().map(|(_, e)| e.text().len() as u64).sum();
+    let anon_bytes: u64 = anon.iter().map(|(_, e)| e.text().len() as u64).sum();
+
+    res.put(data_row(&[
+        "named".to_string(),
+        named.len().to_string(),
+        named_bytes.to_string(),
+    ]));
+    res.put(data_row(&[
+        "anonymous".to_string(),
+        anon.len().to_string(),
+        anon_bytes.to_string(),
+    ]));
+
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Top N interner entries by interned text length. Each row carries hash,
+/// kind, byte length, and the idle time in milliseconds for anonymous
+/// entries (-1 for named, since the named half tracks GC state instead of
+/// last-used timestamps), plus a 120-character preview of the SQL.
+pub async fn show_interner_top<T>(stream: &mut T, n: usize) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    use crate::server::{anon_snapshot, named_snapshot, now_monotonic_ms};
+
+    let columns = vec![
+        ("hash", DataType::Text),
+        ("kind", DataType::Text),
+        ("bytes", DataType::Numeric),
+        ("idle_ms", DataType::Numeric),
+        ("query", DataType::Text),
+    ];
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let now = now_monotonic_ms();
+    // Collect bytes and idle metadata only; preview is built lazily for
+    // the surviving N entries so a `SHOW INTERNER N` against a 100k-entry
+    // interner doesn't allocate 100k previews just to discard most of
+    // them after sorting.
+    enum InternerHandle {
+        Named(Arc<crate::server::NamedEntry>),
+        Anon(Arc<crate::server::AnonEntry>),
+    }
+    let mut combined: Vec<(u64, &'static str, usize, i64, InternerHandle)> = Vec::new();
+    for (hash, entry) in named_snapshot() {
+        combined.push((
+            hash,
+            "named",
+            entry.text().len(),
+            -1,
+            InternerHandle::Named(entry),
+        ));
+    }
+    for (hash, entry) in anon_snapshot() {
+        let idle = entry.idle_ms(now) as i64;
+        let bytes = entry.text().len();
+        combined.push((hash, "anonymous", bytes, idle, InternerHandle::Anon(entry)));
+    }
+    combined.sort_by_key(|r| std::cmp::Reverse(r.2));
+    for (hash, kind, bytes, idle, handle) in combined.into_iter().take(n) {
+        let text = match handle {
+            InternerHandle::Named(e) => e.text().clone(),
+            InternerHandle::Anon(e) => e.text().clone(),
+        };
+        let preview: String = text.chars().take(120).collect();
+        res.put(data_row(&[
+            format!("{hash:#x}"),
+            kind.to_string(),
+            bytes.to_string(),
+            idle.to_string(),
+            preview,
+        ]));
+    }
+
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Force-clear both interners. Diagnostics-only — in-flight clients re-Parse
+/// on next reuse. Returns CommandComplete RESET.
+pub async fn reset_interner<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    crate::server::reset_interners_force();
+
+    let mut res = BytesMut::new();
+    res.put(command_complete("RESET"));
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
@@ -237,6 +362,7 @@ where
         "PAUSE [db]".to_string(),
         "RESUME [db]".to_string(),
         "RECONNECT [db]".to_string(),
+        "RESET INTERNER".to_string(),
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));

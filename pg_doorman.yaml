@@ -292,11 +292,27 @@ general:
   # Default: 8192
   prepared_statements_cache_size: 8192
 
-  # Maximum prepared statements cached per client connection.
-  # Protection against malicious clients that don't call DEALLOCATE.
-  # Set to 0 for unlimited (relies on client calling DEALLOCATE).
-  # Default: 0 (unlimited)
-  client_prepared_statements_cache_size: 0
+  # Per-backend prepared statement LRU size. When unset, inherits prepared_statements_cache_size.
+  # Lets operators bound DOORMAN_<N> rows on a single PostgreSQL backend without shrinking the pool-level cache.
+  # Default: not set (inherits prepared_statements_cache_size)
+  # server_prepared_statements_cache_size: 8192
+
+  # Per-client Anonymous prepared-statement LRU size. When unset, inherits prepared_statements_cache_size.
+  # Bounds the Anonymous part of the per-client cache; the Named part is always unbounded.
+  # Set to 0 to disable the LRU and use an unlimited map.
+  # Default: not set (inherits prepared_statements_cache_size)
+  # client_anonymous_prepared_cache_size: 8192
+
+  # How often (seconds) the query interner runs its mark-and-sweep GC.
+  # The sweep tick is gc_interval / 4 so a marked entry has a quarter-interval
+  # to be touched (and unmarked) before the next eviction pass.
+  # Default: 60
+  query_interner_gc_interval_seconds: 60
+
+  # Idle time (seconds) after which an anonymous interner entry becomes
+  # eligible for eviction. 0 disables TTL eviction entirely.
+  # Default: 60
+  query_interner_anon_idle_ttl_seconds: 60
 
   # --------------------------------------------------------------------------
   # Admin Console
@@ -513,6 +529,9 @@ pools:
 
     # Override global prepared_statements_cache_size for this pool.
     # prepared_statements_cache_size: 8192
+
+    # Override the per-backend server-level prepared statement LRU for this pool.
+    # server_prepared_statements_cache_size: 8192
 
     # --------------------------------------------------------------------------
     # Connection Scaling Overrides

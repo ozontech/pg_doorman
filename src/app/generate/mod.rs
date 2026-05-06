@@ -150,6 +150,7 @@ pub fn generate_config_with_client(
                     server_port: config.port,
                     server_database: Some(datname.to_string()),
                     prepared_statements_cache_size: None,
+                    server_prepared_statements_cache_size: None,
                     scaling_warm_pool_ratio: None,
                     scaling_fast_retries: None,
                     max_db_connections: None,

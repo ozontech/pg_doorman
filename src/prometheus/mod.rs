@@ -4,7 +4,10 @@
 //! various statistics about the connection pooler's operation.
 
 use once_cell::sync::Lazy;
-use prometheus::{Gauge, GaugeVec, HistogramVec, IntCounterVec, Opts, Registry};
+use prometheus::{
+    Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
+    IntGaugeVec, Opts, Registry,
+};
 
 // Sub-modules
 mod metrics;
@@ -15,6 +18,7 @@ mod system;
 mod tests;
 
 // Re-exports
+pub use metrics::{observe_anonymous_eviction, record_interner_gc, record_synthetic_miss};
 pub use server::start_prometheus_server;
 
 // Define the metrics we want to expose
@@ -184,6 +188,133 @@ pub(crate) static SHOW_ASYNC_CLIENTS_COUNT: Lazy<GaugeVec> = Lazy::new(|| {
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+pub(crate) static SHOW_CLIENT_PREPARED_NAMED_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_clients_prepared_named_entries",
+            "Total Named entries across all clients' prepared statement caches by user and database.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_clients_prepared_anonymous_entries",
+            "Total Anonymous entries across all clients' prepared statement caches by user and database.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL: Lazy<IntCounterVec> =
+    Lazy::new(|| {
+        let counter = IntCounterVec::new(
+            Opts::new(
+                "pg_doorman_clients_prepared_anonymous_evictions_total",
+                "Cumulative count of Anonymous LRU evictions on the per-client cache by user and \
+                 database. A sustained non-zero rate signals that \
+                 client_anonymous_prepared_cache_size is too small for the workload.",
+            ),
+            &["user", "database"],
+        )
+        .unwrap();
+        REGISTRY.register(Box::new(counter.clone())).unwrap();
+        counter
+    });
+
+/// Number of entries in the global query interner, split by kind (named or
+/// anonymous). Refreshed once per GC sweep.
+pub(crate) static QUERY_INTERNER_ENTRIES: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_query_interner_entries",
+            "Number of entries in the global query interner, split by kind \
+             (named or anonymous). Refreshed once per GC sweep.",
+        ),
+        &["kind"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+/// Total bytes of interned query text, split by kind. The named half is
+/// bounded only by passive Arc::strong_count GC; the anonymous half is
+/// bounded by query_interner_anon_idle_ttl_seconds.
+pub(crate) static QUERY_INTERNER_BYTES: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_query_interner_bytes",
+            "Total length (bytes) of interned query text, split by kind \
+             (named or anonymous). Refreshed once per GC sweep.",
+        ),
+        &["kind"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+/// Cumulative count of interner evictions, split by kind and reason.
+/// reason='gc_passive' for named entries removed because nothing outside
+/// the interner held the Arc<str>; reason='ttl_expired' for anonymous
+/// entries removed after exceeding the idle TTL.
+pub(crate) static QUERY_INTERNER_EVICTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_query_interner_evictions_total",
+            "Cumulative interner evictions, by kind (named|anonymous) and \
+             reason (gc_passive|ttl_expired).",
+        ),
+        &["kind", "reason"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter for cases where pg_doorman returns SQLSTATE 26000 because an
+/// anonymous prepared statement has been evicted from the interner before
+/// the next Bind. A persistently non-zero rate signals either too short a
+/// query_interner_anon_idle_ttl_seconds or a client pattern that depends
+/// on cross-batch unnamed prepared statements.
+pub(crate) static QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let counter = IntCounter::new(
+        "pg_doorman_query_interner_synthetic_misses_total",
+        "Times pg_doorman returned 26000 because an anonymous interner entry \
+         expired or was evicted before the next Bind referencing it. \
+         Sustained non-zero rate signals TTL too short or a driver \
+         depending on cross-batch unnamed prepared statements.",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Wall-clock time spent in a single GC sweep cycle (named + anonymous
+/// combined). Custom buckets target sweep durations from 100 µs to 1 s
+/// because shard-scan time scales with interner size.
+pub(crate) static QUERY_INTERNER_GC_DURATION_SECONDS: Lazy<Histogram> = Lazy::new(|| {
+    let opts = HistogramOpts::new(
+        "pg_doorman_query_interner_gc_duration_seconds",
+        "Wall-clock time spent in a single GC sweep cycle (named + anonymous combined).",
+    )
+    .buckets(vec![
+        0.0001, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+    ]);
+    let histogram = Histogram::with_opts(opts).unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
 });
 
 pub(crate) static SHOW_POOLS_QUERIES_PERCENTILE: Lazy<GaugeVec> = Lazy::new(|| {

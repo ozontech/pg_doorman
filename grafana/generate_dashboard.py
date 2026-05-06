@@ -385,6 +385,27 @@ p_hit_ratio = ts_panel(
     ], unit="percentunit", w=8,
     desc="Cache hits / total lookups. Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
 )
+p_client_named = ts_panel(
+    "Client Named Entries", [
+        prom(f'pg_doorman_clients_prepared_named_entries{{{S}}}', "{{user}}@{{database}}"),
+    ], w=8,
+    desc="Sum of Named entries across all clients in the pool. Named is unbounded — drivers that mint per-query named statements (some pgjdbc / Hibernate / Npgsql configurations) drive this up without limit. Application is responsible for DEALLOCATE or name reuse.",
+)
+p_client_anonymous = ts_panel(
+    "Client Anonymous Entries", [
+        prom(f'pg_doorman_clients_prepared_anonymous_entries{{{S}}}', "{{user}}@{{database}}"),
+    ], w=8,
+    desc="Sum of Anonymous entries across all clients. Bounded per client by client_anonymous_prepared_cache_size (default 256). Approaches at most connected_clients * cache_size.",
+)
+p_client_anonymous_evictions = ts_panel(
+    "Anonymous LRU Eviction Rate", [
+        prom(
+            f'rate(pg_doorman_clients_prepared_anonymous_evictions_total{{{S}}}[$__rate_interval])',
+            "{{user}}@{{database}}",
+        ),
+    ], unit="ops", w=8,
+    desc="Rate of evictions on the per-client Anonymous LRU. Sustained non-zero rate means client_anonymous_prepared_cache_size is too small for the workload, or the application generates unique queries on the hot path. Alert template: > 10/s for 10m.",
+)
 
 # ---------------------------------------------------------------------------
 # Row 10: Auth Query (collapsed)
@@ -488,6 +509,49 @@ p_fallback_cache_hits = ts_panel(
 )
 
 # ---------------------------------------------------------------------------
+# Row 13: Query Interner (collapsed)
+# ---------------------------------------------------------------------------
+row13 = collapsed_row("Query Interner")
+
+p_interner_entries = ts_panel(
+    "Interner Entries by Kind", [
+        prom(f'pg_doorman_query_interner_entries{{{SI}}}', "{{kind}}"),
+    ], w=8,
+    desc="Live entries in the global query interner. NAMED is bounded by passive Arc::strong_count GC; ANON is bounded by query_interner_anon_idle_ttl_seconds. Sustained growth on either line points to either a long TTL on a unique-anon workload or an Arc<str> leak on the named side.",
+)
+p_interner_bytes = ts_panel(
+    "Interner Bytes by Kind", [
+        prom(f'pg_doorman_query_interner_bytes{{{SI}}}', "{{kind}}"),
+    ], unit="bytes", w=8,
+    desc="Total length of interned Parse text per kind. ANON > 1.5 GiB is the alert threshold for the bundled prometheus rule (PgDoormanAnonInternerMemoryHigh).",
+)
+p_interner_evictions = ts_panel(
+    "Interner Eviction Rate", [
+        prom(
+            f'rate(pg_doorman_query_interner_evictions_total{{{SI}}}[$__rate_interval])',
+            "{{kind}}/{{reason}}",
+        ),
+    ], unit="ops", w=8,
+    desc="Evictions per second, split by kind (named|anonymous) and reason (gc_passive for named, ttl_expired for anonymous). Steady ANON eviction is normal; steady NAMED eviction is unusual unless a flood of unique named statements just landed.",
+)
+p_interner_synthetic_misses = ts_panel(
+    "Synthetic SQLSTATE 26000 Rate", [
+        prom(
+            f'rate(pg_doorman_query_interner_synthetic_misses_total{{{SI}}}[$__rate_interval])',
+            "synthetic 26000/s",
+        ),
+    ], unit="ops", w=12,
+    desc="Bind referencing an anonymous prepared whose text is no longer in any cache. Flat zero is the normal case. Sustained > 1/s = TTL too short for the workload, or a driver depending on cross-batch unnamed prepared statements.",
+)
+p_interner_gc_duration = ts_panel(
+    "GC Sweep Duration", [
+        prom(f'histogram_quantile(0.50, sum by (le) (rate(pg_doorman_query_interner_gc_duration_seconds_bucket{{{SI}}}[$__rate_interval])))', "p50"),
+        prom(f'histogram_quantile(0.99, sum by (le) (rate(pg_doorman_query_interner_gc_duration_seconds_bucket{{{SI}}}[$__rate_interval])))', "p99"),
+    ], unit="s", w=12,
+    desc="Wall-clock time of one GC sweep cycle (named + anonymous combined). P99 above 50 ms means the sweep is starting to bite into request latency tails — increase query_interner_gc_interval_seconds or shrink the interner via RESET INTERNER plus cache-size tuning.",
+)
+
+# ---------------------------------------------------------------------------
 # Build dashboard
 # ---------------------------------------------------------------------------
 d = (
@@ -547,6 +611,9 @@ d = (
     .with_panel(p_cache_entries)
     .with_panel(p_cache_bytes)
     .with_panel(p_hit_ratio)
+    .with_panel(p_client_named)
+    .with_panel(p_client_anonymous)
+    .with_panel(p_client_anonymous_evictions)
     # Row 10: Auth Query (collapsed)
     .with_row(row10)
     .with_panel(p_auth_cache)
@@ -564,6 +631,15 @@ d = (
     .with_panel(p_patroni_api_rate)
     .with_panel(p_patroni_api_duration)
     .with_panel(p_fallback_cache_hits)
+    # Row 13: Query Interner (collapsed). Order is SLO-first: synthetic
+    # misses and bytes go up top because they trip the alerts; entries
+    # and eviction rate are drill-down; GC duration last.
+    .with_row(row13)
+    .with_panel(p_interner_synthetic_misses)
+    .with_panel(p_interner_bytes)
+    .with_panel(p_interner_entries)
+    .with_panel(p_interner_evictions)
+    .with_panel(p_interner_gc_duration)
 )
 
 dashboard_obj = d.build()

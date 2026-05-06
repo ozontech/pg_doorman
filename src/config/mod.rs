@@ -74,11 +74,79 @@ fn parse_config_content<T: serde::de::DeserializeOwned>(
     contents: &str,
     format: ConfigFormat,
 ) -> Result<T, Error> {
+    warn_on_deprecated_general_keys(contents, format);
     match format {
         ConfigFormat::Toml => toml::from_str(contents)
             .map_err(|err| Error::BadConfig(format!("TOML parse error: {err}"))),
         ConfigFormat::Yaml => serde_yaml::from_str(contents)
             .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}"))),
+    }
+}
+
+/// Pure helper: returns the deprecated keys present under `general`
+/// in the parsed YAML value.
+///
+/// Each returned `&'static str` is the deprecated field name. New
+/// deprecations are added to `DEPRECATED_GENERAL_KEYS` and need no
+/// further wiring.
+fn find_deprecated_general_keys_yaml(value: &serde_yaml::Value) -> Vec<&'static str> {
+    let general = value.get("general").unwrap_or(value);
+    let Some(map) = general.as_mapping() else {
+        return Vec::new();
+    };
+    DEPRECATED_GENERAL_KEYS
+        .iter()
+        .copied()
+        .filter(|key| map.contains_key(serde_yaml::Value::String((*key).to_string())))
+        .collect()
+}
+
+/// Pure helper: returns the deprecated keys present under `general`
+/// in the parsed TOML value.
+fn find_deprecated_general_keys_toml(value: &toml::Value) -> Vec<&'static str> {
+    let general = value.get("general").unwrap_or(value);
+    let Some(table) = general.as_table() else {
+        return Vec::new();
+    };
+    DEPRECATED_GENERAL_KEYS
+        .iter()
+        .copied()
+        .filter(|key| table.contains_key(*key))
+        .collect()
+}
+
+/// Deprecated keys under `[general]`. The corresponding live field
+/// must carry `#[serde(alias = "...")]` so the value still flows
+/// through; this list only exists to drive the parser-level warning.
+const DEPRECATED_GENERAL_KEYS: &[&str] = &["client_prepared_statements_cache_size"];
+
+/// Detect deprecated keys in raw config content and emit a `log::warn!`
+/// for each one found. Failures to parse the raw value are silent —
+/// the main parser produces the user-facing error.
+fn warn_on_deprecated_general_keys(contents: &str, format: ConfigFormat) {
+    let deprecated = match format {
+        ConfigFormat::Yaml => match serde_yaml::from_str::<serde_yaml::Value>(contents) {
+            Ok(value) => find_deprecated_general_keys_yaml(&value),
+            Err(_) => return,
+        },
+        ConfigFormat::Toml => match contents.parse::<toml::Value>() {
+            Ok(value) => find_deprecated_general_keys_toml(&value),
+            Err(_) => return,
+        },
+    };
+    for key in deprecated {
+        match key {
+            "client_prepared_statements_cache_size" => warn!(
+                "configuration uses deprecated field 'client_prepared_statements_cache_size'; \
+                 the value has been mapped to 'client_anonymous_prepared_cache_size' for \
+                 backward compatibility. Update your config; the alias may be removed in a \
+                 future release."
+            ),
+            other => warn!(
+                "configuration uses deprecated field '{other}'; \
+                 update your config — the alias may be removed in a future release."
+            ),
+        }
     }
 }
 
@@ -409,6 +477,30 @@ impl Config {
             return Err(Error::BadConfig("The value of prepared_statements_cache should be greater than 0 if prepared_statements are enabled".to_string()));
         }
 
+        // Validate query interner GC interval. The spawn divides this by 4 to
+        // get the sweep tick, so 0 would deadlock the timer.
+        if self.general.query_interner_gc_interval_seconds == 0 {
+            return Err(Error::BadConfig(
+                "general.query_interner_gc_interval_seconds must be > 0".to_string(),
+            ));
+        }
+
+        // Loud warning for the foot-gun: 0 is documented as "disable LRU and
+        // store anonymous entries in an unbounded map". That's the opposite of
+        // pgbouncer convention where 0 typically disables the feature entirely.
+        // An operator who sets 0 by reflex from a pgbouncer config gets the
+        // unbounded map and a slow memory leak under any driver that mints
+        // unique anonymous Parses.
+        if matches!(self.general.client_anonymous_prepared_cache_size, Some(0)) {
+            warn!(
+                "general.client_anonymous_prepared_cache_size = 0 disables the per-client \
+                 Anonymous LRU and falls back to an unbounded map. Anonymous prepared \
+                 statements will accumulate until the client disconnects; on workloads with \
+                 dynamically generated SQL this is a memory leak. Set a positive bound \
+                 unless you have specifically chosen the legacy unbounded behaviour."
+            );
+        }
+
         // Validate TLS
         {
             if self.general.tls_certificate.is_none() && self.general.tls_private_key.is_some() {
@@ -601,6 +693,17 @@ impl Config {
 /// ArcSwap makes this cheap and quick.
 pub fn get_config() -> Config {
     (*(*CONFIG.load())).clone()
+}
+
+/// Borrow the live `Arc<Config>` without deep-cloning. Use this on
+/// hot or warm paths that only need to read a few fields — a tick
+/// loop reading one `u64`, a lookup reading one `Pool` — instead of
+/// `get_config()`, which clones the whole `Config` (general + every
+/// pool + every user). The returned `Arc` is the live snapshot at
+/// call time; it does not observe later RELOADs, but that's the
+/// usual semantics for a single iteration of a loop.
+pub fn config_arc() -> Arc<Config> {
+    CONFIG.load_full()
 }
 
 async fn load_file(path: &str) -> Result<String, Error> {

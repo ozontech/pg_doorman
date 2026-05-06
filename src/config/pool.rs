@@ -101,6 +101,13 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_statements_cache_size: Option<usize>,
 
+    /// Override the per-backend server-level prepared statement LRU
+    /// for this pool. When `None`, inherits the value from
+    /// `general.server_prepared_statements_cache_size`, which itself
+    /// inherits from `prepared_statements_cache_size` when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_prepared_statements_cache_size: Option<usize>,
+
     /// Override global scaling_warm_pool_ratio for this pool (0-100, percentage).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaling_warm_pool_ratio: Option<u32>,
@@ -432,6 +439,7 @@ impl Default for Pool {
             log_client_parameter_status_changes: false,
             application_name: None,
             prepared_statements_cache_size: None,
+            server_prepared_statements_cache_size: None,
             scaling_warm_pool_ratio: None,
             scaling_fast_retries: None,
             max_db_connections: None,

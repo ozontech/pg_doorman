@@ -11,7 +11,7 @@ use crate::client::buffer_pool::PooledBuffer;
 use crate::messages::{error_response, Parse};
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
 use crate::server::ServerParameters;
-use crate::stats::{ClientStats, ServerStats};
+use crate::stats::{ClientStats, PreparedCacheSnapshot, ServerStats};
 
 /// Key for prepared statement cache - avoids string allocations for anonymous statements
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -34,70 +34,248 @@ impl PreparedStatementKey {
     }
 }
 
-/// Abstract cache that can be either unlimited (AHashMap) or limited (LruCache)
-pub enum PreparedStatementCache {
-    Unlimited(AHashMap<PreparedStatementKey, CachedStatement>),
-    Limited(LruCache<PreparedStatementKey, CachedStatement>),
+/// Borrowed view over a `PreparedStatementKey`. Used by `PreparedStatementCache::iter`
+/// to yield key kinds without cloning the Named String per entry. The hot path
+/// (`cache_memory_usage`, called from `update_prepared_cache_stats` after every Parse)
+/// only inspects the kind and reads the borrowed `&str` — owning the key would
+/// allocate a fresh String per yield.
+#[derive(Debug, Clone, Copy)]
+pub enum PreparedStatementKeyRef<'a> {
+    /// Named prepared statement (client-provided name)
+    Named(&'a str),
+    /// Anonymous prepared statement (identified by hash)
+    Anonymous(u64),
+}
+
+impl<'a> From<&'a PreparedStatementKey> for PreparedStatementKeyRef<'a> {
+    fn from(key: &'a PreparedStatementKey) -> Self {
+        match key {
+            PreparedStatementKey::Named(name) => PreparedStatementKeyRef::Named(name.as_str()),
+            PreparedStatementKey::Anonymous(hash) => PreparedStatementKeyRef::Anonymous(*hash),
+        }
+    }
+}
+
+/// Per-client prepared statement cache, split into two parts:
+///   - `named`: AHashMap of client-provided statement names. Never evicted
+///     by the pooler; lifecycle is owned by the client (Close, DEALLOCATE,
+///     disconnect).
+///   - `anonymous`: LRU keyed by query hash. Bounded by
+///     `client_anonymous_prepared_cache_size`. On eviction the local
+///     `Arc<Parse>` is dropped; nothing is sent to the backend.
+pub struct PreparedStatementCache {
+    named: AHashMap<String, CachedStatement>,
+    anonymous: AnonymousCache,
+}
+
+/// Outcome of `PreparedStatementCache::put`.
+///
+/// `lru::LruCache::push` collapses two distinct cases into the same
+/// `Some((k, v))` return: replacement of an existing key, and capacity-driven
+/// eviction of a different key. Conflating them produced false positives in
+/// the eviction counter when steady-state Parse traffic re-Parsed the same
+/// anonymous hash. `PutOutcome` keeps the two apart so callers can bump
+/// metrics only on real evictions.
+pub enum PutOutcome {
+    /// Key was not present; new entry inserted, no value displaced.
+    Inserted,
+    /// Key was already present; the old value is returned and the entry
+    /// remains in the cache. Not an eviction — operator-visible counters
+    /// must not increment on this outcome. The displaced value is exposed
+    /// for callers that want to observe or drop it explicitly.
+    #[allow(dead_code)]
+    Replaced(CachedStatement),
+    /// Cache was at capacity and a different key was evicted to make room.
+    /// Only this outcome should bump the eviction counter. The evicted
+    /// value is exposed for callers that want to inspect it before drop.
+    #[allow(dead_code)]
+    Evicted(CachedStatement),
+}
+
+impl std::fmt::Debug for PutOutcome {
+    // Variant name is enough for diagnostics; CachedStatement carries an
+    // Arc<Parse> with no Debug impl and no useful debug content for tests.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PutOutcome::Inserted => f.write_str("Inserted"),
+            PutOutcome::Replaced(_) => f.write_str("Replaced(_)"),
+            PutOutcome::Evicted(_) => f.write_str("Evicted(_)"),
+        }
+    }
+}
+
+enum AnonymousCache {
+    Unlimited(AHashMap<u64, CachedStatement>),
+    Limited(LruCache<u64, CachedStatement>),
 }
 
 impl PreparedStatementCache {
-    /// Returns a reference to the value corresponding to the key.
-    /// Updates LRU order for Limited cache.
-    #[inline]
-    pub fn get(&mut self, key: &PreparedStatementKey) -> Option<&CachedStatement> {
-        match self {
-            Self::Unlimited(m) => m.get(key),
-            Self::Limited(l) => l.get(key),
+    /// `anon_size = 0` selects an unlimited Anonymous map (no LRU).
+    pub fn new(anon_size: usize) -> Self {
+        let anonymous = if anon_size > 0 {
+            AnonymousCache::Limited(LruCache::new(NonZeroUsize::new(anon_size).unwrap()))
+        } else {
+            AnonymousCache::Unlimited(AHashMap::new())
+        };
+        Self {
+            named: AHashMap::new(),
+            anonymous,
         }
     }
 
-    /// Inserts a key-value pair into the cache.
-    /// For Limited cache, may evict the oldest entry.
+    /// Returns a reference to the value corresponding to the key.
+    /// Updates LRU order for Anonymous + Limited.
     #[inline]
-    pub fn put(&mut self, key: PreparedStatementKey, value: CachedStatement) {
-        match self {
-            Self::Unlimited(m) => {
-                m.insert(key, value);
-            }
-            Self::Limited(l) => {
-                l.put(key, value);
-            }
+    pub fn get(&mut self, key: &PreparedStatementKey) -> Option<&CachedStatement> {
+        match key {
+            PreparedStatementKey::Named(s) => self.named.get(s),
+            PreparedStatementKey::Anonymous(h) => match &mut self.anonymous {
+                AnonymousCache::Unlimited(m) => m.get(h),
+                AnonymousCache::Limited(l) => l.get(h),
+            },
+        }
+    }
+
+    /// Insert into the routed map and report what happened.
+    ///
+    /// Named insertion always returns `Inserted` or `Replaced`. The Named
+    /// map is unbounded, so capacity-driven eviction never occurs.
+    /// Anonymous + Unlimited behaves the same way. Only Anonymous + Limited
+    /// can return `Evicted`, and only when the LRU was full and a different
+    /// key was popped to make room.
+    #[must_use = "check for PutOutcome::Evicted to bump eviction metrics; otherwise discard with `let _ =`"]
+    #[inline]
+    pub fn put(&mut self, key: PreparedStatementKey, value: CachedStatement) -> PutOutcome {
+        match key {
+            PreparedStatementKey::Named(s) => match self.named.insert(s, value) {
+                None => PutOutcome::Inserted,
+                Some(prev) => PutOutcome::Replaced(prev),
+            },
+            PreparedStatementKey::Anonymous(h) => match &mut self.anonymous {
+                AnonymousCache::Unlimited(m) => match m.insert(h, value) {
+                    None => PutOutcome::Inserted,
+                    Some(prev) => PutOutcome::Replaced(prev),
+                },
+                // `LruCache::push` returns `Some((k, v))` for both replacement
+                // (key already present, old value returned) and eviction
+                // (cache at capacity, oldest entry popped). Disambiguate by
+                // probing capacity + presence beforehand so callers can tell
+                // a real eviction from a steady-state replacement.
+                AnonymousCache::Limited(l) => {
+                    let was_at_capacity = l.len() == l.cap().get();
+                    let key_existed = l.contains(&h);
+                    match l.push(h, value) {
+                        None => PutOutcome::Inserted,
+                        Some((_, prev)) if key_existed => PutOutcome::Replaced(prev),
+                        Some((_, evicted)) => {
+                            debug_assert!(
+                                was_at_capacity,
+                                "LruCache::push returned Some without replacement \
+                                 despite cache below capacity",
+                            );
+                            PutOutcome::Evicted(evicted)
+                        }
+                    }
+                }
+            },
         }
     }
 
     /// Removes a key from the cache, returning the value if it existed.
     #[inline]
     pub fn pop(&mut self, key: &PreparedStatementKey) -> Option<CachedStatement> {
-        match self {
-            Self::Unlimited(m) => m.remove(key),
-            Self::Limited(l) => l.pop(key),
+        match key {
+            PreparedStatementKey::Named(s) => self.named.remove(s),
+            PreparedStatementKey::Anonymous(h) => match &mut self.anonymous {
+                AnonymousCache::Unlimited(m) => m.remove(h),
+                AnonymousCache::Limited(l) => l.pop(h),
+            },
         }
     }
 
-    /// Returns the number of elements in the cache.
+    /// Total number of entries across Named and Anonymous maps.
     #[inline]
     pub fn len(&self) -> usize {
-        match self {
-            Self::Unlimited(m) => m.len(),
-            Self::Limited(l) => l.len(),
+        self.named_count() + self.anonymous_count()
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.named.is_empty() && self.anonymous_count() == 0
+    }
+
+    #[inline]
+    pub fn named_count(&self) -> usize {
+        self.named.len()
+    }
+
+    #[inline]
+    pub fn anonymous_count(&self) -> usize {
+        match &self.anonymous {
+            AnonymousCache::Unlimited(m) => m.len(),
+            AnonymousCache::Limited(l) => l.len(),
         }
     }
 
-    /// Clears the cache.
+    /// Clears both Named and Anonymous maps.
     #[inline]
     pub fn clear(&mut self) {
-        match self {
-            Self::Unlimited(m) => m.clear(),
-            Self::Limited(l) => l.clear(),
+        self.named.clear();
+        match &mut self.anonymous {
+            AnonymousCache::Unlimited(m) => m.clear(),
+            AnonymousCache::Limited(l) => l.clear(),
         }
     }
 
-    /// Returns an iterator over the cache entries.
-    /// Note: for Limited cache, this does not affect LRU order.
-    pub fn iter(&self) -> Box<dyn Iterator<Item = (&PreparedStatementKey, &CachedStatement)> + '_> {
+    /// Yields `(borrowed key, value)` for both maps. The Anonymous side
+    /// produces `PreparedStatementKeyRef::Anonymous(hash)` keys, the Named
+    /// side `PreparedStatementKeyRef::Named(&str)` borrowing the map's key.
+    /// Order is unspecified. Note: does not affect LRU order for Anonymous + Limited.
+    ///
+    /// Returning a borrowed-key view avoids two allocation costs that the
+    /// previous `Box<dyn Iterator<Item = (PreparedStatementKey, ...)>>`
+    /// signature paid on every call: the trait-object box and a `String`
+    /// clone per Named entry.
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (PreparedStatementKeyRef<'_>, &CachedStatement)> + '_ {
+        let named_iter = self
+            .named
+            .iter()
+            .map(|(k, v)| (PreparedStatementKeyRef::Named(k.as_str()), v));
+        let anon_iter =
+            AnonIter::new(&self.anonymous).map(|(h, v)| (PreparedStatementKeyRef::Anonymous(h), v));
+        named_iter.chain(anon_iter)
+    }
+}
+
+/// Unifies the two backing iterator types of `AnonymousCache`
+/// (`std::collections::hash_map::Iter` and `lru::Iter`) into a single
+/// concrete type so `PreparedStatementCache::iter` can return
+/// `impl Iterator` without boxing. `AHashMap` derefs to `std::HashMap`,
+/// so its `iter()` returns the standard library's hash_map iterator.
+enum AnonIter<'a> {
+    Unlimited(std::collections::hash_map::Iter<'a, u64, CachedStatement>),
+    Limited(lru::Iter<'a, u64, CachedStatement>),
+}
+
+impl<'a> AnonIter<'a> {
+    fn new(anon: &'a AnonymousCache) -> Self {
+        match anon {
+            AnonymousCache::Unlimited(m) => AnonIter::Unlimited(m.iter()),
+            AnonymousCache::Limited(l) => AnonIter::Limited(l.iter()),
+        }
+    }
+}
+
+impl<'a> Iterator for AnonIter<'a> {
+    type Item = (u64, &'a CachedStatement);
+
+    fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Unlimited(m) => Box::new(m.iter()),
-            Self::Limited(l) => Box::new(l.iter()),
+            AnonIter::Unlimited(it) => it.next().map(|(h, v)| (*h, v)),
+            AnonIter::Limited(it) => it.next().map(|(h, v)| (*h, v)),
         }
     }
 }
@@ -228,30 +406,30 @@ pub struct PreparedStatementState {
 
     /// Counter for pending CloseComplete messages to send before ReadyForQuery
     pub pending_close_complete: u32,
+
+    /// Cumulative count of Anonymous LRU evictions in this client's cache.
+    /// Surfaced via the `pg_doorman_clients_prepared_anonymous_evictions_total`
+    /// Prometheus counter; a sustained non-zero rate signals that
+    /// `client_anonymous_prepared_cache_size` is too small for the workload.
+    pub anonymous_evictions: u64,
 }
 
 impl PreparedStatementState {
-    /// Create a new PreparedStatementState with the given enabled flag and max cache size.
-    /// max_cache_size = 0 means unlimited (no protection against malicious clients).
-    pub fn new(enabled: bool, max_cache_size: usize) -> Self {
-        let cache = if max_cache_size > 0 {
-            PreparedStatementCache::Limited(LruCache::new(
-                NonZeroUsize::new(max_cache_size).unwrap(),
-            ))
-        } else {
-            PreparedStatementCache::Unlimited(AHashMap::new())
-        };
-
+    /// Create a new PreparedStatementState. `anon_cache_size = 0` selects an
+    /// unlimited Anonymous map (no LRU eviction); the Named map is always
+    /// unbounded.
+    pub fn new(enabled: bool, anon_cache_size: usize) -> Self {
         Self {
             enabled,
             async_client: false,
-            cache,
+            cache: PreparedStatementCache::new(anon_cache_size),
             last_anonymous_hash: None,
             skipped_parses: Vec::new(),
             batch_operations: Vec::new(),
             parses_sent_in_batch: 0,
             processed_response_counts: ResponseCounts::default(),
             pending_close_complete: 0,
+            anonymous_evictions: 0,
         }
     }
 
@@ -264,24 +442,45 @@ impl PreparedStatementState {
         self.processed_response_counts.clear();
     }
 
-    /// Returns the number of entries in the cache
+    /// Returns the number of Named entries in the cache.
+    /// Used by SHOW POOLS_MEMORY and Prometheus to break down per-client cache.
     #[inline(always)]
-    pub fn cache_count(&self) -> usize {
-        self.cache.len()
+    pub fn named_count(&self) -> usize {
+        self.cache.named_count()
+    }
+
+    /// Returns the number of Anonymous entries in the cache.
+    /// Used by SHOW POOLS_MEMORY and Prometheus to break down per-client cache.
+    #[inline(always)]
+    pub fn anonymous_count(&self) -> usize {
+        self.cache.anonymous_count()
+    }
+
+    /// Returns the cumulative count of Anonymous LRU evictions in this cache.
+    #[inline(always)]
+    pub fn anonymous_evictions(&self) -> u64 {
+        self.anonymous_evictions
     }
 
     /// Calculates approximate memory usage of the client's prepared statement cache in bytes.
-    /// This includes the keys, the CachedStatement struct, and async_name if present.
-    /// Note: shared Parse content (via Arc) is NOT counted here as it's in the pool cache.
+    /// Iterates both Named and Anonymous maps; counts shared Parse only when the
+    /// client holds the sole Arc (strong_count == 1), since otherwise the bytes
+    /// are accounted for by the pool cache.
     pub fn cache_memory_usage(&self) -> usize {
         let mut total = 0;
         for (key, cached) in self.cache.iter() {
-            // Key size
+            // Key size. Named uses `s.len()` rather than the underlying
+            // String capacity — exposing capacity through the iter would
+            // require re-allocating an owned key per yield, defeating the
+            // borrow that makes this loop allocation-free. Length is a
+            // close lower bound on the actual capacity.
             total += match key {
-                PreparedStatementKey::Named(s) => {
-                    std::mem::size_of::<PreparedStatementKey>() + s.capacity()
+                PreparedStatementKeyRef::Named(s) => {
+                    std::mem::size_of::<PreparedStatementKey>() + s.len()
                 }
-                PreparedStatementKey::Anonymous(_) => std::mem::size_of::<PreparedStatementKey>(),
+                PreparedStatementKeyRef::Anonymous(_) => {
+                    std::mem::size_of::<PreparedStatementKey>()
+                }
             };
             // CachedStatement struct size
             total += std::mem::size_of::<CachedStatement>();
@@ -429,10 +628,13 @@ where
     /// Should be called after any modification to prepared.cache.
     #[inline(always)]
     pub(crate) fn update_prepared_cache_stats(&self) {
-        self.stats.set_prepared_cache_stats(
-            self.prepared.cache_count() as u64,
-            self.prepared.cache_memory_usage() as u64,
-        );
+        self.stats
+            .set_prepared_cache_stats(PreparedCacheSnapshot::new(
+                self.prepared.cache_memory_usage() as u64,
+                self.prepared.named_count() as u64,
+                self.prepared.anonymous_count() as u64,
+                self.prepared.anonymous_evictions(),
+            ));
     }
 
     /// Retrieve connection pool, if it exists.
@@ -484,5 +686,270 @@ impl<S, T> Drop for Client<S, T> {
         // Ensure client is removed from stats tracking when dropped
         // This handles cases where client disconnects unexpectedly (e.g., TCP abort)
         self.stats.disconnect();
+    }
+}
+
+#[cfg(test)]
+mod cache_split_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn make_cached(name: &str, query: &str) -> CachedStatement {
+        let mut buf = bytes::BytesMut::new();
+        use bytes::BufMut;
+        buf.put_u8(b'P');
+        let name_bytes = name.as_bytes();
+        let query_bytes = query.as_bytes();
+        let len = 4 + name_bytes.len() + 1 + query_bytes.len() + 1 + 2;
+        buf.put_i32(len as i32);
+        buf.put_slice(name_bytes);
+        buf.put_u8(0);
+        buf.put_slice(query_bytes);
+        buf.put_u8(0);
+        buf.put_i16(0);
+        let parse: crate::messages::Parse = (&buf).try_into().unwrap();
+        CachedStatement {
+            parse: Arc::new(parse),
+            hash: 0xdead_beef,
+            async_name: None,
+        }
+    }
+
+    #[test]
+    fn named_entries_are_never_evicted_under_anon_pressure() {
+        // Anonymous LRU size 1 — but Named must persist regardless.
+        let mut cache = PreparedStatementCache::new(1);
+        let named_key = PreparedStatementKey::Named("stmt_one".into());
+        let _ = cache.put(named_key.clone(), make_cached("stmt_one", "SELECT 1"));
+
+        for i in 0..5 {
+            let h = i as u64;
+            let _ = cache.put(
+                PreparedStatementKey::Anonymous(h),
+                make_cached("anon", &format!("SELECT {i}")),
+            );
+        }
+
+        assert!(cache.get(&named_key).is_some(), "Named entry was evicted");
+    }
+
+    #[test]
+    fn anonymous_lru_evicts_oldest_when_full() {
+        let mut cache = PreparedStatementCache::new(2);
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1")),
+            PutOutcome::Inserted
+        ));
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(2), make_cached("a", "Q2")),
+            PutOutcome::Inserted
+        ));
+        let outcome = cache.put(PreparedStatementKey::Anonymous(3), make_cached("a", "Q3"));
+        assert!(
+            matches!(outcome, PutOutcome::Evicted(_)),
+            "Capacity overflow on a fresh hash must yield PutOutcome::Evicted, got {outcome:?}",
+        );
+        assert!(cache.get(&PreparedStatementKey::Anonymous(1)).is_none());
+        assert!(cache.get(&PreparedStatementKey::Anonymous(2)).is_some());
+        assert!(cache.get(&PreparedStatementKey::Anonymous(3)).is_some());
+    }
+
+    #[test]
+    fn anonymous_put_returns_replaced_for_same_hash() {
+        // Re-Parsing the same anonymous hash must not signal an eviction —
+        // the LRU stays at one entry, no capacity pressure, the operator
+        // counter must remain at zero.
+        let mut cache = PreparedStatementCache::new(4);
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(42), make_cached("a", "Q")),
+            PutOutcome::Inserted
+        ));
+        let outcome = cache.put(PreparedStatementKey::Anonymous(42), make_cached("a", "Q"));
+        assert!(
+            matches!(outcome, PutOutcome::Replaced(_)),
+            "Same-hash put must yield PutOutcome::Replaced, got {outcome:?}",
+        );
+        assert_eq!(cache.anonymous_count(), 1);
+    }
+
+    #[test]
+    fn anonymous_lru_distinguishes_inserted_replaced_evicted() {
+        // Capacity 2: walk the three outcomes in sequence.
+        let mut cache = PreparedStatementCache::new(2);
+
+        // Two distinct keys → both Inserted.
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1")),
+            PutOutcome::Inserted
+        ));
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(2), make_cached("a", "Q2")),
+            PutOutcome::Inserted
+        ));
+
+        // Re-Parse hash 1 at full capacity → Replaced (no eviction).
+        let outcome = cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1"));
+        assert!(
+            matches!(outcome, PutOutcome::Replaced(_)),
+            "Replacement at capacity must not signal eviction, got {outcome:?}",
+        );
+        assert_eq!(cache.anonymous_count(), 2);
+
+        // Third distinct hash at full capacity → Evicted; oldest (hash 2)
+        // popped because hash 1 was just touched and bumped to MRU.
+        let outcome = cache.put(PreparedStatementKey::Anonymous(3), make_cached("a", "Q3"));
+        assert!(
+            matches!(outcome, PutOutcome::Evicted(_)),
+            "Distinct hash at capacity must signal eviction, got {outcome:?}",
+        );
+        assert!(cache.get(&PreparedStatementKey::Anonymous(2)).is_none());
+        assert!(cache.get(&PreparedStatementKey::Anonymous(1)).is_some());
+        assert!(cache.get(&PreparedStatementKey::Anonymous(3)).is_some());
+    }
+
+    #[test]
+    fn named_put_returns_inserted_then_replaced() {
+        // Named map is unbounded — capacity-driven eviction never occurs.
+        // First put on a fresh name → Inserted; same name again → Replaced.
+        let mut cache = PreparedStatementCache::new(0);
+        let key = PreparedStatementKey::Named("stmt".into());
+        let first = cache.put(key.clone(), make_cached("stmt", "Q1"));
+        assert!(
+            matches!(first, PutOutcome::Inserted),
+            "First Named put on a fresh name must be Inserted, got {first:?}",
+        );
+        let second = cache.put(key.clone(), make_cached("stmt", "Q2"));
+        assert!(
+            matches!(second, PutOutcome::Replaced(_)),
+            "Re-put on existing Named name must be Replaced, got {second:?}",
+        );
+        assert_eq!(cache.named_count(), 1);
+    }
+
+    #[test]
+    fn anonymous_unlimited_when_size_zero() {
+        let mut cache = PreparedStatementCache::new(0);
+        for i in 0..1000_u64 {
+            let outcome = cache.put(PreparedStatementKey::Anonymous(i), make_cached("a", "Q"));
+            assert!(
+                matches!(outcome, PutOutcome::Inserted),
+                "Unlimited cache must not evict or replace on fresh keys, got {outcome:?}",
+            );
+        }
+        assert_eq!(cache.anonymous_count(), 1000);
+    }
+
+    #[test]
+    fn pop_routes_by_key_kind() {
+        let mut cache = PreparedStatementCache::new(0);
+        let _ = cache.put(
+            PreparedStatementKey::Named("a".into()),
+            make_cached("a", "Q"),
+        );
+        let _ = cache.put(PreparedStatementKey::Anonymous(1), make_cached("b", "Q"));
+        assert!(cache
+            .pop(&PreparedStatementKey::Named("a".into()))
+            .is_some());
+        assert!(cache
+            .pop(&PreparedStatementKey::Named("a".into()))
+            .is_none());
+        assert!(cache.pop(&PreparedStatementKey::Anonymous(1)).is_some());
+    }
+
+    #[test]
+    fn clear_empties_both_maps() {
+        let mut cache = PreparedStatementCache::new(0);
+        let _ = cache.put(
+            PreparedStatementKey::Named("a".into()),
+            make_cached("a", "Q"),
+        );
+        let _ = cache.put(PreparedStatementKey::Anonymous(1), make_cached("b", "Q"));
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.named_count(), 0);
+        assert_eq!(cache.anonymous_count(), 0);
+    }
+
+    #[test]
+    fn iter_yields_both_maps() {
+        let mut cache = PreparedStatementCache::new(0);
+        let _ = cache.put(
+            PreparedStatementKey::Named("a".into()),
+            make_cached("a", "Q"),
+        );
+        let _ = cache.put(PreparedStatementKey::Anonymous(1), make_cached("b", "Q"));
+        let kinds: Vec<&str> = cache
+            .iter()
+            .map(|(k, _)| match k {
+                PreparedStatementKeyRef::Named(_) => "named",
+                PreparedStatementKeyRef::Anonymous(_) => "anon",
+            })
+            .collect();
+        assert_eq!(kinds.len(), 2);
+        assert!(kinds.contains(&"named"));
+        assert!(kinds.contains(&"anon"));
+    }
+
+    #[test]
+    fn iter_borrows_named_keys_without_allocation() {
+        // Regression guard for B3: iter() must yield borrowed Named keys,
+        // not freshly cloned Strings. The yielded &str must point into the
+        // map's owned String, so its address must match across calls and
+        // not match the address of an unrelated owned copy.
+        let mut cache = PreparedStatementCache::new(0);
+        let name = "stmt_borrow_check".to_owned();
+        let _ = cache.put(
+            PreparedStatementKey::Named(name.clone()),
+            make_cached("stmt", "SELECT 1"),
+        );
+
+        // Two consecutive iter() calls must hand back the same backing pointer.
+        let first_ptr = cache
+            .iter()
+            .find_map(|(k, _)| match k {
+                PreparedStatementKeyRef::Named(s) => Some(s.as_ptr()),
+                _ => None,
+            })
+            .expect("Named entry not yielded");
+        let second_ptr = cache
+            .iter()
+            .find_map(|(k, _)| match k {
+                PreparedStatementKeyRef::Named(s) => Some(s.as_ptr()),
+                _ => None,
+            })
+            .expect("Named entry not yielded");
+        assert_eq!(
+            first_ptr, second_ptr,
+            "iter() must borrow the same String storage on each call"
+        );
+        // And it must differ from a freshly-built String — proving we are
+        // not silently copying somewhere.
+        assert_ne!(first_ptr, name.as_ptr());
+    }
+
+    #[test]
+    fn iter_handles_fifty_named_entries() {
+        // Smoke test: 50-Named-entry cache mirrors a typical ORM client.
+        // Counts every yielded entry to catch any regression that would
+        // truncate or panic the iterator.
+        let mut cache = PreparedStatementCache::new(0);
+        for i in 0..50_u32 {
+            let _ = cache.put(
+                PreparedStatementKey::Named(format!("stmt_{i}")),
+                make_cached("stmt", "SELECT 1"),
+            );
+        }
+        assert_eq!(cache.iter().count(), 50);
+
+        let mut named = 0_usize;
+        let mut anon = 0_usize;
+        for (k, _) in cache.iter() {
+            match k {
+                PreparedStatementKeyRef::Named(_) => named += 1,
+                PreparedStatementKeyRef::Anonymous(_) => anon += 1,
+            }
+        }
+        assert_eq!(named, 50);
+        assert_eq!(anon, 0);
     }
 }

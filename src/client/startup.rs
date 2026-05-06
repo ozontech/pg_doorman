@@ -402,6 +402,8 @@ where
         ));
 
         let config = get_config();
+        let anon_cache_size =
+            crate::pool::resolve_client_anon_cache_size(&pool_name, &config.general);
         Ok(Client {
             read: BufReader::new(read),
             write,
@@ -422,10 +424,7 @@ where
             pool_name,
             username: std::mem::take(&mut client_identifier.username),
             server_parameters,
-            prepared: PreparedStatementState::new(
-                prepared_statements_enabled,
-                config.general.client_prepared_statements_cache_size,
-            ),
+            prepared: PreparedStatementState::new(prepared_statements_enabled, anon_cache_size),
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: config.general.max_memory_usage.as_bytes(),
             pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
