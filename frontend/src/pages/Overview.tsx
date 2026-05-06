@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
 import { Collapsible } from "../components/Collapsible";
@@ -6,6 +7,7 @@ import { DualAxisChart } from "../components/DualAxisChart";
 import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
 import { PageHero } from "../components/PageHero";
+import { PanelView, type PanelKind } from "../components/PanelView";
 import { SectionHeader } from "../components/SectionHeader";
 import { Sparkline } from "../components/Sparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -249,6 +251,22 @@ export default function Overview() {
     sampleHistory.history.map(extract),
   ];
 
+  // Panel drill-down state. The currently-open panel is encoded in the
+  // route query string so a deep-link to e.g. ?panel=traffic survives a
+  // page reload and can be shared during an incident handover.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openPanel = searchParams.get("panel");
+  const closePanel = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("panel");
+    setSearchParams(next, { replace: true });
+  };
+  const openPanelById = (id: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("panel", id);
+    setSearchParams(next, { replace: false });
+  };
+
   const latest = sampleHistory.history[sampleHistory.history.length - 1];
 
   // Connection breakdown: stacked area active / idle / waiting over the
@@ -405,53 +423,62 @@ export default function Overview() {
           title="Golden signals"
           help={{
             what: "Latency P95, traffic, error rate, and worst saturation.",
-            how: "One sparkline per signal · 120 points × 1.5 s = 3 min.",
+            how: "One sparkline per signal · 120 points × 1.5 s = 3 min. Click any card for the full-screen panel.",
             normal: "P95 < 100 ms · errors near 0 /s · saturation < 70 %.",
           }}
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Sparkline
-              label="Latency P95"
-              valueText={fmtMs(latest?.query_p95_max_ms)}
-              series={sigSeries((s) => s.query_p95_max_ms)}
-              warn={100}
-              crit={500}
-              logY
-              syncKey="overview"
-              events={chartEvents}
-            />
-            <Sparkline
-              label="Traffic q/s · t/s"
-              valueText={`${fmtRate(latest?.qps)} · ${fmtRate(latest?.tps)}`}
-              series={sigSeries((s) => s.qps)}
-              syncKey="overview"
-              events={chartEvents}
-            />
-            <Sparkline
-              label="Errors / s"
-              valueText={fmtRate(latest?.errors_per_s)}
-              series={sigSeries((s) => s.errors_per_s)}
-              warn={1}
-              crit={10}
-              syncKey="overview"
-              events={chartEvents}
-            />
-            <Sparkline
-              label="Saturation max"
-              valueText={fmtPct(latest?.saturation_max_pct)}
-              series={sigSeries((s) => s.saturation_max_pct)}
-              warn={70}
-              crit={90}
-              syncKey="overview"
-              events={chartEvents}
-            />
+            <ChartLink onClick={() => openPanelById("latency")}>
+              <Sparkline
+                label="Latency P95 ↗"
+                valueText={fmtMs(latest?.query_p95_max_ms)}
+                series={sigSeries((s) => s.query_p95_max_ms)}
+                warn={100}
+                crit={500}
+                logY
+                syncKey="overview"
+                events={chartEvents}
+              />
+            </ChartLink>
+            <ChartLink onClick={() => openPanelById("traffic")}>
+              <Sparkline
+                label="Traffic q/s · t/s ↗"
+                valueText={`${fmtRate(latest?.qps)} · ${fmtRate(latest?.tps)}`}
+                series={sigSeries((s) => s.qps)}
+                syncKey="overview"
+                events={chartEvents}
+              />
+            </ChartLink>
+            <ChartLink onClick={() => openPanelById("errors")}>
+              <Sparkline
+                label="Errors / s ↗"
+                valueText={fmtRate(latest?.errors_per_s)}
+                series={sigSeries((s) => s.errors_per_s)}
+                warn={1}
+                crit={10}
+                syncKey="overview"
+                events={chartEvents}
+              />
+            </ChartLink>
+            <ChartLink onClick={() => openPanelById("saturation")}>
+              <Sparkline
+                label="Saturation max ↗"
+                valueText={fmtPct(latest?.saturation_max_pct)}
+                series={sigSeries((s) => s.saturation_max_pct)}
+                warn={70}
+                crit={90}
+                syncKey="overview"
+                events={chartEvents}
+              />
+            </ChartLink>
           </div>
         </Card>
         <Card
-          title="Connection breakdown"
+          title="Connection breakdown ↗"
+          onTitleClick={() => openPanelById("conn_breakdown")}
           help={{
             what: "Stacked clients in active / idle / waiting state.",
-            how: "Three series over the 3 min sample window. Interpretive — no thresholds.",
+            how: "Three series over the 3 min sample window. Interpretive — no thresholds. Click the title to open the full-screen panel.",
           }}
         >
           <AreaChart
@@ -475,10 +502,11 @@ export default function Overview() {
           </Card>
         )}
         <Card
-          title="Wait queue vs oldest active"
+          title="Wait queue vs oldest active ↗"
+          onTitleClick={() => openPanelById("wait_oldest")}
           help={{
             what: "Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools.",
-            how: "Both updated every 1.5 s; right-axis dashed lines mark the threshold engine's amber/red.",
+            how: "Both updated every 1.5 s; right-axis dashed lines mark the threshold engine's amber/red. Click the title to open the full-screen panel.",
             normal: "Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection.",
           }}
         >
@@ -501,10 +529,11 @@ export default function Overview() {
         </Card>
         {top5Errors.labels.length > 0 && (
           <Card
-            title="Top pools by error rate"
+            title="Top pools by error rate ↗"
+            onTitleClick={() => openPanelById("top_errors")}
             help={{
               what: `The ${top5Errors.labels.length} pools with the highest errors-per-second over the last 30 s.`,
-              how: "Stacked area; each band is one pool. Empty when no pool has produced errors recently.",
+              how: "Stacked area; each band is one pool. Empty when no pool has produced errors recently. Click the title for the full-screen panel.",
               normal: "Bands hovering at 0 = no errors. Sustained > 1 / s on one band = investigate that pool.",
             }}
           >
@@ -527,6 +556,20 @@ export default function Overview() {
           <ResourceDetail sockets={socketsPoll.data} interner={internerPoll.data} />
         </Collapsible>
       </div>
+
+      {openPanel && (
+        <PanelView
+          {...panelDescriptor(
+            openPanel,
+            seriesXs,
+            sampleHistory.history,
+            connBreakdown,
+            top5Errors,
+            chartEvents,
+          )}
+          onClose={closePanel}
+        />
+      )}
     </div>
   );
 }
@@ -535,10 +578,12 @@ function Card({
   title,
   help,
   children,
+  onTitleClick,
 }: {
   title: string;
   help?: { what?: string; how?: string; normal?: string };
   children: ReactNode;
+  onTitleClick?: () => void;
 }) {
   return (
     <section className="rounded-md border border-border bg-surface">
@@ -547,10 +592,173 @@ function Card({
         what={help?.what}
         how={help?.how}
         normal={help?.normal}
+        onTitleClick={onTitleClick}
       />
       <div className="p-4">{children}</div>
     </section>
   );
+}
+
+// Wrapper that turns a Sparkline card into a button-like region: any click
+// inside (other than on the cursor itself, which uPlot prevents from
+// bubbling) opens the matching PanelView. Keyboard activation via Enter
+// keeps the affordance accessible for non-mouse users.
+function ChartLink({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="cursor-pointer transition-colors hover:bg-surface-2"
+      title="Open the full-screen panel for this signal"
+    >
+      {children}
+    </div>
+  );
+}
+
+interface PanelDescriptor {
+  open: true;
+  title: string;
+  kind: PanelKind;
+  data: [number[], ...number[][]];
+  labels: string[];
+  fills?: string[];
+  rightSeries?: number[];
+  rightLogScale?: boolean;
+  warn?: number;
+  crit?: number;
+  units?: string;
+  events?: import("../components/Sparkline").ChartEvent[];
+}
+
+function panelDescriptor(
+  id: string,
+  seriesXs: number[],
+  history: OverviewSamplePoint[],
+  connBreakdown: [number[], ...number[][]],
+  top5Errors: { labels: string[]; data: [number[], ...number[][]] },
+  events: import("../components/Sparkline").ChartEvent[],
+): PanelDescriptor {
+  switch (id) {
+    case "latency":
+      return {
+        open: true,
+        title: "Latency P95 (max across pools)",
+        kind: "line",
+        data: [seriesXs, history.map((s) => s.query_p95_max_ms)] as [number[], ...number[][]],
+        labels: ["query p95"],
+        fills: ["rgb(255 176 0)"],
+        warn: 100,
+        crit: 500,
+        units: "ms",
+        events,
+      };
+    case "traffic":
+      return {
+        open: true,
+        title: "Traffic — qps and tps",
+        kind: "line",
+        data: [
+          seriesXs,
+          history.map((s) => s.qps),
+          history.map((s) => s.tps),
+        ] as [number[], ...number[][]],
+        labels: ["queries / s", "transactions / s"],
+        fills: ["rgb(255 176 0)", "rgb(0 212 255)"],
+        units: "/s",
+        events,
+      };
+    case "errors":
+      return {
+        open: true,
+        title: "Errors per second",
+        kind: "line",
+        data: [seriesXs, history.map((s) => s.errors_per_s)] as [number[], ...number[][]],
+        labels: ["errors / s"],
+        fills: ["rgb(255 77 77)"],
+        warn: 1,
+        crit: 10,
+        units: "/s",
+        events,
+      };
+    case "saturation":
+      return {
+        open: true,
+        title: "Worst pool saturation %",
+        kind: "line",
+        data: [seriesXs, history.map((s) => s.saturation_max_pct)] as [number[], ...number[][]],
+        labels: ["saturation max %"],
+        fills: ["rgb(57 211 83)"],
+        warn: 70,
+        crit: 90,
+        units: "%",
+        events,
+      };
+    case "conn_breakdown":
+      return {
+        open: true,
+        title: "Connection breakdown — active / idle / waiting",
+        kind: "stackedArea",
+        data: connBreakdown,
+        labels: ["active", "idle", "waiting"],
+        fills: ["rgb(57 211 83)", "rgb(154 148 133)", "rgb(255 176 0)"],
+        events,
+      };
+    case "wait_oldest":
+      return {
+        open: true,
+        title: "Wait queue vs oldest active query",
+        kind: "dualAxis",
+        data: [
+          seriesXs,
+          history.map((s) => s.waiting_clients),
+          history.map((s) => Math.max(1, s.oldest_active_age_max_ms)),
+        ] as [number[], ...number[][]],
+        labels: ["waiting clients", "oldest active ms"],
+        fills: ["rgb(0 212 255)", "rgb(255 176 0)"],
+        rightSeries: [2],
+        rightLogScale: true,
+        events,
+      };
+    case "top_errors":
+      return {
+        open: true,
+        title: `Top ${top5Errors.labels.length} pools by error rate`,
+        kind: "stackedArea",
+        data: top5Errors.data,
+        labels: top5Errors.labels,
+        fills: [
+          "rgb(255 77 77 / 0.7)",
+          "rgb(255 176 0 / 0.7)",
+          "rgb(177 140 245 / 0.7)",
+          "rgb(91 140 255 / 0.65)",
+          "rgb(57 211 83 / 0.6)",
+        ],
+        events,
+      };
+    default:
+      return {
+        open: true,
+        title: id,
+        kind: "line",
+        data: [seriesXs] as [number[], ...number[][]],
+        labels: [],
+        events,
+      };
+  }
 }
 
 

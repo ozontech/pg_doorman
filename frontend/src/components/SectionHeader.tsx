@@ -11,6 +11,9 @@ interface SectionHeaderProps {
   normal?: string;
   /** Optional right-aligned slot (status pill, last-updated chip, button). */
   right?: ReactNode;
+  /** When set, the title becomes a clickable button (used for chart cards
+   * that open a full-screen PanelView on click). */
+  onTitleClick?: () => void;
 }
 
 /**
@@ -19,11 +22,29 @@ interface SectionHeaderProps {
  * stays clean. The popover answers three questions: what is on screen, how
  * the numbers update, and what counts as healthy.
  */
-export function SectionHeader({ title, what, how, normal, right }: SectionHeaderProps) {
+export function SectionHeader({
+  title,
+  what,
+  how,
+  normal,
+  right,
+  onTitleClick,
+}: SectionHeaderProps) {
   const hasHelp = Boolean(what || how || normal);
   return (
     <header className="flex items-center gap-3 border-b border-border bg-surface px-6 py-3">
-      <h2 className="text-sm font-semibold text-text">{title}</h2>
+      {onTitleClick ? (
+        <button
+          type="button"
+          onClick={onTitleClick}
+          className="text-sm font-semibold text-text hover:text-accent"
+          title="Open the full-screen panel"
+        >
+          {title}
+        </button>
+      ) : (
+        <h2 className="text-sm font-semibold text-text">{title}</h2>
+      )}
       {hasHelp && (
         <HelpTip title={title}>
           {what && (
