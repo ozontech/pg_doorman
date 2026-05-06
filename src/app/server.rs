@@ -317,14 +317,28 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                  Config::validate should have caught a value of 0"
             );
 
+            let initial_ttl_secs = config.general.query_interner_anon_idle_ttl_seconds;
             tokio::task::spawn(async move {
                 let mut ticker = tokio::time::interval(sweep_interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut prev_ttl_secs = initial_ttl_secs;
                 loop {
                     ticker.tick().await;
 
                     let anon_ttl_secs =
                         crate::config::config_arc().general.query_interner_anon_idle_ttl_seconds;
+                    if anon_ttl_secs != prev_ttl_secs {
+                        // Single line per change so an operator who reloaded
+                        // a TTL change has visible evidence the GC task
+                        // picked it up — without it the only way to confirm
+                        // is to scrape Prometheus and wait for the next
+                        // eviction wave.
+                        info!(
+                            "query interner anon TTL changed: {} -> {} seconds",
+                            prev_ttl_secs, anon_ttl_secs
+                        );
+                        prev_ttl_secs = anon_ttl_secs;
+                    }
                     let anon_ttl_ms = if anon_ttl_secs == 0 {
                         u64::MAX
                     } else {

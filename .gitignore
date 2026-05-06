@@ -50,3 +50,6 @@ flamegraph-output/
 
 # Claude memory compiler (personal knowledge base)
 .claude-memory-compiler/
+
+# Superpowers brainstorm session workdir (VC mockups, server state)
+.superpowers/

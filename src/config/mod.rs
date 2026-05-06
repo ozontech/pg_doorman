@@ -485,6 +485,22 @@ impl Config {
             ));
         }
 
+        // Loud warning for the foot-gun: 0 is documented as "disable LRU and
+        // store anonymous entries in an unbounded map". That's the opposite of
+        // pgbouncer convention where 0 typically disables the feature entirely.
+        // An operator who sets 0 by reflex from a pgbouncer config gets the
+        // unbounded map and a slow memory leak under any driver that mints
+        // unique anonymous Parses.
+        if matches!(self.general.client_anonymous_prepared_cache_size, Some(0)) {
+            warn!(
+                "general.client_anonymous_prepared_cache_size = 0 disables the per-client \
+                 Anonymous LRU and falls back to an unbounded map. Anonymous prepared \
+                 statements will accumulate until the client disconnects; on workloads with \
+                 dynamically generated SQL this is a memory leak. Set a positive bound \
+                 unless you have specifically chosen the legacy unbounded behaviour."
+            );
+        }
+
         // Validate TLS
         {
             if self.general.tls_certificate.is_none() && self.general.tls_private_key.is_some() {
