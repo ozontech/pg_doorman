@@ -44,13 +44,13 @@ For installation from source, distribution packages (Ubuntu PPA, Fedora COPR), a
 - **Pool Coordinator** — database-level connection cap with priority eviction and per-user minimums. [Learn more](https://ozontech.github.io/pg_doorman/concepts/pool-coordinator.html).
 - **Patroni-assisted fallback** — automatic backend rerouting via the Patroni REST API when the local node fails. [Learn more](https://ozontech.github.io/pg_doorman/tutorials/patroni-assisted-fallback.html).
 - **Graceful binary upgrade** — replace the binary without dropping clients; TLS connections migrate cleanly with the `tls-migration` cargo feature. [Learn more](https://ozontech.github.io/pg_doorman/tutorials/binary-upgrade.html).
-- **Built-in observability** — Prometheus `/metrics` with HDR-histogram percentiles, structured JSON logs, admin `SHOW` commands. `SHOW INTERNER` and the `pg_doorman_query_interner_*` metric family expose the prepared-statement cache footprint.
+- **Built-in observability** — Prometheus `/metrics` with HDR-histogram percentiles, structured JSON logs, admin `SHOW` commands.
 
 [Full feature comparison →](https://ozontech.github.io/pg_doorman/comparison.html)
 
 ## Benchmarks
 
-Continuously updated AWS Fargate results (`pgbench`, multiple scenarios) live on the [benchmarks page](https://ozontech.github.io/pg_doorman/benchmarks.html). PgDoorman runs 3-4× ahead of PgBouncer on extended-protocol and prepared-statement workloads, and noticeably ahead of Odyssey under the same scenarios.
+Continuously updated `pgbench` results from AWS Fargate and Ubicloud (multiple scenarios) live on the [benchmarks page](https://ozontech.github.io/pg_doorman/benchmarks.html). PgDoorman runs 3-4× ahead of PgBouncer on extended-protocol and prepared-statement workloads, and noticeably ahead of Odyssey under the same scenarios.
 
 ## Community
 
