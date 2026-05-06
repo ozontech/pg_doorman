@@ -74,12 +74,15 @@ The first command builds the image referenced by
 `docker-compose.yml`. The second regenerates the dashboard with the
 provisioned datasource UID `prometheus` matching
 `grafana/provisioning/datasources/prometheus.yml`. The third brings
-up Postgres, pg_doorman, Prometheus, Grafana, and two pgbench load
+up Postgres, pg_doorman, Prometheus, Grafana, two pgbench load
 generators (`pgbench.sh`, `pgbench2.sh`) hammering the pool with
-distinct user identities.
+distinct user identities, and a `listener` sidecar that holds three
+LISTEN sessions on a session-mode pool — so the Web UI shows
+`pool_mode = session` alongside the transaction-mode pgbench traffic.
 
 - Grafana: http://localhost:3000 (anonymous admin login).
 - Prometheus: http://localhost:19090.
+- pg_doorman Web UI: http://localhost:9127 (admin / `doorman_demo`).
 
 ```bash
 docker compose down -v

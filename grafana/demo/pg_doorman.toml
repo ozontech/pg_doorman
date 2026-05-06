@@ -2,20 +2,26 @@
 host = "0.0.0.0"
 port = 6432
 admin_username = "admin"
-admin_password = "admin"
+# Non-default password is required to enable the Web UI; with the default
+# `admin` value pg_doorman warns and leaves the SPA disabled.
+admin_password = "doorman_demo"
 pool_mode = "transaction"
 shutdown_timeout = 10000
 pg_hba = { content = "host all all 0.0.0.0/0 trust" }
 
-[prometheus]
+[web]
 enabled = true
 host = "0.0.0.0"
 port = 9127
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 2048
 
 [pools.app_db]
 server_host = "postgres"
 server_port = 5432
-max_db_connections = 15
+# 10 (app_user) + 10 (app_user_2) + 5 (session_user, long-lived backends).
+max_db_connections = 25
 
 [[pools.app_db.users]]
 username = "app_user"
@@ -26,6 +32,15 @@ pool_size = 10
 username = "app_user_2"
 password = "md5a05c39aae7f2198b1f06c4291434ee85"
 pool_size = 10
+
+# Session-mode pool for LISTEN/NOTIFY workloads. pg_doorman keeps each
+# client pinned to its own backend for the lifetime of the session, so
+# pool_size = concurrent client count.
+[[pools.app_db.users]]
+username = "session_user"
+password = "md5cd9e540cc88befe2fc88bb0259ddbe42"
+pool_size = 5
+pool_mode = "session"
 
 # Patroni-assisted fallback (uncomment to enable)
 # patroni_api_urls = ["http://10.0.0.1:8008", "http://10.0.0.2:8008"]

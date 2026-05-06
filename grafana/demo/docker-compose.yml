@@ -78,3 +78,16 @@ services:
       postgres:
         condition: service_healthy
     restart: always
+
+  # Session-mode demo: 3 LISTEN sessions + a slow producer of NOTIFY events.
+  # Demonstrates pool_mode = "session" alongside the transaction-mode pgbench
+  # workload so the Web UI shows both modes side-by-side.
+  listener:
+    image: postgres:16
+    volumes:
+      - ./listener.sh:/listener.sh
+    entrypoint: ["bash", "/listener.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
