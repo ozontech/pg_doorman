@@ -1,10 +1,162 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiGet } from "../api";
+import { useAdminAuth } from "../hooks/useAdminAuth";
+import { usePoll } from "../hooks/usePoll";
+import type { LogEntryDto, LogsDto } from "../types";
+
+const POLL_MS = 1500;
+const MAX_KEEP = 500;
+const LEVEL_OPTIONS = ["", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
+
+const LEVEL_COLOR: Record<string, string> = {
+  ERROR: "text-danger",
+  WARN: "text-warning",
+  INFO: "text-text",
+  DEBUG: "text-text-muted",
+  TRACE: "text-text-dim",
+};
+
 export default function Logs() {
+  const { authHeader } = useAdminAuth();
+  const [level, setLevel] = useState("");
+  const [target, setTarget] = useState("");
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [paused, setPaused] = useState(false);
+  const [lines, setLines] = useState<LogEntryDto[]>([]);
+  const [meta, setMeta] = useState<{
+    tap_active: boolean;
+    used: number;
+    capacity: number;
+    dropped_before: number;
+    dropped_total: number;
+  } | null>(null);
+  const sinceRef = useRef(0);
+  const tailRef = useRef<HTMLDivElement | null>(null);
+
+  // Reset stream when filters change.
+  useEffect(() => {
+    sinceRef.current = 0;
+    setLines([]);
+  }, [level, target]);
+
+  const fetcher = useCallback(
+    async (signal: AbortSignal): Promise<LogsDto> => {
+      const params = new URLSearchParams();
+      params.set("since", String(sinceRef.current));
+      params.set("max", "200");
+      if (level) params.set("level", level);
+      if (target) params.set("target", target);
+      return apiGet<LogsDto>(`/api/logs?${params.toString()}`, authHeader, signal);
+    },
+    [authHeader, level, target],
+  );
+
+  const poll = usePoll<LogsDto>(fetcher, paused ? 60_000 : POLL_MS);
+
+  // Append new entries on each successful poll.
+  useEffect(() => {
+    if (!poll.data) return;
+    setMeta({
+      tap_active: poll.data.tap_active,
+      used: poll.data.tap_used_entries,
+      capacity: poll.data.tap_capacity_entries,
+      dropped_before: poll.data.dropped_before,
+      dropped_total: poll.data.dropped_total,
+    });
+    if (poll.data.entries.length > 0) {
+      sinceRef.current = poll.data.next_seq;
+      setLines((prev) => {
+        const next = [...prev, ...poll.data!.entries];
+        if (next.length > MAX_KEEP) return next.slice(next.length - MAX_KEEP);
+        return next;
+      });
+    } else if (poll.data.next_seq > sinceRef.current) {
+      // server moved forward without entries (e.g. filter rejected all).
+      sinceRef.current = poll.data.next_seq;
+    }
+  }, [poll.data]);
+
+  useEffect(() => {
+    if (autoScroll && tailRef.current) {
+      tailRef.current.scrollIntoView({ behavior: "auto" });
+    }
+  }, [lines, autoScroll]);
+
+  if (poll.error) {
+    return (
+      <section className="p-6">
+        <h1 className="text-lg font-semibold text-text">Logs</h1>
+        <p className="mt-2 text-sm text-danger">{poll.error.message}</p>
+      </section>
+    );
+  }
+
+  const fmtTs = (ms: number) => {
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+  };
+
   return (
-    <section className="p-6">
-      <h1 className="text-lg font-semibold text-text">Logs</h1>
-      <p className="mt-2 text-sm text-text-muted">
-        Placeholder page; phase 6 wires up LogStream against /api/logs.
-      </p>
+    <section className="flex h-screen flex-col">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <select
+          value={level}
+          onChange={(e) => setLevel(e.target.value)}
+          className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
+        >
+          {LEVEL_OPTIONS.map((l) => (
+            <option key={l} value={l}>
+              {l === "" ? "all levels" : `${l}+`}
+            </option>
+          ))}
+        </select>
+        <input
+          placeholder="target substring"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          className="w-48 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
+        />
+        <button
+          type="button"
+          onClick={() => setPaused((p) => !p)}
+          className={`rounded border px-3 py-1 text-sm ${paused ? "border-warning text-warning" : "border-border-strong text-text-muted hover:text-text"}`}
+        >
+          {paused ? "▶ resume" : "❚❚ pause"}
+        </button>
+        <label className="flex items-center gap-1 text-xs text-text-muted">
+          <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
+          auto-scroll
+        </label>
+        {meta && (
+          <span className="ml-auto text-xs text-text-dim tabular">
+            {meta.tap_active ? "tap on" : "tap off"} · {meta.used}/{meta.capacity} buffered ·
+            {" "}drops {meta.dropped_total}
+            {meta.dropped_before > 0 && ` · ${meta.dropped_before} lost before since`}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 overflow-auto bg-bg font-mono text-xs">
+        {lines.length === 0 ? (
+          <p className="p-4 text-text-dim">no entries yet — quiet pooler.</p>
+        ) : (
+          <table className="w-full">
+            <tbody>
+              {lines.map((e) => (
+                <tr key={e.seq} className="border-b border-border/40 hover:bg-surface-2">
+                  <td className="whitespace-nowrap px-2 py-0.5 text-text-dim tabular">
+                    {fmtTs(e.ts_ms)}
+                  </td>
+                  <td className={`px-2 py-0.5 ${LEVEL_COLOR[e.level] ?? ""}`}>{e.level}</td>
+                  <td className="whitespace-nowrap px-2 py-0.5 text-accent">{e.target}</td>
+                  <td className="px-2 py-0.5 text-text">{e.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div ref={tailRef} />
+      </div>
     </section>
   );
 }

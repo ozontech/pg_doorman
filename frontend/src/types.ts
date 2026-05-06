@@ -136,3 +136,22 @@ export interface PreparedDto {
   ts: number;
   prepared: PreparedRowDto[];
 }
+
+export interface LogEntryDto {
+  seq: number;
+  ts_ms: number;
+  level: string;
+  target: string;
+  message: string;
+}
+
+export interface LogsDto {
+  ts: number;
+  tap_active: boolean;
+  tap_capacity_entries: number;
+  tap_used_entries: number;
+  next_seq: number;
+  dropped_before: number;
+  dropped_total: number;
+  entries: LogEntryDto[];
+}
