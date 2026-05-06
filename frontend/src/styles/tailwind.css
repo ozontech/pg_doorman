@@ -1,63 +1,125 @@
 @import "tailwindcss";
 
-/* Self-hosted IBM Plex via @fontsource. Limit subsets to latin and cyrillic
-   (no `*-ext` or vietnamese) so the bundle ships ~half the font files. */
+/* Bloomberg-Terminal direction: JetBrains Mono everywhere as the working
+   typeface (display + tabular numerics + body). IBM Plex Sans stays loaded
+   as a fallback for prose-heavy contexts; the previous palette was
+   IBM-Plex-Sans + cyan, which read as a generic SaaS skin. Subset trim:
+   latin + cyrillic, woff2 only. */
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-500.css";
+@import "@fontsource/jetbrains-mono/latin-700.css";
+@import "@fontsource/jetbrains-mono/cyrillic-400.css";
+@import "@fontsource/jetbrains-mono/cyrillic-500.css";
+@import "@fontsource/jetbrains-mono/cyrillic-700.css";
 @import "@fontsource/ibm-plex-sans/latin-400.css";
-@import "@fontsource/ibm-plex-sans/latin-500.css";
-@import "@fontsource/ibm-plex-sans/latin-600.css";
 @import "@fontsource/ibm-plex-sans/cyrillic-400.css";
-@import "@fontsource/ibm-plex-sans/cyrillic-500.css";
-@import "@fontsource/ibm-plex-sans/cyrillic-600.css";
-@import "@fontsource/ibm-plex-mono/latin-400.css";
-@import "@fontsource/ibm-plex-mono/latin-500.css";
-@import "@fontsource/ibm-plex-mono/cyrillic-400.css";
-@import "@fontsource/ibm-plex-mono/cyrillic-500.css";
 
 @theme {
-  /* Surface — values from design-system.md §4.1 (verbatim) */
-  --color-bg:         #0a0d12;
-  --color-surface:    #11151c;
-  --color-surface-2:  #161b24;
-  --color-surface-3:  #1c2230;
+  /* Surface — Bloomberg-flat. The whole canvas is one plane carved by
+     hairline borders rather than four near-identical near-black layers. */
+  --color-bg:         #000000;
+  --color-surface:    #000000;
+  --color-surface-2:  #0b0b0b;
+  --color-surface-3:  #0b0b0b;
 
-  /* Border */
-  --color-border:        #232a36;
-  --color-border-strong: #2d3543;
+  /* Borders — single hairline tone, never doubled. */
+  --color-border:        #1f1f1f;
+  --color-border-strong: #2a2a2a;
 
-  /* Text */
-  --color-text:       #e6e9ee;
-  --color-text-muted: #8a93a4;
-  --color-text-dim:   #5a6275;
+  /* Text — warm paper-white, not bluish. */
+  --color-text:       #e8e3d6;
+  --color-text-muted: #9a9485;
+  --color-text-dim:   #5a564b;
 
-  /* Accent */
-  --color-accent:       #22b8cf;
-  --color-accent-hover: #3ec8d9;
-  --color-accent-fg:    #042024;
+  /* Accent — Bloomberg amber. Used for call-to-action, focus rings,
+     selection, and the live-tick underline animation below. */
+  --color-accent:       #ffb000;
+  --color-accent-hover: #ffc233;
+  --color-accent-fg:    #000000;
 
-  /* Semantic */
-  --color-success: #2dc26b;
-  --color-warning: #f5a524;
-  --color-danger:  #e5484d;
-  --color-info:    #5b8cff;
+  /* Semantic — high-contrast trader palette. */
+  --color-success: #39d353;
+  --color-warning: #ffb000;
+  --color-danger:  #ff4d4d;
+  --color-info:    #00d4ff;
 
-  /* Chart palette (uPlot lines) */
-  --color-chart-1: #22b8cf;
-  --color-chart-2: #2dc26b;
-  --color-chart-3: #f5a524;
-  --color-chart-4: #b18cf5;
+  /* Chart palette (uPlot lines) — distinct hues, no muddy gradients. */
+  --color-chart-1: #ffb000;
+  --color-chart-2: #00d4ff;
+  --color-chart-3: #39d353;
+  --color-chart-4: #ff4d4d;
 
-  /* Typography — values from design-system.md §3 */
-  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Typography. JetBrains Mono is the working face; Plex Sans is a
+     prose-only fallback (long descriptions in PageHero, etc). */
+  --font-sans: "JetBrains Mono", "IBM Plex Sans", ui-monospace, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --font-size-xs:   11px;
   --font-size-sm:   13px;
   --font-size-base: 14px;
   --font-size-md:   16px;
   --font-size-lg:   20px;
   --font-size-xl:   28px;
+
+  /* Geometry. Bloomberg discipline: zero radius, no shadow, depth via
+     hairlines. Setting --radius-* to 0 collapses every rounded-* class. */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
 }
 
-/* Tabular figures helper (design-system.md §3.4). */
+/* Tabular figures helper. JetBrains Mono is tabular by default; the legacy
+   CSS still references this class so we keep the rule. */
 .tabular {
   font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* Focus ring — single hairline amber, no offset. */
+*:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 0;
+}
+
+/* Selection — invert to amber-on-black. */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+/* Scrollbar — narrow, monochrome, no rounded thumb. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+/* Tick-flash animation. Live cells (numbers retickering each poll cycle)
+   wear this for ~160ms after each update so the dashboard feels like a
+   tickertape without any actual motion of content. */
+@keyframes tick-amber {
+  0%   { background-color: rgb(255 176 0 / 0.20); }
+  100% { background-color: transparent; }
+}
+@keyframes tick-cyan {
+  0%   { background-color: rgb(0 212 255 / 0.20); }
+  100% { background-color: transparent; }
+}
+.tick-up   { animation: tick-amber 160ms linear; }
+.tick-down { animation: tick-cyan 160ms linear; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tick-up,
+  .tick-down {
+    animation: none;
+  }
 }
