@@ -597,13 +597,25 @@ function ResourceDetail({
 // N×100%. The bar paints amber when total CPU > 60% of cpu_cores and red
 // when > 90%; FDs paint amber > 70% of limit, red > 90%.
 function ProcessBar({ process }: { process: ProcessDto | null }) {
-  // Previous snapshot (for the rate calculation) lives in a ref so it
-  // survives re-renders without entering a setState loop.
+  // Two refs: the previous snapshot we computed against, and the most
+  // recent percentage. Re-renders that don't bring a new ts (a sibling
+  // poll updated state) reuse the cached delta instead of nulling it
+  // out — without that we'd flicker "sampling…" between every real poll.
   const prevRef = useRef<ProcessDto | null>(null);
+  const cachedPctRef = useRef<{
+    cpuPct: number | null;
+    threadDeltas: { tid: number; name: string; pct: number }[];
+    forTs: number;
+  } | null>(null);
+
   let cpuPct: number | null = null;
   let threadDeltas: { tid: number; name: string; pct: number }[] = [];
   const last = prevRef.current;
-  if (process && last && last.ts !== process.ts) {
+  if (process && cachedPctRef.current && cachedPctRef.current.forTs === process.ts) {
+    // Same poll snapshot we already computed against — reuse cached values.
+    cpuPct = cachedPctRef.current.cpuPct;
+    threadDeltas = cachedPctRef.current.threadDeltas;
+  } else if (process && last && last.ts !== process.ts) {
     const dtSec = (process.ts - last.ts) / 1000;
     if (dtSec > 0 && process.cpu_cores > 0) {
       const usDelta =
@@ -631,10 +643,12 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
         .sort((a: { pct: number }, b: { pct: number }) => b.pct - a.pct);
     }
   }
-  // Stash *after* computing the delta so the next render can compare against
-  // this same snapshot.
-  if (process) {
+  // Stash *after* computing the delta — but only when we actually advanced
+  // to a new poll snapshot. Skipping stale re-renders keeps the cached
+  // values usable on the next paint.
+  if (process && (!last || last.ts !== process.ts)) {
     prevRef.current = process;
+    cachedPctRef.current = { cpuPct, threadDeltas, forTs: process.ts };
   }
 
   if (!process) return null;

@@ -9,7 +9,7 @@
 //! - Consumer is a single tokio task, the sole owner of the VecDeque.
 //!   Assigns monotonic `seq`, processes `Drain` commands by cloning a
 //!   filtered subset; never blocks producers.
-//! - Reaper task disables the tap after 30 s without GETs.
+//! - Reaper task disables the tap after 2 min without GETs.
 
 use std::collections::VecDeque;
 use std::fmt::{self, Write as _};
@@ -26,9 +26,11 @@ use tokio::sync::{mpsc, oneshot};
 // one entry; longer messages are truncated at a UTF-8 boundary with a marker.
 const PER_ENTRY_BYTE_CAP: usize = 4 * 1024;
 
-// Disable the tap after 30 s without GETs — short enough to release memory
-// when an operator closes the tab, long enough to survive page reloads.
-const IDLE_DISABLE_MS: u64 = 30_000;
+// Disable the tap after this much time without GETs — long enough that a
+// stepped-away operator coming back from coffee still has the buffer alive,
+// short enough to release memory once nobody is reading. Two minutes is the
+// operator-feedback default; the tap re-arms instantly on the next request.
+const IDLE_DISABLE_MS: u64 = 120_000;
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
@@ -321,7 +323,7 @@ pub fn disable_log_tap() {
     LOG_TAP.store(Arc::new(None));
 }
 
-/// Reaper task: disables the tap after 30 s without /api/logs traffic.
+/// Reaper task: disables the tap after 2 min without /api/logs traffic.
 /// Spawned once during `start_web_server` startup when ui_active is true
 /// and log_tap_max_entries > 0.
 pub async fn run_reaper() {

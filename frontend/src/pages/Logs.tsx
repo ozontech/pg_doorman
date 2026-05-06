@@ -103,7 +103,7 @@ export default function Logs() {
     <section className="flex h-screen flex-col">
       <PageHero
         title="Logs"
-        description="Live pooler log without ssh-ing onto the host. Filter by level or by any text — module, client id (#c123), SQLSTATE, message fragment. The tap turns itself off 30 s after you leave the page, so it costs nothing when nobody is reading."
+        description="Live pooler log without ssh-ing onto the host. Filter by level or by any text — module, client id (#c123), SQLSTATE, message fragment. The tap turns itself off 2 minutes after you leave the page, so it costs nothing when nobody is reading."
       />
       <SectionHeader
         title="Stream"
@@ -215,7 +215,7 @@ function LogsEmpty({
       <div className="p-6 text-sm leading-relaxed">
         <p className="text-text">LogTap is currently off.</p>
         <p className="mt-2 text-text-muted">
-          The tap deactivates 30 s after the last poll; it should turn back on within the next tick. If it stays off, reload the page.
+          The tap deactivates 2 minutes after the last poll; it should turn back on within the next tick. If it stays off, reload the page.
         </p>
       </div>
     );
