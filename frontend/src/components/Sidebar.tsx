@@ -1,59 +1,43 @@
 import { NavLink } from "react-router-dom";
 
-const NAV: { to: string; label: string; index: string }[] = [
-  { to: "/overview", label: "Overview", index: "01" },
-  { to: "/pools", label: "Pools", index: "02" },
-  { to: "/clients", label: "Clients", index: "03" },
-  { to: "/caches", label: "Caches", index: "04" },
-  { to: "/logs", label: "Logs", index: "05" },
-  { to: "/config", label: "Config", index: "06" },
+const NAV: { to: string; label: string }[] = [
+  { to: "/overview", label: "Overview" },
+  { to: "/pools", label: "Pools" },
+  { to: "/clients", label: "Clients" },
+  { to: "/caches", label: "Caches" },
+  { to: "/logs", label: "Logs" },
+  { to: "/config", label: "Config" },
 ];
 
 export function Sidebar() {
   return (
-    <nav className="flex h-screen w-56 shrink-0 flex-col border-r border-border bg-surface">
-      <div className="border-b border-border px-5 py-5">
-        <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-text-dim">
-          pooler
+    <nav className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface">
+      <div className="px-6 py-7">
+        <div className="text-xs font-medium uppercase tracking-[0.2em] text-text-dim">
+          pg_doorman
         </div>
-        <div className="mt-1 font-mono text-md font-semibold text-text">pg_doorman</div>
-        <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-accent">
-          ◆ admin console
-        </div>
+        <div className="mt-1.5 text-base font-semibold text-text">Admin console</div>
       </div>
-      <ul className="flex-1 py-3">
+      <ul className="flex-1 px-2 pb-3">
         {NAV.map((item) => (
           <li key={item.to}>
             <NavLink
               to={item.to}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-5 py-2 text-sm transition-colors ${
+                `block rounded-md px-4 py-2 text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-surface-2 text-text"
-                    : "text-text-muted hover:bg-surface-2 hover:text-text"
+                    : "text-text-muted hover:bg-surface-2/60 hover:text-text"
                 }`
               }
             >
-              {({ isActive }) => (
-                <>
-                  <span
-                    aria-hidden
-                    className={`font-mono text-[10px] tabular ${
-                      isActive ? "text-accent" : "text-text-dim"
-                    }`}
-                  >
-                    {item.index}
-                  </span>
-                  <span className="flex-1 font-medium">{item.label}</span>
-                  {isActive && <span aria-hidden className="h-1.5 w-1.5 bg-accent" />}
-                </>
-              )}
+              {item.label}
             </NavLink>
           </li>
         ))}
       </ul>
-      <div className="border-t border-border px-5 py-3 font-mono text-[10px] uppercase tracking-wide text-text-dim">
-        v3.7 · feat/web-ui
+      <div className="border-t border-border px-6 py-4 text-xs text-text-dim">
+        v3.7.0 · feat/web-ui
       </div>
     </nav>
   );

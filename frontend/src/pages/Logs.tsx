@@ -150,7 +150,7 @@ export default function Logs() {
       </div>
       <div className="flex-1 overflow-auto bg-bg font-mono text-xs">
         {lines.length === 0 ? (
-          <p className="p-4 text-text-dim">no entries yet — quiet pooler.</p>
+          <LogsEmpty meta={meta} />
         ) : (
           <table className="w-full">
             <tbody>
@@ -170,5 +170,53 @@ export default function Logs() {
         <div ref={tailRef} />
       </div>
     </section>
+  );
+}
+
+function LogsEmpty({
+  meta,
+}: {
+  meta: {
+    tap_active: boolean;
+    used: number;
+    capacity: number;
+    dropped_before: number;
+    dropped_total: number;
+  } | null;
+}) {
+  if (!meta) {
+    return <p className="p-6 text-text-dim">connecting to LogTap…</p>;
+  }
+  if (meta.capacity === 0) {
+    return (
+      <div className="p-6 text-sm leading-relaxed">
+        <p className="font-semibold text-warning">LogTap is disabled in this build.</p>
+        <p className="mt-2 text-text-muted">
+          Set <code className="rounded bg-surface px-1.5 py-0.5 text-text">[web].log_tap_max_entries</code>{" "}
+          to a positive integer (default 8192) and restart pg_doorman to enable streaming logs.
+        </p>
+      </div>
+    );
+  }
+  if (!meta.tap_active) {
+    return (
+      <div className="p-6 text-sm leading-relaxed">
+        <p className="text-text">LogTap is currently off.</p>
+        <p className="mt-2 text-text-muted">
+          The tap deactivates 30 s after the last poll; it should turn back on within the next tick. If it stays off, reload the page.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="p-6 text-sm leading-relaxed">
+      <p className="text-text">
+        Tap is on — buffer holds {meta.used} of {meta.capacity} entries — and nothing matches the current filter yet.
+      </p>
+      <p className="mt-2 text-text-muted">
+        Likely the pooler is idle. Run a query against pg_doorman or widen the level / clear the target filter to see entries.{" "}
+        Drops since the tap activated: {meta.dropped_total}.
+      </p>
+    </div>
   );
 }

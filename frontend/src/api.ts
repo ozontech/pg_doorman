@@ -37,9 +37,21 @@ export async function apiGet<T>(
   headerProvider: HeaderProvider,
   signal?: AbortSignal,
 ): Promise<T> {
+  const provided = headerProvider();
+  // When we have no credentials we still set an explicit (empty) Authorization
+  // header to override the browser's basic-auth cache. Without this, once the
+  // user has dismissed an OS-level basic-auth dialog or typed the wrong creds
+  // earlier, the browser keeps replaying that cached header on every fetch and
+  // our React modal never gets a chance to take over.
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: "Basic ",
+    ...provided,
+  };
   const res = await fetch(path, {
     method: "GET",
-    headers: { Accept: "application/json", ...headerProvider() },
+    credentials: "omit",
+    headers,
     signal,
   });
   if (res.status === 401) {

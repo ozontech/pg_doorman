@@ -128,8 +128,16 @@ async fn handle_connection(stream: TcpStream, opts: WebServerOptions) {
     if opts.ui_active
         && parsed.method == "GET"
         && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
-        && auth == AuthOutcome::Admin
     {
+        if auth != AuthOutcome::Admin {
+            let resp = if parsed.accepts_json {
+                Response::unauthorized_silent()
+            } else {
+                Response::unauthorized()
+            };
+            let _ = resp.write(&mut writer).await;
+            return;
+        }
         let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
         let query = crate::web::routes::query::parse_query(query_str);
         let response = crate::web::routes::logs::handle_logs(&query).await;
@@ -147,6 +155,13 @@ struct ParsedRequest<'a> {
     path: &'a str,
     authorization: Option<&'a str>,
     accepts_gzip: bool,
+    /// True when the request advertises `Accept: application/json`. The SPA
+    /// `fetch()` wrapper sets this on every call; a browser hitting the URL
+    /// directly would not. The mux uses it to skip the `WWW-Authenticate`
+    /// header on 401 — otherwise the browser caches whatever the user typed
+    /// in its native basic-auth dialog and replays it forever, hiding our
+    /// React sign-in modal.
+    accepts_json: bool,
 }
 
 impl<'a> ParsedRequest<'a> {
@@ -160,6 +175,7 @@ impl<'a> ParsedRequest<'a> {
 
         let mut authorization = None;
         let mut accepts_gzip = false;
+        let mut accepts_json = false;
         for line in lines {
             if line.is_empty() {
                 break;
@@ -176,6 +192,14 @@ impl<'a> ParsedRequest<'a> {
                 if value.to_lowercase().contains("gzip") {
                     accepts_gzip = true;
                 }
+            } else if let Some(value) = line.strip_prefix("Accept: ") {
+                if value.to_lowercase().contains("application/json") {
+                    accepts_json = true;
+                }
+            } else if let Some(value) = line.strip_prefix("accept: ") {
+                if value.to_lowercase().contains("application/json") {
+                    accepts_json = true;
+                }
             }
         }
         Some(ParsedRequest {
@@ -183,6 +207,7 @@ impl<'a> ParsedRequest<'a> {
             path,
             authorization,
             accepts_gzip,
+            accepts_json,
         })
     }
 }
@@ -214,6 +239,9 @@ impl Response {
         }
     }
 
+    /// 401 with `WWW-Authenticate`. Use only for non-JSON callers (curl,
+    /// direct browser navigation) — the SPA path uses `unauthorized_silent`
+    /// to keep the browser from caching credentials we did not solicit.
     pub(crate) fn unauthorized() -> Self {
         let mut r = Response::status(401, "Unauthorized");
         r.extra_headers.push((
@@ -221,6 +249,13 @@ impl Response {
             "Basic realm=\"pg_doorman admin\"".into(),
         ));
         r
+    }
+
+    /// 401 without `WWW-Authenticate`. Use for SPA / JSON callers so the
+    /// browser does not cache rejected credentials and replay them under
+    /// our React modal.
+    pub(crate) fn unauthorized_silent() -> Self {
+        Response::status(401, "Unauthorized")
     }
 
     pub(crate) fn ok_json<T: serde::Serialize>(value: &T) -> Self {
@@ -338,7 +373,11 @@ fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome)
 
     let needs_admin = admin_only || (!opts.ui_anonymous);
     if needs_admin && auth != AuthOutcome::Admin {
-        return Response::unauthorized();
+        return if req.accepts_json {
+            Response::unauthorized_silent()
+        } else {
+            Response::unauthorized()
+        };
     }
 
     if req.path.starts_with("/api/") {
@@ -372,6 +411,17 @@ mod tests {
             path,
             authorization: None,
             accepts_gzip: false,
+            accepts_json: false,
+        }
+    }
+
+    fn req_json<'a>(method: &'a str, path: &'a str) -> ParsedRequest<'a> {
+        ParsedRequest {
+            method,
+            path,
+            authorization: None,
+            accepts_gzip: false,
+            accepts_json: true,
         }
     }
 
@@ -404,6 +454,27 @@ mod tests {
     #[test]
     fn parse_rejects_malformed_request_line() {
         assert!(ParsedRequest::parse("garbage").is_none());
+    }
+
+    #[test]
+    fn parse_detects_accept_application_json() {
+        let raw = "GET /api/foo HTTP/1.1\r\nHost: x\r\nAccept: application/json\r\n\r\n";
+        let p = ParsedRequest::parse(raw).unwrap();
+        assert!(p.accepts_json);
+    }
+
+    #[test]
+    fn parse_detects_lowercase_accept() {
+        let raw = "GET /api/foo HTTP/1.1\r\nHost: x\r\naccept: application/json, */*\r\n\r\n";
+        let p = ParsedRequest::parse(raw).unwrap();
+        assert!(p.accepts_json);
+    }
+
+    #[test]
+    fn parse_does_not_detect_json_when_accept_is_html() {
+        let raw = "GET / HTTP/1.1\r\nHost: x\r\nAccept: text/html\r\n\r\n";
+        let p = ParsedRequest::parse(raw).unwrap();
+        assert!(!p.accepts_json);
     }
 
     #[test]
@@ -471,6 +542,25 @@ mod tests {
             AuthOutcome::Anonymous,
         );
         assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_admin_anonymous_json_request_returns_401_without_challenge() {
+        // SPA / JSON callers must NOT receive WWW-Authenticate, otherwise the
+        // browser caches credentials we did not solicit and replays them
+        // forever, hiding the React sign-in modal.
+        let r = dispatch(
+            &req_json("GET", "/api/logs"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 401);
+        assert!(
+            !r.extra_headers
+                .iter()
+                .any(|(k, _)| *k == "WWW-Authenticate"),
+            "JSON 401 should not advertise Basic auth"
+        );
     }
 
     #[test]
