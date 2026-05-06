@@ -1930,6 +1930,7 @@ dependencies = [
  "smallvec",
  "socket2 0.6.1",
  "stringprep",
+ "subtle",
  "syslog",
  "tempfile",
  "tikv-jemallocator",

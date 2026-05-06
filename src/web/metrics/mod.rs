@@ -10,17 +10,17 @@ use prometheus::{
 };
 
 // Sub-modules
+mod handler;
 #[allow(clippy::module_inception)]
 mod metrics;
-mod server;
 mod system;
 
 #[cfg(test)]
 mod tests;
 
 // Re-exports
+pub(crate) use handler::write_metrics_response;
 pub use metrics::{observe_anonymous_eviction, record_interner_gc, record_synthetic_miss};
-pub use server::start_prometheus_server;
 
 // Define the metrics we want to expose
 pub(crate) static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);

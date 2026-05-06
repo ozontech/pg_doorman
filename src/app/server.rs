@@ -23,7 +23,8 @@ use crate::server::{gc_sweep_anon, gc_sweep_named};
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
-use crate::web::metrics::{record_interner_gc, start_prometheus_server};
+use crate::web::metrics::record_interner_gc;
+use crate::web::{start_web_server, WebServerOptions};
 use socket2::SockRef;
 #[cfg(not(windows))]
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -357,13 +358,32 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let shutdown_timeout = config.general.shutdown_timeout.as_std();
 
-        // Prometheus metrics exporter
+        // Web listener (Prometheus exporter + optional UI)
         if config.web.enabled {
+            let admin_password_is_default =
+                config.general.admin_password.is_empty() || config.general.admin_password == "admin";
+            let ui_active = if config.web.ui {
+                if admin_password_is_default {
+                    log::warn!(
+                        "web.ui = true ignored: admin_password is default/empty. \
+                         Set a real admin_password to enable the UI; /metrics keeps working."
+                    );
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+            let host = format!("{}:{}", config.web.host, config.web.port);
+            let opts = WebServerOptions {
+                ui_active,
+                ui_anonymous: config.web.ui_anonymous,
+                admin_username: config.general.admin_username.clone(),
+                admin_password: config.general.admin_password.clone(),
+            };
             tokio::task::spawn(async move {
-                start_prometheus_server(
-                    format!("{}:{}", config.web.host, config.web.port).as_str(),
-                )
-                .await;
+                start_web_server(&host, opts).await;
             });
         }
 

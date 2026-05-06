@@ -1,10 +1,10 @@
 //! Tests for Prometheus metrics exporter.
 
-use super::start_prometheus_server;
 use crate::stats::{
     CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
     TOTAL_CONNECTION_COUNTER,
 };
+use crate::web::{start_web_server, WebServerOptions};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -25,7 +25,16 @@ async fn test_prometheus_server_basic() {
     let server_addr = "127.0.0.1:16432";
     let server_handle = tokio::spawn(async move {
         // This will run indefinitely, so we'll abort it after the test
-        start_prometheus_server(server_addr).await;
+        start_web_server(
+            server_addr,
+            WebServerOptions {
+                ui_active: false,
+                ui_anonymous: true,
+                admin_username: "admin".into(),
+                admin_password: "secret".into(),
+            },
+        )
+        .await;
     });
 
     // Give the server a moment to start
@@ -122,7 +131,16 @@ async fn test_prometheus_server_integration() {
     // Use a random high port to avoid conflicts
     let server_addr = "127.0.0.1:16432";
     let server_handle = tokio::spawn(async move {
-        start_prometheus_server(server_addr).await;
+        start_web_server(
+            server_addr,
+            WebServerOptions {
+                ui_active: false,
+                ui_anonymous: true,
+                admin_username: "admin".into(),
+                admin_password: "secret".into(),
+            },
+        )
+        .await;
     });
 
     // Give the server a moment to start
