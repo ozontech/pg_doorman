@@ -42,6 +42,29 @@ pub(crate) struct OverviewDto {
 
     pub pools_total: u64,
     pub pools_paused: u64,
+
+    /// Process resident-set size in bytes, sampled at request time. Linux
+    /// reads `/proc/self/statm`; macOS shells out to `ps`. Provides the
+    /// "is the pooler leaking memory" tile without requiring Prometheus.
+    pub rss_bytes: u64,
+    /// Seconds since the binary started (`STARTED_AT` lazy in app/server.rs).
+    pub uptime_seconds: u64,
+    /// OS process id. Useful when correlating with external tools (`htop`,
+    /// `lsof`, `gdb`) on the same host.
+    pub pid: u32,
+    /// Number of clients currently connected to the pooler. Mirrors
+    /// `CURRENT_CLIENT_COUNT` in app/server.rs; not derivable from the per-
+    /// pool counts because clients do not always belong to a pool yet (e.g.
+    /// during startup negotiation).
+    pub current_clients: i64,
+    /// Number of clients currently inside an open PG transaction holding
+    /// a backend connection. Mirrors `CLIENTS_IN_TRANSACTIONS`.
+    pub clients_in_transactions: i64,
+    /// Set during `SIGTERM`/admin SHUTDOWN. Operator-visible "the pooler is
+    /// draining, do not deploy now" indicator.
+    pub shutdown_in_progress: bool,
+    /// Set during binary upgrade — clients are migrating to the new process.
+    pub migration_in_progress: bool,
 }
 
 #[derive(Debug, Serialize)]

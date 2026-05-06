@@ -1,10 +1,15 @@
 use std::sync::atomic::Ordering;
 
+use crate::app::server::{
+    CLIENTS_IN_TRANSACTIONS, CURRENT_CLIENT_COUNT, MIGRATION_IN_PROGRESS, SHUTDOWN_IN_PROGRESS,
+    STARTED_AT,
+};
 use crate::stats::pool::PoolStats;
 use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
+use crate::web::metrics::system::get_process_memory_usage;
 use crate::web::routes::dto::OverviewDto;
 
 use super::{cnt, now_unix_ms};
@@ -83,5 +88,16 @@ pub(crate) fn collect_overview() -> OverviewDto {
 
         pools_total: pool_lookup.len() as u64,
         pools_paused,
+
+        rss_bytes: get_process_memory_usage(),
+        uptime_seconds: STARTED_AT
+            .elapsed()
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        pid: std::process::id(),
+        current_clients: CURRENT_CLIENT_COUNT.load(Ordering::Relaxed),
+        clients_in_transactions: CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed),
+        shutdown_in_progress: SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed),
+        migration_in_progress: MIGRATION_IN_PROGRESS.load(Ordering::Relaxed),
     }
 }

@@ -28,6 +28,14 @@ export interface OverviewDto {
   prepared_misses_total: number;
   pools_total: number;
   pools_paused: number;
+  // Process tile fields (added in the backend P0 inventory wedge).
+  rss_bytes: number;
+  uptime_seconds: number;
+  pid: number;
+  current_clients: number;
+  clients_in_transactions: number;
+  shutdown_in_progress: boolean;
+  migration_in_progress: boolean;
 }
 
 export interface PoolDto {

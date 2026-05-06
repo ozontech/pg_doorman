@@ -13,7 +13,7 @@ use prometheus::{
 mod handler;
 #[allow(clippy::module_inception)]
 mod metrics;
-mod system;
+pub(crate) mod system;
 
 #[cfg(test)]
 mod tests;

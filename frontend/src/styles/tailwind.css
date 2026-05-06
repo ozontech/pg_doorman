@@ -1,18 +1,15 @@
 @import "tailwindcss";
 
-/* Bloomberg-Terminal direction: JetBrains Mono everywhere as the working
-   typeface (display + tabular numerics + body). IBM Plex Sans stays loaded
-   as a fallback for prose-heavy contexts; the previous palette was
-   IBM-Plex-Sans + cyan, which read as a generic SaaS skin. Subset trim:
-   latin + cyrillic, woff2 only. */
+/* Bloomberg-Terminal direction: JetBrains Mono is the only typeface —
+   display, body, numerics. Subset trim: latin + cyrillic, weights 400 +
+   500, woff2 only (`font-bold` aka 700 is not used anywhere in the app —
+   `font-semibold`/600 is the heaviest weight rendered, and the browser
+   synthesises that from 500 with no visible artefacting in this face).
+   Result: 4 woff2 files in the bundle, ~150 KB across all subsets. */
 @import "@fontsource/jetbrains-mono/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-500.css";
-@import "@fontsource/jetbrains-mono/latin-700.css";
 @import "@fontsource/jetbrains-mono/cyrillic-400.css";
 @import "@fontsource/jetbrains-mono/cyrillic-500.css";
-@import "@fontsource/jetbrains-mono/cyrillic-700.css";
-@import "@fontsource/ibm-plex-sans/latin-400.css";
-@import "@fontsource/ibm-plex-sans/cyrillic-400.css";
 
 @theme {
   /* Surface — Bloomberg-flat. The whole canvas is one plane carved by
@@ -49,9 +46,9 @@
   --color-chart-3: #39d353;
   --color-chart-4: #ff4d4d;
 
-  /* Typography. JetBrains Mono is the working face; Plex Sans is a
-     prose-only fallback (long descriptions in PageHero, etc). */
-  --font-sans: "JetBrains Mono", "IBM Plex Sans", ui-monospace, monospace;
+  /* Typography. JetBrains Mono is the only typeface; system fallbacks
+     cover the rare case where the woff2 fails to load. */
+  --font-sans: "JetBrains Mono", ui-monospace, monospace;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --font-size-xs:   11px;
   --font-size-sm:   13px;

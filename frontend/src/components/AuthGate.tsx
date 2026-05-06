@@ -14,7 +14,7 @@ import type { VersionDto } from "../types";
  * the modal until a successful retry.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { creds, setCreds, authHeader } = useAdminAuth();
+  const { creds, setCreds, authHeader, remembered } = useAdminAuth();
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState(true);
@@ -51,23 +51,26 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <div className="p-4 text-danger">{error}</div>;
   }
   if (needsAuth) {
-    return <AuthModal currentCreds={creds} onSubmit={setCreds} />;
+    return <AuthModal currentCreds={creds} initialRemember={remembered} onSubmit={setCreds} />;
   }
   return <>{children}</>;
 }
 
 function AuthModal({
   currentCreds,
+  initialRemember,
   onSubmit,
 }: {
   currentCreds: { username: string; password: string } | null;
-  onSubmit: (next: { username: string; password: string }) => void;
+  initialRemember: boolean;
+  onSubmit: (next: { username: string; password: string } | null, remember?: boolean) => void;
 }) {
   const [username, setUsername] = useState(currentCreds?.username ?? "");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(initialRemember);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit({ username, password });
+    onSubmit({ username, password }, remember);
   };
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm">
@@ -86,6 +89,7 @@ function AuthModal({
         </label>
         <input
           autoFocus
+          autoComplete="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           className="mb-3 w-full rounded border border-border-strong bg-surface-2 px-2 py-1.5 text-sm text-text"
@@ -95,10 +99,19 @@ function AuthModal({
         </label>
         <input
           type="password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="mb-4 w-full rounded border border-border-strong bg-surface-2 px-2 py-1.5 text-sm text-text"
+          className="mb-3 w-full rounded border border-border-strong bg-surface-2 px-2 py-1.5 text-sm text-text"
         />
+        <label className="mb-4 flex items-center gap-2 text-sm text-text-muted">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          Remember me on this device
+        </label>
         <button
           type="submit"
           className="w-full rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover"

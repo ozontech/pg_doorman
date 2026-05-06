@@ -48,6 +48,14 @@ pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
 /// Global flag: migration to new process is active. Clients should self-migrate at idle points.
 pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
+/// Process start time. Captured the first time `STARTED_AT` is read (i.e.
+/// during the first poll into `OverviewDto.uptime_seconds`); for the
+/// foreground listener path that happens within a few hundred milliseconds
+/// of `main()` so the value approximates the binary's real boot time
+/// closely enough for an operator console.
+pub static STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
+    std::sync::LazyLock::new(std::time::SystemTime::now);
+
 /// Channel sender for migration payloads. Set once when migration starts.
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
     std::sync::OnceLock::new();
