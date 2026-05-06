@@ -206,6 +206,7 @@
 <ul>
 <li><strong>Admin-консоль</strong> — PostgreSQL-совместимый эндпоинт для <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>, <code>RELOAD</code>, <code>PAUSE</code>, <code>UPGRADE</code> и т.д.</li>
 <li><strong>Prometheus <code>/metrics</code></strong> — встроенный HTTP-эндпоинт с per-pool latency-перцентилями, счётчиками prepared statements, состоянием fallback и метриками TLS.</li>
+<li><strong>Видимость prepared-кеша</strong> — <code>SHOW INTERNER</code> и <code>SHOW POOLS_MEMORY</code> показывают объём интернера и клиентскую разбивку Named / Anonymous, с парными метриками в Prometheus.</li>
 <li><strong><code>pg_doorman -t</code></strong> — валидация конфига без запуска сервера.</li>
 <li><strong><code>pg_doorman generate --host …</code></strong> — собрать starter-конфиг через интроспекцию существующего PostgreSQL.</li>
 </ul>

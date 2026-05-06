@@ -206,6 +206,7 @@
 <ul>
 <li><strong>Admin console</strong> — a PostgreSQL-compatible endpoint for <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>, <code>RELOAD</code>, <code>PAUSE</code>, <code>UPGRADE</code>, etc.</li>
 <li><strong>Prometheus <code>/metrics</code></strong> — built-in HTTP endpoint with per-pool latency percentiles, prepared-statement counters, fallback state, and TLS metrics.</li>
+<li><strong>Prepared-statement cache visibility</strong> — <code>SHOW INTERNER</code> and <code>SHOW POOLS_MEMORY</code> expose interner footprint and per-client Named / Anonymous counts, with matching Prometheus gauges.</li>
 <li><strong><code>pg_doorman -t</code></strong> — validate the config without starting the server.</li>
 <li><strong><code>pg_doorman generate --host …</code></strong> — emit a starter config by introspecting an existing PostgreSQL.</li>
 </ul>

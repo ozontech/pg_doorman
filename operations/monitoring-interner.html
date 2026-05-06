@@ -1,0 +1,364 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Monitoring the Query Interner - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/operations/monitoring-interner.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="monitoring-the-query-interner"><a class="header" href="#monitoring-the-query-interner">Monitoring the Query Interner</a></h1>
+<p>The query interner deduplicates Parse texts in pg_doorman's process
+memory. Two halves run different policies: NAMED is bounded by
+passive <code>Arc::strong_count</code> GC, ANON by per-entry idle TTL
+(<code>query_interner_anon_idle_ttl_seconds</code>). Both expose Prometheus
+gauges, eviction counters, and a sweep duration histogram, plus a
+counter for the synthetic SQLSTATE 26000 returned to clients whose
+anonymous prepared statement is no longer in any cache.</p>
+<p>This page is the operator companion to those metrics: dashboard
+recipe, alert rules, and tuning guidance.</p>
+<h2 id="dashboard"><a class="header" href="#dashboard">Dashboard</a></h2>
+<h3 id="above-the-fold-top-three-panels"><a class="header" href="#above-the-fold-top-three-panels">Above-the-fold (top three panels)</a></h3>
+<ol>
+<li><strong>Stat — interner total bytes.</strong>
+<code>sum(pg_doorman_query_interner_bytes)</code> per instance, with red
+threshold at 1.5 GiB and yellow at 500 MiB. Drives most
+memory-related decisions.</li>
+<li><strong>Time series — entries by kind.</strong> Two lines:
+<ul>
+<li><code>pg_doorman_query_interner_entries{kind="named"}</code></li>
+<li><code>pg_doorman_query_interner_entries{kind="anonymous"}</code>
+Six-hour window. Sustained growth on either line is the cue to
+open the drill-down panels.</li>
+</ul>
+</li>
+<li><strong>Time series — synthetic 26000 rate.</strong>
+<code>rate(pg_doorman_query_interner_synthetic_misses_total[5m])</code>.
+Flat zero is the normal case; any spike means TTL trimmed
+something a client referenced or the driver depended on
+cross-batch unnamed.</li>
+</ol>
+<h3 id="drill-down"><a class="header" href="#drill-down">Drill-down</a></h3>
+<ol start="4">
+<li>Eviction rate, stacked by reason:
+<code>sum by (kind, reason) (rate(pg_doorman_query_interner_evictions_total[5m]))</code></li>
+<li>GC sweep duration heatmap:
+<code>histogram_quantile(0.5, rate(pg_doorman_query_interner_gc_duration_seconds_bucket[5m]))</code>,
+with a P99 line on top.</li>
+<li>Average bytes per entry:
+<code>pg_doorman_query_interner_bytes / pg_doorman_query_interner_entries</code>,
+per kind.</li>
+</ol>
+<h3 id="correlations"><a class="header" href="#correlations">Correlations</a></h3>
+<ol start="7">
+<li>Anon eviction rate vs total query rate. Linear correlation =
+normal traffic; non-linear = ORM dynamic-SQL explosion.</li>
+<li>Synthetic 26000 rate vs P99 query latency. Correlation = TTL is
+killing real traffic; investigate the slow path.</li>
+</ol>
+<h3 id="recommended-dashboard-variables"><a class="header" href="#recommended-dashboard-variables">Recommended dashboard variables</a></h3>
+<ul>
+<li><code>instance</code> — to compare replicas.</li>
+<li><code>kind</code> — to slice gauges and counters down to one half at a time.</li>
+</ul>
+<p>Pool, user, and database labels do not apply to the interner — it
+is process-global. Adding those labels to interner panels would
+mislead readers.</p>
+<h2 id="alert-rules"><a class="header" href="#alert-rules">Alert rules</a></h2>
+<p>A complete <code>groups:</code> block is shipped at
+<code>monitoring/prometheus-rules/pg_doorman_interner.yaml</code>. The five
+alerts:</p>
+<ul>
+<li><strong><code>PgDoormanAnonInternerMemoryHigh</code></strong> (critical) — ANON bytes
+<blockquote>
+<p>1.5 GiB. Tighten TTL or check for ORM dynamic SQL.</p>
+</blockquote>
+</li>
+<li><strong><code>PgDoormanAnonTTLTooShort</code></strong> (critical) — synthetic 26000 rate
+<blockquote>
+<p>1/s for 10 min. Raise TTL or fix the offending driver.</p>
+</blockquote>
+</li>
+<li><strong><code>PgDoormanAnonInternerNotShrinking</code></strong> (warning) — ANON keeps
+growing while TTL evictions are flat. Either TTL is set too long
+or the workload is pushing unique queries faster than they expire.</li>
+<li><strong><code>PgDoormanInternerGCSlow</code></strong> (warning) — GC sweep P99 &gt; 50 ms
+for 15 min. Lengthen <code>query_interner_gc_interval_seconds</code> (this
+knob is <strong>restart-only</strong>; reload won't change the running sweep
+cadence) or shrink the interner via <code>RESET INTERNER</code> plus
+cache-size tuning.</li>
+<li><strong><code>PgDoormanNamedInternerGrowsUnbounded</code></strong> (warning) — NAMED
+entries above 100k with near-zero eviction rate. Almost always a
+code bug holding <code>Arc&lt;str&gt;</code> strong refs forever.</li>
+</ul>
+<p>Cold-start guard: every alert above uses <code>for: &gt; 5m</code>, so the empty
+interner immediately after process start does not trip them.</p>
+<h2 id="sizing"><a class="header" href="#sizing">Sizing</a></h2>
+<p>Steady-state ANON interner footprint, assuming 50% of queries take the
+prepared path and the average SQL text is 2 KiB:</p>
+<div class="table-wrapper"><table><thead><tr><th>RPS</th><th>TTL = 60s</th><th>TTL = 300s</th></tr></thead><tbody>
+<tr><td>100</td><td>~12k entries / ~24 MiB</td><td>~60k / ~120 MiB</td></tr>
+<tr><td>1 000</td><td>~120k / ~240 MiB</td><td>~600k / ~1.2 GiB</td></tr>
+<tr><td>10 000</td><td>~1.2M / ~2.4 GiB</td><td>refuse to size</td></tr>
+</tbody></table>
+</div>
+<p>The interner is process-global, so the cluster-wide footprint scales
+linearly with the number of pg_doorman replicas. Use this as the
+starting estimate for <code>query_interner_anon_idle_ttl_seconds</code> and the
+RAM budget per host; the live <code>pg_doorman_query_interner_bytes</code>
+gauge is authoritative.</p>
+<h2 id="effective-ttl"><a class="header" href="#effective-ttl">Effective TTL</a></h2>
+<p>The eviction policy is two-cycle mark-and-sweep over a sweep that
+ticks at <code>gc_interval / 4</code>. With the defaults
+(<code>gc_interval = 60 s</code>, <code>anon_idle_ttl = 60 s</code>) the sweep runs every
+15 s, so an entry is marked between 60 s and 75 s after it last got
+touched, and removed on the next sweep that still sees it as a
+candidate — i.e. between 75 s and 120 s of total idle time. A shorter
+TTL than the 60 s default does not buy you sub-15-second eviction:
+<code>gc_interval</code> controls the sweep cadence.</p>
+<h2 id="tuning-recipes"><a class="header" href="#tuning-recipes">Tuning recipes</a></h2>
+<h3 id="reduce-ttl-when-memory-pressure-dominates"><a class="header" href="#reduce-ttl-when-memory-pressure-dominates">Reduce TTL when memory pressure dominates</a></h3>
+<p>Trigger: <code>PgDoormanAnonInternerNotShrinking</code> fires, ANON bytes
+approaches the budget for the host.</p>
+<p>Action: drop <code>query_interner_anon_idle_ttl_seconds</code> in <code>general</code>
+config (e.g. 60 → 30). Reload pg_doorman. Watch the eviction rate
+catch up to the new threshold.</p>
+<h3 id="raise-ttl-when-synthetic-26000-fires"><a class="header" href="#raise-ttl-when-synthetic-26000-fires">Raise TTL when synthetic 26000 fires</a></h3>
+<p>Trigger: <code>PgDoormanAnonTTLTooShort</code> fires.</p>
+<p>Action: identify which client and what query — the synthetic-miss
+counter has no labels, so use the WARN log line emitted with each
+miss for client / pool / connection_id context. If the offender is
+a driver that legitimately reuses unnamed Bind across batches,
+raise TTL to cover the gap (e.g. 60 → 300). If it is not, switch
+that client to named prepared.</p>
+<h3 id="run-reset-interner"><a class="header" href="#run-reset-interner">Run RESET INTERNER</a></h3>
+<p>Trigger: ad-hoc diagnostics or memory containment incident.</p>
+<p>Action: <code>psql admin@:6432 -c "RESET INTERNER"</code>. Returns
+<code>CommandComplete RESET</code>. In-flight clients re-Parse on next reuse;
+short-lived ones see no effect because their <code>last_anonymous_hash</code>
+remembers the hash they registered before the reset, and the next
+Bind discovers the missing entry and emits 26000 once before the
+client driver re-issues Parse.</p>
+<h2 id="recording-rules"><a class="header" href="#recording-rules">Recording rules</a></h2>
+<p>Cluster-wide aggregates worth pre-computing for cheaper dashboards:</p>
+<pre><code class="language-yaml">groups:
+  - name: pg_doorman_query_interner_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:query_interner_total_bytes:5m
+        expr: sum without (instance) (pg_doorman_query_interner_bytes)
+      - record: pg_doorman:query_interner_eviction_rate:5m
+        expr: |
+          sum without (instance) (rate(pg_doorman_query_interner_evictions_total[5m]))
+</code></pre>
+<p>The first lets the cluster-wide stat panel scrape one series; the
+second drives the eviction-rate-by-reason panel without re-running
+<code>rate()</code> on every dashboard load.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../operations/signals.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../operations/signals.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

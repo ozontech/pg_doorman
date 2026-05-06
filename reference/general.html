@@ -473,16 +473,55 @@ It should be replaced with your secret.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size">prepared_statements_cache_size</a></h3>
 <p>Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
 This cache stores the mapping from query hash to rewritten prepared statement name.</p>
+<p>For an end-to-end picture of how this knob interacts with <code>server_prepared_statements_cache_size</code>,
+<code>client_anonymous_prepared_cache_size</code>, and the query interner, see the
+<a href="../tutorials/prepared-statements.html">Anonymous Prepared Statement Caching tutorial</a>.</p>
 <p>Default: <code>8192</code>.</p>
-<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size">client_prepared_statements_cache_size</a></h3>
-<p>Maximum number of prepared statements cached per client connection. This is a protection mechanism against
-malicious or misbehaving clients that don't call <code>DEALLOCATE</code> and could cause memory exhaustion by creating
-unlimited prepared statements over long-running connections.</p>
-<p>When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement
-can still be re-used later because the pool-level cache (<code>prepared_statements_cache_size</code>) retains the
-query-to-server-name mapping.</p>
-<p>Set to <code>0</code> to disable the limit (unlimited cache size, relies on client calling <code>DEALLOCATE</code>).</p>
-<p>Default: <code>0 (unlimited)</code>.</p>
+<h3 id="server_prepared_statements_cache_size"><a class="header" href="#server_prepared_statements_cache_size">server_prepared_statements_cache_size</a></h3>
+<p>Sizes the per-backend <code>LruCache&lt;String, ()&gt;</code> of <code>DOORMAN_&lt;N&gt;</code> names independently of the pool-level cache.
+When unset (default), inherits the resolved <code>prepared_statements_cache_size</code> for that pool. A per-pool
+override on this field takes precedence over this general value.</p>
+<p>Lower this knob below the pool size when backends carry too many <code>DOORMAN_&lt;N&gt;</code> rows
+(<code>pg_prepared_statements</code> near the cap, plan memory ballooning) or when faster <code>Close</code> recycling is desired
+without shrinking pool-level hit rate. Forced to 0 when <code>prepared_statements: false</code>.</p>
+<p>Default: <code>not set (inherits prepared_statements_cache_size)</code>.</p>
+<h3 id="client_anonymous_prepared_cache_size"><a class="header" href="#client_anonymous_prepared_cache_size">client_anonymous_prepared_cache_size</a></h3>
+<p>Bounds the Anonymous part of the per-client prepared-statement cache. Anonymous statements are issued
+without an explicit name and are typically short-lived; the LRU caps how many of them a single client
+can accumulate before the oldest one is evicted.</p>
+<p>When unset (default), inherits the resolved <code>prepared_statements_cache_size</code> for the pool. Set to <code>0</code> to
+disable the LRU and fall back to an unlimited map for Anonymous entries; set to a number to bound the
+per-client cache independently of the pool size.</p>
+<p>The Named part of the per-client cache (statements created with an explicit name via <code>PREPARE</code> or the
+extended-query Parse) is <strong>always unbounded</strong> — this knob does not affect it. Named statements stay
+cached for the lifetime of the client connection.</p>
+<p>Default: <code>not set (inherits prepared_statements_cache_size)</code>.</p>
+<h3 id="query_interner_gc_interval_seconds"><a class="header" href="#query_interner_gc_interval_seconds">query_interner_gc_interval_seconds</a></h3>
+<p>The query interner runs a two-cycle mark-and-sweep collector. Named entries
+are evicted when nothing outside the interner holds the <code>Arc&lt;str&gt;</code>; anonymous
+entries are evicted when idle longer than <code>query_interner_anon_idle_ttl_seconds</code>.</p>
+<p>This knob controls how often the collector wakes up. The actual sweep tick
+is <code>gc_interval / 4</code>, so an entry marked on cycle N has roughly a
+quarter-interval before cycle N+1 evicts it; any access during that window
+clears the mark.</p>
+<p>Lower values shrink the interner faster after disconnect waves at the cost
+of more CPU. Setting this to <code>0</code> is rejected at startup.</p>
+<p><strong>Restart-only</strong>: changes to this knob take effect only after a restart;
+a config reload won't change the running sweep cadence.</p>
+<p>Default: <code>60</code>.</p>
+<h3 id="query_interner_anon_idle_ttl_seconds"><a class="header" href="#query_interner_anon_idle_ttl_seconds">query_interner_anon_idle_ttl_seconds</a></h3>
+<p>Bounds the upper memory cost of pg_doorman remembering the SQL text of an
+anonymous prepared statement after the last Bind or Parse referencing the
+same hash. Once an anonymous entry has been idle longer than this many
+seconds it is marked, then evicted on the next sweep that still sees it
+as idle.</p>
+<p>Setting this to <code>0</code> disables TTL eviction entirely. Anonymous entries
+live until the process restarts. This matches the pre-3.7 behaviour and
+is the right choice for legacy deployments that rely on cross-batch
+unnamed prepared statements; everywhere else, leave the default.</p>
+<p><strong>Live-reloadable</strong>: re-read on every sweep, so a config reload changes
+the effective TTL without a restart.</p>
+<p>Default: <code>60</code>.</p>
 <h3 id="message_size_to_be_stream"><a class="header" href="#message_size_to_be_stream">message_size_to_be_stream</a></h3>
 <p>When a PostgreSQL DataRow message exceeds this threshold, pg_doorman switches to streaming mode:
 data is forwarded to the client in 4 KB chunks instead of buffering the entire message.

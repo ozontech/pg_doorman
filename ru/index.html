@@ -162,7 +162,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Drop-in замена для <a href="https://www.pgbouncer.org/">PgBouncer</a> и <a href="https://github.com/yandex/odyssey">Odyssey</a>, альтернатива <a href="https://github.com/postgresml/pgcat">PgCat</a>. Три года в production у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.</p>
-<p><a href="tutorials/installation.html">Скачать PgDoorman 3.6.5</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Скачать PgDoorman 3.7.0</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="Ключевые-возможности"><a class="header" href="#Ключевые-возможности">Ключевые возможности</a></h2>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
@@ -212,14 +212,15 @@
 <a class="admonition-anchor-link" href="#admonition-Кеш-плана-для-анонимных-prepared-statements"></a>
 </div>
 <div>
-<p>PostgreSQL не кеширует план анонимных prepared statements (<code>Parse</code> с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый <code>Bind</code> заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное <code>DOORMAN_&lt;N&gt;</code> на бекенде, и план попадает в named-registry бекенда — переиспользуется между <code>Bind</code>'ами одного клиента и между клиентами, делящими пул.</p>
-<p>PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для <strong>именованных</strong> statement; анонимный <code>Parse</code> пробрасывается без изменений и каждый раз перепланируется. PgDoorman — единственный пулер, который кеширует план анонимного трафика.</p>
+<p>PostgreSQL не кеширует план анонимных prepared statements (<code>Parse</code> с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый <code>Bind</code> заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное <code>DOORMAN_&lt;N&gt;</code> на бекенде, и план попадает в реестр именованных statement бекенда — переиспользуется между <code>Bind</code>'ами одного клиента и между клиентами одного пула.</p>
+<p>PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для <strong>именованных</strong> statement; анонимный <code>Parse</code> пробрасывается без изменений и каждый раз перепланируется. PgDoorman — тот, кто его переписывает.</p>
+<p>Кеш ограничен и наблюдаем. Анонимные записи истекают по бездействию, именованные освобождаются, как только на них никто не ссылается, а <code>SHOW INTERNER</code> и метрики Prometheus показывают объём в реальном времени — поток сгенерированного SQL больше не удерживает память пулера до перезапуска.</p>
 <p><a href="tutorials/prepared-statements.html">Подробнее →</a></p>
 </div>
 </div>
 <h2 id="Почему-pgdoorman"><a class="header" href="#Почему-pgdoorman">Почему PgDoorman</a></h2>
 <ul>
-<li><strong>Prepared statements в transaction mode.</strong> PgDoorman переименовывает клиентские statement names в <code>DOORMAN_N</code> и ведёт кеш на трёх уровнях — pool, client, backend. Драйверы видят свои имена, backend'ы — переименованные. Никаких прикладных <code>DEALLOCATE</code>, никаких <code>DISCARD ALL</code>.</li>
+<li><strong>Кэшируем <code>Parse</code> между клиентами.</strong> План переиспользуется клиентами одного пула — в том числе анонимный <code>Parse</code>, на который опирается большинство драйверов для разовых параметризованных запросов. Кеш ограничен и наблюдаем.</li>
 <li><strong>Многопоточность с одним общим пулом.</strong> Все рабочие потоки делят один пул. PgBouncer однопоточен; рекомендованный способ масштабирования — несколько инстансов за <code>so_reuseport</code> — даёт каждому инстансу свой отдельный пул, и idle-счётчики для одной и той же базы могут расходиться между процессами.</li>
 <li><strong>Подавление thundering herd.</strong> Когда 200 клиентов борются за 4 idle-соединения, PgDoorman ограничивает число параллельно создаваемых backend-соединений (<code>scaling_max_parallel_creates</code>) и направляет возвращающиеся серверы напрямую самому давно ждущему клиенту через in-process oneshot-канал — без перекладывания через idle-очередь.</li>
 <li><strong>Ограниченная хвостовая задержка.</strong> Очередь ожидающих обслуживается строго FIFO — никто не обгоняет того, кто пришёл раньше. Опережающая замена истекающих backend-соединений (на 95% от <code>server_lifetime</code>, до 3 параллельных) удерживает пул прогретым: при ротации поколения соединений нет всплеска checkout-латентности.</li>

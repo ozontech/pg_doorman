@@ -269,15 +269,23 @@ pool cache and skips the backend <code>Parse</code> entirely:</p>
                 Size:    prepared_statements_cache_size (default 8192).
                 Eviction: approximate LRU.
 
-  Client-level  AHashMap or LruCache, per client.
-                Maps Named(client_name) | Anonymous(hash) → CachedStatement.
-                Size:    client_prepared_statements_cache_size
-                         (default 0 = unlimited).
+  Client-level  Named:     AHashMap&lt;String, CachedStatement&gt;, unbounded.
+                Anonymous: LruCache&lt;u64, CachedStatement&gt; bounded by
+                           client_anonymous_prepared_cache_size (defaults to
+                           prepared_statements_cache_size when unset),
+                           or AHashMap if size = 0.
+                Eviction of an Anonymous entry is local: the Arc&lt;Parse&gt;
+                is dropped, the underlying DOORMAN_&lt;N&gt; on the backend
+                stays.
 
   Server-level  LruCache&lt;String, ()&gt;, per backend connection.
                 Tracks which DOORMAN_N this backend already holds.
                 True LRU; on eviction issues Close to the backend.
 </code></pre>
+<p>When the Anonymous LRU evicts an entry, PgDoorman drops the local
+reference and does not send <code>Close</code> to the backend. The underlying
+<code>DOORMAN_&lt;N&gt;</code> is recycled by the server-level LRU or <code>server_lifetime</code>
+(default 20 min), whichever comes first.</p>
 <p>The query text itself is interned via <code>Arc&lt;str&gt;</code>: ten clients sending
 the same anonymous query share one allocation in memory.</p>
 <h2 id="when-the-remap-helps"><a class="header" href="#when-the-remap-helps">When the remap helps</a></h2>
@@ -332,9 +340,11 @@ provides.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Setting</th><th style="text-align: center">Default</th><th>Effect</th></tr></thead><tbody>
 <tr><td><code>prepared_statements_cache_size</code></td><td style="text-align: center">8192</td><td>Pool-level cache size in entries. 0 disables remap.</td></tr>
-<tr><td><code>client_prepared_statements_cache_size</code></td><td style="text-align: center">0</td><td>Per-client cache size. 0 = unlimited (LRU disabled).</td></tr>
+<tr><td><code>client_anonymous_prepared_cache_size</code></td><td style="text-align: center">inherits <code>prepared_statements_cache_size</code></td><td>Per-client Anonymous LRU size. 0 = unlimited. Named is unbounded.</td></tr>
 </tbody></table>
 </div>
+<p>The Named part of the per-client cache is always unlimited and is not
+affected by <code>client_anonymous_prepared_cache_size</code>.</p>
 <p>To disable anonymous remap entirely (rare, for OLAP-only deployments):</p>
 <pre><code class="language-yaml">general:
   prepared_statements_cache_size: 0
@@ -359,15 +369,157 @@ data.</li>
 <p>Applications that depend on PostgreSQL's "anonymous Parse discards
 the previous one" semantics should switch to named statements with
 explicit <code>Close</code>.</p>
+<h2 id="tuning"><a class="header" href="#tuning">Tuning</a></h2>
+<h3 id="sizing-the-cache"><a class="header" href="#sizing-the-cache">Sizing the cache</a></h3>
+<p>PgDoorman's prepared-statement cache has three layers, governed by
+two related config knobs:</p>
+<ul>
+<li><code>prepared_statements_cache_size</code> (default <code>8192</code>) sizes the
+pool-level shared cache — one map per pool, keyed by query hash.
+This is the upper bound on distinct query shapes the pool will
+remember across all clients. Approximate LRU; eviction is O(N) over
+the whole map and never sends Close to a backend (other clients may
+still hold the Arc).</li>
+<li><code>server_prepared_statements_cache_size</code> (default: inherits from
+<code>prepared_statements_cache_size</code>) sizes the per-backend cache —
+one LRU per backend connection, keyed by <code>DOORMAN_&lt;N&gt;</code> name. This
+is the upper bound on distinct prepared statements PgDoorman will
+let a single PostgreSQL backend hold. True LRU (O(1)); eviction
+queues a <code>Close</code> message for the backend, sent on the next Sync or
+Flush — your <code>pg_prepared_statements</code> view may temporarily show
+more rows than the cap until the next Sync arrives.</li>
+<li><code>client_anonymous_prepared_cache_size</code> (default: inherits from
+<code>prepared_statements_cache_size</code>) sizes the per-client Anonymous
+LRU. Set to <code>0</code> to disable the LRU and use an unlimited map; set
+to a number to bound the per-client cache independently of the
+pool size.</li>
+</ul>
+<p>Both knobs accept a per-pool override:</p>
+<pre><code class="language-yaml">general:
+  prepared_statements_cache_size: 8192
+  server_prepared_statements_cache_size: 1024  # tighter per-backend
+
+pools:
+  oltp:
+    # inherits both from general
+    pool_mode: "transaction"
+  reporting:
+    # this pool has wider query diversity; let server cache hold more
+    server_prepared_statements_cache_size: 4096
+    pool_mode: "transaction"
+</code></pre>
+<p>Setting <code>prepared_statements_cache_size: 0</code> disables the entire
+remap and forces server-level LRU to 0 too. Setting
+<code>server_prepared_statements_cache_size: 0</code> while leaving the pool
+size positive is allowed but rarely useful — the per-backend cache
+becomes a pass-through that re-Parses on every cross-backend hit.</p>
+<p>When to lower <code>server_prepared_statements_cache_size</code> below the pool
+size:</p>
+<ul>
+<li>Backends carry too many <code>DOORMAN_&lt;N&gt;</code> rows (<code>pg_prepared_statements</code>
+near the cap, plan memory ballooning).</li>
+<li>You want faster <code>Close</code> recycling without shrinking pool-cache hit
+rate.</li>
+</ul>
+<p>When to keep them equal (the default):</p>
+<ul>
+<li>You don't have a measured backend-memory problem. Leave the inheritance.</li>
+</ul>
+<h3 id="sizing-client_anonymous_prepared_cache_size"><a class="header" href="#sizing-client_anonymous_prepared_cache_size">Sizing <code>client_anonymous_prepared_cache_size</code></a></h3>
+<p>When unset, the per-client Anonymous LRU inherits the resolved
+<code>prepared_statements_cache_size</code> for the pool (default <code>8192</code>). Set
+an explicit value to override that inheritance — <code>0</code> disables the
+LRU and uses an unlimited map, any positive number caps the LRU at
+that size.</p>
+<p>Each entry holds a lightweight <code>(hash, async_name?, Arc&lt;Parse&gt;)</code>
+record — the <code>Arc&lt;Parse&gt;</code> is shared with the pool-level cache, so the
+per-client overhead is roughly <code>~80 bytes</code> of bookkeeping per entry.
+At 10 000 connected clients × 256 entries × ~80 bytes that adds up to
+about 200 MB of headroom on the pooler — predictable and bounded.</p>
+<p>Raise the cap when:</p>
+<ul>
+<li>An ORM or generated SQL framework mints <code>stmt_&lt;seq&gt;</code> per query and
+the <code>Anonymous</code> LRU keeps recycling entries (visible as a sustained
+non-zero rate on <code>pg_doorman_clients_prepared_anonymous_evictions_total</code>).</li>
+<li>The application has a known wide working set per session and the
+eviction rate matches that pressure.</li>
+</ul>
+<p>Lower the cap or raise <code>max_memory_usage</code> for very large connection
+counts (50 000+ clients): at that scale <code>clients × cache_size × 80 bytes</code> of pooler bookkeeping can cross 1 GB, and trimming the cap
+halves it.</p>
+<h3 id="named-is-unbounded-by-design"><a class="header" href="#named-is-unbounded-by-design">Named is unbounded by design</a></h3>
+<p>The Named part of the per-client cache has no upper bound. PgDoorman
+holds the <code>Arc&lt;Parse&gt;</code> for every named statement the client created
+until the client disconnects or sends <code>DEALLOCATE</code> / <code>DEALLOCATE ALL</code>.
+This matches PostgreSQL's own contract — named statements live for the
+session — and avoids the failure mode where evicting a Named entry
+under pressure causes the next <code>Bind</code> to fail with
+<code>prepared statement does not exist</code>.</p>
+<p>The flip side: drivers that mint per-query named statements (some
+pgjdbc and Hibernate flows, some .NET Npgsql configurations) can grow
+the per-client Named map without limit. PgDoorman cannot bound this
+safely; the application is responsible for either reusing names or
+sending <code>DEALLOCATE</code> on names it no longer uses.</p>
+<p>The Anonymous LRU eviction counter
+(<code>pg_doorman_clients_prepared_anonymous_evictions_total</code>) is the only
+side that has a built-in pressure signal. The Named side has none —
+watch the <code>client_named_count</code> column in <code>SHOW POOLS_MEMORY</code> and
+<code>pg_doorman_clients_prepared_named_entries</code> for unexpected growth.</p>
+<h3 id="backend-memory-creep-window"><a class="header" href="#backend-memory-creep-window">Backend memory creep window</a></h3>
+<p>When the Anonymous LRU evicts an entry on the client side, PgDoorman
+drops only the local <code>Arc&lt;Parse&gt;</code>. The corresponding <code>DOORMAN_&lt;N&gt;</code>
+prepared statement stays alive on every PostgreSQL backend that ever
+served it. Two mechanisms eventually clean it up:</p>
+<ul>
+<li><strong>Server-level LRU.</strong> Each backend tracks its own
+<code>LruCache&lt;String, ()&gt;</code> of <code>DOORMAN_&lt;N&gt;</code> names, capped at
+<code>prepared_statements_cache_size</code> (default 8192). When the cap is
+reached, the backend issues <code>Close</code> on the least recently used
+name, releasing the plan.</li>
+<li><strong>Backend rotation.</strong> A backend reaches <code>server_lifetime</code>
+(default 20 min) and pg_doorman closes it; the new backend starts
+with an empty plan cache.</li>
+</ul>
+<p>The worst-case memory footprint per backend is therefore
+<code>prepared_statements_cache_size × ~100 KB</code> of plan memory ≈ 800 MB
+on the PostgreSQL side. To shrink the window:</p>
+<ul>
+<li>Lower <code>prepared_statements_cache_size</code> so the server-level LRU
+recycles plans sooner.</li>
+<li>Lower <code>server_lifetime</code> so backends rotate faster.</li>
+</ul>
+<p>The PostgreSQL system view <code>pg_prepared_statements</code> reports the names
+held by the current backend. Counting rows there per backend tells
+you how close the backend is to the cap.</p>
 <h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
 <p>Admin commands:</p>
 <ul>
-<li><code>SHOW PREPARED_STATEMENTS</code> — pool, hash, name, query text,
-<code>count_used</code>. Top rows by <code>count_used</code> show the hot queries that
-benefit most from the cache.</li>
-<li><code>SHOW POOLS_MEMORY</code> — <code>pool_prepared_count</code>,
+<li>
+<p><code>SHOW PREPARED_STATEMENTS</code> — pool, hash, name, query text,
+<code>count_used</code>, <code>kind</code>. Top rows by <code>count_used</code> show the hot queries
+that benefit most from the cache. The <code>kind</code> column is the last
+column and reports <code>named</code>, <code>anonymous</code>, or <code>mixed</code> depending on
+how clients have used the entry over its lifetime.</p>
+<p>Example output:</p>
+<pre><code class="language-text"> pool         | hash               | name        | query             | count_used | kind
+--------------+--------------------+-------------+-------------------+------------+-----------
+ sharded.user | 1234567890123456   | DOORMAN_1   | SELECT * FROM t1  |     150234 | anonymous
+ sharded.user | 2345678901234567   | DOORMAN_2   | INSERT INTO t2 .. |      87654 | named
+ sharded.user | 3456789012345678   | DOORMAN_3   | SELECT * FROM t3  |      45678 | mixed
+</code></pre>
+</li>
+<li>
+<p><code>SHOW POOLS_MEMORY</code> — <code>pool_prepared_count</code>,
 <code>client_prepared_count</code>, <code>pool_prepared_bytes</code>,
-<code>client_prepared_bytes</code>.</li>
+<code>client_prepared_bytes</code>, plus the breakdown by kind:
+<code>client_named_count</code>, <code>client_anonymous_count</code>,
+<code>client_anonymous_evictions_alive</code>. The last column sums the
+per-client eviction counters across the currently connected
+clients only — disconnected clients drop out of the sum, so this
+column is <em>not</em> monotonic. For the cumulative counter, scrape
+<code>pg_doorman_clients_prepared_anonymous_evictions_total</code> from the
+Prometheus surface instead.</p>
+</li>
 </ul>
 <p>Prometheus metrics (full list in <a href="../reference/prometheus.html">Prometheus</a>):</p>
 <ul>
@@ -375,18 +527,102 @@ benefit most from the cache.</li>
 <li><code>pg_doorman_pool_prepared_cache_bytes</code></li>
 <li><code>pg_doorman_clients_prepared_cache_entries</code></li>
 <li><code>pg_doorman_clients_prepared_cache_bytes</code></li>
+<li><code>pg_doorman_clients_prepared_named_entries{user, database}</code></li>
+<li><code>pg_doorman_clients_prepared_anonymous_entries{user, database}</code></li>
+<li><code>pg_doorman_clients_prepared_anonymous_evictions_total{user, database}</code></li>
 <li><code>pg_doorman_servers_prepared_hits{user, database, backend_pid}</code></li>
 <li><code>pg_doorman_servers_prepared_misses</code></li>
 <li><code>pg_doorman_async_clients_count</code></li>
 </ul>
+<h2 id="alerting"><a class="header" href="#alerting">Alerting</a></h2>
+<h3 id="anonymous-lru-eviction-rate"><a class="header" href="#anonymous-lru-eviction-rate">Anonymous LRU eviction rate</a></h3>
+<p>A sustained non-zero rate on the Anonymous eviction counter means the
+LRU is recycling entries faster than the application reuses them.
+Alert template:</p>
+<pre><code class="language-text">rate(pg_doorman_clients_prepared_anonymous_evictions_total[5m]) &gt; 10
+  for 10m
+</code></pre>
+<p>The threshold of 10 evictions/second per pool is a starting point —
+the right value depends on traffic shape and connection count. Treat
+the alert as "the cap is too tight or the application's working set
+is wider than expected", then either raise <code>client_anonymous_prepared_cache_size</code>
+or investigate whether the application is generating unique queries
+on the hot path.</p>
+<h3 id="kind--mixed-interpretation"><a class="header" href="#kind--mixed-interpretation"><code>kind = mixed</code> interpretation</a></h3>
+<p>Each pool-level cache entry remembers whether clients have used it
+under a Named statement name, an Anonymous one, or both. <code>kind = mixed</code>
+means the same <code>(query, param_types)</code> pair has been parsed by at
+least one client as named and at least one client as anonymous in its
+current lifetime. Most workloads do not see <code>mixed</code> rows; a pool
+dominated by <code>mixed</code> entries indicates a heterogeneous client base
+(different drivers or driver configurations against the same database)
+worth verifying — sometimes intentional, sometimes a sign that one of
+the clients is configured wrong.</p>
+<h3 id="backend-prepared-statement-count"><a class="header" href="#backend-prepared-statement-count">Backend prepared statement count</a></h3>
+<p>PostgreSQL exposes <code>pg_prepared_statements</code> per backend. If pooler
+memory is fine but PostgreSQL backend RSS keeps growing, count rows
+per backend:</p>
+<pre><code class="language-sql">SELECT count(*) FROM pg_prepared_statements;
+</code></pre>
+<p>Numbers near <code>prepared_statements_cache_size</code> (default 8192) per
+backend mean the server-level LRU is at its cap and rotation is the
+only way to release plan memory. If <code>server_lifetime</code> is long, plans
+accumulate for a long time. Lowering either knob releases the
+plan-memory pressure, at the cost of more frequent re-parses on the
+backend.</p>
+<h2 id="bounded-query-interner"><a class="header" href="#bounded-query-interner">Bounded query interner</a></h2>
+<p>The pool-level interner that deduplicates Parse query texts is split
+into two halves:</p>
+<ul>
+<li><strong>NAMED</strong> — text for named prepared statements. An entry stays alive
+as long as any pool or client cache holds an <code>Arc&lt;str&gt;</code> reference.
+The GC task collects entries when nothing outside the interner
+holds a reference any more, with a two-cycle grace period to avoid
+thrash on cold-but-still-needed hashes.</li>
+<li><strong>ANON</strong> — text for anonymous prepared statements. An entry expires
+after <code>query_interner_anon_idle_ttl_seconds</code> of idle time (default
+60 seconds). Setting the knob to <code>0</code> disables TTL eviction — the
+pre-3.7 unbounded behaviour, kept as an escape hatch for legacy
+deployments.</li>
+</ul>
+<p>If both the interner and the pool/client caches drop the text for an
+anonymous prepared statement before the next <code>Bind</code>, pg_doorman
+returns <code>ERROR: unnamed prepared statement does not exist</code>
+(SQLSTATE <code>26000</code>). This is the same error native PostgreSQL raises
+for the same condition; standard drivers handle it transparently by
+re-issuing <code>Parse</code>.</p>
+<p>Binary upgrade (<code>SIGUSR2</code>) carries both NAMED and ANON entries to
+the new process. Anonymous entries land in the new ANON interner
+with a fresh <code>last_used</code> timestamp, so the TTL clock starts over at
+the upgrade moment.</p>
+<h3 id="operator-surface"><a class="header" href="#operator-surface">Operator surface</a></h3>
+<p><code>SHOW INTERNER</code> (admin SQL) prints aggregate counts and bytes per
+kind:</p>
+<pre><code>kind      | entries | bytes
+named     |     420 |    87654
+anonymous |    1337 |   234567
+</code></pre>
+<p><code>SHOW INTERNER N</code> returns the top N entries by interned text length
+with <code>hash</code>, <code>kind</code>, <code>bytes</code>, <code>idle_ms</code> (<code>-1</code> for named — the named
+half tracks GC state, not last-used timestamps), and a 120-character
+preview of the SQL.</p>
+<p><code>RESET INTERNER</code> clears both halves. In-flight clients re-Parse on
+next reuse — diagnostics-only.</p>
+<p>The Prometheus surface mirrors <code>SHOW INTERNER</code> plus a histogram for
+sweep duration and a counter for the synthetic <code>26000</code>s. Tune
+<code>query_interner_anon_idle_ttl_seconds</code> upward when
+<code>pg_doorman_query_interner_synthetic_misses_total</code> shows a sustained
+non-zero rate.</p>
 <h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
 <ul>
 <li><a href="../concepts/pool-modes.html">Pool Modes</a> — transaction mode, where
 prepared-statement remapping is enabled.</li>
 <li><a href="../reference/general.html">General Settings</a> — <code>prepared_statements_cache_size</code>,
-<code>client_prepared_statements_cache_size</code>.</li>
+<code>client_anonymous_prepared_cache_size</code>,
+<code>query_interner_gc_interval_seconds</code>,
+<code>query_interner_anon_idle_ttl_seconds</code>.</li>
 <li><a href="../observability/admin-commands.html">Admin Commands</a> — <code>SHOW PREPARED_STATEMENTS</code>,
-<code>SHOW POOLS_MEMORY</code>.</li>
+<code>SHOW POOLS_MEMORY</code>, <code>SHOW INTERNER</code>, <code>RESET INTERNER</code>.</li>
 <li><a href="../reference/prometheus.html">Prometheus</a> — full metric list.</li>
 </ul>
 

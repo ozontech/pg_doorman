@@ -162,7 +162,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.6.5</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.7.0</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
@@ -213,13 +213,14 @@
 </div>
 <div>
 <p>PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-name <code>Parse</code> most drivers send for one-shot parameterised queries) — every <code>Bind</code> re-runs the planner from scratch. PgDoorman transparently rewrites the empty name to an internal <code>DOORMAN_&lt;N&gt;</code> on the backend, so the plan lands in the backend's named prepared registry and gets reused across <code>Bind</code>s of the same client and across clients sharing the pool.</p>
-<p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the only pooler that caches the plan for anonymous prepared traffic.</p>
+<p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.</p>
+<p>The cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and <code>SHOW INTERNER</code> plus matching Prometheus metrics make the footprint live — so a workload built on dynamically generated SQL can't pin pooler memory forever.</p>
 <p><a href="tutorials/prepared-statements.html">Read more →</a></p>
 </div>
 </div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
 <ul>
-<li><strong>Prepared statements in transaction mode.</strong> PgDoorman remaps client statement names to <code>DOORMAN_N</code> and tracks the cache per pool, per client, and per backend. Drivers see their own names; backends see the remapped ones. No app-level <code>DEALLOCATE</code>, no <code>DISCARD ALL</code>.</li>
+<li><strong>Caches <code>Parse</code> across clients.</strong> Plans are reused between clients sharing a pool — including the anonymous <code>Parse</code> most drivers send for one-shot parameterised queries. The cache is bounded and observable.</li>
 <li><strong>Multi-threaded, single shared pool.</strong> All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind <code>so_reuseport</code> — gives each instance its own pool, and idle counts can drift between processes for the same database.</li>
 <li><strong>Thundering herd suppression.</strong> When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (<code>scaling_max_parallel_creates</code>) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.</li>
 <li><strong>Bounded tail latency.</strong> Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of <code>server_lifetime</code>, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.</li>

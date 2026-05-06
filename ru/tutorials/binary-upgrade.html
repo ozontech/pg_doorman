@@ -317,9 +317,9 @@ round-trip.</li>
 </ol>
 <p><strong>Ограничения:</strong></p>
 <ul>
-<li>Если <code>client_prepared_statements_cache_size</code> нового конфига меньше,
-чем количество entries у клиента -- лишние вытесняются (LRU).
-Оставшиеся работают нормально.</li>
+<li>Если <code>client_anonymous_prepared_cache_size</code> нового конфига меньше --
+лишние Anonymous-записи вытесняются (LRU). Named-часть без лимита и
+переживает миграцию полностью. Оставшиеся entries работают нормально.</li>
 <li>Anonymous prepared statements (<code>Parse</code> с пустым именем) переживают
 миграцию, но требуют повторного <code>Parse</code> перед <code>Bind</code> в новом процессе.</li>
 <li><code>DEALLOCATE ALL</code> после миграции очищает переданный кэш. Повторный
@@ -483,10 +483,11 @@ TLS-клиенты со старым сертификатом всё равно 
 <p>Pool-level кэш prepared statements. Напрямую на миграцию не
 влияет, но pool cache в новом процессе должен быть достаточного
 размера для entries от мигрированных клиентов.</p>
-<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size"><code>client_prepared_statements_cache_size</code></a></h3>
-<p>Per-client кэш prepared statements. Клиентский кэш сериализуется
-полностью при миграции. Если новый конфиг имеет меньшее значение --
-LRU вытесняет лишние записи.</p>
+<h3 id="client_anonymous_prepared_cache_size"><a class="header" href="#client_anonymous_prepared_cache_size"><code>client_anonymous_prepared_cache_size</code></a></h3>
+<p>Per-client Anonymous LRU. Клиентский кэш (и Named, и Anonymous)
+сериализуется полностью при миграции. Если новый конфиг имеет
+меньшее значение -- LRU вытесняет лишние Anonymous-записи; Named без
+лимита и мигрирует целиком.</p>
 <h2 id="Мониторинг"><a class="header" href="#Мониторинг">Мониторинг</a></h2>
 <h3 id="Логи"><a class="header" href="#Логи">Логи</a></h3>
 <p>Ключевые строки в логах при миграции:</p>

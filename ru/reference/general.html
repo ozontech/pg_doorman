@@ -469,16 +469,54 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size">prepared_statements_cache_size</a></h3>
 <p>Размер кеша prepared statements на уровне пула (общий для всех клиентов, подключающихся к одному пулу).
 Кеш хранит соответствие между хешем запроса и переписанным именем prepared statement.</p>
+<p>Полная картина того, как этот параметр взаимодействует с <code>server_prepared_statements_cache_size</code>,
+<code>client_anonymous_prepared_cache_size</code> и query interner — в туториале
+<a href="../tutorials/prepared-statements.html">Anonymous Prepared Statement Caching</a>.</p>
 <p>По умолчанию: <code>8192</code>.</p>
-<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size">client_prepared_statements_cache_size</a></h3>
-<p>Максимальное число prepared statements, кешируемых в одном клиентском соединении. Это механизм защиты
-от вредоносных или некорректно работающих клиентов, которые не вызывают <code>DEALLOCATE</code> и могут вызвать
-исчерпание памяти, создавая неограниченное число prepared statements в долгоживущих соединениях.</p>
-<p>При достижении лимита самая старая запись вытесняется из клиентского кеша. Вытесненный statement
-по-прежнему может быть переиспользован позже, потому что кеш уровня пула (<code>prepared_statements_cache_size</code>)
-сохраняет соответствие запроса и имени на сервере.</p>
-<p>Установите <code>0</code>, чтобы отключить лимит (неограниченный размер кеша, надежда на вызов <code>DEALLOCATE</code> клиентом).</p>
-<p>По умолчанию: <code>0 (unlimited)</code>.</p>
+<h3 id="server_prepared_statements_cache_size"><a class="header" href="#server_prepared_statements_cache_size">server_prepared_statements_cache_size</a></h3>
+<p>Размер LRU <code>DOORMAN_&lt;N&gt;</code> на каждое серверное соединение, независимо от кеша уровня пула.
+Если параметр не задан, наследуется итоговый <code>prepared_statements_cache_size</code> для пула:
+сначала проверяется per-pool override, затем общее значение. Per-pool override этого
+параметра имеет приоритет над общим.</p>
+<p>Уменьшайте значение ниже размера пула, когда бэкенды накапливают слишком много
+<code>DOORMAN_&lt;N&gt;</code> (<code>pg_prepared_statements</code> упирается в лимит, плановая память растёт)
+или когда нужна более быстрая утилизация через <code>Close</code> без уменьшения hit rate
+на уровне пула. При <code>prepared_statements: false</code> принудительно равен <code>0</code>.</p>
+<p>По умолчанию: <code>not set (наследует prepared_statements_cache_size)</code>.</p>
+<h3 id="client_anonymous_prepared_cache_size"><a class="header" href="#client_anonymous_prepared_cache_size">client_anonymous_prepared_cache_size</a></h3>
+<p>Ограничивает Anonymous-часть per-client кеша prepared statements. Анонимные statements отправляются
+без явного имени и обычно короткоживущие; LRU задаёт верхнюю границу того, сколько таких записей
+один клиент может накопить, прежде чем будет выселена самая старая.</p>
+<p>Если параметр не задан, наследуется итоговый <code>prepared_statements_cache_size</code> для пула.
+Установите <code>0</code>, чтобы отключить LRU и хранить Anonymous в неограниченной хеш-таблице;
+задайте число, чтобы ограничить кеш на каждого клиента независимо от размера пула.</p>
+<p>Named-часть per-client кеша (statements, созданные с явным именем через <code>PREPARE</code> или extended-query
+Parse) <strong>всегда без ограничения</strong> — этот параметр на неё не влияет. Named statements живут в кеше до
+закрытия клиентского соединения.</p>
+<p>По умолчанию: <code>not set (наследует prepared_statements_cache_size)</code>.</p>
+<h3 id="query_interner_gc_interval_seconds"><a class="header" href="#query_interner_gc_interval_seconds">query_interner_gc_interval_seconds</a></h3>
+<p>Интернер запросов запускает двухцикловый mark-and-sweep сборщик. Named-записи вытесняются,
+когда вне интернера никто не держит <code>Arc&lt;str&gt;</code>; анонимные — когда простаивают дольше
+<code>query_interner_anon_idle_ttl_seconds</code>.</p>
+<p>Этот параметр задаёт, как часто запускается коллектор. Реальный sweep тикает
+<code>gc_interval / 4</code>, поэтому помеченная на цикле N запись имеет примерно четверть
+интервала, чтобы её прочитали (и сняли пометку), пока цикл N+1 её не вытеснит.</p>
+<p>Меньшие значения быстрее уменьшают интернер после волн отключений ценой большей
+нагрузки на CPU. Значение <code>0</code> отклоняется при старте.</p>
+<p><strong>Restart-only</strong>: изменения подхватываются только после рестарта;
+config reload не меняет частоту проходов работающего процесса.</p>
+<p>По умолчанию: <code>60</code>.</p>
+<h3 id="query_interner_anon_idle_ttl_seconds"><a class="header" href="#query_interner_anon_idle_ttl_seconds">query_interner_anon_idle_ttl_seconds</a></h3>
+<p>Ограничивает верхнюю границу памяти, которую pg_doorman тратит на хранение SQL-текста
+анонимного prepared statement после последнего Bind или Parse, ссылающегося на тот же hash.
+Когда анонимная запись простаивает дольше указанных секунд, она помечается и вытесняется
+на следующем проходе, который всё ещё видит её бездействующей.</p>
+<p>Значение <code>0</code> полностью отключает TTL: анонимные записи живут до перезапуска процесса.
+Это соответствует поведению до 3.7 и нужно для legacy-развёртываний, которые опираются
+на кросс-batch unnamed prepared statements; в остальных случаях оставляйте значение по умолчанию.</p>
+<p><strong>Live-reloadable</strong>: перечитывается на каждом проходе, поэтому config reload меняет
+эффективный TTL без рестарта.</p>
+<p>По умолчанию: <code>60</code>.</p>
 <h3 id="message_size_to_be_stream"><a class="header" href="#message_size_to_be_stream">message_size_to_be_stream</a></h3>
 <p>Когда сообщение DataRow PostgreSQL превышает этот порог, pg_doorman переключается в потоковый режим:
 данные пересылаются клиенту чанками по 4 KB вместо буферизации всего сообщения целиком.

@@ -161,6 +161,96 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="370"><a class="header" href="#370">3.7.0</a></h3>
+<h4 id="action-required-before-upgrading-to-370"><a class="header" href="#action-required-before-upgrading-to-370">ACTION REQUIRED before upgrading to 3.7.0</a></h4>
+<ul>
+<li><strong>SQLSTATE for missing prepared statements changed from <code>58000</code> to
+<code>26000</code>.</strong> Any <code>Bind</code> or <code>Describe</code> referencing a prepared statement
+that pg_doorman cannot resolve now returns SQLSTATE <code>26000</code>
+(<code>invalid_sql_statement_name</code>), matching native PostgreSQL.
+Audit dashboards, log searches, alert rules, and retry middleware
+that filter on <code>58000</code> for this condition (Splunk saved searches,
+Grafana log alerts, custom retry policies). Drivers that auto-retry
+on <code>26000</code> (pgjdbc, pgx with <code>cache_describe</code>) now do so;
+drivers that closed the connection on <code>58000</code> will no longer.</li>
+<li><strong>Migration format v1 is no longer accepted.</strong> Upgrades from a
+pg_doorman that emitted v1 (3.5.0–3.5.x) must hop through
+3.6.x first; from 3.4 and earlier no migration support existed,
+so the upgrade is unaffected.</li>
+<li><strong><code>client_prepared_statements_cache_size</code> is deprecated.</strong> It
+remains a serde alias of <code>client_anonymous_prepared_cache_size</code>,
+with a <code>WARN</code> at startup. Planned for removal in 3.9; rename in
+configs now.</li>
+<li><strong>Anonymous prepared statements have a TTL by default.</strong> The
+query interner evicts an anonymous entry after
+<code>query_interner_anon_idle_ttl_seconds</code> (default 60) of idle time.
+Drivers like pgjdbc and <code>pgx</code> with <code>cache_describe</code> re-issue
+<code>Parse</code> transparently when the next <code>Bind</code> returns SQLSTATE
+<code>26000</code>. If your driver relies on cross-batch unnamed prepared
+statements without a re-Parse, set
+<code>query_interner_anon_idle_ttl_seconds: 0</code> to keep the pre-3.7
+unbounded behaviour.</li>
+</ul>
+<h4 id="added"><a class="header" href="#added">Added</a></h4>
+<ul>
+<li>The query interner is split into NAMED (passive <code>Arc::strong_count</code>
+GC) and ANON (idle TTL). Two general knobs control the GC:
+<code>query_interner_gc_interval_seconds</code> (default 60, restart-only) and
+<code>query_interner_anon_idle_ttl_seconds</code> (default 60; <code>0</code> disables
+TTL and restores pre-3.7 unbounded behaviour; live-reloadable).
+A two-cycle mark-and-sweep grace prevents eviction of entries
+touched between cycles.</li>
+<li><code>SHOW INTERNER</code> reports entries and bytes per kind;
+<code>SHOW INTERNER N</code> lists the top N by interned text length with
+hash, kind, idle_ms, and a 120-character preview; <code>RESET INTERNER</code>
+clears both halves (diagnostics-only).</li>
+<li>Prometheus interner metrics:
+<code>pg_doorman_query_interner_entries{kind}</code>,
+<code>_bytes{kind}</code>, <code>_evictions_total{kind, reason}</code>,
+<code>_synthetic_misses_total</code>, <code>_gc_duration_seconds</code>.</li>
+<li><code>server_prepared_statements_cache_size</code> (general + per-pool)
+sizes the per-backend server-level prepared-statement LRU.
+When unset, inherits <code>prepared_statements_cache_size</code>.</li>
+<li><code>client_anonymous_prepared_cache_size</code> bounds the Anonymous part
+of the per-client cache; named statements remain unbounded. The
+knob is now optional and inherits <code>prepared_statements_cache_size</code>
+when unset (<code>0</code> still means unlimited).</li>
+<li><code>kind</code> column appended to <code>SHOW PREPARED_STATEMENTS</code>
+(<code>named</code> / <code>anonymous</code> / <code>mixed</code>).</li>
+<li><code>SHOW POOLS_MEMORY</code> gains <code>client_named_count</code>,
+<code>client_anonymous_count</code>, and <code>client_anonymous_evictions_alive</code>
+(a gauge of evictions across currently connected clients; the
+authoritative cumulative counter lives in Prometheus as
+<code>pg_doorman_clients_prepared_anonymous_evictions_total</code>). The
+matching gauges <code>pg_doorman_clients_prepared_named_entries</code> /
+<code>..._anonymous_entries</code> round out the surface.</li>
+</ul>
+<h4 id="changed"><a class="header" href="#changed">Changed</a></h4>
+<ul>
+<li>The per-client prepared-statement cache is split into Named
+(unbounded) and Anonymous (LRU). Fixes a bug where the previous
+combined LRU could evict a Named entry and cause the next <code>Bind</code>
+to fail with <code>prepared statement does not exist</code>.</li>
+<li><code>Bind</code> against an anonymous prepared statement that is no longer
+cached anywhere (interner, pool, client) now returns SQLSTATE
+<code>26000</code> (<code>invalid_sql_statement_name</code>) instead of <code>58000</code>,
+matching native PostgreSQL. Standard drivers re-issue <code>Parse</code>
+transparently.</li>
+</ul>
+<h4 id="deprecated"><a class="header" href="#deprecated">Deprecated</a></h4>
+<ul>
+<li><code>client_prepared_statements_cache_size</code> is renamed to
+<code>client_anonymous_prepared_cache_size</code>. The old name remains a
+serde alias and logs a <code>WARN</code> at startup; rename it in your
+config.</li>
+</ul>
+<h4 id="removed"><a class="header" href="#removed">Removed</a></h4>
+<ul>
+<li>Migration format v1 is no longer accepted. Upgrades from versions
+that emitted v1 (3.4 and earlier) must hop through a 3.5–3.6
+binary first; <code>deserialize_state</code> returns <code>unsupported version 1</code>
+otherwise.</li>
+</ul>
 <h3 id="365-may-4-2026"><a class="header" href="#365-may-4-2026">3.6.5 <small>May 4, 2026</small></a></h3>
 <h4 id="fix-stuck-cl_activesv_active-after-large-datarow-client-disconnect-under-pressure"><a class="header" href="#fix-stuck-cl_activesv_active-after-large-datarow-client-disconnect-under-pressure">Fix: stuck <code>cl_active/sv_active</code> after large DataRow client disconnect under pressure</a></h4>
 <p>When a large <code>DataRow</code> was deferred via <code>pending_large_message</code>, <code>recv()</code> cleared the deferred header before streaming. If the client disconnected during streaming write, the next drain/read path lost frame boundaries and could block in <code>wait_available()</code>. Under full pressure, this left <code>cl_active</code>/<code>sv_active</code> pinned at pool size and prevented normal <code>server_lifetime</code> recycling.</p>

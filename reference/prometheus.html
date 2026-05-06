@@ -235,6 +235,14 @@
 <tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance.</td></tr>
 </tbody></table>
 </div>
+<h3 id="per-client-prepared-statement-cache-metrics"><a class="header" href="#per-client-prepared-statement-cache-metrics">Per-Client Prepared Statement Cache Metrics</a></h3>
+<p>The per-client prepared statement cache is split into a Named map (unbounded) and an Anonymous LRU bounded by <code>client_anonymous_prepared_cache_size</code> (defaults to the resolved <code>prepared_statements_cache_size</code> when unset). The three metrics below expose the size of each part and the eviction rate on the bounded part.</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_clients_prepared_named_entries</code></td><td>Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends <code>DEALLOCATE</code>. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer.</td></tr>
+<tr><td><code>pg_doorman_clients_prepared_anonymous_entries</code></td><td>Gauge by user and database. Sum of Anonymous entries across every connected client's cache. Each client's Anonymous part is capped at <code>client_anonymous_prepared_cache_size</code>, so this gauge approaches at most <code>connected_clients * cache_size</code>.</td></tr>
+<tr><td><code>pg_doorman_clients_prepared_anonymous_evictions_total</code></td><td>Counter by user and database. Cumulative count of Anonymous LRU evictions across all clients of the pool. A sustained non-zero rate signals that <code>client_anonymous_prepared_cache_size</code> is too small for the workload and the LRU is recycling entries faster than the application reuses them. The counter is monotonic per pool; an upgrade restarts it from zero.</td></tr>
+</tbody></table>
+</div>
 <h2 id="grafana-dashboard"><a class="header" href="#grafana-dashboard">Grafana Dashboard</a></h2>
 <p>You can create a Grafana dashboard to visualize these metrics. Here's a simple example of panels you might want to include:</p>
 <ol>

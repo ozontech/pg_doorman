@@ -317,8 +317,9 @@ not see this extra round-trip.</li>
 </ol>
 <p><strong>Limits:</strong></p>
 <ul>
-<li>If the new config has a smaller <code>client_prepared_statements_cache_size</code>,
-excess entries are evicted (LRU). The remaining entries work normally.</li>
+<li>If the new config has a smaller <code>client_anonymous_prepared_cache_size</code>,
+excess Anonymous entries are evicted (LRU). Named entries are unbounded
+and survive in full. The remaining entries work normally.</li>
 <li>Anonymous prepared statements (empty-name <code>Parse</code>) survive migration
 but require a re-<code>Parse</code> before <code>Bind</code> in the new process.</li>
 <li><code>DEALLOCATE ALL</code> after migration clears the transferred cache. Re-<code>Parse</code>
@@ -488,10 +489,11 @@ you can tolerate the reconnects.</p>
 <p>Pool-level prepared statement cache. Does not directly affect
 migration, but the pool cache in the new process must be large
 enough to hold entries registered by migrated clients.</p>
-<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size"><code>client_prepared_statements_cache_size</code></a></h3>
-<p>Per-client prepared statement cache. The client's cache is
-serialized in full during migration. If the new config has a
-smaller value, LRU eviction drops excess entries.</p>
+<h3 id="client_anonymous_prepared_cache_size"><a class="header" href="#client_anonymous_prepared_cache_size"><code>client_anonymous_prepared_cache_size</code></a></h3>
+<p>Per-client Anonymous prepared statement LRU. The client's full cache
+(both Named and Anonymous) is serialized during migration. If the new
+config has a smaller value, only Anonymous entries are subject to LRU
+eviction; Named entries are unbounded and migrate intact.</p>
 <h2 id="monitoring"><a class="header" href="#monitoring">Monitoring</a></h2>
 <h3 id="logs"><a class="header" href="#logs">Logs</a></h3>
 <p>Key log lines during migration:</p>
