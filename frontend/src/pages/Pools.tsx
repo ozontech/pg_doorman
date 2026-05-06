@@ -8,6 +8,7 @@ import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
 import { evaluatePool, type PoolEvaluation } from "../lib/thresholds";
+import { describeSqlstate } from "../lib/sqlstate";
 import type { PoolDto, PoolsDto, Severity } from "../types";
 
 const POLL_MS = 1500;
@@ -280,7 +281,10 @@ function PoolRowView({
     >
       <td className="px-4 py-2 font-mono">{pool.id}</td>
       <td className="px-4 py-2 text-text-muted">{pool.pool_mode}</td>
-      <td className="px-4 py-2 text-right">
+      <td
+        className="px-4 py-2 text-right"
+        title={`Saturation = connections / max_connections. Warn ≥ 70%, crit ≥ 90%. Now: ${pool.connections}/${pool.max_connections} = ${(saturation * 100).toFixed(0)}%`}
+      >
         <span
           className={
             saturation >= 0.9 ? "text-danger" : saturation >= 0.7 ? "text-warning" : ""
@@ -294,24 +298,37 @@ function PoolRowView({
       </td>
       <td className="px-4 py-2">
         <div className="flex items-center justify-center gap-2">
-          <MiniSparkline values={satSeries} stroke={satColor} min={0} max={100} />
-          <MiniSparkline
-            values={p95Series}
-            stroke={pool.query_p95_ms > 500 ? "rgb(229 72 77)" : pool.query_p95_ms > 100 ? "rgb(245 165 36)" : "rgb(34 184 207)"}
-          />
+          <span title={`Saturation last 60 s (current ${(saturation * 100).toFixed(0)}%)`}>
+            <MiniSparkline values={satSeries} stroke={satColor} min={0} max={100} />
+          </span>
+          <span title={`Query p95 last 60 s (current ${pool.query_p95_ms} ms; warn > 100, crit > 500)`}>
+            <MiniSparkline
+              values={p95Series}
+              stroke={pool.query_p95_ms > 500 ? "rgb(229 72 77)" : pool.query_p95_ms > 100 ? "rgb(245 165 36)" : "rgb(34 184 207)"}
+            />
+          </span>
         </div>
       </td>
-      <td className={`px-4 py-2 text-right ${pool.waiting > 0 ? "text-warning" : ""}`}>
+      <td
+        className={`px-4 py-2 text-right ${pool.waiting > 0 ? "text-warning" : ""}`}
+        title={`Waiting clients (queue depth). Sustained ≥ 1 for 10 s = degraded; ≥ max(10, 0.10×max_connections) = critical. Now: ${pool.waiting}`}
+      >
         {pool.waiting}
       </td>
       <td
         className={`px-4 py-2 text-right ${
           pool.query_p95_ms > 500 ? "text-danger" : pool.query_p95_ms > 100 ? "text-warning" : ""
         }`}
+        title={`Query p95 over last 60 s. Warn > 100 ms, crit > 500 ms. p99 = ${pool.query_p99_ms} ms`}
       >
         {pool.query_p95_ms}
       </td>
-      <td className="px-4 py-2 text-right">{pool.errors_total}</td>
+      <td
+        className="px-4 py-2 text-right"
+        title={`Cumulative errors since pool warm-up. Click row for SQLSTATE breakdown.`}
+      >
+        {pool.errors_total}
+      </td>
       <td className="px-4 py-2">
         <span
           className={`text-xs ${SEV_TEXT[sev]}`}
@@ -400,7 +417,13 @@ function SqlstateBreakdown({ errors }: { errors?: Record<string, number> }) {
       <div className="text-xs uppercase tracking-wide text-text-dim">Errors by SQLSTATE</div>
       <dl className="mt-2 space-y-1 tabular">
         {top.map(([code, count]) => (
-          <KV key={code} label={code} value={String(count)} />
+          <div key={code} className="flex items-baseline justify-between gap-3">
+            <dt className="flex flex-col">
+              <span className="font-mono text-text">{code}</span>
+              <span className="text-xs text-text-dim">{describeSqlstate(code)}</span>
+            </dt>
+            <dd className="text-text tabular">{count}</dd>
+          </div>
         ))}
         {tail > 0 && <KV label={`other (${entries.length - 5})`} value={String(tail)} />}
       </dl>

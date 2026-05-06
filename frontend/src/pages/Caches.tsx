@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { apiGet } from "../api";
 import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
-import type { InternerDto, PreparedDto } from "../types";
+import type { InternerDto, InternerTopDto, PreparedDto, PreparedTextDto } from "../types";
 
 const POLL_MS = 3000;
 
@@ -49,12 +49,47 @@ function TabButton({
   );
 }
 
+interface TextCell {
+  loading: boolean;
+  text?: string;
+  error?: string;
+}
+
 function PreparedTab() {
   const { authHeader } = useAdminAuth();
   const poll = usePoll<PreparedDto>(
     (signal) => apiGet<PreparedDto>("/api/prepared", authHeader, signal),
     POLL_MS,
   );
+  // Lazy-loaded SQL text per (pool, hash). The /api/prepared response
+  // omits the text on purpose (anonymous-safe public endpoint); admins
+  // fetch it row-by-row via /api/prepared/text/{hash}.
+  const [texts, setTexts] = useState<Record<string, TextCell>>({});
+
+  const toggle = (pool: string, hash: string) => {
+    const key = `${pool}-${hash}`;
+    setTexts((prev) => {
+      const cur = prev[key];
+      if (cur && (cur.text || cur.error)) {
+        // Already loaded — collapse.
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      if (cur?.loading) return prev;
+      return { ...prev, [key]: { loading: true } };
+    });
+    // Avoid double-fetching on re-toggle.
+    if (texts[key]?.text || texts[key]?.error) return;
+    apiGet<PreparedTextDto>(`/api/prepared/text/${hash}`, authHeader)
+      .then((dto) => {
+        setTexts((prev) => ({ ...prev, [key]: { loading: false, text: dto.query } }));
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        setTexts((prev) => ({ ...prev, [key]: { loading: false, error: msg } }));
+      });
+  };
 
   if (poll.error) return <p className="p-4 text-sm text-danger">{poll.error.message}</p>;
   if (!poll.data) return <p className="p-4 text-sm text-text-dim">loading…</p>;
@@ -63,8 +98,8 @@ function PreparedTab() {
     <>
       <SectionHeader
         title="Prepared statements"
-        what="One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip."
-        how="Polled every 3 s from /api/prepared. Counters are cumulative since pool warm-up; lost on LRU eviction."
+        what="One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip. Click a row to fetch the SQL body."
+        how="Polled every 3 s from /api/prepared. The SQL text comes from the admin-only /api/prepared/text/{hash} endpoint and stays cached client-side until you collapse the row."
         normal="Hit rate ≥ 95 % once warm. Amber under 95 %, red under 80 % — bump prepared-statement-cache size if sustained."
       />
       <div className="overflow-x-auto">
@@ -85,22 +120,45 @@ function PreparedTab() {
           {poll.data.prepared.map((r) => {
             const total = r.hits + r.misses;
             const hitRate = total > 0 ? r.hits / total : null;
+            const key = `${r.pool}-${r.hash}`;
+            const cell = texts[key];
             return (
-              <tr key={`${r.pool}-${r.hash}`} className="border-b border-border hover:bg-surface-2">
-                <td className="px-3 py-1.5 font-mono text-xs">{r.pool}</td>
-                <td className="px-3 py-1.5 text-xs text-text-muted">{r.kind}</td>
-                <td className="px-3 py-1.5 text-xs">{r.name || "—"}</td>
-                <td className="px-3 py-1.5 font-mono text-xs text-text-dim">{r.hash}</td>
-                <td className="px-3 py-1.5 text-right">{r.count_used}</td>
-                <td className="px-3 py-1.5 text-right">{r.hits}</td>
-                <td className="px-3 py-1.5 text-right">{r.misses}</td>
-                <td className={`px-3 py-1.5 text-right ${
-                  hitRate !== null && hitRate < 0.8 ? "text-danger" :
-                  hitRate !== null && hitRate < 0.95 ? "text-warning" : ""
-                }`}>
-                  {hitRate === null ? "—" : `${(hitRate * 100).toFixed(1)}%`}
-                </td>
-              </tr>
+              <Fragment key={key}>
+                <tr
+                  className="cursor-pointer border-b border-border hover:bg-surface-2"
+                  onClick={() => toggle(r.pool, r.hash)}
+                  title="Click to fetch the SQL body"
+                >
+                  <td className="px-3 py-1.5 font-mono text-xs">{r.pool}</td>
+                  <td className="px-3 py-1.5 text-xs text-text-muted">{r.kind}</td>
+                  <td className="px-3 py-1.5 text-xs">{r.name || "—"}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs text-text-dim">{r.hash}</td>
+                  <td className="px-3 py-1.5 text-right">{r.count_used}</td>
+                  <td className="px-3 py-1.5 text-right">{r.hits}</td>
+                  <td className="px-3 py-1.5 text-right">{r.misses}</td>
+                  <td className={`px-3 py-1.5 text-right ${
+                    hitRate !== null && hitRate < 0.8 ? "text-danger" :
+                    hitRate !== null && hitRate < 0.95 ? "text-warning" : ""
+                  }`}>
+                    {hitRate === null ? "—" : `${(hitRate * 100).toFixed(1)}%`}
+                  </td>
+                </tr>
+                {cell && (
+                  <tr className="border-b border-border bg-surface-2">
+                    <td colSpan={8} className="px-4 py-2">
+                      {cell.loading && <span className="text-xs text-text-dim">loading SQL…</span>}
+                      {cell.error && (
+                        <span className="text-xs text-danger">SQL fetch failed: {cell.error}</span>
+                      )}
+                      {cell.text && (
+                        <pre className="whitespace-pre-wrap break-all font-mono text-xs text-text">
+{cell.text}
+                        </pre>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -117,6 +175,13 @@ function InternerTab() {
   const { authHeader } = useAdminAuth();
   const poll = usePoll<InternerDto>(
     (signal) => apiGet<InternerDto>("/api/interner", authHeader, signal),
+    POLL_MS,
+  );
+  // Admin-only top-N from /api/interner/top — needed to show *which*
+  // entries dominate the cache. Without it the tab is just two summary
+  // cards and offers no actionable information.
+  const topPoll = usePoll<InternerTopDto>(
+    (signal) => apiGet<InternerTopDto>("/api/interner/top?n=20", authHeader, signal),
     POLL_MS,
   );
 
@@ -141,6 +206,45 @@ function InternerTab() {
         <Card title="Named" entries={poll.data.named.entries} bytes={poll.data.named.bytes} fmtBytes={fmtBytes} />
         <Card title="Anonymous" entries={poll.data.anonymous.entries} bytes={poll.data.anonymous.bytes} fmtBytes={fmtBytes} />
       </div>
+      <SectionHeader
+        title="Top entries by bytes"
+        what="Largest interned SQL texts across both kinds. Useful for spotting outlier statements that bloat the cache."
+        how="Admin-only /api/interner/top?n=20. The preview is the first 120 characters of the SQL text, truncated to keep multi-byte sequences whole."
+      />
+      {topPoll.error && (
+        <p className="px-6 pb-4 text-sm text-danger">{topPoll.error.message}</p>
+      )}
+      {topPoll.data && (
+        <div className="overflow-x-auto px-6 pb-6">
+          <table className="w-full text-sm tabular">
+            <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
+              <tr>
+                <th className="px-3 py-2 text-left">Hash</th>
+                <th className="px-3 py-2 text-left">Kind</th>
+                <th className="px-3 py-2 text-right">Bytes</th>
+                <th className="px-3 py-2 text-right">Idle ms</th>
+                <th className="px-3 py-2 text-left">Preview</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topPoll.data.entries.map((e) => (
+                <tr key={e.hash} className="border-b border-border hover:bg-surface-2">
+                  <td className="px-3 py-1.5 font-mono text-xs text-text-dim">{e.hash}</td>
+                  <td className="px-3 py-1.5 text-xs text-text-muted">{e.kind}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtBytes(e.bytes)}</td>
+                  <td className="px-3 py-1.5 text-right text-xs text-text-muted">
+                    {e.idle_ms < 0 ? "—" : e.idle_ms}
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-xs">{e.preview}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {topPoll.data.entries.length === 0 && (
+            <p className="p-4 text-sm text-text-dim">No interned entries yet.</p>
+          )}
+        </div>
+      )}
     </>
   );
 }

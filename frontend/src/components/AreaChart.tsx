@@ -55,8 +55,26 @@ export function AreaChart({ data, labels, fills, height = 200, syncKey }: AreaCh
     [labels, fills, height, syncKey],
   );
 
+  // Static legend above the canvas. uPlot's built-in legend renders inline
+  // values which we don't need; a fixed colour-swatch row tells operators
+  // which band is which without forcing them to remember the stack order.
+  const totals = useMemo(() => data.slice(1).map((s) => s[s.length - 1] ?? 0), [data]);
+
   return (
     <div className="w-full overflow-hidden">
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 px-2 text-xs text-text-muted">
+        {labels.map((l, i) => (
+          <span key={l} className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ background: fills[i] }}
+            />
+            <span>{l}</span>
+            <span className="tabular text-text-dim">{Math.round(totals[i] ?? 0)}</span>
+          </span>
+        ))}
+      </div>
       <Chart data={stacked} options={options} />
     </div>
   );

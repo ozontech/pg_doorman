@@ -140,6 +140,33 @@ export interface PreparedDto {
   prepared: PreparedRowDto[];
 }
 
+// Admin-only response for /api/prepared/text/{hash}.
+export interface PreparedTextDto {
+  ts: number;
+  hash: string;
+  pool: string;
+  name: string;
+  query: string;
+  kind: string;
+}
+
+// Admin-only response for /api/interner/top.
+export interface InternerTopRowDto {
+  hash: string;
+  kind: string;
+  bytes: number;
+  // Idle milliseconds for anonymous entries; -1 for named entries.
+  idle_ms: number;
+  // First 120 chars of the SQL text, truncated by chars (not bytes).
+  preview: string;
+}
+
+export interface InternerTopDto {
+  ts: number;
+  n: number;
+  entries: InternerTopRowDto[];
+}
+
 export interface LogEntryDto {
   seq: number;
   ts_ms: number;

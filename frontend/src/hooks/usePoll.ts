@@ -27,7 +27,14 @@ export function usePoll<T>(
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    let intervalId: number | null = null;
+
     const tick = () => {
+      // Skip background ticks: when the tab is hidden, browsers throttle
+      // setInterval (often to 1 Hz minimum) and abort/clear pending fetches
+      // anyway. A skipped tick keeps the user-visible last sample fresh
+      // without faking new history points.
+      if (typeof document !== "undefined" && document.hidden) return;
       fetcherRef
         .current(controller.signal)
         .then((data) => {
@@ -43,12 +50,40 @@ export function usePoll<T>(
           }));
         });
     };
+
+    const startInterval = () => {
+      if (intervalId !== null) return;
+      intervalId = window.setInterval(tick, intervalMs);
+    };
+    const stopInterval = () => {
+      if (intervalId === null) return;
+      window.clearInterval(intervalId);
+      intervalId = null;
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopInterval();
+      } else {
+        // Resume immediately so the user does not wait a full interval
+        // for the first sample after returning to the tab.
+        tick();
+        startInterval();
+      }
+    };
+
     tick();
-    const id = window.setInterval(tick, intervalMs);
+    if (typeof document === "undefined" || !document.hidden) startInterval();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+
     return () => {
       cancelled = true;
       controller.abort();
-      window.clearInterval(id);
+      stopInterval();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, [intervalMs]);
 

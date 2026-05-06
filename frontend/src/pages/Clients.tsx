@@ -142,9 +142,13 @@ export default function Clients() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-3 py-2 text-left">Client</th>
+            <th className="px-3 py-2 text-left">Addr</th>
             <th className="px-3 py-2 text-left">Pool</th>
             <th className="px-3 py-2 text-left">App</th>
             <th className="px-3 py-2 text-left">State</th>
+            <th className="px-3 py-2 text-right" title="Wait reason / waited milliseconds">
+              Wait
+            </th>
             <th className="cursor-pointer px-3 py-2 text-right" onClick={() => onSort("current_query_age_ms")}>
               Q age ms{sortIndicator("current_query_age_ms")}
             </th>
@@ -157,13 +161,14 @@ export default function Clients() {
             <th className="cursor-pointer px-3 py-2 text-right" onClick={() => onSort("errors_total")}>
               Errors{sortIndicator("errors_total")}
             </th>
-            <th className="px-3 py-2 text-left">TLS</th>
+            <th className="px-3 py-2 text-left" title="TLS-encrypted client connection">TLS</th>
           </tr>
         </thead>
         <tbody>
           {poll.data?.clients.map((c) => (
             <tr key={c.client_id} className="border-b border-border hover:bg-surface-2">
               <td className="px-3 py-1.5 font-mono text-xs">{c.client_id}</td>
+              <td className="px-3 py-1.5 font-mono text-xs text-text-muted">{c.addr || "—"}</td>
               <td className="px-3 py-1.5 text-xs">{c.user}@{c.database}</td>
               <td className="px-3 py-1.5 text-xs text-text-muted">{c.application_name || "—"}</td>
               <td className="px-3 py-1.5 text-xs">
@@ -175,13 +180,22 @@ export default function Clients() {
                   {c.state}
                 </span>
               </td>
+              <td className="px-3 py-1.5 text-right text-xs text-text-muted">
+                {c.wait && c.wait !== "none" ? (
+                  <span title={`reason: ${c.wait}`}>{c.wait_ms ? `${c.wait_ms} ms` : c.wait}</span>
+                ) : (
+                  "—"
+                )}
+              </td>
               <td className="px-3 py-1.5 text-right">{c.current_query_age_ms || "—"}</td>
               <td className="px-3 py-1.5 text-right">{c.age_seconds}</td>
               <td className="px-3 py-1.5 text-right">{c.queries_total}</td>
               <td className={`px-3 py-1.5 text-right ${c.errors_total > 0 ? "text-warning" : ""}`}>
                 {c.errors_total}
               </td>
-              <td className="px-3 py-1.5 text-xs text-text-muted">{c.tls ? "✓" : ""}</td>
+              <td className="px-3 py-1.5 text-xs text-text-muted" title={c.tls ? "TLS" : "plaintext"}>
+                {c.tls ? "✓" : ""}
+              </td>
             </tr>
           ))}
         </tbody>

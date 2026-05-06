@@ -91,8 +91,37 @@ export function DualAxisChart({
     ],
   );
 
+  const leftLatest = data[1][data[1].length - 1] ?? 0;
+  const rightLatest = data[2][data[2].length - 1] ?? 0;
+
   return (
     <div className="w-full overflow-hidden">
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 px-2 text-xs text-text-muted">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-block h-2 w-2 rounded-sm"
+            style={{ background: leftStroke }}
+          />
+          <span>{leftLabel} (left)</span>
+          <span className="tabular text-text-dim">{Math.round(leftLatest)}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-block h-2 w-2 rounded-sm"
+            style={{ background: rightStroke }}
+          />
+          <span>{rightLabel} (right)</span>
+          <span className="tabular text-text-dim">{Math.round(rightLatest)}</span>
+        </span>
+        {rightWarn !== undefined && (
+          <span className="text-warning">warn ≥ {rightWarn}</span>
+        )}
+        {rightCrit !== undefined && (
+          <span className="text-danger">crit ≥ {rightCrit}</span>
+        )}
+      </div>
       <Chart data={data} options={options} />
     </div>
   );

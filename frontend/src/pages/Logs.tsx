@@ -124,10 +124,15 @@ export default function Logs() {
           ))}
         </select>
         <input
-          placeholder="target substring"
+          placeholder="module e.g. pool, auth, stats"
+          title={
+            "Substring match against the target column (Rust module path). " +
+            "Examples: 'pool' — connection pool events; 'auth' — authentication; " +
+            "'stats' — periodic stats dumps; 'server::stream' — backend protocol I/O."
+          }
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          className="w-48 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
+          className="w-64 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
         />
         <button
           type="button"

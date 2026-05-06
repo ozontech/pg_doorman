@@ -24,7 +24,10 @@ pub struct WebServerOptions {
     /// `true` when `[web].ui = true` AND admin_password is non-default.
     /// When `false`, the listener serves only `/metrics`; everything else → 404.
     pub ui_active: bool,
-    /// `[web].ui_anonymous` (gates public `/api/*` and SPA paths when ui_active).
+    /// `[web].ui_anonymous` — gates the public `/api/*` endpoints when
+    /// `ui_active`. The SPA shell (HTML/CSS/JS/font/svg) is always served
+    /// anonymously so a hard refresh of a deep link does not trigger a
+    /// browser-native basic-auth prompt on top of the React `AuthGate`.
     pub ui_anonymous: bool,
     pub admin_username: String,
     pub admin_password: String,
@@ -430,14 +433,21 @@ fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome)
         return Response::status(404, "Not Found");
     }
 
-    let admin_only = req.path.starts_with("/api/") && is_admin_only(req.path);
+    let is_api = req.path.starts_with("/api/");
+    let admin_only = is_api && is_admin_only(req.path);
 
-    let needs_admin = admin_only || (!opts.ui_anonymous);
+    // The SPA shell (HTML, CSS, JS, fonts, favicon) carries no operator data
+    // — the basic-auth challenge is reserved for `/api/*`. Letting the shell
+    // load anonymously avoids the double-prompt operators saw on a deep link:
+    // browser-native basic auth on the HTML, then the React `AuthGate` modal
+    // on the first JSON fetch. Now the React modal is the single password
+    // prompt the operator ever sees.
+    let needs_admin = admin_only || (is_api && !opts.ui_anonymous);
     if needs_admin && auth != AuthOutcome::Admin {
         return unauthorized_for(req);
     }
 
-    if req.path.starts_with("/api/") {
+    if is_api {
         return route_api(req);
     }
 
@@ -674,6 +684,38 @@ mod tests {
                 .any(|(k, v)| *k == "Content-Type" && v.contains("text/html")),
             "deep link should fall back to the SPA shell"
         );
+    }
+
+    #[test]
+    fn dispatch_serves_spa_shell_anonymously_when_ui_anonymous_false() {
+        // Hard-refreshing a deep link must not trigger a browser-native
+        // basic-auth prompt on top of the React `AuthGate`. The SPA shell is
+        // anonymous regardless of `ui_anonymous`; only `/api/*` is gated.
+        for path in ["/", "/overview", "/pools/some-pool"] {
+            let r = dispatch(&req("GET", path), &opts(true, false), AuthOutcome::Anonymous);
+            assert_eq!(
+                r.status, 200,
+                "anonymous SPA shell should serve {path} with ui_anonymous=false"
+            );
+            assert!(
+                r.extra_headers
+                    .iter()
+                    .any(|(k, v)| *k == "Content-Type" && v.contains("text/html")),
+                "{path} should serve the SPA shell as text/html"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_still_gates_api_when_ui_anonymous_false_after_spa_relax() {
+        // Counterpart to `dispatch_serves_spa_shell_anonymously_when_ui_anonymous_false`:
+        // the loosened gate must not leak `/api/*` to anonymous callers.
+        let r = dispatch(
+            &req("GET", "/api/overview"),
+            &opts(true, false),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 401);
     }
 
     #[test]
