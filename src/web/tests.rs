@@ -180,3 +180,55 @@ async fn api_servers_returns_envelope() {
     assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
     assert!(raw.contains("\"servers\""), "raw={raw}");
 }
+
+#[tokio::test]
+async fn api_connections_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/connections HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    for field in [
+        "\"ts\"",
+        "\"total\"",
+        "\"tls\"",
+        "\"plain\"",
+        "\"cancel\"",
+        "\"errors\"",
+    ] {
+        assert!(raw.contains(field), "missing {field} in {raw}");
+    }
+}
+
+#[tokio::test]
+async fn api_stats_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/stats HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"ts\""), "raw={raw}");
+    assert!(raw.contains("\"stats\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_databases_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/databases HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"ts\""), "raw={raw}");
+    assert!(raw.contains("\"databases\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_users_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/users HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"ts\""), "raw={raw}");
+    assert!(raw.contains("\"users\""), "raw={raw}");
+}

@@ -128,10 +128,10 @@ pub struct PoolStats {
     pub total_query_count: u64,
 
     /// Total bytes received from clients
-    total_received: u64,
+    pub total_received: u64,
 
     /// Total bytes sent to clients
-    total_sent: u64,
+    pub total_sent: u64,
 
     /// Total transaction processing time (microseconds)
     pub total_xact_time_microseconds: u64,
@@ -169,16 +169,16 @@ pub struct PoolStats {
     pub async_clients_count: u64,
 
     /// Average bytes received per second
-    avg_recv: u64,
+    pub avg_recv: u64,
 
     /// Average bytes sent per second
-    avg_sent: u64,
+    pub avg_sent: u64,
 
     /// Average transaction processing time (microseconds)
-    avg_xact_time_microsecons: u64,
+    pub avg_xact_time_microsecons: u64,
 
     /// Average query processing time (microseconds)
-    avg_query_time_microseconds: u64,
+    pub avg_query_time_microseconds: u64,
 
     /// Whether the pool is paused (PAUSE command)
     pub paused: bool,

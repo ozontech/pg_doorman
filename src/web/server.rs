@@ -275,7 +275,11 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/overview" => routes::overview::handle_overview(),
         "/api/pools" => routes::pools::handle_pools(),
         "/api/clients" => routes::clients::handle_clients(&query),
+        "/api/connections" => routes::connections::handle_connections(),
+        "/api/databases" => routes::databases::handle_databases(),
         "/api/servers" => routes::servers::handle_servers(&query),
+        "/api/stats" => routes::stats::handle_stats(),
+        "/api/users" => routes::users::handle_users(),
         _ => Response::json(
             501,
             "Not Implemented",
@@ -522,6 +526,46 @@ mod tests {
     fn dispatch_servers_returns_200() {
         let r = dispatch(
             &req("GET", "/api/servers"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_connections_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/connections"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_stats_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/stats"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_databases_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/databases"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_users_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/users"),
             &opts(true, true),
             AuthOutcome::Anonymous,
         );

@@ -15,8 +15,9 @@ use crate::stats::{
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
 use crate::web::routes::dto::{
-    ClientDto, ClientFilters, ClientSort, ClientsDto, OverviewDto, PoolDto, PoolsDto, ServerDto,
-    ServerFilters, ServerSort, ServersDto, SortOrder, VersionDto,
+    ClientDto, ClientFilters, ClientSort, ClientsDto, ConnectionsDto, DatabaseDto, DatabasesDto,
+    OverviewDto, PoolDto, PoolsDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder,
+    StatsDto, StatsRowDto, UserDto, UsersDto, VersionDto,
 };
 
 fn cnt(counter: &AtomicUsize) -> u64 {
@@ -366,6 +367,128 @@ fn server_to_dto(s: &std::sync::Arc<crate::stats::ServerStats>) -> ServerDto {
         prepared_hits_total: s.prepared_hit_count.load(Ordering::Relaxed),
         prepared_misses_total: s.prepared_miss_count.load(Ordering::Relaxed),
         prepared_cache_size: s.prepared_cache_size.load(Ordering::Relaxed),
+    }
+}
+
+pub fn collect_connections() -> ConnectionsDto {
+    connections_from_raw(
+        cnt(&TOTAL_CONNECTION_COUNTER),
+        cnt(&TLS_CONNECTION_COUNTER),
+        cnt(&PLAIN_CONNECTION_COUNTER),
+        cnt(&CANCEL_CONNECTION_COUNTER),
+    )
+}
+
+/// Builds a `ConnectionsDto` from raw counter values. Pure function — exists
+/// so the `errors = total - tls - plain - cancel` derivation is exercised by
+/// unit tests without touching the global atomics.
+fn connections_from_raw(total: u64, tls: u64, plain: u64, cancel: u64) -> ConnectionsDto {
+    ConnectionsDto {
+        ts: now_unix_ms(),
+        total,
+        tls,
+        plain,
+        cancel,
+        // `errors` mirrors `SHOW CONNECTIONS`: it is whatever is left after
+        // subtracting the categorised counters from the total. May be zero or
+        // positive in normal operation.
+        errors: total
+            .saturating_sub(tls)
+            .saturating_sub(plain)
+            .saturating_sub(cancel),
+    }
+}
+
+pub fn collect_stats() -> StatsDto {
+    let pool_lookup = PoolStats::construct_pool_lookup();
+    let mut stats: Vec<StatsRowDto> = pool_lookup
+        .iter()
+        .map(|(identifier, s)| StatsRowDto {
+            id: format!("{}@{}", identifier.user, identifier.db),
+            database: identifier.db.clone(),
+            user: identifier.user.clone(),
+            total_xact_count: s.total_xact_count,
+            total_query_count: s.total_query_count,
+            total_received: s.total_received,
+            total_sent: s.total_sent,
+            total_xact_time: s.total_xact_time_microseconds,
+            total_query_time: s.total_query_time_microseconds,
+            total_wait_time: s.wait_time,
+            total_errors: s.errors,
+            avg_xact_count: s.avg_xact_count,
+            avg_query_count: s.avg_query_count,
+            avg_recv: s.avg_recv,
+            avg_sent: s.avg_sent,
+            // `avg_errors` mirrors `generate_show_stats_row`: uses `errors` (no
+            // per-window rate stored in PoolStats).
+            avg_errors: s.errors,
+            avg_xact_time: s.avg_xact_time_microsecons,
+            avg_query_time: s.avg_query_time_microseconds,
+            avg_wait_time: s.avg_wait_time,
+        })
+        .collect();
+
+    // Stable order: same `id` ordering as `/api/pools` for deterministic UI.
+    stats.sort_by(|a, b| a.id.cmp(&b.id));
+
+    StatsDto {
+        ts: now_unix_ms(),
+        stats,
+    }
+}
+
+pub fn collect_databases() -> DatabasesDto {
+    let pools_map = get_all_pools();
+    let mut databases: Vec<DatabaseDto> = pools_map
+        .iter()
+        .map(|(_identifier, pool)| {
+            let address = pool.address();
+            let settings = &pool.settings;
+            DatabaseDto {
+                name: address.name(),
+                host: address.host.clone(),
+                port: address.port,
+                database: address.database.clone(),
+                force_user: settings.user.username.clone(),
+                pool_size: settings.user.pool_size,
+                min_pool_size: settings.user.min_pool_size.unwrap_or(0),
+                // See DatabaseDto::reserve_pool — mirrors SHOW DATABASES quirk.
+                reserve_pool: 0,
+                pool_mode: settings.pool_mode.to_string(),
+                max_connections: settings.user.pool_size,
+                current_connections: pool.pool_state().size as u32,
+            }
+        })
+        .collect();
+
+    // Deterministic order using the pool name composite key.
+    databases.sort_by(|a, b| a.name.cmp(&b.name));
+
+    DatabasesDto {
+        ts: now_unix_ms(),
+        databases,
+    }
+}
+
+pub fn collect_users() -> UsersDto {
+    let pools_map = get_all_pools();
+    let mut users: Vec<UserDto> = pools_map
+        .iter()
+        .map(|(identifier, pool)| UserDto {
+            name: identifier.user.clone(),
+            pool_mode: pool.settings.pool_mode.to_string(),
+        })
+        .collect();
+
+    users.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.pool_mode.cmp(&b.pool_mode))
+    });
+
+    UsersDto {
+        ts: now_unix_ms(),
+        users,
     }
 }
 
@@ -789,5 +912,33 @@ mod tests {
         f.limit = MAX_LIMIT + 9999;
         let result = collect_servers_from(servers, &f);
         assert_eq!(result.limit, MAX_LIMIT);
+    }
+
+    // ---------------------------------------------------------------------------
+    // ConnectionsDto math
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn connections_errors_derive_from_total_minus_categorised() {
+        let dto = super::connections_from_raw(100, 60, 30, 5);
+        assert_eq!(dto.total, 100);
+        assert_eq!(dto.tls, 60);
+        assert_eq!(dto.plain, 30);
+        assert_eq!(dto.cancel, 5);
+        assert_eq!(dto.errors, 5);
+    }
+
+    #[test]
+    fn connections_errors_zero_when_categories_cover_total() {
+        let dto = super::connections_from_raw(50, 30, 15, 5);
+        assert_eq!(dto.errors, 0);
+    }
+
+    #[test]
+    fn connections_errors_saturate_when_categories_exceed_total() {
+        // Race: categorised counters momentarily ahead of total.
+        // Without saturating_sub this would underflow into u64::MAX.
+        let dto = super::connections_from_raw(10, 8, 5, 0);
+        assert_eq!(dto.errors, 0);
     }
 }
