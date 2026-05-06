@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiGet } from "../api";
-import { Drawer } from "../components/Drawer";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
@@ -8,7 +8,6 @@ import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
 import { evaluatePool, type PoolEvaluation } from "../lib/thresholds";
-import { describeSqlstate } from "../lib/sqlstate";
 import type { PoolDto, PoolsDto, Severity } from "../types";
 
 const POLL_MS = 1500;
@@ -79,10 +78,10 @@ export default function Pools() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poll.data?.ts]);
 
+  const navigate = useNavigate();
   const [filters, setFilters] = useState<Filters>({ query: "", severity: "all" });
   const [sortKey, setSortKey] = useState<SortKey>("saturation");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [openId, setOpenId] = useState<string | null>(null);
 
   const evaluated: Row[] = useMemo(() => {
     if (!poll.data) return [];
@@ -144,10 +143,6 @@ export default function Pools() {
   const seriesFor = (poolId: string, extract: (s: RowSnap) => number): number[] =>
     snapHistory.history.map((snap) => snap[poolId] ?? null).filter((v): v is RowSnap => v !== null).map(extract);
 
-  const openRow = openId
-    ? evaluated.find((r) => r.pool.id === openId) ?? null
-    : null;
-
   if (poll.error) {
     return (
       <section className="p-6">
@@ -161,7 +156,7 @@ export default function Pools() {
     <section className="flex flex-col">
       <PageHero
         title="Pools"
-        description="Per-pool table backed by /api/pools, polled every 1.5 s. Each row inlines mini-sparklines for the four signals operators care about; click a row for the full per-pool drawer."
+        description="Per-pool table backed by /api/pools, polled every 1.5 s. Each row inlines mini-sparklines for the four signals operators care about; click a row to open the full pool detail page (/pools/:id)."
       />
       <SectionHeader
         title="Filter & sort"
@@ -232,7 +227,7 @@ export default function Pools() {
               row={row}
               satSeries={seriesFor(row.pool.id, (s) => s.saturation * 100)}
               p95Series={seriesFor(row.pool.id, (s) => s.query_p95_ms)}
-              onOpen={() => setOpenId(row.pool.id)}
+              onOpen={() => navigate(`/pools/${encodeURIComponent(row.pool.id)}`)}
             />
           ))}
         </tbody>
@@ -241,20 +236,6 @@ export default function Pools() {
         <p className="px-4 py-4 text-sm text-text-dim">No pools match the current filter.</p>
       )}
       {!poll.data && <p className="px-4 py-4 text-sm text-text-dim">Loading…</p>}
-      <Drawer
-        open={openRow !== null}
-        title={openRow?.pool.id ?? ""}
-        onClose={() => setOpenId(null)}
-      >
-        {openRow && (
-          <PoolDetail
-            row={openRow}
-            satSeries={seriesFor(openRow.pool.id, (s) => s.saturation * 100)}
-            p95Series={seriesFor(openRow.pool.id, (s) => s.query_p95_ms)}
-            waitingSeries={seriesFor(openRow.pool.id, (s) => s.waiting)}
-          />
-        )}
-      </Drawer>
     </section>
   );
 }
@@ -341,127 +322,3 @@ function PoolRowView({
   );
 }
 
-function PoolDetail({
-  row,
-  satSeries,
-  p95Series,
-  waitingSeries,
-}: {
-  row: Row;
-  satSeries: number[];
-  p95Series: number[];
-  waitingSeries: number[];
-}) {
-  const { pool } = row;
-  return (
-    <div className="space-y-6 text-sm">
-      <div>
-        <div className="text-xs uppercase tracking-wide text-text-dim">Identity</div>
-        <dl className="mt-2 space-y-1 tabular">
-          <KV label="user" value={pool.user} />
-          <KV label="database" value={pool.database} />
-          <KV label="upstream" value={`${pool.host}:${pool.port}`} />
-          <KV label="mode" value={pool.pool_mode} />
-          <KV label="paused" value={pool.paused ? "yes" : "no"} />
-          <KV label="epoch" value={String(pool.epoch)} />
-        </dl>
-      </div>
-      <DetailChart label="Saturation %" values={satSeries} stroke="rgb(34 184 207)" min={0} max={100} />
-      <DetailChart label="Query p95 ms" values={p95Series} stroke="rgb(245 165 36)" />
-      <DetailChart label="Waiting clients" values={waitingSeries} stroke="rgb(91 140 255)" />
-      <div>
-        <div className="text-xs uppercase tracking-wide text-text-dim">Latency</div>
-        <dl className="mt-2 space-y-1 tabular">
-          <KV label="query p95 / p99" value={`${pool.query_p95_ms} / ${pool.query_p99_ms} ms`} />
-          <KV
-            label="transactions p95 / p99"
-            value={`${pool.transactions_p95_ms} / ${pool.transactions_p99_ms} ms`}
-          />
-          <KV label="wait avg / p95" value={`${pool.wait_avg_ms} / ${pool.wait_p95_ms} ms`} />
-          <KV label="oldest active" value={`${pool.max_active_age_ms} ms`} />
-        </dl>
-      </div>
-      <div>
-        <div className="text-xs uppercase tracking-wide text-text-dim">Counters</div>
-        <dl className="mt-2 space-y-1 tabular">
-          <KV label="queries total" value={String(pool.queries_total)} />
-          <KV label="transactions total" value={String(pool.transactions_total)} />
-          <KV label="errors total" value={String(pool.errors_total)} />
-        </dl>
-      </div>
-      <SqlstateBreakdown errors={pool.errors_by_sqlstate} />
-      {row.eval.reasons.length > 0 && (
-        <div>
-          <div className="text-xs uppercase tracking-wide text-text-dim">Threshold reasons</div>
-          <ul className="mt-2 space-y-1 text-text-muted">
-            {row.eval.reasons.map((r) => (
-              <li key={r}>· {r}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SqlstateBreakdown({ errors }: { errors?: Record<string, number> }) {
-  const entries = errors ? Object.entries(errors) : [];
-  if (entries.length === 0) return null;
-  // Top-5 SQLSTATEs by count. Long tails roll into "other" so the drawer stays
-  // compact without hiding the total.
-  entries.sort((a, b) => b[1] - a[1]);
-  const top = entries.slice(0, 5);
-  const tail = entries.slice(5).reduce((sum, [, v]) => sum + v, 0);
-  return (
-    <div>
-      <div className="text-xs uppercase tracking-wide text-text-dim">Errors by SQLSTATE</div>
-      <dl className="mt-2 space-y-1 tabular">
-        {top.map(([code, count]) => (
-          <div key={code} className="flex items-baseline justify-between gap-3">
-            <dt className="flex flex-col">
-              <span className="font-mono text-text">{code}</span>
-              <span className="text-xs text-text-dim">{describeSqlstate(code)}</span>
-            </dt>
-            <dd className="text-text tabular">{count}</dd>
-          </div>
-        ))}
-        {tail > 0 && <KV label={`other (${entries.length - 5})`} value={String(tail)} />}
-      </dl>
-    </div>
-  );
-}
-
-function KV({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between">
-      <dt className="text-text-muted">{label}</dt>
-      <dd className="text-text">{value}</dd>
-    </div>
-  );
-}
-
-function DetailChart({
-  label,
-  values,
-  stroke,
-  min,
-  max,
-}: {
-  label: string;
-  values: number[];
-  stroke: string;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-baseline justify-between">
-        <span className="text-xs uppercase tracking-wide text-text-dim">{label}</span>
-        <span className="text-xs text-text-dim tabular">last {values.length} samples</span>
-      </div>
-      <div className="border border-border bg-surface-2 px-2 py-2">
-        <MiniSparkline values={values} stroke={stroke} width={360} height={48} min={min} max={max} />
-      </div>
-    </div>
-  );
-}

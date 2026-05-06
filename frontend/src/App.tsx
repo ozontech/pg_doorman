@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { AdminAuthProvider } from "./hooks/useAdminAuth";
 import Overview from "./pages/Overview";
 import Pools from "./pages/Pools";
+import PoolDetail from "./pages/PoolDetail";
 import Clients from "./pages/Clients";
 import Caches from "./pages/Caches";
 import Logs from "./pages/Logs";
@@ -21,6 +22,7 @@ export default function App() {
                 <Route path="/" element={<Navigate to="/overview" replace />} />
                 <Route path="/overview" element={<Overview />} />
                 <Route path="/pools" element={<Pools />} />
+                <Route path="/pools/:poolId" element={<PoolDetail />} />
                 <Route path="/clients" element={<Clients />} />
                 <Route path="/caches" element={<Caches />} />
                 <Route path="/logs" element={<Logs />} />
