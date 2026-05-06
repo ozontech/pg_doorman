@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::app::log_level;
 use crate::config::get_config;
 use crate::pool::{get_all_pools, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
+use crate::server::{anon_snapshot, named_snapshot, now_monotonic_ms};
 use crate::stats::pool::PoolStats;
 use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
@@ -18,10 +19,11 @@ use crate::stats::{
 };
 use crate::web::routes::dto::{
     AuthQueryDto, AuthQueryRowDto, ClientDto, ClientFilters, ClientSort, ClientsDto, ConfigDto,
-    ConfigEntry, ConnectionsDto, DatabaseDto, DatabasesDto, LogLevelDto, OverviewDto,
-    PoolCoordinatorDto, PoolCoordinatorRowDto, PoolDto, PoolScalingDto, PoolScalingRowDto,
-    PoolsDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto, StatsRowDto,
-    UserDto, UsersDto, VersionDto,
+    ConfigEntry, ConnectionsDto, DatabaseDto, DatabasesDto, InternerDto, InternerKindDto,
+    InternerTopDto, InternerTopRowDto, LogLevelDto, OverviewDto, PoolCoordinatorDto,
+    PoolCoordinatorRowDto, PoolDto, PoolScalingDto, PoolScalingRowDto, PoolsDto, PreparedDto,
+    PreparedRowDto, PreparedTextDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder,
+    StatsDto, StatsRowDto, UserDto, UsersDto, VersionDto,
 };
 
 #[cfg(target_os = "linux")]
@@ -699,6 +701,136 @@ pub fn collect_sockets() -> Result<SocketsDto, &'static str> {
     })
 }
 
+pub fn collect_prepared() -> PreparedDto {
+    let mut prepared: Vec<PreparedRowDto> = Vec::new();
+    for (identifier, pool) in get_all_pools().iter() {
+        let Some(cache) = pool.prepared_statement_cache.as_ref() else {
+            continue;
+        };
+        for (hash, parse, count_used, kind) in cache.get_entries() {
+            prepared.push(PreparedRowDto {
+                pool: identifier.to_string(),
+                hash: hash.to_string(),
+                name: parse.name.clone(),
+                count_used,
+                kind: kind.as_str().to_string(),
+            });
+        }
+    }
+
+    // Stable order: pool first, then hash, for deterministic UI display.
+    prepared.sort_by(|a, b| {
+        (a.pool.as_str(), a.hash.as_str()).cmp(&(b.pool.as_str(), b.hash.as_str()))
+    });
+
+    PreparedDto {
+        ts: now_unix_ms(),
+        prepared,
+    }
+}
+
+pub fn collect_interner() -> InternerDto {
+    let named = named_snapshot();
+    let anon = anon_snapshot();
+    let named_bytes: u64 = named.iter().map(|(_, e)| e.text().len() as u64).sum();
+    let anon_bytes: u64 = anon.iter().map(|(_, e)| e.text().len() as u64).sum();
+
+    InternerDto {
+        ts: now_unix_ms(),
+        named: InternerKindDto {
+            entries: named.len() as u64,
+            bytes: named_bytes,
+        },
+        anonymous: InternerKindDto {
+            entries: anon.len() as u64,
+            bytes: anon_bytes,
+        },
+    }
+}
+
+pub fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
+    for (identifier, pool) in get_all_pools().iter() {
+        let Some(cache) = pool.prepared_statement_cache.as_ref() else {
+            continue;
+        };
+        for (h, parse, _count, kind) in cache.get_entries() {
+            if h == hash {
+                return Some(PreparedTextDto {
+                    ts: now_unix_ms(),
+                    hash: format!("{:#x}", hash),
+                    pool: identifier.to_string(),
+                    name: parse.name.clone(),
+                    query: parse.query().to_string(),
+                    kind: kind.as_str().to_string(),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Clamps the user-supplied `?n=` parameter to a sensible range.
+///
+/// `0` and missing → default 20 (matches SHOW INTERNER TOP convention).
+/// Values above 200 are capped — the page would be unusable beyond that
+/// and a 100k-entry interner shouldn't materialise an unbounded preview list.
+pub(crate) fn clamp_top_n(requested: u64) -> u64 {
+    const DEFAULT: u64 = 20;
+    const MAX: u64 = 200;
+    match requested {
+        0 => DEFAULT,
+        n if n > MAX => MAX,
+        n => n,
+    }
+}
+
+pub fn collect_interner_top(n: u64) -> InternerTopDto {
+    let n = clamp_top_n(n);
+    let now = now_monotonic_ms();
+
+    enum Handle {
+        Named(std::sync::Arc<crate::server::NamedEntry>),
+        Anon(std::sync::Arc<crate::server::AnonEntry>),
+    }
+
+    let mut combined: Vec<(u64, &'static str, usize, i64, Handle)> = Vec::new();
+    for (hash, entry) in named_snapshot() {
+        let bytes = entry.text().len();
+        combined.push((hash, "named", bytes, -1, Handle::Named(entry)));
+    }
+    for (hash, entry) in anon_snapshot() {
+        let idle = entry.idle_ms(now) as i64;
+        let bytes = entry.text().len();
+        combined.push((hash, "anonymous", bytes, idle, Handle::Anon(entry)));
+    }
+    combined.sort_by_key(|r| std::cmp::Reverse(r.2));
+
+    let entries = combined
+        .into_iter()
+        .take(n as usize)
+        .map(|(hash, kind, bytes, idle_ms, handle)| {
+            let text = match handle {
+                Handle::Named(e) => e.text().clone(),
+                Handle::Anon(e) => e.text().clone(),
+            };
+            let preview: String = text.chars().take(120).collect();
+            InternerTopRowDto {
+                hash: format!("{:#x}", hash),
+                kind: kind.to_string(),
+                bytes: bytes as u64,
+                idle_ms,
+                preview,
+            }
+        })
+        .collect();
+
+    InternerTopDto {
+        ts: now_unix_ms(),
+        n,
+        entries,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1193,5 +1325,23 @@ mod tests {
         // Only exact equals or exact suffix counts.
         assert!(!super::is_secret_key("password_check_attempts"));
         assert!(!super::is_secret_key("not_a_secret_check"));
+    }
+
+    #[test]
+    fn clamp_top_n_zero_returns_default() {
+        assert_eq!(super::clamp_top_n(0), 20);
+    }
+
+    #[test]
+    fn clamp_top_n_keeps_in_range() {
+        assert_eq!(super::clamp_top_n(1), 1);
+        assert_eq!(super::clamp_top_n(50), 50);
+        assert_eq!(super::clamp_top_n(200), 200);
+    }
+
+    #[test]
+    fn clamp_top_n_caps_above_max() {
+        assert_eq!(super::clamp_top_n(201), 200);
+        assert_eq!(super::clamp_top_n(u64::MAX), 200);
     }
 }

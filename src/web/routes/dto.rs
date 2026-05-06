@@ -427,3 +427,78 @@ pub struct UnixStreamCounts {
     pub connected: u64,
     pub disconnecting: u64,
 }
+
+/// `GET /api/prepared` — aggregate of pool-level prepared-statement caches.
+///
+/// Public endpoint. The `query` text is intentionally NOT included here to
+/// avoid leaking SQL bodies to anonymous Web UI viewers; the admin-only
+/// `/api/prepared/text/{hash}` endpoint returns the text on demand.
+#[derive(Debug, Serialize)]
+pub struct PreparedDto {
+    pub ts: u64,
+    pub prepared: Vec<PreparedRowDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreparedRowDto {
+    /// Pool identifier in the form rendered by `PoolIdentifier::Display`.
+    pub pool: String,
+    /// 64-bit FxHash, formatted as decimal to mirror SHOW PREPARED STATEMENTS.
+    pub hash: String,
+    pub name: String,
+    pub count_used: u64,
+    /// One of "named", "anonymous", "mixed" — `CacheEntryKind::as_str`.
+    pub kind: String,
+}
+
+/// `GET /api/interner` — global query interner aggregate.
+/// Public; no SQL preview.
+#[derive(Debug, Serialize)]
+pub struct InternerDto {
+    pub ts: u64,
+    pub named: InternerKindDto,
+    pub anonymous: InternerKindDto,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InternerKindDto {
+    pub entries: u64,
+    pub bytes: u64,
+}
+
+/// `GET /api/interner/top?n=N` — admin-only Top-N interner entries by
+/// interned-text byte length, with a 120-character SQL preview.
+#[derive(Debug, Serialize)]
+pub struct InternerTopDto {
+    pub ts: u64,
+    /// The clamped value of `n` actually used (1..=MAX).
+    pub n: u64,
+    pub entries: Vec<InternerTopRowDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InternerTopRowDto {
+    /// `0x<hex>` form of the FxHash, matching SHOW INTERNER TOP.
+    pub hash: String,
+    /// `"named"` or `"anonymous"`.
+    pub kind: String,
+    pub bytes: u64,
+    /// Idle milliseconds for anonymous entries; `-1` for named (named tracks
+    /// GC state instead of last-used).
+    pub idle_ms: i64,
+    /// First 120 characters of the interned text (truncated by chars, not
+    /// bytes — keeps multi-byte UTF-8 sequences whole).
+    pub preview: String,
+}
+
+/// `GET /api/prepared/text/{hash}` — admin-only body of a single prepared
+/// statement. Returns 404 when the hash is not present in any pool's cache.
+#[derive(Debug, Serialize)]
+pub struct PreparedTextDto {
+    pub ts: u64,
+    pub hash: String,
+    pub pool: String,
+    pub name: String,
+    pub query: String,
+    pub kind: String,
+}

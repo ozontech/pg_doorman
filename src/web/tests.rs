@@ -308,3 +308,73 @@ async fn api_sockets_returns_503_on_non_linux() {
     let raw = send(port, "GET /api/sockets HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
     assert!(raw.starts_with("HTTP/1.1 503"), "raw={raw}");
 }
+
+#[tokio::test]
+async fn api_prepared_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/prepared HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"prepared\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_interner_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/interner HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"named\""), "raw={raw}");
+    assert!(raw.contains("\"anonymous\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_interner_top_anonymous_returns_401() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/interner/top HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_interner_top_admin_returns_200() {
+    let port = spawn_server(opts(true, true)).await;
+    let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
+    let req = format!(
+        "GET /api/interner/top?n=5 HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic {creds}\r\n\r\n"
+    );
+    let raw = send(port, &req).await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"n\":5"), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_prepared_text_anonymous_returns_401() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/prepared/text/0x123 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_prepared_text_admin_unknown_hash_returns_404() {
+    let port = spawn_server(opts(true, true)).await;
+    let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
+    let req = format!(
+        "GET /api/prepared/text/0xdeadbeef HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic {creds}\r\n\r\n"
+    );
+    let raw = send(port, &req).await;
+    assert!(raw.starts_with("HTTP/1.1 404"), "raw={raw}");
+}

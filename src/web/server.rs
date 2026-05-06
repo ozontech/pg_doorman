@@ -270,6 +270,11 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
     };
     let query = parse_query(query_str);
 
+    // Prefix-routed paths first (admin-only; mux already gated auth).
+    if let Some(hash) = path.strip_prefix("/api/prepared/text/") {
+        return routes::prepared_text::handle_prepared_text(hash);
+    }
+
     match path {
         "/api/version" => routes::version::handle_version(),
         "/api/overview" => routes::overview::handle_overview(),
@@ -286,6 +291,9 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/pool_coordinator" => routes::pool_coordinator::handle_pool_coordinator(),
         "/api/pool_scaling" => routes::pool_scaling::handle_pool_scaling(),
         "/api/sockets" => routes::sockets::handle_sockets(),
+        "/api/prepared" => routes::prepared::handle_prepared(),
+        "/api/interner" => routes::interner::handle_interner(),
+        "/api/interner/top" => routes::interner_top::handle_interner_top(&query),
         _ => Response::json(
             501,
             "Not Implemented",
@@ -649,5 +657,65 @@ mod tests {
             AuthOutcome::Anonymous,
         );
         assert_eq!(r.status, 503);
+    }
+
+    #[test]
+    fn dispatch_prepared_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/prepared"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_interner_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/interner"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_interner_top_anonymous_returns_401() {
+        let r = dispatch(
+            &req("GET", "/api/interner/top"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 401);
+    }
+
+    #[test]
+    fn dispatch_interner_top_admin_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/interner/top?n=10"),
+            &opts(true, true),
+            AuthOutcome::Admin,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_prepared_text_anonymous_returns_401() {
+        let r = dispatch(
+            &req("GET", "/api/prepared/text/0x123"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 401);
+    }
+
+    #[test]
+    fn dispatch_prepared_text_admin_unknown_hash_returns_404() {
+        let r = dispatch(
+            &req("GET", "/api/prepared/text/0xdeadbeef"),
+            &opts(true, true),
+            AuthOutcome::Admin,
+        );
+        assert_eq!(r.status, 404);
     }
 }
