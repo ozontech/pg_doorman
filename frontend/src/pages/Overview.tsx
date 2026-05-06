@@ -115,6 +115,54 @@ export default function Overview() {
     return list.map((e) => ({ ts: e.ts_ms / 1000, label: e.target }));
   }, [eventsPoll.data]);
 
+  // Per-thread CPU% history. Each successful /api/process poll computes a
+  // delta against the previous snapshot and pushes a row into a rolling
+  // 120-point window. The threads PanelView reads this history to render
+  // a line per tokio worker so an imbalanced runtime is visible as one
+  // line at 100% while the others stay near 0.
+  const processSnapshotsRef = useRef<ProcessDto[]>([]);
+  const threadHistoryRef = useRef<
+    Array<{
+      ts: number;
+      // pct keyed by tid for the *whole* known set at this snapshot. Threads
+      // that disappeared or just appeared are filled with NaN so uPlot
+      // breaks the line at the join.
+      pcts: Map<number, number>;
+      names: Map<number, string>;
+    }>
+  >([]);
+  if (processPoll.data) {
+    const snapshots = processSnapshotsRef.current;
+    const last = snapshots[snapshots.length - 1];
+    if (!last || last.ts !== processPoll.data.ts) {
+      const cur = processPoll.data;
+      if (last && cur.ts > last.ts) {
+        const dtSec = (cur.ts - last.ts) / 1000;
+        if (dtSec > 0) {
+          const pcts = new Map<number, number>();
+          const names = new Map<number, string>();
+          const lastByTid = new Map<number, number>(
+            last.threads_breakdown.map((t) => [t.tid, t.cpu_user_us + t.cpu_system_us]),
+          );
+          for (const t of cur.threads_breakdown) {
+            const prevTotal = lastByTid.get(t.tid);
+            const curTotal = t.cpu_user_us + t.cpu_system_us;
+            const pct =
+              prevTotal === undefined
+                ? 0
+                : Math.max(0, ((curTotal - prevTotal) / 1_000_000 / dtSec) * 100);
+            pcts.set(t.tid, pct);
+            names.set(t.tid, t.name);
+          }
+          threadHistoryRef.current.push({ ts: cur.ts, pcts, names });
+          if (threadHistoryRef.current.length > 240) threadHistoryRef.current.shift();
+        }
+      }
+      snapshots.push(cur);
+      if (snapshots.length > 240) snapshots.shift();
+    }
+  }
+
   const rawHistory = useHistory<RawTotals>(`${HISTORY_KEY}.raw`);
   const sampleHistory = useHistory<OverviewSamplePoint>(HISTORY_KEY);
   const poolErrorsHistory = useHistory<PoolSnap>(`${HISTORY_KEY}.poolerrs`);
@@ -418,7 +466,7 @@ export default function Overview() {
           pools={poolsPoll.data}
           errorsPerSecond={latest?.errors_per_s ?? null}
         />
-        <ProcessBar process={processPoll.data} />
+        <ProcessBar process={processPoll.data} onOpenThreads={() => openPanelById("threads")} onOpenRss={() => openPanelById("rss")} />
         <Card
           title="Golden signals"
           help={{
@@ -566,6 +614,8 @@ export default function Overview() {
             connBreakdown,
             top5Errors,
             chartEvents,
+            threadHistoryRef.current,
+            processSnapshotsRef.current,
           )}
           onClose={closePanel}
         />
@@ -585,8 +635,14 @@ function Card({
   children: ReactNode;
   onTitleClick?: () => void;
 }) {
-  return (
-    <section className="rounded-md border border-border bg-surface">
+  // When the section is bound to a PanelView (`onTitleClick` set) we make
+  // the whole card clickable, not just the title text. Operators expected
+  // the chart-title arrow ↗ to be a clue that the card opens, but they
+  // kept clicking the canvas instead of the heading. The wrapper button
+  // takes the click anywhere; the canvas itself still owns mouse-move for
+  // hover readout.
+  const inner = (
+    <>
       <SectionHeader
         title={title}
         what={help?.what}
@@ -595,8 +651,28 @@ function Card({
         onTitleClick={onTitleClick}
       />
       <div className="p-4">{children}</div>
-    </section>
+    </>
   );
+  if (onTitleClick) {
+    return (
+      <section
+        role="button"
+        tabIndex={0}
+        onClick={onTitleClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onTitleClick();
+          }
+        }}
+        className="cursor-pointer rounded-md border border-border bg-surface transition-colors hover:border-border-strong"
+        title="Open the full-screen panel for this chart"
+      >
+        {inner}
+      </section>
+    );
+  }
+  return <section className="rounded-md border border-border bg-surface">{inner}</section>;
 }
 
 // Wrapper that turns a Sparkline card into a button-like region: any click
@@ -651,6 +727,12 @@ function panelDescriptor(
   connBreakdown: [number[], ...number[][]],
   top5Errors: { labels: string[]; data: [number[], ...number[][]] },
   events: import("../components/Sparkline").ChartEvent[],
+  threadHistory: Array<{
+    ts: number;
+    pcts: Map<number, number>;
+    names: Map<number, string>;
+  }>,
+  processSnapshots: ProcessDto[],
 ): PanelDescriptor {
   switch (id) {
     case "latency":
@@ -733,6 +815,74 @@ function panelDescriptor(
         rightLogScale: true,
         events,
       };
+    case "threads": {
+      // Per-thread CPU over the rolling window. We keep only threads that
+      // ever exceeded 1% in the window (the rest are bookkeeping overhead
+      // — jemalloc background workers idling at 0 — and they bury the
+      // signal in the legend). Series order: highest peak first so the
+      // legend matches the panel summary.
+      const xs = threadHistory.map((s) => s.ts / 1000);
+      const peakByTid = new Map<number, number>();
+      const nameByTid = new Map<number, string>();
+      for (const snap of threadHistory) {
+        for (const [tid, pct] of snap.pcts.entries()) {
+          if (pct > (peakByTid.get(tid) ?? 0)) peakByTid.set(tid, pct);
+          if (!nameByTid.has(tid)) nameByTid.set(tid, snap.names.get(tid) ?? `tid${tid}`);
+        }
+      }
+      const tids = [...peakByTid.entries()]
+        .filter(([, peak]) => peak >= 1)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([tid]) => tid);
+      const seriesPalette = [
+        "rgb(255 176 0)",
+        "rgb(0 212 255)",
+        "rgb(57 211 83)",
+        "rgb(255 77 77)",
+        "rgb(177 140 245)",
+        "rgb(91 140 255)",
+        "rgb(245 165 36)",
+        "rgb(154 148 133)",
+      ];
+      const series: number[][] = tids.map((tid) =>
+        threadHistory.map((snap) => {
+          const v = snap.pcts.get(tid);
+          return v === undefined ? NaN : v;
+        }),
+      );
+      const labels = tids.map((tid) => `${nameByTid.get(tid) ?? "tid"}#${tid}`);
+      return {
+        open: true,
+        title: "Per-thread CPU% (active threads only, ≥ 1% peak)",
+        kind: "line",
+        data: [xs, ...series] as [number[], ...number[][]],
+        labels,
+        fills: seriesPalette.slice(0, tids.length),
+        warn: 60,
+        crit: 90,
+        units: "% of 1 core",
+        events,
+      };
+    }
+    case "rss": {
+      // RSS over time + cumulative CPU as secondary line. Memory
+      // breakdown research is in flight; until that lands we plot what we
+      // already have — the operator at least sees the growth curve.
+      const xs = processSnapshots.map((s) => s.ts / 1000);
+      const rss = processSnapshots.map((s) => s.rss_bytes / (1024 * 1024));
+      const vm = processSnapshots.map((s) => s.vm_size_bytes / (1024 * 1024));
+      return {
+        open: true,
+        title: "Process memory — RSS / VM",
+        kind: "line",
+        data: [xs, rss, vm] as [number[], ...number[][]],
+        labels: ["RSS MiB", "VM MiB"],
+        fills: ["rgb(255 176 0)", "rgb(154 148 133 / 0.7)"],
+        units: "MiB",
+        events,
+      };
+    }
     case "top_errors":
       return {
         open: true,
@@ -820,7 +970,15 @@ function ResourceDetail({
 // "100%" means one core saturated; with N cores fully busy you'd see
 // N×100%. The bar paints amber when total CPU > 60% of cpu_cores and red
 // when > 90%; FDs paint amber > 70% of limit, red > 90%.
-function ProcessBar({ process }: { process: ProcessDto | null }) {
+function ProcessBar({
+  process,
+  onOpenThreads,
+  onOpenRss,
+}: {
+  process: ProcessDto | null;
+  onOpenThreads?: () => void;
+  onOpenRss?: () => void;
+}) {
   // Two refs: the previous snapshot we computed against, and the most
   // recent percentage. Re-renders that don't bring a new ts (a sibling
   // poll updated state) reuse the cached delta instead of nulling it
@@ -948,13 +1106,14 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
           hint={`${process.cpu_cores} cores · 100% = 1 core saturated. With all cores busy you would see ${process.cpu_cores * 100}%.`}
         />
         <ProcStat
-          label="rss"
+          label="rss ↗"
           value={fmtBytes(process.rss_bytes)}
           tone="text-text"
-          hint={`Resident set size. VM size ${fmtBytes(process.vm_size_bytes)}.`}
+          hint={`Resident set size. VM size ${fmtBytes(process.vm_size_bytes)}. Click the tile for the memory breakdown.`}
+          onClick={onOpenRss}
         />
         <ProcStatTwoLine
-          label={`threads (${process.threads})`}
+          label={`threads (${process.threads}) ↗`}
           primary={
             maxThreadPct === null
               ? "sampling…"
@@ -964,15 +1123,15 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
           tone={maxThreadTone}
           hint={
             threadDeltas.length === 0
-              ? "Per-thread CPU appears after the second /api/process poll. Linux-only — non-Linux build returns an empty breakdown."
-              : `${process.threads} OS threads · max-thread ${maxThreadPct?.toFixed(0)}% · avg ${avgThreadPct?.toFixed(1)}% · min ${minThreadPct?.toFixed(1)}% (each is % of one core).\n\n` +
+              ? "Per-thread CPU appears after the second /api/process poll. Linux-only — non-Linux build returns an empty breakdown. Click for the per-thread time-series."
+              : `${process.threads} OS threads · max-thread ${maxThreadPct?.toFixed(0)}% · avg ${avgThreadPct?.toFixed(1)}% · min ${minThreadPct?.toFixed(1)}% (each is % of one core). Click for the per-thread time-series.\n\n` +
                 `Top-${Math.min(5, threadDeltas.length)}:\n` +
                 threadDeltas
                   .slice(0, 5)
                   .map((t) => `${t.pct.toFixed(0).padStart(3, " ")}%  ${t.name}#${t.tid}`)
-                  .join("\n") +
-                "\n\nAn imbalanced tokio runtime — one worker pinned at 100% while others idle — is the prime suspect when whole-process CPU looks fine but a queue is backing up."
+                  .join("\n")
           }
+          onClick={onOpenThreads}
         />
         <ProcStat
           label="fds"
@@ -1004,14 +1163,17 @@ function ProcStat({
   value,
   tone,
   hint,
+  onClick,
 }: {
   label: string;
   value: string;
   tone: string;
   hint: string;
+  onClick?: () => void;
 }) {
+  const cls = `border border-border bg-surface-2 px-3 py-2 ${onClick ? "cursor-pointer hover:border-border-strong" : ""}`;
   return (
-    <div title={hint} className="border border-border bg-surface-2 px-3 py-2">
+    <div title={hint} className={cls} onClick={onClick} role={onClick ? "button" : undefined}>
       <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{value}</div>
     </div>
@@ -1024,15 +1186,18 @@ function ProcStatTwoLine({
   secondary,
   tone,
   hint,
+  onClick,
 }: {
   label: string;
   primary: string;
   secondary: string;
   tone: string;
   hint: string;
+  onClick?: () => void;
 }) {
+  const cls = `border border-border bg-surface-2 px-3 py-2 ${onClick ? "cursor-pointer hover:border-border-strong" : ""}`;
   return (
-    <div title={hint} className="border border-border bg-surface-2 px-3 py-2">
+    <div title={hint} className={cls} onClick={onClick} role={onClick ? "button" : undefined}>
       <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{primary}</div>
       {secondary && <div className="text-[10px] text-text-dim">{secondary}</div>}
