@@ -226,6 +226,48 @@ pub(crate) enum ServerSort {
     ActiveAgeMs,
 }
 
+/// `GET /api/process` — process resource snapshot. Linux reads `/proc/self/*`
+/// directly; non-Linux platforms return zeros where information is not
+/// available without extra dependencies. CPU usage is provided as
+/// monotonic microsecond counters (user + system, total + per thread); the
+/// frontend computes `%` by sampling deltas across two consecutive polls.
+#[derive(Debug, Serialize)]
+pub(crate) struct ProcessDto {
+    pub ts: u64,
+    pub pid: u32,
+    pub hostname: String,
+    pub uptime_seconds: u64,
+    pub started_at_ms: u64,
+    pub rss_bytes: u64,
+    pub vm_size_bytes: u64,
+    pub threads: u64,
+    pub fd_open: u64,
+    pub fd_limit: u64,
+    /// Cumulative user-mode CPU time across the whole process, microseconds.
+    pub cpu_user_us: u64,
+    /// Cumulative kernel-mode CPU time across the whole process, microseconds.
+    pub cpu_system_us: u64,
+    /// Number of online CPU cores (`num_cpus::get`). Frontend uses this to
+    /// turn the cumulative deltas into a percentage of one core or of all
+    /// cores depending on the operator's preference.
+    pub cpu_cores: u32,
+    /// Per-thread CPU breakdown. Sorted by `cpu_user_us + cpu_system_us`
+    /// descending so the hottest tokio worker is at the top. Linux only;
+    /// other platforms return an empty list.
+    pub threads_breakdown: Vec<ProcessThreadDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ProcessThreadDto {
+    pub tid: u64,
+    /// Comm field from `/proc/self/task/<tid>/stat` — limited to 15 chars by
+    /// the kernel. Names like `tokio-runtime-w`, `pg_doorman` for the main
+    /// thread, etc.
+    pub name: String,
+    pub cpu_user_us: u64,
+    pub cpu_system_us: u64,
+}
+
 /// `GET /api/connections` — cumulative connection counters.
 ///
 /// `errors` is derived as `total - tls - plain - cancel` to mirror the

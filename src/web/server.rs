@@ -406,6 +406,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/log_level" => routes::log_level::handle_log_level(),
         "/api/pool_coordinator" => routes::pool_coordinator::handle_pool_coordinator(),
         "/api/pool_scaling" => routes::pool_scaling::handle_pool_scaling(),
+        "/api/process" => routes::process::handle_process(),
         "/api/sockets" => routes::sockets::handle_sockets(),
         "/api/prepared" => routes::prepared::handle_prepared(),
         "/api/interner" => routes::interner::handle_interner(),

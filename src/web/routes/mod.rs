@@ -21,6 +21,7 @@ pub(crate) mod overview;
 pub(crate) mod pool_coordinator;
 pub(crate) mod pool_scaling;
 pub(crate) mod pools;
+pub(crate) mod process;
 pub(crate) mod prepared;
 pub(crate) mod prepared_text;
 pub(crate) mod query;

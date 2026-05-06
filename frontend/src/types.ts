@@ -75,6 +75,30 @@ export interface PoolsDto {
 
 export type Severity = "ok" | "degraded" | "critical";
 
+export interface ProcessThreadDto {
+  tid: number;
+  name: string;
+  cpu_user_us: number;
+  cpu_system_us: number;
+}
+
+export interface ProcessDto {
+  ts: number;
+  pid: number;
+  hostname: string;
+  uptime_seconds: number;
+  started_at_ms: number;
+  rss_bytes: number;
+  vm_size_bytes: number;
+  threads: number;
+  fd_open: number;
+  fd_limit: number;
+  cpu_user_us: number;
+  cpu_system_us: number;
+  cpu_cores: number;
+  threads_breakdown: ProcessThreadDto[];
+}
+
 export interface InternerKindDto {
   entries: number;
   bytes: number;

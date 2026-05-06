@@ -22,6 +22,7 @@ mod pool_coordinator;
 mod pool_scaling;
 mod pools;
 mod prepared;
+mod process;
 mod servers;
 #[cfg(target_os = "linux")]
 mod sockets;
@@ -44,6 +45,7 @@ pub(crate) use self::pool_coordinator::collect_pool_coordinator;
 pub(crate) use self::pool_scaling::collect_pool_scaling;
 pub(crate) use self::pools::collect_pools;
 pub(crate) use self::prepared::{collect_prepared, collect_prepared_text};
+pub(crate) use self::process::collect_process;
 pub(crate) use self::servers::collect_servers;
 #[cfg(target_os = "linux")]
 pub(crate) use self::sockets::collect_sockets;

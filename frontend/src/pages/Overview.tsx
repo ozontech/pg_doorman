@@ -24,6 +24,7 @@ import type {
   PoolCoordinatorDto,
   PoolScalingDto,
   PoolsDto,
+  ProcessDto,
   SocketsDto,
 } from "../types";
 
@@ -89,6 +90,13 @@ export default function Overview() {
   );
   const authPoll = usePoll<AuthQueryDto>(
     (signal) => apiGet<AuthQueryDto>("/api/auth_query", authHeader, signal),
+    3000,
+  );
+  // Process resources (RSS, CPU, FDs, threads). Slow cadence (3 s) — the
+  // process card is informational, not alerting, and these /proc reads are
+  // not free at 1.5 s.
+  const processPoll = usePoll<ProcessDto>(
+    (signal) => apiGet<ProcessDto>("/api/process", authHeader, signal),
     3000,
   );
 
@@ -348,6 +356,7 @@ export default function Overview() {
           pools={poolsPoll.data}
           errorsPerSecond={latest?.errors_per_s ?? null}
         />
+        <ProcessBar process={processPoll.data} />
         <Card
           title="Golden signals"
           help={{
@@ -541,6 +550,158 @@ function ResourceDetail({
           <p className="text-sm text-text-dim">loading…</p>
         )}
       </div>
+    </div>
+  );
+}
+
+// Process resource bar — RSS, CPU%, FDs, threads, uptime, hostname/pid.
+// CPU% is computed from successive snapshots: every poll we record the
+// previous (cpu_user_us + cpu_system_us) and the latest, divide by the
+// elapsed wall-clock and the core count to get a percentage of one core.
+// "100%" means one core saturated; with N cores fully busy you'd see
+// N×100%. The bar paints amber when total CPU > 60% of cpu_cores and red
+// when > 90%; FDs paint amber > 70% of limit, red > 90%.
+const PROC_HISTORY_KEY = "overview.process";
+function ProcessBar({ process }: { process: ProcessDto | null }) {
+  // The cumulative CPU counters live behind a /proc read so we sample two
+  // points and compute the rate. `useRef` would suffice but the hook keeps
+  // the value across re-renders cleanly.
+  const last = ((globalThis as unknown as Record<string, ProcessDto | undefined>)[
+    PROC_HISTORY_KEY
+  ] ?? null) as ProcessDto | null;
+  let cpuPct: number | null = null;
+  if (process && last && last.ts !== process.ts) {
+    const dtSec = (process.ts - last.ts) / 1000;
+    if (dtSec > 0 && process.cpu_cores > 0) {
+      const usDelta =
+        process.cpu_user_us +
+        process.cpu_system_us -
+        (last.cpu_user_us + last.cpu_system_us);
+      cpuPct = (usDelta / 1_000_000 / dtSec) * 100;
+    }
+  }
+  if (process) {
+    (globalThis as unknown as Record<string, ProcessDto>)[PROC_HISTORY_KEY] = process;
+  }
+
+  if (!process) return null;
+
+  const fmtBytes = (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MiB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+  };
+  const fmtUptime = (s: number): string => {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ${s % 60}s`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ${m % 60}m`;
+    const d = Math.floor(h / 24);
+    return `${d}d ${h % 24}h`;
+  };
+
+  const cpuTone =
+    cpuPct === null
+      ? "text-text-muted"
+      : cpuPct > 90 * process.cpu_cores
+        ? "text-danger"
+        : cpuPct > 60 * process.cpu_cores
+          ? "text-warning"
+          : "text-text";
+  const fdRatio = process.fd_limit > 0 ? process.fd_open / process.fd_limit : 0;
+  const fdTone =
+    fdRatio > 0.9 ? "text-danger" : fdRatio > 0.7 ? "text-warning" : "text-text";
+
+  return (
+    <div className="border border-border bg-surface px-4 py-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-[10px] uppercase tracking-[0.2em] text-text-dim">Process</span>
+        <span className="font-mono text-xs text-text-dim">
+          {process.hostname || "host"} · pid {process.pid}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3 lg:grid-cols-6">
+        <ProcStat
+          label="cpu"
+          value={cpuPct === null ? "—" : `${cpuPct.toFixed(0)}%`}
+          tone={cpuTone}
+          hint={`${process.cpu_cores} cores · 100% = 1 core. Worst-thread breakdown: ${
+            process.threads_breakdown.slice(0, 3).map((t) => t.name).join(", ") || "n/a"
+          }`}
+        />
+        <ProcStat
+          label="rss"
+          value={fmtBytes(process.rss_bytes)}
+          tone="text-text"
+          hint={`Resident set size. VM size ${fmtBytes(process.vm_size_bytes)}.`}
+        />
+        <ProcStat
+          label="threads"
+          value={String(process.threads)}
+          tone="text-text"
+          hint={
+            process.threads_breakdown.length === 0
+              ? "Per-thread CPU available on Linux only."
+              : `Hottest: ${process.threads_breakdown
+                  .slice(0, 3)
+                  .map(
+                    (t) =>
+                      `${t.name}#${t.tid} ${(
+                        (t.cpu_user_us + t.cpu_system_us) /
+                        1000
+                      ).toFixed(0)}ms`,
+                  )
+                  .join(" · ")}`
+          }
+        />
+        <ProcStat
+          label="fds"
+          value={
+            process.fd_limit > 0
+              ? `${process.fd_open}/${process.fd_limit}`
+              : String(process.fd_open)
+          }
+          tone={fdTone}
+          hint={`Open file descriptors. Limit warns >70%, crits >90%.`}
+        />
+        <ProcStat
+          label="uptime"
+          value={fmtUptime(process.uptime_seconds)}
+          tone="text-text"
+          hint={`Since ${new Date(process.started_at_ms || 0).toISOString()}`}
+        />
+        <ProcStat
+          label="started"
+          value={
+            process.started_at_ms > 0
+              ? new Date(process.started_at_ms).toLocaleString()
+              : "—"
+          }
+          tone="text-text-muted"
+          hint="Process boot time captured the first time the field is read"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ProcStat({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+  hint: string;
+}) {
+  return (
+    <div title={hint} className="border border-border bg-surface-2 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{value}</div>
     </div>
   );
 }
