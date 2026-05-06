@@ -44,7 +44,7 @@ The cache is bounded and observable. Anonymous entries time out on idle, named e
 
 ## Why PgDoorman
 
-- **Bounded prepared-statement memory.** Both halves of the cache (interner and per-client) are split by `Parse` kind so a flood of anonymous traffic can't evict named entries, and TTL keeps the anonymous side from accumulating dead text indefinitely. Drivers see their own names; backends see the remapped `DOORMAN_N`. No app-level `DEALLOCATE`, no `DISCARD ALL`.
+- **Caches `Parse` across clients.** Plans are reused between clients sharing a pool — including the anonymous `Parse` most drivers send for one-shot parameterised queries. The cache is bounded and observable.
 - **Multi-threaded, single shared pool.** All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind `so_reuseport` — gives each instance its own pool, and idle counts can drift between processes for the same database.
 - **Thundering herd suppression.** When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (`scaling_max_parallel_creates`) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.
 - **Bounded tail latency.** Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of `server_lifetime`, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.
