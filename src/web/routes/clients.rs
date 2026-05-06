@@ -29,6 +29,7 @@ fn parse_filters(query: &BTreeMap<String, Vec<String>>) -> ClientFilters {
         pool: first(query, "pool"),
         database: first(query, "database"),
         user: first(query, "user"),
+        addr: first(query, "addr"),
         application_name: query.get("application_name").cloned().unwrap_or_default(),
         state: query.get("state").cloned().unwrap_or_default(),
     }
@@ -62,10 +63,12 @@ mod tests {
         q.insert("sort".into(), vec!["errors_total".into()]);
         q.insert("order".into(), vec!["asc".into()]);
         q.insert("pool".into(), vec!["main@db1".into()]);
+        q.insert("addr".into(), vec!["10.0.5.".into()]);
         let f = parse_filters(&q);
         assert_eq!(f.limit, 50);
         assert!(matches!(f.sort, ClientSort::ErrorsTotal));
         assert!(matches!(f.order, SortOrder::Asc));
         assert_eq!(f.pool.as_deref(), Some("main@db1"));
+        assert_eq!(f.addr.as_deref(), Some("10.0.5."));
     }
 }

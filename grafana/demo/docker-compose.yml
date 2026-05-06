@@ -91,3 +91,19 @@ services:
       postgres:
         condition: service_healthy
     restart: always
+
+  # Session-mode pgbench: 4 long-lived clients hammering session_user with
+  # SELECT-only traffic so the Web UI shows the session pool actually busy
+  # (active connections, query latency, qps) instead of just three idle
+  # LISTENers.
+  pgbench-session:
+    image: postgres:16
+    environment:
+      PGPASSWORD: session_pass
+    volumes:
+      - ./pgbench-session.sh:/pgbench-session.sh
+    entrypoint: ["bash", "/pgbench-session.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always

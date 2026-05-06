@@ -35,11 +35,12 @@ export default function Logs() {
   const sinceRef = useRef(0);
   const tailRef = useRef<HTMLDivElement | null>(null);
 
-  // Reset stream when filters change.
+  // Reset stream when level changes (full refetch from seq 0). The text
+  // filter stays client-side so changing it doesn't drop the buffer.
   useEffect(() => {
     sinceRef.current = 0;
     setLines([]);
-  }, [level, target]);
+  }, [level]);
 
   const fetcher = useCallback(
     async (signal: AbortSignal): Promise<LogsDto> => {
@@ -47,10 +48,9 @@ export default function Logs() {
       params.set("since", String(sinceRef.current));
       params.set("max", "200");
       if (level) params.set("level", level);
-      if (target) params.set("target", target);
       return apiGet<LogsDto>(`/api/logs?${params.toString()}`, authHeader, signal);
     },
-    [authHeader, level, target],
+    [authHeader, level],
   );
 
   const poll = usePoll<LogsDto>(fetcher, paused ? 60_000 : POLL_MS);
@@ -124,15 +124,16 @@ export default function Logs() {
           ))}
         </select>
         <input
-          placeholder="module e.g. pool, auth, stats"
+          placeholder="search any text (target or message, e.g. #c235, pool, 53300)"
           title={
-            "Substring match against the target column (Rust module path). " +
-            "Examples: 'pool' — connection pool events; 'auth' — authentication; " +
-            "'stats' — periodic stats dumps; 'server::stream' — backend protocol I/O."
+            "Case-sensitive substring search across both target and message columns. " +
+            "Filter is client-side so the buffer is preserved on each keystroke. " +
+            "Use 'pool', 'auth', 'stats' for module subsets; '#c123' for a specific client; " +
+            "a SQLSTATE like '53300' or part of the message body."
           }
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          className="w-64 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
+          className="w-96 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
         />
         <button
           type="button"
@@ -154,12 +155,17 @@ export default function Logs() {
         )}
       </div>
       <div className="flex-1 overflow-auto bg-bg font-mono text-xs">
-        {lines.length === 0 ? (
-          <LogsEmpty meta={meta} />
-        ) : (
+        {(() => {
+          const filtered = target
+            ? lines.filter(
+                (e) => e.target.includes(target) || e.message.includes(target),
+              )
+            : lines;
+          if (filtered.length === 0) return <LogsEmpty meta={meta} />;
+          return (
           <table className="w-full">
             <tbody>
-              {lines.map((e) => (
+              {filtered.map((e) => (
                 <tr key={e.seq} className="border-b border-border/40 hover:bg-surface-2">
                   <td className="whitespace-nowrap px-2 py-0.5 text-text-dim tabular">
                     {fmtTs(e.ts_ms)}
@@ -171,7 +177,8 @@ export default function Logs() {
               ))}
             </tbody>
           </table>
-        )}
+          );
+        })()}
         <div ref={tailRef} />
       </div>
     </section>

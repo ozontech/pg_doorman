@@ -76,6 +76,13 @@ fn client_matches(s: &crate::stats::ClientStats, f: &ClientFilters) -> bool {
             return false;
         }
     }
+    if let Some(a) = &f.addr {
+        // Substring match — covers both "1.2.3.4" and "1.2.3.4:5432" forms,
+        // and supports operator typing partial subnets like "10.0.5.".
+        if !s.ipaddr().contains(a.as_str()) {
+            return false;
+        }
+    }
     if !f.application_name.is_empty() && !f.application_name.contains(&app) {
         return false;
     }
@@ -143,6 +150,7 @@ mod tests {
             pool: None,
             database: None,
             user: None,
+            addr: None,
             application_name: vec![],
             state: vec![],
         }

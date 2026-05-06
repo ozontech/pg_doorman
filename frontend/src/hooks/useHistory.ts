@@ -5,6 +5,10 @@ const DEFAULT_MAX_POINTS = 120; // 120 × 1.5 s polling = 3 min window per paren
 export interface HistoryHandle<T> {
   history: T[];
   push: (value: T) => void;
+  /// Replace the rolling window with `next`. Used to clear the buffer when a
+  /// stale-tab gap is detected so the chart does not bridge it with a flat
+  /// line.
+  replace: (next: T[]) => void;
 }
 
 /**
@@ -43,5 +47,9 @@ export function useHistory<T>(key: string, maxPoints = DEFAULT_MAX_POINTS): Hist
     });
   };
 
-  return { history, push };
+  const replace = (next: T[]) => {
+    setHistory(next.slice(0, maxPoints));
+  };
+
+  return { history, push, replace };
 }

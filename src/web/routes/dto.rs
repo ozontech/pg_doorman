@@ -160,6 +160,9 @@ pub(crate) struct ClientFilters {
     pub pool: Option<String>,
     pub database: Option<String>,
     pub user: Option<String>,
+    /// Substring match against `ClientStats.addr` (e.g. "10.0.5." for a subnet
+    /// or "1.2.3.4:5432" for an exact peer).
+    pub addr: Option<String>,
     pub application_name: Vec<String>,
     pub state: Vec<String>,
 }

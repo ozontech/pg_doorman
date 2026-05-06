@@ -18,6 +18,7 @@ interface Filters {
   user: string;
   state: string;
   appName: string;
+  addr: string;
 }
 
 const STATE_OPTIONS = ["", "active", "idle", "waiting", "closing"];
@@ -33,6 +34,7 @@ function buildQuery(filters: Filters, sort: SortKey, dir: SortDir, offset: numbe
   if (filters.user) params.set("user", filters.user);
   if (filters.state) params.set("state", filters.state);
   if (filters.appName) params.set("application_name", filters.appName);
+  if (filters.addr) params.set("addr", filters.addr);
   return params.toString();
 }
 
@@ -44,6 +46,7 @@ export default function Clients() {
     user: "",
     state: "",
     appName: "",
+    addr: "",
   });
   const [sort, setSort] = useState<SortKey>("queries_total");
   const [dir, setDir] = useState<SortDir>("desc");
@@ -122,6 +125,13 @@ export default function Clients() {
           value={filters.appName}
           onChange={(e) => updateFilter("appName", e.target.value)}
           className="w-44 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
+        />
+        <input
+          placeholder="addr (e.g. 10.0.5. or 1.2.3.4:5432)"
+          title="Substring match against the client peer address — covers full ip:port, partial subnet, or just the port."
+          value={filters.addr}
+          onChange={(e) => updateFilter("addr", e.target.value)}
+          className="w-56 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
         />
         <select
           value={filters.state}

@@ -104,7 +104,12 @@ export function Sparkline({
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[10px] uppercase tracking-[0.18em] text-text-dim">{label}</span>
-        <span className="font-mono text-base font-semibold text-text tabular">{valueText}</span>
+        <span
+          className="whitespace-nowrap truncate font-mono text-sm font-semibold text-text tabular"
+          title={valueText}
+        >
+          {valueText}
+        </span>
       </div>
       <div ref={containerRef} className="w-full" />
     </div>

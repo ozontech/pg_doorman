@@ -39,3 +39,11 @@ CREATE TRIGGER notify_queue_t
 
 GRANT INSERT, SELECT ON notify_queue TO session_user, app_user_2;
 GRANT USAGE, SELECT ON SEQUENCE notify_queue_id_seq TO session_user, app_user_2;
+
+-- session_user runs read-only pgbench against the tables that app_user
+-- creates with `pgbench -i`. ALTER DEFAULT PRIVILEGES grants SELECT on
+-- every future table app_user makes in this schema, so pgbench_accounts,
+-- _branches, _tellers, _history all become readable without a per-table
+-- grant after init.
+ALTER DEFAULT PRIVILEGES FOR USER app_user IN SCHEMA public
+    GRANT SELECT ON TABLES TO session_user;

@@ -102,6 +102,17 @@ export default function Overview() {
     const ov = overviewPoll.data;
     const pools = poolsPoll.data;
     const prevRaw = rawHistory.history[rawHistory.history.length - 1];
+    // Stale-tab guard: if the gap since the last poll is bigger than five
+    // intervals (browser throttled the timer or the laptop slept), drop the
+    // history. Otherwise the chart bridges the gap with a flat line and
+    // misrepresents the state during the pause as steady-state activity.
+    if (prevRaw && ov.ts - prevRaw.ts > 5 * POLL_MS) {
+      rawHistory.replace([]);
+      sampleHistory.replace([]);
+      poolErrorsHistory.replace([]);
+      poolSatHistory.replace([]);
+      return;
+    }
     rawHistory.push({
       ts: ov.ts,
       query_count_total: ov.query_count_total,
@@ -355,7 +366,7 @@ export default function Overview() {
             />
             <Sparkline
               label="Traffic"
-              valueText={`${fmtRate(latest?.qps, "qps")} / ${fmtRate(latest?.tps, "tps")}`}
+              valueText={`${fmtRate(latest?.qps, "q/s")} · ${fmtRate(latest?.tps, "t/s")}`}
               series={sigSeries((s) => s.qps)}
               syncKey="overview"
             />
