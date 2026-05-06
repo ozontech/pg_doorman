@@ -39,6 +39,14 @@ jobs:
         run: npm run typecheck
         working-directory: frontend
 
+      - name: Verify committed dist matches source-hash
+        # The build itself is not byte-stable across machines (esbuild native
+        # binaries differ), so we hash the source tree instead and compare it
+        # against `dist/.source-hash` written by `npm run build`. A mismatch
+        # means a contributor changed source files without rebuilding dist.
+        run: npm run check-dist
+        working-directory: frontend
+
       - name: Build
         run: npm run build
         working-directory: frontend
@@ -49,8 +57,3 @@ jobs:
           test -d frontend/dist/assets
           test "$(ls frontend/dist/assets/*.js 2>/dev/null | wc -l)" -ge 1
           echo "frontend/dist/ shipped with $(ls frontend/dist/assets | wc -l) assets"
-        # Strict diff-against-rebuild was attempted but vite/esbuild output is
-        # not byte-stable across local and CI runners (different esbuild native
-        # binaries despite identical package-lock). Treat the committed
-        # frontend/dist/ as the source of truth; phase 7 will revisit with a
-        # reproducible-build approach (esbuild pin or build-once-in-CI).
