@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Self-hosted IBM Plex via @fontsource — both packages register @font-face declarations on import. */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@theme {
+  /* Surface — values from design-system.md §4.1 (verbatim) */
+  --color-bg:         #0a0d12;
+  --color-surface:    #11151c;
+  --color-surface-2:  #161b24;
+  --color-surface-3:  #1c2230;
+
+  /* Border */
+  --color-border:        #232a36;
+  --color-border-strong: #2d3543;
+
+  /* Text */
+  --color-text:       #e6e9ee;
+  --color-text-muted: #8a93a4;
+  --color-text-dim:   #5a6275;
+
+  /* Accent */
+  --color-accent:       #22b8cf;
+  --color-accent-hover: #3ec8d9;
+  --color-accent-fg:    #042024;
+
+  /* Semantic */
+  --color-success: #2dc26b;
+  --color-warning: #f5a524;
+  --color-danger:  #e5484d;
+  --color-info:    #5b8cff;
+
+  /* Chart palette (uPlot lines) */
+  --color-chart-1: #22b8cf;
+  --color-chart-2: #2dc26b;
+  --color-chart-3: #f5a524;
+  --color-chart-4: #b18cf5;
+
+  /* Typography — values from design-system.md §3 */
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-size-xs:   11px;
+  --font-size-sm:   13px;
+  --font-size-base: 14px;
+  --font-size-md:   16px;
+  --font-size-lg:   20px;
+  --font-size-xl:   28px;
+}
+
+/* Tabular figures helper (design-system.md §3.4). */
+.tabular {
+  font-variant-numeric: tabular-nums slashed-zero;
+}

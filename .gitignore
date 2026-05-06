@@ -20,6 +20,9 @@ build/
 dist/
 wheels/
 *.egg-info
+# Frontend build output is committed (Web UI decision #22).
+!frontend/dist/
+!frontend/dist/**
 
 # Virtual environments
 .venv
