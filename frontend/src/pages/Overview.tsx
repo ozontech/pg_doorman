@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
 import { Collapsible } from "../components/Collapsible";
@@ -578,15 +578,13 @@ function ResourceDetail({
 // "100%" means one core saturated; with N cores fully busy you'd see
 // N×100%. The bar paints amber when total CPU > 60% of cpu_cores and red
 // when > 90%; FDs paint amber > 70% of limit, red > 90%.
-const PROC_HISTORY_KEY = "overview.process";
 function ProcessBar({ process }: { process: ProcessDto | null }) {
-  // The cumulative CPU counters live behind a /proc read so we sample two
-  // points and compute the rate. `useRef` would suffice but the hook keeps
-  // the value across re-renders cleanly.
-  const last = ((globalThis as unknown as Record<string, ProcessDto | undefined>)[
-    PROC_HISTORY_KEY
-  ] ?? null) as ProcessDto | null;
+  // Previous snapshot (for the rate calculation) lives in a ref so it
+  // survives re-renders without entering a setState loop.
+  const prevRef = useRef<ProcessDto | null>(null);
   let cpuPct: number | null = null;
+  let threadDeltas: { tid: number; name: string; pct: number }[] = [];
+  const last = prevRef.current;
   if (process && last && last.ts !== process.ts) {
     const dtSec = (process.ts - last.ts) / 1000;
     if (dtSec > 0 && process.cpu_cores > 0) {
@@ -595,13 +593,41 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
         process.cpu_system_us -
         (last.cpu_user_us + last.cpu_system_us);
       cpuPct = (usDelta / 1_000_000 / dtSec) * 100;
+
+      // Per-thread CPU% deltas. Operators care about the hottest tokio
+      // worker — a single worker pinned to 100% means the runtime is
+      // imbalanced even when the global CPU number looks fine.
+      const lastByTid = new Map<number, number>(
+        last.threads_breakdown.map((t) => [t.tid, t.cpu_user_us + t.cpu_system_us]),
+      );
+      threadDeltas = process.threads_breakdown
+        .map((t): { tid: number; name: string; pct: number } | null => {
+          const prevTotal = lastByTid.get(t.tid);
+          const cur = t.cpu_user_us + t.cpu_system_us;
+          if (prevTotal === undefined) return null;
+          const deltaUs = cur - prevTotal;
+          if (deltaUs <= 0) return { tid: t.tid, name: t.name, pct: 0 };
+          return { tid: t.tid, name: t.name, pct: (deltaUs / 1_000_000 / dtSec) * 100 };
+        })
+        .filter((x: { tid: number; name: string; pct: number } | null): x is { tid: number; name: string; pct: number } => x !== null)
+        .sort((a: { pct: number }, b: { pct: number }) => b.pct - a.pct);
     }
   }
+  // Stash *after* computing the delta so the next render can compare against
+  // this same snapshot.
   if (process) {
-    (globalThis as unknown as Record<string, ProcessDto>)[PROC_HISTORY_KEY] = process;
+    prevRef.current = process;
   }
 
   if (!process) return null;
+
+  const maxThreadPct = threadDeltas[0]?.pct ?? null;
+  const minThreadPct =
+    threadDeltas.length > 0 ? threadDeltas[threadDeltas.length - 1].pct : null;
+  const avgThreadPct =
+    threadDeltas.length > 0
+      ? threadDeltas.reduce((s, t) => s + t.pct, 0) / threadDeltas.length
+      : null;
 
   const fmtBytes = (n: number) => {
     if (n < 1024) return `${n} B`;
@@ -630,6 +656,14 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
   const fdRatio = process.fd_limit > 0 ? process.fd_open / process.fd_limit : 0;
   const fdTone =
     fdRatio > 0.9 ? "text-danger" : fdRatio > 0.7 ? "text-warning" : "text-text";
+  const maxThreadTone =
+    maxThreadPct === null
+      ? "text-text-muted"
+      : maxThreadPct > 90
+        ? "text-danger"
+        : maxThreadPct > 60
+          ? "text-warning"
+          : "text-text";
 
   return (
     <div className="border border-border bg-surface px-4 py-3">
@@ -641,12 +675,10 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3 lg:grid-cols-6">
         <ProcStat
-          label="cpu"
-          value={cpuPct === null ? "—" : `${cpuPct.toFixed(0)}%`}
+          label="cpu (proc)"
+          value={cpuPct === null ? "sampling…" : `${cpuPct.toFixed(0)}%`}
           tone={cpuTone}
-          hint={`${process.cpu_cores} cores · 100% = 1 core. Worst-thread breakdown: ${
-            process.threads_breakdown.slice(0, 3).map((t) => t.name).join(", ") || "n/a"
-          }`}
+          hint={`${process.cpu_cores} cores · 100% = 1 core saturated. With all cores busy you would see ${process.cpu_cores * 100}%.`}
         />
         <ProcStat
           label="rss"
@@ -655,22 +687,23 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
           hint={`Resident set size. VM size ${fmtBytes(process.vm_size_bytes)}.`}
         />
         <ProcStat
-          label="threads"
-          value={String(process.threads)}
-          tone="text-text"
+          label={`threads (${process.threads})`}
+          value={
+            maxThreadPct === null
+              ? "sampling…"
+              : `max ${maxThreadPct.toFixed(0)} · avg ${avgThreadPct?.toFixed(0) ?? "0"} · min ${minThreadPct?.toFixed(0) ?? "0"}`
+          }
+          tone={maxThreadTone}
           hint={
-            process.threads_breakdown.length === 0
-              ? "Per-thread CPU available on Linux only."
-              : `Hottest: ${process.threads_breakdown
-                  .slice(0, 3)
-                  .map(
-                    (t) =>
-                      `${t.name}#${t.tid} ${(
-                        (t.cpu_user_us + t.cpu_system_us) /
-                        1000
-                      ).toFixed(0)}ms`,
-                  )
-                  .join(" · ")}`
+            threadDeltas.length === 0
+              ? "Per-thread CPU appears after the second /api/process poll. Linux-only — non-Linux build returns an empty breakdown."
+              : `${process.threads} OS threads · max-thread ${maxThreadPct?.toFixed(0)}% · avg ${avgThreadPct?.toFixed(1)}% · min ${minThreadPct?.toFixed(1)}% (each is % of one core).\n\n` +
+                `Top-${Math.min(5, threadDeltas.length)}:\n` +
+                threadDeltas
+                  .slice(0, 5)
+                  .map((t) => `${t.pct.toFixed(0).padStart(3, " ")}%  ${t.name}#${t.tid}`)
+                  .join("\n") +
+                "\n\nAn imbalanced tokio runtime — one worker pinned at 100% while others idle — is the prime suspect when whole-process CPU looks fine but a queue is backing up."
           }
         />
         <ProcStat
@@ -687,17 +720,11 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
           label="uptime"
           value={fmtUptime(process.uptime_seconds)}
           tone="text-text"
-          hint={`Since ${new Date(process.started_at_ms || 0).toISOString()}`}
-        />
-        <ProcStat
-          label="started"
-          value={
+          hint={
             process.started_at_ms > 0
-              ? new Date(process.started_at_ms).toLocaleString()
-              : "—"
+              ? `Started ${new Date(process.started_at_ms).toLocaleString()}`
+              : "Process start timestamp not yet captured"
           }
-          tone="text-text-muted"
-          hint="Process boot time captured the first time the field is read"
         />
       </div>
     </div>
