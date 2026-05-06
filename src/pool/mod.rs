@@ -978,8 +978,7 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
 /// Returns the Pool config if the database exists in configuration.
 /// Used by auth_query to find auth_query config when user is not in static config.
 pub fn get_pool_config(db: &str) -> Option<crate::config::Pool> {
-    let config = get_config();
-    config.pools.get(db).cloned()
+    crate::config::config_arc().pools.get(db).cloned()
 }
 
 /// Get a pointer to all configured pools.

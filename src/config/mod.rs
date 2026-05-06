@@ -679,6 +679,17 @@ pub fn get_config() -> Config {
     (*(*CONFIG.load())).clone()
 }
 
+/// Borrow the live `Arc<Config>` without deep-cloning. Use this on
+/// hot or warm paths that only need to read a few fields — a tick
+/// loop reading one `u64`, a lookup reading one `Pool` — instead of
+/// `get_config()`, which clones the whole `Config` (general + every
+/// pool + every user). The returned `Arc` is the live snapshot at
+/// call time; it does not observe later RELOADs, but that's the
+/// usual semantics for a single iteration of a loop.
+pub fn config_arc() -> Arc<Config> {
+    CONFIG.load_full()
+}
+
 async fn load_file(path: &str) -> Result<String, Error> {
     let mut contents = String::new();
     let mut file = match File::open(path).await {

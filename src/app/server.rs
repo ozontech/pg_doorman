@@ -323,9 +323,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 loop {
                     ticker.tick().await;
 
-                    let anon_ttl_secs = get_config()
-                        .general
-                        .query_interner_anon_idle_ttl_seconds;
+                    let anon_ttl_secs =
+                        crate::config::config_arc().general.query_interner_anon_idle_ttl_seconds;
                     let anon_ttl_ms = if anon_ttl_secs == 0 {
                         u64::MAX
                     } else {
