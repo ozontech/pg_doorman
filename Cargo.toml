@@ -49,6 +49,7 @@ lru = "0.16.3"
 scopeguard = "1.2"
 parking_lot = {version = "0.12.1", features = ["hardware-lock-elision"]}
 libc = "0.2.172"
+include_dir = "0.7"
 num_cpus = "1.16.0"
 syslog = "7.0.0"
 native-tls = { version = "0.2.14" }

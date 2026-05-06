@@ -9,6 +9,7 @@ pub mod log_tap;
 pub mod metrics;
 pub mod routes;
 pub mod server;
+pub mod static_assets;
 
 pub use server::{start_web_server, WebServerOptions};
 
