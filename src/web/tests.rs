@@ -51,6 +51,14 @@ async fn spawn_server(opts: WebServerOptions) -> u16 {
 }
 
 async fn send(port: u16, request: &str) -> String {
+    // Auto-inject `Connection: close` so the keep-alive accept loop
+    // releases the socket as soon as the response is written. Without
+    // this every test would block for `KEEPALIVE_IDLE_TIMEOUT` (30 s)
+    // before `read_to_end` saw EOF.
+    let mut request = request.to_string();
+    if !request.to_lowercase().contains("connection:") {
+        request = request.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1);
+    }
     let mut stream = tokio::time::timeout(
         Duration::from_secs(2),
         TcpStream::connect(("127.0.0.1", port)),
@@ -518,4 +526,46 @@ async fn api_events_returns_envelope() {
     assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
     assert!(raw.contains("\"events\""), "raw={raw}");
     assert!(raw.contains("\"next_seq\""), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn http_keep_alive_serves_two_requests_on_one_connection() {
+    // Two sequential GETs without `Connection: close` should both come
+    // back over the same TCP connection. The server then closes when
+    // we drop our half (no more requests). Until codex perf P1#2 the
+    // listener closed after one request, forcing the SPA to reconnect
+    // multiple times per poll interval.
+    let port = spawn_server(opts(true, true)).await;
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(2),
+        TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    .expect("connect timeout")
+    .expect("connect");
+    stream
+        .write_all(b"GET /api/version HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+    // Request #2 piggybacks immediately — keep-alive means the listener
+    // is still reading the same socket.
+    stream
+        .write_all(b"GET /api/overview HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut buf)).await;
+    let raw = String::from_utf8_lossy(&buf);
+    // Both bodies should be in the buffer; count 200 status lines.
+    let oks = raw.matches("HTTP/1.1 200 OK").count();
+    assert_eq!(
+        oks, 2,
+        "expected two 200 OK responses, got {oks} in:\n{raw}"
+    );
+    assert!(raw.contains("\"version\""), "first response missing: {raw}");
+    assert!(
+        raw.contains("\"active_clients\""),
+        "second response missing: {raw}"
+    );
 }

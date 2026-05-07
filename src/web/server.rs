@@ -168,82 +168,181 @@ pub async fn serve_on(listener: tokio::net::TcpListener, opts: WebServerOptions)
     }
 }
 
+/// Soft cap on requests per keep-alive connection. After this many
+/// requests we close so a misbehaving client cannot pin a worker
+/// forever; HTTP/1.1 clients that need more will reconnect.
+const KEEPALIVE_MAX_REQUESTS: u32 = 1000;
+
+/// Idle timeout between requests on a keep-alive connection. Browsers
+/// hold these open for minutes by default; pg_doorman terminates faster
+/// because each idle connection still costs an FD and a tokio task.
+const KEEPALIVE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOptions>) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut writer = BufWriter::new(write_half);
 
-    let mut buf = [0u8; 4096];
-    let n = match reader.read(&mut buf).await {
-        Ok(0) => return,
-        Ok(n) => n,
-        Err(e) => {
-            error!("Failed to read HTTP request: {e}");
+    let mut req_buf: Vec<u8> = Vec::with_capacity(4096);
+    let mut handled = 0u32;
+    while handled < KEEPALIVE_MAX_REQUESTS {
+        // `req_buf` carries over any bytes from the previous read that
+        // belonged to the *next* request (clients can pipeline two GETs
+        // into one TCP write). `read_request_head` extends it until the
+        // header terminator is in view, then we slice off only the
+        // first request and keep the tail for the next iteration.
+        let head_end = match read_request_head(&mut reader, &mut req_buf).await {
+            Ok(0) => return, // peer closed cleanly between requests
+            Ok(end) => end,
+            Err(ReadError::Io(_)) | Err(ReadError::Idle) => return,
+            Err(ReadError::TooLarge) => {
+                let _ = write_simple(&mut writer, 431, "Request Header Fields Too Large").await;
+                return;
+            }
+        };
+        let close_after = {
+            let head_bytes = &req_buf[..head_end];
+            let raw = match std::str::from_utf8(head_bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    let _ = write_simple(&mut writer, 400, "Bad Request").await;
+                    return;
+                }
+            };
+            let Some(parsed) = ParsedRequest::parse(raw) else {
+                let _ = write_simple(&mut writer, 400, "Bad Request").await;
+                return;
+            };
+            let close_after = parsed.connection_close;
+
+            // /metrics is always served, regardless of ui_active or auth.
+            if parsed.method == "GET" && parsed.path == "/metrics" {
+                write_metrics_response(&mut writer, parsed.accepts_gzip).await;
+            } else {
+                let auth = classify(
+                    parsed.authorization,
+                    &opts.admin_username,
+                    &opts.admin_password,
+                );
+
+                // /api/logs needs an async handler because it talks to the LogTap consumer
+                // task via mpsc + oneshot; the rest of the API stays sync. Pre-screen
+                // ui_active and admin auth here so dispatch() never sees the path on the
+                // success branch — on auth failure or inactive UI we fall through to
+                // dispatch() which already returns the right 401/404.
+                if opts.ui_active
+                    && parsed.method == "GET"
+                    && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
+                {
+                    if auth != AuthOutcome::Admin {
+                        let _ = unauthorized_for(&parsed).write(&mut writer).await;
+                    } else {
+                        let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
+                        let query = crate::web::routes::query::parse_query(query_str);
+                        let response = crate::web::routes::logs::handle_logs(&query).await;
+                        let _ = response.write(&mut writer).await;
+                    }
+                } else if opts.ui_active
+                    && parsed.method == "POST"
+                    && parsed.path.starts_with("/api/admin/")
+                {
+                    if auth != AuthOutcome::Admin {
+                        let _ = unauthorized_for(&parsed).write(&mut writer).await;
+                    } else {
+                        let response =
+                            crate::web::routes::admin::handle_admin_action(parsed.path).await;
+                        let _ = response.write(&mut writer).await;
+                    }
+                } else {
+                    let response = dispatch(&parsed, &opts, auth);
+                    let _ = response.write(&mut writer).await;
+                }
+            }
+            close_after
+        };
+
+        // Discard the request we just answered; pipelined bytes (a
+        // second request that came in the same TCP read) stay at the
+        // head of `req_buf` for the next iteration to consume.
+        req_buf.drain(..head_end);
+        handled += 1;
+        if close_after {
             return;
         }
-    };
-
-    let raw = match std::str::from_utf8(&buf[..n]) {
-        Ok(s) => s,
-        Err(_) => {
-            let _ = write_simple(&mut writer, 400, "Bad Request").await;
-            return;
-        }
-    };
-
-    let Some(parsed) = ParsedRequest::parse(raw) else {
-        let _ = write_simple(&mut writer, 400, "Bad Request").await;
-        return;
-    };
-
-    // /metrics is always served, regardless of ui_active or auth.
-    if parsed.method == "GET" && parsed.path == "/metrics" {
-        let accepts_gzip = parsed.accepts_gzip;
-        write_metrics_response(&mut writer, accepts_gzip).await;
-        return;
     }
+    // Hit the per-connection request cap. Close so the client knows to
+    // reconnect rather than queue more behind us.
+}
 
-    let auth = classify(
-        parsed.authorization,
-        &opts.admin_username,
-        &opts.admin_password,
-    );
+#[derive(Debug)]
+enum ReadError {
+    /// Underlying socket error. We do not track the inner error because
+    /// the only action on Io is "close the connection" — same as Idle.
+    #[allow(dead_code)]
+    Io(std::io::Error),
+    Idle,
+    TooLarge,
+}
 
-    // /api/logs needs an async handler because it talks to the LogTap consumer
-    // task via mpsc + oneshot; the rest of the API stays sync. Pre-screen
-    // ui_active and admin auth here so dispatch() never sees the path on the
-    // success branch — on auth failure or inactive UI we fall through to
-    // dispatch() which already returns the right 401/404.
-    if opts.ui_active
-        && parsed.method == "GET"
-        && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
-    {
-        if auth != AuthOutcome::Admin {
-            let _ = unauthorized_for(&parsed).write(&mut writer).await;
-            return;
-        }
-        let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
-        let query = crate::web::routes::query::parse_query(query_str);
-        let response = crate::web::routes::logs::handle_logs(&query).await;
-        let _ = response.write(&mut writer).await;
-        return;
+impl From<std::io::Error> for ReadError {
+    fn from(e: std::io::Error) -> Self {
+        ReadError::Io(e)
     }
+}
 
-    // POST /api/admin/{action} needs an async handler because reload_now()
-    // is async (it reloads the config and reconciles pools). Pre-screen
-    // ui_active and admin auth in the same shape as /api/logs.
-    if opts.ui_active && parsed.method == "POST" && parsed.path.starts_with("/api/admin/") {
-        if auth != AuthOutcome::Admin {
-            let _ = unauthorized_for(&parsed).write(&mut writer).await;
-            return;
+/// Extend `buf` with bytes from the wire until the request-header
+/// terminator `\r\n\r\n` is in view. Returns the offset *just past* the
+/// terminator (so the caller knows where the headers end and any
+/// pipelined body / next request begin), or `Ok(0)` if the peer closed
+/// cleanly between requests. Caps the buffer at 32 KiB so a malicious
+/// client cannot push us into OOM.
+async fn read_request_head(
+    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    buf: &mut Vec<u8>,
+) -> Result<usize, ReadError> {
+    const MAX_HEADER_BYTES: usize = 32 * 1024;
+    if buf.is_empty() {
+        // Wait up to KEEPALIVE_IDLE_TIMEOUT for the first byte; once
+        // bytes arrive, the read loop below drives without an outer
+        // timeout because the headers are bounded by MAX_HEADER_BYTES.
+        let mut chunk = [0u8; 1024];
+        let read_fut = reader.read(&mut chunk);
+        let n = match tokio::time::timeout(KEEPALIVE_IDLE_TIMEOUT, read_fut).await {
+            Ok(r) => r?,
+            Err(_elapsed) => return Err(ReadError::Idle),
+        };
+        if n == 0 {
+            return Ok(0);
         }
-        let response = crate::web::routes::admin::handle_admin_action(parsed.path).await;
-        let _ = response.write(&mut writer).await;
-        return;
+        buf.extend_from_slice(&chunk[..n]);
     }
+    if let Some(end) = find_double_crlf(buf) {
+        return Ok(end);
+    }
+    let mut chunk = [0u8; 1024];
+    loop {
+        let n = reader.read(&mut chunk).await?;
+        if n == 0 {
+            // Peer closed mid-request — treat as malformed.
+            return Err(ReadError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "EOF mid request headers",
+            )));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(end) = find_double_crlf(buf) {
+            return Ok(end);
+        }
+        if buf.len() >= MAX_HEADER_BYTES {
+            return Err(ReadError::TooLarge);
+        }
+    }
+}
 
-    let response = dispatch(&parsed, &opts, auth);
-    let _ = response.write(&mut writer).await;
+/// Index of the byte immediately after the first `\r\n\r\n` sequence,
+/// or `None` if the buffer does not yet contain the terminator.
+fn find_double_crlf(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
 }
 
 #[derive(Debug)]
@@ -259,6 +358,11 @@ struct ParsedRequest<'a> {
     /// in its native basic-auth dialog and replays it forever, hiding our
     /// React sign-in modal.
     accepts_json: bool,
+    /// True when the request explicitly opts out of HTTP/1.1 keep-alive
+    /// (`Connection: close`) or speaks an older HTTP version. The mux
+    /// uses it to decide whether to drop the connection after the
+    /// response or wait for another request on the same socket.
+    connection_close: bool,
 }
 
 impl<'a> ParsedRequest<'a> {
@@ -268,11 +372,12 @@ impl<'a> ParsedRequest<'a> {
         let mut parts = request_line.splitn(3, ' ');
         let method = parts.next()?;
         let path = parts.next()?;
-        let _http_version = parts.next()?;
+        let http_version = parts.next()?;
 
         let mut authorization = None;
         let mut accepts_gzip = false;
         let mut accepts_json = false;
+        let mut connection_close = !http_version.eq_ignore_ascii_case("HTTP/1.1");
         for line in lines {
             if line.is_empty() {
                 break;
@@ -297,6 +402,14 @@ impl<'a> ParsedRequest<'a> {
                 if value.to_lowercase().contains("application/json") {
                     accepts_json = true;
                 }
+            } else if let Some(value) = line.strip_prefix("Connection: ") {
+                if value.to_lowercase().contains("close") {
+                    connection_close = true;
+                }
+            } else if let Some(value) = line.strip_prefix("connection: ") {
+                if value.to_lowercase().contains("close") {
+                    connection_close = true;
+                }
             }
         }
         Some(ParsedRequest {
@@ -305,6 +418,7 @@ impl<'a> ParsedRequest<'a> {
             authorization,
             accepts_gzip,
             accepts_json,
+            connection_close,
         })
     }
 }
@@ -584,6 +698,7 @@ mod tests {
             authorization: None,
             accepts_gzip: false,
             accepts_json: false,
+            connection_close: false,
         }
     }
 
@@ -594,6 +709,7 @@ mod tests {
             authorization: None,
             accepts_gzip: false,
             accepts_json: true,
+            connection_close: false,
         }
     }
 
