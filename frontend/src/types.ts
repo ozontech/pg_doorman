@@ -36,6 +36,20 @@ export interface OverviewDto {
   clients_in_transactions: number;
   shutdown_in_progress: boolean;
   migration_in_progress: boolean;
+  // Database currently holding the most live backend connections, summed
+  // across every user@db pool that targets it. Sidebar surfaces it so
+  // any page shows which database is taking the load right now. Omitted
+  // when no pool has a live backend connection.
+  hottest_database?: HottestDatabaseDto;
+}
+
+export interface HottestDatabaseDto {
+  name: string;
+  // Sum of every state — active, idle, in-use, login. Mirrors the per-pool
+  // `connections` field.
+  total_connections: number;
+  // Subset currently executing a query or carrying a transaction.
+  active_connections: number;
 }
 
 export interface PoolDto {
