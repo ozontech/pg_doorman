@@ -409,3 +409,18 @@ export interface PoolCoordinatorDto {
   ts: number;
   databases: PoolCoordinatorRowDto[];
 }
+
+// Web UI auth types — populated from /api/auth/config.
+export type Role = "anonymous" | "sso" | "admin";
+
+export interface CurrentUser {
+  username: string;
+  source: "basic" | "sso";
+  role: Role;
+}
+
+export interface AuthConfig {
+  sso_enabled: boolean;
+  sso_proxy_url: string | null;
+  current_user: CurrentUser | null;
+}

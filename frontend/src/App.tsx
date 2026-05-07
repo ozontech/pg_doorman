@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthGate } from "./components/AuthGate";
 import { Sidebar } from "./components/Sidebar";
+import { SilentCallback } from "./components/SilentCallback";
 import { AdminAuthProvider } from "./hooks/useAdminAuth";
 import Overview from "./pages/Overview";
 import Pools from "./pages/Pools";
@@ -13,6 +14,19 @@ import Logs from "./pages/Logs";
 import ConfigState from "./pages/ConfigState";
 
 export default function App() {
+  // Silent SSO refresh: when the iframe lands on `${origin}/?sso_silent=1`
+  // we render a minimal callback component instead of the regular shell,
+  // so polling effects don't fire inside the hidden frame.
+  if (
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("sso_silent") === "1"
+  ) {
+    return <SilentCallback />;
+  }
+  return <AppMain />;
+}
+
+function AppMain() {
   return (
     <AdminAuthProvider>
       <BrowserRouter>
