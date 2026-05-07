@@ -494,12 +494,12 @@ export default function Overview() {
             </ChartLink>
             <ChartLink onClick={() => openPanelById("traffic")}>
               <Sparkline
-                label="Traffic q/s · t/s ↗"
+                label="Traffic ↗"
                 valueText={`${fmtRate(latest?.qps)} · ${fmtRate(latest?.tps)}`}
                 series={sigSeries((s) => s.qps)}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Aggregate rate across all pools. q/s = client-issued statements per second; t/s = transactions completed per second. The sparkline tracks q/s; both numbers in the value column."
+                tip="Aggregate rate across all pools. The two numbers are queries-per-second (left) and transactions-per-second (right); the sparkline tracks q/s. Footer line spells out which is which."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("errors")}>

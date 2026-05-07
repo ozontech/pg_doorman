@@ -172,19 +172,27 @@ export function Sparkline({
       ref={wrapRef}
       className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-surface p-3"
     >
+      {/*
+        The label flex-shrinks (min-w-0) and the value never does (shrink-0).
+        The number is always the operator's primary read; if the tile is
+        narrow, the title abbreviates with an ellipsis instead of squeezing
+        the number out.
+      */}
       <div className="flex items-baseline justify-between gap-3">
         {tip ? (
           <InfoLabel
             tip={tip}
-            className="text-[10px] uppercase tracking-[0.18em] text-text-dim"
+            className="min-w-0 text-[10px] uppercase tracking-[0.18em] text-text-dim"
           >
-            {label}
+            <span className="truncate">{label}</span>
           </InfoLabel>
         ) : (
-          <span className="text-[10px] uppercase tracking-[0.18em] text-text-dim">{label}</span>
+          <span className="min-w-0 truncate text-[10px] uppercase tracking-[0.18em] text-text-dim">
+            {label}
+          </span>
         )}
         <span
-          className="whitespace-nowrap truncate font-mono text-sm font-semibold text-text tabular"
+          className="shrink-0 whitespace-nowrap font-mono text-sm font-semibold text-text tabular"
           title={valueText}
         >
           {valueText}
