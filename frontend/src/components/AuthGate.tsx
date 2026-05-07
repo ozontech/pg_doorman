@@ -13,7 +13,6 @@ import {
   redirectToSso,
   startTokenRefresh,
 } from "../lib/sso";
-import { getValidSsoToken } from "../lib/jwt";
 import type { AuthConfig } from "../types";
 
 /**
@@ -52,12 +51,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [hadFirstResponse, setHadFirstResponse] = useState(false);
 
   // Capture `?token=` returned by the SSO proxy on first load. The
-  // captureTokenFromUrl helper rewrites the URL clean of the param so
-  // the rest of the SPA does not see it.
+  // helper returns the token directly so we can drive React state
+  // even when localStorage is unavailable (private mode / quota).
   useEffect(() => {
-    if (captureTokenFromUrl()) {
-      setSsoToken(getValidSsoToken());
-    }
+    const captured = captureTokenFromUrl();
+    if (captured) setSsoToken(captured);
   }, [setSsoToken]);
 
   // Probe /api/auth/config on mount, on Basic credentials change, and
@@ -74,7 +72,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setAuthConfig(cfg);
         const role = cfg.current_user?.role ?? "anonymous";
         setRole(role);
-        setNeedsAuth(cfg.current_user === null);
+        // /api/auth/config is public, so a null current_user only tells
+        // us the request was anonymous. The backend still gates per
+        // path: anonymous can read the public surface when the listener
+        // was started with `[web].ui_anonymous = true`. Re-arm the
+        // sign-in modal only when api.ts has seen a real 401 elsewhere
+        // (`unauthorizedAt` bumped) and the operator is still anonymous
+        // — otherwise the SPA stays open in Anonymous mode.
+        setNeedsAuth(cfg.current_user === null && unauthorizedAt !== null);
         setHadFirstResponse(true);
       })
       .catch((e: unknown) => {
@@ -95,13 +100,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => ctrl.abort();
   }, [authHeader, unauthorizedAt, setRole]);
 
-  // Periodic SSO refresh. Falls back silently to Basic if Basic is
-  // available; otherwise full redirect.
+  // Periodic SSO refresh. The onToken callback drives React state in
+  // the same tab — `storage` events do not fire here. Falls back to
+  // Basic when available; otherwise full redirect.
   useEffect(() => {
     const proxyUrl = authConfig?.sso_proxy_url ?? null;
     if (!proxyUrl) return;
-    return startTokenRefresh(proxyUrl, () => basic !== null);
-  }, [authConfig?.sso_proxy_url, basic]);
+    return startTokenRefresh(
+      proxyUrl,
+      (token) => setSsoToken(token),
+      () => basic !== null,
+    );
+  }, [authConfig?.sso_proxy_url, basic, setSsoToken]);
 
   // First load shows a placeholder. Subsequent re-probes (after a
   // credential change or 401) keep the previous content visible behind
@@ -234,7 +244,11 @@ function AuthModal({
               disabled={redirecting}
               onClick={() => {
                 setRedirecting(true);
-                redirectToSso(ssoProxyUrl);
+                if (!redirectToSso(ssoProxyUrl)) {
+                  // Bad sso_proxy_url; the helper logged to console.
+                  // Reset the spinner so the operator can retry Basic.
+                  setRedirecting(false);
+                }
               }}
               className="w-full rounded bg-accent px-3 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-60"
             >

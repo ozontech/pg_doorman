@@ -180,9 +180,8 @@ fn find_sso_cookie(cookie_header: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::web::sso::test_helpers::{mint_jwt, ClaimsBuilder};
     use crate::web::sso::{test_keys, AllowedUsers, SsoRuntime};
-    use jsonwebtoken::{encode, Algorithm as JwtAlg, EncodingKey, Header};
-    use serde::Serialize;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn b64(s: &str) -> String {
@@ -196,27 +195,17 @@ mod tests {
         })
     }
 
-    #[derive(Serialize)]
-    struct TestClaims {
-        exp: u64,
-        aud: String,
-        preferred_username: Option<String>,
-        sub: Option<String>,
-    }
-
     fn mint(exp_offset: i64, name: &str) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        let claims = TestClaims {
-            exp: (now + exp_offset) as u64,
-            aud: "pg_doorman".into(),
-            preferred_username: Some(name.into()),
+        mint_jwt(&ClaimsBuilder {
+            preferred_username: Some(name),
             sub: None,
-        };
-        let key = EncodingKey::from_rsa_pem(test_keys::PRIVATE_PEM.as_bytes()).unwrap();
-        encode(&Header::new(JwtAlg::RS256), &claims, &key).unwrap()
+            aud: serde_json::json!("pg_doorman"),
+            exp: now + exp_offset,
+        })
     }
 
     fn sso_rt(allowed: AllowedUsers) -> SsoRuntime {

@@ -129,10 +129,10 @@ pub(super) fn dispatch(
     if is_api {
         let needed = required_role(req.path, opts.ui_anonymous);
         let actual = auth.role();
-        if matches!(auth, AuthOutcome::Rejected) {
-            return unauthorized_for(req);
-        }
         if actual < needed {
+            // Rejected and Anonymous both have role=Anonymous; the
+            // distinction matters only when the path requires Sso or
+            // Admin. Sso role on a Sso-or-higher path is sufficient.
             return match auth {
                 AuthOutcome::Sso(_) => Response::forbidden("admin role required"),
                 _ => unauthorized_for(req),

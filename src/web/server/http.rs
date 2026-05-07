@@ -110,7 +110,9 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
         // the path on the success branch — on failure we fall through to
         // dispatch() which already returns the right 401/404.
         let response = if opts.ui_active && parsed.method == "GET" && parsed.path == "/api/logs" {
-            if matches!(auth, AuthOutcome::Rejected) || auth.role() < Role::Sso {
+            // /api/logs needs Sso or Admin (personal data); Anonymous
+            // and Rejected both yield 401, Sso/Admin proceed.
+            if auth.role() < Role::Sso {
                 unauthorized_for(&parsed)
             } else {
                 let query = crate::web::routes::query::parse_query(parsed.query.unwrap_or(""));

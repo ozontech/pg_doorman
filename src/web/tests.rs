@@ -15,12 +15,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
-use jsonwebtoken::{encode as jwt_encode, Algorithm as JwtAlg, EncodingKey, Header as JwtHeader};
-use serde::Serialize;
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::web::sso::test_helpers::{mint_jwt as sso_mint_jwt, ClaimsBuilder};
 use crate::web::sso::{test_keys, AllowedUsers, SsoRuntime};
 use crate::web::{serve_on, WebServerOptions};
 
@@ -51,25 +50,17 @@ fn opts_with_sso(ui_anonymous: bool) -> WebServerOptions {
     }
 }
 
-#[derive(Serialize)]
-struct TestClaims {
-    exp: u64,
-    aud: String,
-    preferred_username: Option<String>,
-}
-
 fn mint_jwt(name: &str, exp_offset: i64) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let claims = TestClaims {
-        exp: (now + exp_offset) as u64,
-        aud: "pg_doorman".into(),
-        preferred_username: Some(name.into()),
-    };
-    let key = EncodingKey::from_rsa_pem(test_keys::PRIVATE_PEM.as_bytes()).unwrap();
-    jwt_encode(&JwtHeader::new(JwtAlg::RS256), &claims, &key).unwrap()
+    sso_mint_jwt(&ClaimsBuilder {
+        preferred_username: Some(name),
+        sub: None,
+        aud: serde_json::json!("pg_doorman"),
+        exp: now + exp_offset,
+    })
 }
 
 /// Bind on `127.0.0.1:0`, ask the kernel for an actual port, hand the
@@ -692,5 +683,37 @@ async fn anonymous_personal_data_path_returns_401() {
     // ui_anonymous=true should still gate /api/logs (it's personal data).
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/logs HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn anonymous_public_passes_with_poison_basic_header() {
+    // Regression: the SPA's `api.ts` sends `Authorization: Basic ` on
+    // every fetch when there are no credentials, to override the
+    // browser's basic-auth cache. The backend used to demote that to
+    // Anonymous; the three-role refactor briefly let it fall through
+    // as Rejected and 401'd every public endpoint. This test pins the
+    // fix.
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/version HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic \r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200"), "raw={raw}");
+    assert!(raw.contains("\"version\""), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn anonymous_personal_data_with_poison_basic_returns_401() {
+    // The poison Basic header still blocks personal-data paths.
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/logs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic \r\n\r\n",
+    )
+    .await;
     assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
 }

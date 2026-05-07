@@ -57,17 +57,10 @@ native-tls = { version = "0.2.14" }
 tokio-native-tls = { version = "0.3.1" }
 serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }
-# jsonwebtoken is the validator used by the web UI SSO flow (RS256 against
-# a PEM-loaded public key, audience + expiry checked). It coexists with
-# the older `jwt` crate above, which is wired into the PostgreSQL auth
-# pipeline through openssl. The two paths are independent and never share
-# keys, so duplicating the dependency is the simpler choice over teaching
-# the postgres flow a second API surface.
-#
-# Pinned to v8: v9.3.1 transitively pulls `time` 0.3.47 which raised its
-# MSRV to 1.88, conflicting with this crate's pinned 1.87 toolchain. v8
-# exposes the same DecodingKey/Validation/decode API surface we rely on.
-jsonwebtoken = "8"
+# `jwt` (above) is shared with the web UI SSO flow. Both code paths
+# verify RS256 against an RSA public key loaded through openssl, so
+# adding a second JWT crate would only duplicate functionality and
+# pull extra transitive licenses (ring, ISC) into the vendor set.
 thiserror = "1"
 openssl = { version = "0.10.78" }
 openssl-sys = { version = "0.9.114" }

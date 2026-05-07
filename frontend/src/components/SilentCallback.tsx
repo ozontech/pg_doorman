@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { captureTokenFromUrl } from "../lib/sso";
-import { getValidSsoToken } from "../lib/jwt";
 
 /**
  * Rendered inside the silent-refresh iframe (when the URL has
@@ -15,8 +14,7 @@ import { getValidSsoToken } from "../lib/jwt";
  */
 export function SilentCallback() {
   useEffect(() => {
-    captureTokenFromUrl();
-    const token = getValidSsoToken();
+    const token = captureTokenFromUrl();
     if (token && window.parent !== window) {
       window.parent.postMessage(
         { type: "sso-token", token },

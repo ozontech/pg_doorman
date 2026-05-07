@@ -453,10 +453,41 @@ fn dispatch_anonymous_cannot_get_logs() {
 }
 
 #[test]
-fn dispatch_rejected_on_public_returns_401() {
+fn dispatch_rejected_on_public_anonymous_endpoint_passes() {
+    // Rejected has role=Anonymous. On a public endpoint with
+    // ui_anonymous=true the required role is Anonymous, so the request
+    // proceeds. This guards against the regression where the SPA's
+    // poison `Authorization: Basic ` header (sent on every fetch to
+    // override browser-cached creds) would otherwise turn every
+    // anonymous request into a 401.
     let r = dispatch(
         &req("GET", "/api/version"),
         &opts(true, true),
+        &AuthOutcome::Rejected,
+    );
+    assert_eq!(r.status, 200);
+}
+
+#[test]
+fn dispatch_rejected_on_personal_data_returns_401() {
+    // Rejected on /api/logs (Sso required) still 401s — the fall-
+    // through above only covers paths whose required role is
+    // Anonymous.
+    let r = dispatch(
+        &req("GET", "/api/logs"),
+        &opts(true, true),
+        &AuthOutcome::Rejected,
+    );
+    assert_eq!(r.status, 401);
+}
+
+#[test]
+fn dispatch_rejected_on_public_when_anonymous_disabled_returns_401() {
+    // ui_anonymous=false raises the bar for /api/version to Sso, so
+    // Rejected.role()=Anonymous is now insufficient.
+    let r = dispatch(
+        &req("GET", "/api/version"),
+        &opts(true, false),
         &AuthOutcome::Rejected,
     );
     assert_eq!(r.status, 401);

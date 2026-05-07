@@ -19,11 +19,17 @@ const REFRESH_MARGIN_SEC = 90;
 const SILENT_REFRESH_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 60_000;
 
-/** Capture a `?token=...` returned by the SSO proxy and clean the URL. */
-export function captureTokenFromUrl(): boolean {
+/**
+ * Capture a `?token=...` returned by the SSO proxy and clean the URL.
+ * Returns the captured token on success so the caller can feed it
+ * into React state in the same render. Falls back to in-memory only
+ * when localStorage is unavailable (private mode / quota); the caller
+ * still receives the token and the session works until reload.
+ */
+export function captureTokenFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
-  if (!token) return false;
+  if (!token) return null;
   // Always rewrite the URL clean of `?token=`, even when the value is
   // garbage — otherwise a bad redirect loops on the same broken token
   // every time the SPA re-mounts.
@@ -34,17 +40,19 @@ export function captureTokenFromUrl(): boolean {
     : window.location.pathname;
   window.history.replaceState({}, "", newUrl);
   if (!parseJwt(token)) {
-    // Shape-valid JWT only. Backend will reject signature anyway, but we
-    // refuse to feed obvious junk into localStorage / Authorization.
-    return false;
+    // Shape-valid JWT only. Backend will reject signature anyway, but
+    // we refuse to feed obvious junk into localStorage / Authorization.
+    return null;
   }
   try {
     localStorage.setItem(SSO_TOKEN_KEY, token);
   } catch {
-    /* private mode / quota — non-fatal, the token will not survive a
-     * reload but the in-memory state path still works. */
+    /* private mode / quota — non-fatal. The caller still gets the
+     * token returned from this function and can drive React state;
+     * the session will not survive a reload, but the SPA works for
+     * the current load. */
   }
-  return true;
+  return token;
 }
 
 /**
@@ -53,12 +61,17 @@ export function captureTokenFromUrl(): boolean {
  * (or be localhost for development). A bad URL logs to the console
  * and aborts the redirect, so a typo in `pg_doorman.toml` shows in
  * devtools instead of leaving the SPA stuck on a half-redirect.
+ *
+ * Returns `true` when navigation was scheduled, `false` when the URL
+ * was rejected — the caller can use this to clear a "Redirecting…"
+ * spinner instead of leaving the button stuck.
  */
-export function redirectToSso(proxyUrl: string): void {
+export function redirectToSso(proxyUrl: string): boolean {
   const url = safeProxyUrl(proxyUrl);
-  if (!url) return;
+  if (!url) return false;
   url.searchParams.set("redirect_to", window.location.href);
   window.location.href = url.toString();
+  return true;
 }
 
 function safeProxyUrl(proxyUrl: string): URL | null {
@@ -94,28 +107,31 @@ function isSsoTokenMessage(d: unknown): d is SsoTokenMessage {
   return obj.type === "sso-token" && typeof obj.token === "string";
 }
 
-let refreshInFlight: Promise<boolean> | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
 
 /**
  * Ask the SSO proxy for a fresh token through a hidden iframe. Resolves
- * `true` once the iframe posts the new token back via `window.postMessage`,
- * `false` if no message arrives within `SILENT_REFRESH_TIMEOUT_MS` or if
- * `signal` aborts before then.
+ * with the new JWT once the iframe posts it back via
+ * `window.postMessage`, or `null` if no message arrives within
+ * `SILENT_REFRESH_TIMEOUT_MS` or if `signal` aborts before then.
  *
  * The iframe lands on `${origin}/?sso_silent=1`; App.tsx detects that
  * sentinel and renders <SilentCallback /> which captures the token and
  * calls `window.parent.postMessage({type:"sso-token", token})`.
  *
  * Concurrent callers share a single Promise so two timer ticks cannot
- * spawn duplicate iframes.
+ * spawn duplicate iframes. Returning the token (rather than just `true`)
+ * lets the caller propagate it into React state — `storage` events do
+ * not fire in the originating tab, so a write to localStorage alone
+ * leaves `useAdminAuth` holding the stale token.
  */
 export function silentRefresh(
   proxyUrl: string,
   signal?: AbortSignal,
-): Promise<boolean> {
+): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
 
-  refreshInFlight = new Promise<boolean>((resolve) => {
+  refreshInFlight = new Promise<string | null>((resolve) => {
     const iframe = document.createElement("iframe");
     iframe.style.display = "none";
     let settled = false;
@@ -149,20 +165,21 @@ export function silentRefresh(
       } catch {
         /* non-fatal */
       }
+      const token = ev.data.token;
       cleanup();
-      resolve(true);
+      resolve(token);
     };
 
     const onAbort = () => {
       if (settled) return;
       cleanup();
-      resolve(false);
+      resolve(null);
     };
 
     const timer = setTimeout(() => {
       if (settled) return;
       cleanup();
-      resolve(false);
+      resolve(null);
     }, SILENT_REFRESH_TIMEOUT_MS);
 
     window.addEventListener("message", onMessage);
@@ -177,7 +194,7 @@ export function silentRefresh(
     const ssoUrl = safeProxyUrl(proxyUrl);
     if (!ssoUrl) {
       cleanup();
-      resolve(false);
+      resolve(null);
       return;
     }
     const callbackUrl = new URL(window.location.origin);
@@ -192,10 +209,13 @@ export function silentRefresh(
 
 /**
  * Periodic check: when the SSO token is < REFRESH_MARGIN_SEC from
- * expiring, attempt silent refresh. On failure, fall back to a full
+ * expiring, attempt silent refresh. On success the callback `onToken`
+ * lets the caller propagate the new token into React state — writing
+ * to localStorage alone is not enough, because `storage` events do
+ * not fire in the originating tab. On failure, fall back to a full
  * redirect, unless `onFallbackBlocked` returns true (typically because
- * the operator still has working Basic credentials and we'd rather drop
- * the dead SSO token than punt them through the proxy).
+ * the operator still has working Basic credentials and we'd rather
+ * drop the dead SSO token than push them through the proxy).
  *
  * The interval pauses while `document.hidden` is true: hidden tabs
  * already throttle setInterval to ~1Hz and a refresh request would
@@ -208,6 +228,7 @@ export function silentRefresh(
  */
 export function startTokenRefresh(
   proxyUrl: string,
+  onToken: (token: string) => void,
   onFallbackBlocked?: () => boolean,
 ): () => void {
   const ctrl = new AbortController();
@@ -225,9 +246,12 @@ export function startTokenRefresh(
       if (!parsed || typeof parsed.exp !== "number") return;
       const remaining = parsed.exp - Math.floor(Date.now() / 1000);
       if (remaining >= REFRESH_MARGIN_SEC) return;
-      const ok = await silentRefresh(proxyUrl, ctrl.signal);
+      const fresh = await silentRefresh(proxyUrl, ctrl.signal);
       if (ctrl.signal.aborted) return;
-      if (ok) return;
+      if (fresh) {
+        onToken(fresh);
+        return;
+      }
       if (onFallbackBlocked && onFallbackBlocked()) {
         try {
           localStorage.removeItem(SSO_TOKEN_KEY);
