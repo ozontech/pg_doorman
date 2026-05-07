@@ -1,0 +1,55 @@
+# pg_doorman config for the SSO demo. The web UI listens on
+# 0.0.0.0:9127 with SSO enabled against demo/sso/keys/sso-public.pem.
+#
+# Browser flow:
+#   open http://localhost:9127/
+#   click "Sign in via SSO" — there is no real proxy in this demo, so
+#   the redirect target is documentation only. To impersonate the
+#   redirect, mint a JWT and paste it into localStorage:
+#
+#     docker compose run --rm mint-jwt > /tmp/jwt
+#     # in browser devtools console:
+#     localStorage.setItem("pgdoorman.sso-token", "<paste>")
+#     # then reload http://localhost:9127/
+#
+# The header path needs no browser:
+#
+#   curl -H "Authorization: Bearer $(cat /tmp/jwt)" http://localhost:9127/api/auth/config
+#
+# Basic auth (admin / admin-demo) coexists with SSO; presenting both
+# resolves to Admin and the operator gets full access.
+
+[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+# A throwaway demo password. Change this for any environment that's
+# not your laptop.
+admin_password = "admin-demo"
+
+[web]
+enabled = true
+host = "0.0.0.0"
+port = 9127
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 4096
+
+sso_enabled = true
+# Documentation-only — the demo does not run a real proxy. A production
+# deployment would point this at oauth2-proxy / Keycloak so the
+# Sign in via SSO button has somewhere to send the operator.
+sso_proxy_url = "https://sso.example.com/oauth2/start"
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_allowed_users = ["*"]
+
+[pools.demo]
+server_host = "postgres"
+server_port = 5432
+pool_mode = "transaction"
+
+[[pools.demo.users]]
+username = "demo"
+password = "demo"
+pool_size = 5

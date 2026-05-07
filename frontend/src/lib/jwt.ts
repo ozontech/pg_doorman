@@ -2,7 +2,7 @@
 // that is the backend's job. We only parse the payload to read `exp`
 // and pick the username for the role-aware UI.
 
-const TOKEN_KEY = "pgdoorman.sso-token";
+export const SSO_TOKEN_KEY = "pgdoorman.sso-token";
 
 /** Parse a JWT payload without signature verification (client-side only). */
 export function parseJwt(token: string): Record<string, unknown> | null {
@@ -26,15 +26,15 @@ export function parseJwt(token: string): Record<string, unknown> | null {
  * is consistently null.
  */
 export function getValidSsoToken(): string | null {
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token = localStorage.getItem(SSO_TOKEN_KEY);
   if (!token) return null;
   const parsed = parseJwt(token);
   if (!parsed || typeof parsed.exp !== "number") {
-    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(SSO_TOKEN_KEY);
     return null;
   }
   if (parsed.exp <= Math.floor(Date.now() / 1000)) {
-    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(SSO_TOKEN_KEY);
     return null;
   }
   return token;
@@ -54,7 +54,6 @@ export function getSsoTokenUsername(): string | null {
 }
 
 export function clearSsoToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(SSO_TOKEN_KEY);
 }
 
-export const SSO_TOKEN_KEY = TOKEN_KEY;

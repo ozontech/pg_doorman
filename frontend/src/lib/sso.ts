@@ -83,12 +83,24 @@ function safeProxyUrl(proxyUrl: string): URL | null {
   return url;
 }
 
+interface SsoTokenMessage {
+  type: "sso-token";
+  token: string;
+}
+
+function isSsoTokenMessage(d: unknown): d is SsoTokenMessage {
+  if (typeof d !== "object" || d === null) return false;
+  const obj = d as Record<string, unknown>;
+  return obj.type === "sso-token" && typeof obj.token === "string";
+}
+
 let refreshInFlight: Promise<boolean> | null = null;
 
 /**
  * Ask the SSO proxy for a fresh token through a hidden iframe. Resolves
  * `true` once the iframe posts the new token back via `window.postMessage`,
- * `false` if no message arrives within `SILENT_REFRESH_TIMEOUT_MS`.
+ * `false` if no message arrives within `SILENT_REFRESH_TIMEOUT_MS` or if
+ * `signal` aborts before then.
  *
  * The iframe lands on `${origin}/?sso_silent=1`; App.tsx detects that
  * sentinel and renders <SilentCallback /> which captures the token and
@@ -97,7 +109,10 @@ let refreshInFlight: Promise<boolean> | null = null;
  * Concurrent callers share a single Promise so two timer ticks cannot
  * spawn duplicate iframes.
  */
-export function silentRefresh(proxyUrl: string): Promise<boolean> {
+export function silentRefresh(
+  proxyUrl: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = new Promise<boolean>((resolve) => {
@@ -108,12 +123,13 @@ export function silentRefresh(proxyUrl: string): Promise<boolean> {
     const cleanup = () => {
       settled = true;
       window.removeEventListener("message", onMessage);
+      if (signal) signal.removeEventListener("abort", onAbort);
       clearTimeout(timer);
-      // Defer DOM removal so the iframe finishes loading; tearing it
-      // down in the same task as the postMessage dispatch loses the
-      // message on Firefox. Reset `refreshInFlight` only after the
-      // iframe is gone — otherwise a follow-up caller starts a fresh
-      // refresh while the previous iframe still sits in the DOM.
+      // Firefox drops the postMessage if the iframe is removed in the
+      // same task as the dispatch. 100ms gives the message time to
+      // land. We also clear `refreshInFlight` after the removal so a
+      // follow-up caller cannot spawn a second iframe while the first
+      // still sits in the DOM.
       setTimeout(() => {
         try {
           document.body.removeChild(iframe);
@@ -127,14 +143,20 @@ export function silentRefresh(proxyUrl: string): Promise<boolean> {
     const onMessage = (ev: MessageEvent) => {
       if (ev.origin !== window.location.origin) return;
       if (settled) return;
-      const data = ev.data as { type?: string; token?: string } | null;
-      if (data?.type !== "sso-token") return;
-      const token = data.token;
-      if (typeof token === "string" && token.length > 0) {
-        localStorage.setItem(SSO_TOKEN_KEY, token);
-        cleanup();
-        resolve(true);
+      if (!isSsoTokenMessage(ev.data)) return;
+      try {
+        localStorage.setItem(SSO_TOKEN_KEY, ev.data.token);
+      } catch {
+        /* non-fatal */
       }
+      cleanup();
+      resolve(true);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      cleanup();
+      resolve(false);
     };
 
     const timer = setTimeout(() => {
@@ -144,6 +166,13 @@ export function silentRefresh(proxyUrl: string): Promise<boolean> {
     }, SILENT_REFRESH_TIMEOUT_MS);
 
     window.addEventListener("message", onMessage);
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort);
+    }
 
     const ssoUrl = safeProxyUrl(proxyUrl);
     if (!ssoUrl) {
@@ -168,26 +197,78 @@ export function silentRefresh(proxyUrl: string): Promise<boolean> {
  * the operator still has working Basic credentials and we'd rather drop
  * the dead SSO token than punt them through the proxy).
  *
- * Returns a cleanup function that cancels the interval.
+ * The interval pauses while `document.hidden` is true: hidden tabs
+ * already throttle setInterval to ~1Hz and a refresh request would
+ * just waste an iframe and a network round-trip until the operator
+ * comes back. On `visibilitychange` we check immediately so a long
+ * idle does not leave the operator with an expired token.
+ *
+ * Returns a cleanup function that cancels the interval and aborts any
+ * silent refresh that is currently in flight.
  */
 export function startTokenRefresh(
   proxyUrl: string,
   onFallbackBlocked?: () => boolean,
 ): () => void {
-  const id = window.setInterval(async () => {
-    const token = getValidSsoToken();
-    if (!token) return;
-    const parsed = parseJwt(token);
-    if (!parsed || typeof parsed.exp !== "number") return;
-    const remaining = parsed.exp - Math.floor(Date.now() / 1000);
-    if (remaining >= REFRESH_MARGIN_SEC) return;
-    const ok = await silentRefresh(proxyUrl);
-    if (ok) return;
-    if (onFallbackBlocked && onFallbackBlocked()) {
-      localStorage.removeItem(SSO_TOKEN_KEY);
-      return;
+  const ctrl = new AbortController();
+  let intervalId: number | null = null;
+  let runningCheck = false;
+
+  const tick = async () => {
+    if (ctrl.signal.aborted) return;
+    if (runningCheck) return;
+    runningCheck = true;
+    try {
+      const token = getValidSsoToken();
+      if (!token) return;
+      const parsed = parseJwt(token);
+      if (!parsed || typeof parsed.exp !== "number") return;
+      const remaining = parsed.exp - Math.floor(Date.now() / 1000);
+      if (remaining >= REFRESH_MARGIN_SEC) return;
+      const ok = await silentRefresh(proxyUrl, ctrl.signal);
+      if (ctrl.signal.aborted) return;
+      if (ok) return;
+      if (onFallbackBlocked && onFallbackBlocked()) {
+        try {
+          localStorage.removeItem(SSO_TOKEN_KEY);
+        } catch {
+          /* non-fatal */
+        }
+        return;
+      }
+      redirectToSso(proxyUrl);
+    } finally {
+      runningCheck = false;
     }
-    redirectToSso(proxyUrl);
-  }, POLL_INTERVAL_MS);
-  return () => window.clearInterval(id);
+  };
+
+  const startInterval = () => {
+    if (intervalId !== null) return;
+    intervalId = window.setInterval(tick, POLL_INTERVAL_MS);
+  };
+  const stopInterval = () => {
+    if (intervalId === null) return;
+    window.clearInterval(intervalId);
+    intervalId = null;
+  };
+
+  const onVisibility = () => {
+    if (document.hidden) {
+      stopInterval();
+    } else {
+      // The tab just came back into focus — re-check immediately, then
+      // resume the regular cadence.
+      void tick();
+      startInterval();
+    }
+  };
+
+  if (!document.hidden) startInterval();
+  document.addEventListener("visibilitychange", onVisibility);
+
+  return () => {
+    ctrl.abort();
+    stopInterval();
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
 }

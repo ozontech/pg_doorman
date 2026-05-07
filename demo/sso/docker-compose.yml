@@ -1,0 +1,72 @@
+# Self-contained demo for pg_doorman SSO. Brings up:
+#
+#   - postgres:    a one-database PostgreSQL instance with a single user.
+#   - pg_doorman:  the pooler with [web].sso_enabled = true and the
+#                  public key from ./keys/sso-public.pem.
+#   - mint-jwt:    a one-shot helper container that prints a freshly
+#                  signed JWT to stdout (`docker compose run --rm mint-jwt`).
+#
+# In a real deployment the JWT would come from an external SSO proxy
+# (oauth2-proxy / Keycloak / …) — that machinery is out of scope for
+# this demo, which only proves out the pg_doorman side of the contract.
+#
+# Quick start:
+#   docker compose up -d
+#   docker compose run --rm mint-jwt > /tmp/jwt
+#   curl -H "Authorization: Bearer $(cat /tmp/jwt)" http://localhost:9127/api/auth/config
+#   # → {"sso_enabled":true,"sso_proxy_url":"...","current_user":{"role":"sso",...}}
+#   open http://localhost:9127/                  # Sign in via SSO -> redirects elsewhere
+#                                                 # in this demo there is no real proxy, so
+#                                                 # the operator pastes the JWT directly:
+#   # localStorage.setItem("pgdoorman.sso-token", "$(cat /tmp/jwt)")
+#   # then refresh the page.
+#
+# Tear down:  docker compose down
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "demo"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    ports:
+      - "5432:5432"
+
+  pg_doorman:
+    # Build from the repo root so the demo always runs against local code.
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml:ro
+      - ./keys/sso-public.pem:/etc/pg_doorman/sso-public.pem:ro
+    command: ["-c", "/etc/pg_doorman/pg_doorman.toml"]
+    ports:
+      - "6432:6432"
+      - "9127:9127"
+
+  mint-jwt:
+    image: python:3.12-slim
+    profiles: ["tools"]
+    volumes:
+      - ./keys/sso-private.pem:/keys/sso-private.pem:ro
+      - ./mint_jwt.py:/mint_jwt.py:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        pip install --quiet pyjwt cryptography &&
+        python /mint_jwt.py "$${SSO_USER:-alice}" "$${SSO_AUDIENCE:-pg_doorman}" "$${SSO_TTL:-3600}"
+    environment:
+      SSO_USER: alice
+      SSO_AUDIENCE: pg_doorman
+      SSO_TTL: 3600

@@ -19,6 +19,12 @@ interface BasicCreds {
   password: string;
 }
 
+function isBasicCreds(x: unknown): x is BasicCreds {
+  if (typeof x !== "object" || x === null) return false;
+  const obj = x as Record<string, unknown>;
+  return typeof obj.username === "string" && typeof obj.password === "string";
+}
+
 interface AdminAuthValue {
   /** Basic-auth credentials, when the operator has signed in via the form. */
   basic: BasicCreds | null;
@@ -50,17 +56,7 @@ function loadStored(): BasicCreds | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "username" in parsed &&
-      "password" in parsed &&
-      typeof (parsed as BasicCreds).username === "string" &&
-      typeof (parsed as BasicCreds).password === "string"
-    ) {
-      return parsed as BasicCreds;
-    }
-    return null;
+    return isBasicCreds(parsed) ? parsed : null;
   } catch {
     return null;
   }
