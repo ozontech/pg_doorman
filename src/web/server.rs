@@ -96,43 +96,62 @@ const ADMIN_ONLY_PREFIXES: &[&str] = &[
     "/api/logs",
     "/api/prepared/text/",
     "/api/interner/top",
+    // /api/top/queries returns SQL previews — first 120 chars of cached
+    // statements. Tenant ids, literal values, schema names, and the
+    // occasional accidental secret embedded in SQL all leak through;
+    // keep it admin-only regardless of `ui_anonymous`.
+    "/api/top/queries",
     "/api/admin/",
 ];
 
-/// Spawns the HTTP listener for the given address. The provided `opts`
-/// seeds the reload-aware [`WEB_OPTIONS`] slot — subsequent
-/// [`refresh_options_from_config`] calls (from `RELOAD`) atomically replace
-/// it, and every request reads the current value via [`current_options`].
-pub async fn start_web_server(host: &str, opts: WebServerOptions) {
-    install_options(Arc::new(opts));
-
-    info!("starting web listener on {host}");
-    let addr: SocketAddr = match host.parse() {
-        Ok(addr) => addr,
-        Err(e) => panic!("Failed to parse socket address '{host}': {e}"),
-    };
+/// Bind the listener synchronously and return it. Used by callers that
+/// want to fail fast when the configured port is taken: the daemon's
+/// readiness signal must wait until the web subsystem is verifiably
+/// listening, otherwise systemd / a binary-upgrade parent treats the
+/// pooler as healthy while `/metrics` and the UI are silently down.
+pub fn bind_web_listener(host: &str) -> std::io::Result<tokio::net::TcpListener> {
+    info!("binding web listener on {host}");
+    let addr: SocketAddr = host.parse().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Failed to parse socket address '{host}': {e}"),
+        )
+    })?;
 
     let listen_socket = if addr.is_ipv4() {
         TcpSocket::new_v4()
     } else {
         TcpSocket::new_v6()
-    }
-    .unwrap_or_else(|e| panic!("Failed to create socket: {e}"));
+    }?;
 
-    listen_socket
-        .set_reuseaddr(true)
-        .unwrap_or_else(|e| panic!("Failed to set SO_REUSEADDR: {e}"));
-    listen_socket
-        .set_reuseport(true)
-        .unwrap_or_else(|e| panic!("Failed to set SO_REUSEPORT: {e}"));
-    listen_socket
-        .bind(addr)
-        .unwrap_or_else(|e| panic!("Failed to bind to address {addr}: {e}"));
-
-    let listener = listen_socket
-        .listen(1024)
-        .unwrap_or_else(|e| panic!("Failed to listen on {addr}: {e}"));
+    listen_socket.set_reuseaddr(true)?;
+    listen_socket.set_reuseport(true)?;
+    listen_socket.bind(addr)?;
+    let listener = listen_socket.listen(1024)?;
     info!("web listener bound on {addr}");
+    Ok(listener)
+}
+
+/// Spawns the HTTP listener for the given address. The provided `opts`
+/// seeds the reload-aware [`WEB_OPTIONS`] slot — subsequent
+/// [`refresh_options_from_config`] calls (from `RELOAD`) atomically replace
+/// it, and every request reads the current value via [`current_options`].
+///
+/// Panics on bind failure. Production callers in `app::server::run_server`
+/// prefer [`bind_web_listener`] + [`serve_on`] so a port collision fails
+/// the whole startup instead of leaving the listener task panicked behind
+/// a successful readiness signal.
+pub async fn start_web_server(host: &str, opts: WebServerOptions) {
+    let listener = bind_web_listener(host)
+        .unwrap_or_else(|e| panic!("Failed to bind web listener on {host}: {e}"));
+    serve_on(listener, opts).await;
+}
+
+/// Drive the accept loop on a pre-bound listener. Used by both
+/// [`start_web_server`] and the production startup path that binds
+/// synchronously before spawning.
+pub async fn serve_on(listener: tokio::net::TcpListener, opts: WebServerOptions) {
+    install_options(Arc::new(opts));
 
     loop {
         match listener.accept().await {
@@ -1093,11 +1112,23 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_top_queries_returns_200() {
+    fn dispatch_top_queries_anonymous_returns_401() {
+        // /api/top/queries returns SQL previews — admin-only regardless of
+        // ui_anonymous so tenant identifiers and embedded secrets do not leak.
         let r = dispatch(
             &req("GET", "/api/top/queries"),
             &opts(true, true),
             AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 401);
+    }
+
+    #[test]
+    fn dispatch_top_queries_admin_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/top/queries"),
+            &opts(true, true),
+            AuthOutcome::Admin,
         );
         assert_eq!(r.status, 200);
     }

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
-const TRACKED_DIRS = ["src", "public"];
+const TRACKED_DIRS = ["src", "public", "scripts"];
 const TRACKED_FILES = [
   "index.html",
   "package.json",

@@ -1706,10 +1706,10 @@ fields:
 
     ui_anonymous:
       config:
-        en: "Allow unauthenticated access to the web UI."
-        ru: "Разрешить анонимный доступ к веб-интерфейсу."
-      doc: "When true, public read-only routes (overview, pools, clients, config) are accessible without authentication; admin-only routes (logs, prepared statement bodies, interner top) always require basic-auth regardless."
-      default: "true"
+        en: "Allow unauthenticated access to the public read-only API endpoints."
+        ru: "Разрешить анонимный доступ к публичным read-only API-эндпоинтам."
+      doc: "When true, public read-only routes (overview, pools, clients, config) are accessible without authentication; admin-only routes (logs, prepared statement bodies, interner top, top queries, /api/admin/*) always require basic-auth regardless. Note: the SPA shell on `/` is always served anonymously when `web.ui` is active so the React sign-in modal can render before any browser-native basic-auth dialog."
+      default: "false"
 
     log_tap_max_entries:
       config:

@@ -52,8 +52,11 @@ jobs:
         working-directory: frontend
 
       - name: Verify dist exists and is non-empty
+        # Pin working-directory so paths are unambiguous regardless of
+        # whether the step inherits the previous step's directory.
+        working-directory: frontend
         run: |
-          test -s frontend/dist/index.html
-          test -d frontend/dist/assets
-          test "$(ls frontend/dist/assets/*.js 2>/dev/null | wc -l)" -ge 1
-          echo "frontend/dist/ shipped with $(ls frontend/dist/assets | wc -l) assets"
+          test -s dist/index.html
+          test -d dist/assets
+          test "$(ls dist/assets/*.js 2>/dev/null | wc -l)" -ge 1
+          echo "frontend/dist/ shipped with $(ls dist/assets | wc -l) assets"

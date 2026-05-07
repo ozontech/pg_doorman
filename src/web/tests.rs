@@ -448,13 +448,27 @@ async fn api_apps_returns_envelope() {
 
 #[tokio::test]
 #[serial]
-async fn api_top_queries_returns_envelope() {
+async fn api_top_queries_anonymous_returns_401() {
+    // /api/top/queries returns SQL previews — admin-only regardless of
+    // ui_anonymous so SQL literals and secrets do not leak.
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
         port,
         "GET /api/top/queries HTTP/1.1\r\nHost: localhost\r\n\r\n",
     )
     .await;
+    assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn api_top_queries_admin_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
+    let req = format!(
+        "GET /api/top/queries HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic {creds}\r\n\r\n"
+    );
+    let raw = send(port, &req).await;
     assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
     assert!(raw.contains("\"by\":\"count\""), "raw={raw}");
     assert!(raw.contains("\"queries\""), "raw={raw}");

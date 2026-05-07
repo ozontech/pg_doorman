@@ -24,7 +24,7 @@ use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
 use crate::web::metrics::record_interner_gc;
-use crate::web::{start_web_server, WebServerOptions};
+use crate::web::WebServerOptions;
 use socket2::SockRef;
 #[cfg(not(windows))]
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -390,8 +390,18 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 admin_username: config.general.admin_username.clone(),
                 admin_password: config.general.admin_password.clone(),
             };
+            // Bind synchronously so a port conflict fails the whole startup
+            // instead of leaving the daemon "ready" while /metrics + UI
+            // silently die in a panicked detached task.
+            let web_listener = match crate::web::bind_web_listener(&host) {
+                Ok(l) => l,
+                Err(e) => {
+                    error!("web listener bind failed on {host}: {e}");
+                    std::process::exit(exitcode::OSERR);
+                }
+            };
             tokio::task::spawn(async move {
-                start_web_server(&host, opts).await;
+                crate::web::serve_on(web_listener, opts).await;
             });
             // LogTap stays off until /api/logs is hit; the reaper turns it
             // back off when nobody is polling, so spawn it once here.

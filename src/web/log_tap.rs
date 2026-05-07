@@ -336,7 +336,7 @@ pub async fn run_reaper() {
             let last = tap.last_request_at.load(Ordering::Relaxed);
             if now_monotonic_ms().saturating_sub(last) > IDLE_DISABLE_MS {
                 disable_log_tap();
-                log::debug!("LogTap disabled (no consumers for 30s)");
+                log::debug!("LogTap disabled (no consumers for 2 minutes)");
             }
         }
     }

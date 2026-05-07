@@ -22,9 +22,12 @@ ui_anonymous = false
 log_tap_max_entries = 8192
 ```
 
-`web.ui = true` is refused at startup when `general.admin_password` is empty
-or the literal `"admin"` — every admin-only endpoint would otherwise be
-trivially open. Set a real password before flipping `ui = true`.
+`web.ui = true` is silently demoted to "metrics only" at startup when
+`general.admin_password` is empty or the literal `"admin"`: the listener
+keeps serving `/metrics`, but every admin-only endpoint would otherwise
+be trivially open. Set a real password before flipping `ui = true`; you
+will see `web.ui = true ignored: admin_password is default/empty` in
+the log when this gate fires.
 
 | Option | Description | Default |
 |---|---|---|
@@ -39,11 +42,11 @@ trivially open. Set a real password before flipping `ui = true`.
 
 | URL | Auth | Purpose |
 |---|---|---|
-| `/` and any non-API path | Public when `ui_anonymous = true`, otherwise basic-auth | The SPA shell. Client-side routing is handled by the bundle, so deep links like `/pools` resolve to the same shell on hard refresh. |
-| `/assets/*` | Same as `/` | Hashed JS / CSS / font bundles. Served with `Cache-Control: public, max-age=31536000, immutable`. |
+| `/` and any non-API path | Always public when `web.ui` is active | The SPA shell. Browsing to `/pools` directly must not trigger a browser-native basic-auth dialog before the React sign-in modal can render — `ui_anonymous` does not gate the shell. |
+| `/assets/*` | Always public when `web.ui` is active | Hashed JS / CSS / font bundles. Served with `Cache-Control: public, max-age=31536000, immutable`. |
 | `/metrics` | None | Prometheus exposition format. Unaffected by `ui`. |
-| `/api/version`, `/api/overview`, `/api/pools`, `/api/clients`, `/api/servers`, `/api/connections`, `/api/stats`, `/api/databases`, `/api/users`, `/api/auth_query`, `/api/config`, `/api/log_level`, `/api/pool_coordinator`, `/api/pool_scaling`, `/api/sockets`, `/api/prepared`, `/api/interner`, `/api/top/clients`, `/api/top/queries`, `/api/top/prepared`, `/api/apps`, `/api/events` | Public when `ui_anonymous = true`, otherwise admin | Read-only JSON. Field shapes mirror `SHOW <admin-command>`. |
-| `/api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top` | Admin (basic auth) | Admin-only. `/api/logs` activates the in-memory tap on first request and self-disables after 30 s without traffic. |
+| `/api/version`, `/api/overview`, `/api/pools`, `/api/clients`, `/api/servers`, `/api/connections`, `/api/stats`, `/api/databases`, `/api/users`, `/api/auth_query`, `/api/config`, `/api/log_level`, `/api/pool_coordinator`, `/api/pool_scaling`, `/api/sockets`, `/api/prepared`, `/api/interner`, `/api/top/clients`, `/api/top/prepared`, `/api/apps`, `/api/events` | Public when `ui_anonymous = true`, otherwise admin | Read-only JSON. Field shapes mirror `SHOW <admin-command>`. |
+| `/api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | Admin (basic auth) | Admin-only. `/api/logs` activates the in-memory tap on first request and self-disables after 2 minutes without traffic. `/api/top/queries` returns the first ~120 characters of cached SQL text — kept admin-only because previews can include literal values and tenant identifiers. |
 
 ## Authentication
 
@@ -64,23 +67,27 @@ wipes the entry.
 
 ## Pages
 
-The SPA renders six pages:
+The SPA exposes:
 
 - **Overview** — health pill, four golden-signal sparklines (latency p95,
   traffic, errors/s, saturation), connection breakdown stacked area,
   pool fill heatmap, dual-axis wait + oldest-active-age, top-5 errors
   per pool, and a collapsed resource detail panel.
-- **Pools** — sortable table with mini-sparklines per row and a click-out
-  drawer with the full per-pool detail.
+- **Pools** — sortable table with mini-sparklines per row.
+- **Pool detail** (`/pools/:poolId`) — full per-pool drill-down: SQLSTATE
+  breakdown, oldest-active-age, pause/resume/reconnect controls.
 - **Clients** — paginated table backed by `/api/clients` with server-side
   filter and sort.
+- **Apps** — one row per `application_name` with err / 1k q ratio.
 - **Caches** — Prepared statement table with hit rate, plus a query
   interner card (named vs anonymous bytes).
 - **Logs** — live tail of the LogTap with level / target filter and
   pause / auto-scroll toggles.
-- **Config** — eight collapsed panels covering `[general]` keys, the
+- **Config & state** — collapsed panels covering `[general]` keys, the
   active log filter, `auth_query` cache, databases, users, sockets,
   pool scaling, pool coordinator.
+- **War room** (`/wall`) — six huge tiles, optimized for an incident
+  bridge or a wall display.
 
 ## Building from source
 
