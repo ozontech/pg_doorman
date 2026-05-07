@@ -155,11 +155,23 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
                   className="h-full"
                   style={{ background: palette[c.key] ?? "rgb(154 148 133)" }}
                 />
+                {/*
+                  Anchor the popover to the segment's left edge instead of
+                  centering: a centered popover overflows the viewport on
+                  the leftmost segments (the user saw "Live allocations"
+                  clipped on the left because the segment starts at the
+                  bar's left edge and the centered popover extends 144 px
+                  further left). `left-0` keeps the popover on-screen for
+                  the typical small-segment-on-the-left case; the
+                  rightmost segments may extend past the viewport on the
+                  right side, but that is a much rarer hit pattern given
+                  the breakdown's typical shape.
+                */}
                 <div
                   role="tooltip"
                   className="
-                    pointer-events-none invisible absolute bottom-full left-1/2 z-30 mb-2
-                    w-72 max-w-[20rem] -translate-x-1/2 border border-border-strong bg-surface px-3 py-2
+                    pointer-events-none invisible absolute bottom-full left-0 z-30 mb-2
+                    w-72 max-w-[20rem] border border-border-strong bg-surface px-3 py-2
                     text-left text-xs leading-snug text-text shadow-xl break-words
                     opacity-0 transition-opacity duration-100
                     group-hover/seg:visible group-hover/seg:opacity-100

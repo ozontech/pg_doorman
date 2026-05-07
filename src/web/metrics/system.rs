@@ -1,16 +1,22 @@
 //! System metrics utilities for Prometheus exporter.
 
-/// Gets the current memory usage of the process in bytes
+/// Gets the current resident memory (RSS) of the process in bytes.
+///
+/// `/proc/self/statm` columns are documented in `man 5 proc`:
+/// `size resident shared text lib data dt`. We want **resident** —
+/// the number of pages backed by RAM right now (VmRSS). The first
+/// field is `size` (VmSize, total virtual address space) and would
+/// over-count by the heap arenas, mmaps, and library text pages
+/// that the process has reserved but does not currently touch.
 pub fn get_process_memory_usage() -> u64 {
     #[cfg(target_os = "linux")]
     {
-        // On Linux, read from /proc/self/statm
         match std::fs::read_to_string("/proc/self/statm") {
             Ok(statm) => {
                 let values: Vec<&str> = statm.split_whitespace().collect();
-                if !values.is_empty() {
-                    if let Ok(pages) = values[0].parse::<u64>() {
-                        // Convert pages to bytes (page size is typically 4KB)
+                if values.len() >= 2 {
+                    if let Ok(pages) = values[1].parse::<u64>() {
+                        // Convert pages to bytes (page size is typically 4KB).
                         return pages * 4096;
                     }
                 }
