@@ -5,7 +5,7 @@
 // now have a single sortable table instead of grepping the Clients view by
 // application_name substring.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
@@ -16,8 +16,56 @@ import type { AppsDto } from "../types";
 
 const POLL_MS = 1500;
 
-type SortKey = "application_name" | "clients" | "queries_total" | "transactions_total" | "errors_total";
+type SortKey =
+  | "application_name"
+  | "clients"
+  | "qps"
+  | "tps"
+  | "queries_total"
+  | "transactions_total"
+  | "errors_total";
 type SortDir = "asc" | "desc";
+
+type AppTotals = Record<string, { queries: number; transactions: number }>;
+type AppRates = Record<string, { qps: number; tps: number }>;
+
+// Computes per-application qps / tps from the delta between the current
+// `/api/apps` snapshot and the previous one. The endpoint only ships
+// cumulative counters; without this hook the operator could not answer
+// "which app is busy right now" without doing the math by eye.
+function useAppRates(data: AppsDto | null): AppRates {
+  const [rates, setRates] = useState<AppRates>({});
+  const prevRef = useRef<{ ts: number; apps: AppTotals } | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const cur: AppTotals = {};
+    for (const a of data.apps) {
+      cur[a.application_name] = {
+        queries: a.queries_total,
+        transactions: a.transactions_total,
+      };
+    }
+    const prev = prevRef.current;
+    if (prev && prev.ts !== data.ts) {
+      const dt = (data.ts - prev.ts) / 1000;
+      if (dt > 0) {
+        const next: AppRates = {};
+        for (const [name, totals] of Object.entries(cur)) {
+          const p = prev.apps[name];
+          if (p) {
+            next[name] = {
+              qps: Math.max(0, (totals.queries - p.queries) / dt),
+              tps: Math.max(0, (totals.transactions - p.transactions) / dt),
+            };
+          }
+        }
+        setRates(next);
+      }
+    }
+    prevRef.current = { ts: data.ts, apps: cur };
+  }, [data]);
+  return rates;
+}
 
 export default function Apps() {
   const { authHeader } = useAdminAuth();
@@ -25,8 +73,9 @@ export default function Apps() {
     (signal) => apiGet<AppsDto>("/api/apps", authHeader, signal),
     POLL_MS,
   );
+  const rates = useAppRates(poll.data);
   const [filter, setFilter] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("clients");
+  const [sortKey, setSortKey] = useState<SortKey>("qps");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const rows = useMemo(() => {
@@ -41,6 +90,10 @@ export default function Apps() {
           return a.application_name.localeCompare(b.application_name) * dir;
         case "clients":
           return (a.clients - b.clients) * dir;
+        case "qps":
+          return ((rates[a.application_name]?.qps ?? 0) - (rates[b.application_name]?.qps ?? 0)) * dir;
+        case "tps":
+          return ((rates[a.application_name]?.tps ?? 0) - (rates[b.application_name]?.tps ?? 0)) * dir;
         case "queries_total":
           return (a.queries_total - b.queries_total) * dir;
         case "transactions_total":
@@ -50,7 +103,7 @@ export default function Apps() {
       }
     });
     return list;
-  }, [poll.data, filter, sortKey, sortDir]);
+  }, [poll.data, rates, filter, sortKey, sortDir]);
 
   const onSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -118,6 +171,20 @@ export default function Apps() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Sort to find the loudest app right now. Empty on the first tick — needs two snapshots to compute a rate.">
+                <span className="cursor-pointer" onClick={() => onSort("qps")}>
+                  qps{sortIndicator("qps")}
+                </span>
+              </InfoLabel>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Transactions per second over the last poll interval. Compare against qps to spot apps doing many statements per transaction.">
+                <span className="cursor-pointer" onClick={() => onSort("tps")}>
+                  tx/s{sortIndicator("tps")}
+                </span>
+              </InfoLabel>
+            </th>
+            <th className="px-3 py-2 text-right">
               <InfoLabel tip="Total queries from this app since pg_doorman started.">
                 <span className="cursor-pointer" onClick={() => onSort("queries_total")}>
                   queries{sortIndicator("queries_total")}
@@ -166,6 +233,16 @@ export default function Apps() {
                   {r.application_name || <span className="text-text-dim">(unknown)</span>}
                 </td>
                 <td className="px-3 py-1.5 text-right">{r.clients}</td>
+                <td className="px-3 py-1.5 text-right">
+                  {rates[r.application_name]
+                    ? rates[r.application_name].qps.toFixed(1)
+                    : "—"}
+                </td>
+                <td className="px-3 py-1.5 text-right">
+                  {rates[r.application_name]
+                    ? rates[r.application_name].tps.toFixed(1)
+                    : "—"}
+                </td>
                 <td className="px-3 py-1.5 text-right">{r.queries_total.toLocaleString()}</td>
                 <td className="px-3 py-1.5 text-right">{r.transactions_total.toLocaleString()}</td>
                 <td
