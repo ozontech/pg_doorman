@@ -389,6 +389,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 ui_anonymous: config.web.ui_anonymous,
                 admin_username: config.general.admin_username.clone(),
                 admin_password: config.general.admin_password.clone(),
+                // SSO runtime gets populated by `WebServerOptions::from_config`
+                // on RELOAD; the startup snapshot here intentionally leaves it
+                // off until the loader lands in a follow-up commit.
+                sso: None,
             };
             // Bind synchronously so a port conflict fails the whole startup
             // instead of leaving the daemon "ready" while /metrics + UI

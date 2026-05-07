@@ -71,8 +71,11 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
             } else {
                 let auth = classify(
                     parsed.authorization,
+                    parsed.cookie,
+                    extract_query_token(parsed.query),
                     &opts.admin_username,
                     &opts.admin_password,
+                    opts.sso.as_deref(),
                 );
 
                 // /api/logs needs an async handler because it talks to the LogTap consumer
@@ -80,15 +83,12 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
                 // ui_active and admin auth here so dispatch() never sees the path on the
                 // success branch — on auth failure or inactive UI we fall through to
                 // dispatch() which already returns the right 401/404.
-                if opts.ui_active
-                    && parsed.method == "GET"
-                    && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
-                {
+                if opts.ui_active && parsed.method == "GET" && parsed.path == "/api/logs" {
                     if !matches!(auth, AuthOutcome::Admin(_)) {
                         let _ = unauthorized_for(&parsed).write(&mut writer).await;
                     } else {
-                        let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
-                        let query = crate::web::routes::query::parse_query(query_str);
+                        let query =
+                            crate::web::routes::query::parse_query(parsed.query.unwrap_or(""));
                         let response = crate::web::routes::logs::handle_logs(&query).await;
                         let _ = response.write(&mut writer).await;
                     }
@@ -122,6 +122,79 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
     }
     // Hit the per-connection request cap. Close so the client knows to
     // reconnect rather than queue more behind us.
+}
+
+/// Pick `token=<jwt>` out of a raw query string, returning the token
+/// substring without URL-decoding. JWTs are base64url so they round-trip
+/// through query strings unchanged; if the proxy URL-encoded the token
+/// (replacing `+/=`), `SsoRuntime::validate` rejects it and the SPA
+/// retries via Bearer header.
+fn extract_query_token(query: Option<&str>) -> Option<&str> {
+    let q = query?;
+    q.split('&').find_map(|pair| pair.strip_prefix("token="))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_query_token_returns_value_when_only_param() {
+        assert_eq!(
+            extract_query_token(Some("token=abc.def.ghi")),
+            Some("abc.def.ghi")
+        );
+    }
+
+    #[test]
+    fn extract_query_token_returns_value_when_among_others() {
+        assert_eq!(
+            extract_query_token(Some("foo=1&token=jwt&bar=2")),
+            Some("jwt")
+        );
+    }
+
+    #[test]
+    fn extract_query_token_handles_trailing_amp() {
+        assert_eq!(extract_query_token(Some("token=jwt&")), Some("jwt"));
+    }
+
+    #[test]
+    fn extract_query_token_returns_first_match() {
+        // Two `token=` keys would be malformed but the function must be
+        // deterministic — the first wins.
+        assert_eq!(
+            extract_query_token(Some("token=first&token=second")),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn extract_query_token_rejects_keys_with_token_as_substring() {
+        // `mytoken=foo` must NOT match — `strip_prefix("token=")` only
+        // matches at the start of a pair.
+        assert_eq!(extract_query_token(Some("mytoken=foo&other=bar")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_empty_for_token_without_value() {
+        assert_eq!(extract_query_token(Some("token=")), Some(""));
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_for_no_token_key() {
+        assert_eq!(extract_query_token(Some("foo=1&bar=2")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_for_empty_query() {
+        assert_eq!(extract_query_token(Some("")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_for_none_input() {
+        assert_eq!(extract_query_token(None), None);
+    }
 }
 
 /// Extend `buf` with bytes from the wire until the request-header

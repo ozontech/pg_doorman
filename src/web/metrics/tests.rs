@@ -37,6 +37,7 @@ async fn test_prometheus_server_basic() {
                 ui_anonymous: true,
                 admin_username: "admin".into(),
                 admin_password: "secret".into(),
+                sso: None,
             },
         )
         .await;
@@ -143,6 +144,7 @@ async fn test_prometheus_server_integration() {
                 ui_anonymous: true,
                 admin_username: "admin".into(),
                 admin_password: "secret".into(),
+                sso: None,
             },
         )
         .await;

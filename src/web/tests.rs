@@ -26,6 +26,7 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         ui_anonymous,
         admin_username: "admin".into(),
         admin_password: "secret".into(),
+        sso: None,
     }
 }
 

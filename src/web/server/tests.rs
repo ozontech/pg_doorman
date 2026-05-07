@@ -11,6 +11,7 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         ui_anonymous,
         admin_username: "admin".into(),
         admin_password: "secret".into(),
+        sso: None,
     }
 }
 
@@ -21,22 +22,35 @@ fn admin_outcome() -> AuthOutcome {
     })
 }
 
-fn req<'a>(method: &'a str, path: &'a str) -> ParsedRequest<'a> {
+fn split_path(raw_path: &str) -> (&str, Option<&str>) {
+    match raw_path.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (raw_path, None),
+    }
+}
+
+fn req<'a>(method: &'a str, raw_path: &'a str) -> ParsedRequest<'a> {
+    let (path, query) = split_path(raw_path);
     ParsedRequest {
         method,
         path,
+        query,
         authorization: None,
+        cookie: None,
         accepts_gzip: false,
         accepts_json: false,
         connection_close: false,
     }
 }
 
-fn req_json<'a>(method: &'a str, path: &'a str) -> ParsedRequest<'a> {
+fn req_json<'a>(method: &'a str, raw_path: &'a str) -> ParsedRequest<'a> {
+    let (path, query) = split_path(raw_path);
     ParsedRequest {
         method,
         path,
+        query,
         authorization: None,
+        cookie: None,
         accepts_gzip: false,
         accepts_json: true,
         connection_close: false,
@@ -143,6 +157,36 @@ fn parse_detects_gzip_in_accept_encoding() {
     let raw = "GET /metrics HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip, deflate\r\n\r\n";
     let p = ParsedRequest::parse(raw).unwrap();
     assert!(p.accepts_gzip);
+}
+
+#[test]
+fn parse_strips_query_from_path() {
+    let raw = "GET /api/logs?since=10&limit=50 HTTP/1.1\r\nHost: x\r\n\r\n";
+    let p = ParsedRequest::parse(raw).unwrap();
+    assert_eq!(p.path, "/api/logs");
+    assert_eq!(p.query, Some("since=10&limit=50"));
+}
+
+#[test]
+fn parse_query_is_none_without_question_mark() {
+    let raw = "GET /api/version HTTP/1.1\r\nHost: x\r\n\r\n";
+    let p = ParsedRequest::parse(raw).unwrap();
+    assert_eq!(p.path, "/api/version");
+    assert_eq!(p.query, None);
+}
+
+#[test]
+fn parse_extracts_cookie_header() {
+    let raw = "GET / HTTP/1.1\r\nHost: x\r\nCookie: foo=bar; sso_access_token=abc; baz=qux\r\n\r\n";
+    let p = ParsedRequest::parse(raw).unwrap();
+    assert_eq!(p.cookie, Some("foo=bar; sso_access_token=abc; baz=qux"));
+}
+
+#[test]
+fn parse_extracts_lowercase_cookie() {
+    let raw = "GET / HTTP/1.1\r\nHost: x\r\ncookie: a=b\r\n\r\n";
+    let p = ParsedRequest::parse(raw).unwrap();
+    assert_eq!(p.cookie, Some("a=b"));
 }
 
 #[test]

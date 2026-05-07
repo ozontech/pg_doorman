@@ -22,6 +22,11 @@ pub struct WebServerOptions {
     pub ui_anonymous: bool,
     pub admin_username: String,
     pub admin_password: String,
+    /// SSO runtime (RS256 decoding key, validation config, allowlist).
+    /// `None` when `[web].sso_enabled = false` or when the public-key
+    /// file failed to load. Threaded into `classify` so the JWT branch
+    /// can validate Bearer/cookie/query tokens.
+    pub sso: Option<std::sync::Arc<crate::web::sso::SsoRuntime>>,
 }
 
 impl WebServerOptions {
@@ -38,6 +43,9 @@ impl WebServerOptions {
             ui_anonymous: cfg.web.ui_anonymous,
             admin_username: cfg.general.admin_username.clone(),
             admin_password: cfg.general.admin_password.clone(),
+            // Populated in a later commit. Leaving `None` here keeps the
+            // listener Basic-only until SSO loading lands.
+            sso: None,
         }
     }
 }

@@ -9,6 +9,7 @@ pub mod log_tap;
 pub mod metrics;
 pub mod routes;
 pub mod server;
+pub mod sso;
 pub mod static_assets;
 
 #[cfg(test)]

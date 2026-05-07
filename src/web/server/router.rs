@@ -42,18 +42,15 @@ pub(super) fn unauthorized_for(req: &ParsedRequest<'_>) -> Response {
 }
 
 fn route_api(req: &ParsedRequest<'_>) -> Response {
-    let (path, query_str) = match req.path.split_once('?') {
-        Some((p, q)) => (p, q),
-        None => (req.path, ""),
-    };
-    let query = parse_query(query_str);
+    // ParsedRequest already split path on `?` — no further work here.
+    let query = parse_query(req.query.unwrap_or(""));
 
     // Prefix-routed paths first (admin-only; mux already gated auth).
-    if let Some(hash) = path.strip_prefix("/api/prepared/text/") {
+    if let Some(hash) = req.path.strip_prefix("/api/prepared/text/") {
         return routes::prepared_text::handle_prepared_text(hash);
     }
 
-    match path {
+    match req.path {
         "/api/version" => routes::version::handle_version(),
         "/api/overview" => routes::overview::handle_overview(),
         "/api/pools" => routes::pools::handle_pools(),
@@ -123,8 +120,7 @@ pub(super) fn dispatch(
     // SPA: serve the embedded bundle. Anything that is not /api or /metrics
     // resolves to a static asset or falls back to the SPA shell so client-side
     // routes (`/pools`, `/clients/...`) work on a hard refresh.
-    let bundle_path = req.path.split_once('?').map(|(p, _)| p).unwrap_or(req.path);
-    if let Some(asset) = crate::web::static_assets::lookup(bundle_path) {
+    if let Some(asset) = crate::web::static_assets::lookup(req.path) {
         return Response::static_asset(&asset, req.accepts_gzip);
     }
 
