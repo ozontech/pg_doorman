@@ -56,4 +56,8 @@ flamegraph-output/
 
 # Superpowers brainstorm session workdir (VC mockups, server state)
 .superpowers/
+
+# Per-session agent handoff scratchpads — not part of public history.
+.local/
+
 Dockerfile.ubuntu22-tls
