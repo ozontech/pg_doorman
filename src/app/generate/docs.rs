@@ -370,11 +370,12 @@ fn write_user_fields(out: &mut String, f: &FieldsData) {
 // ---------------------------------------------------------------------------
 
 fn write_prometheus_fields(out: &mut String, f: &FieldsData) {
-    let _ = writeln!(out, "## Enabling Prometheus Metrics\n");
-    let _ = writeln!(out, "To enable the Prometheus metrics exporter, add the following to your configuration file:\n");
-    let _ = writeln!(out, "```yaml\nprometheus:\n  enabled: true\n  host: \"0.0.0.0\"  # The host on which the metrics server will listen\n  port: 9127       # The port on which the metrics server will listen\n```\n");
+    let _ = writeln!(out, "## Enabling the Web Listener\n");
+    let _ = writeln!(out, "Both the Prometheus metrics endpoint (`/metrics`) and the optional operator console (the SPA on `/`, `/api/*`) are served by the same `[web]` listener. The legacy `prometheus.*` config keys are accepted as aliases for `web.*`.\n");
+    let _ = writeln!(out, "```yaml\nweb:\n  enabled: true     # Bind the listener (Prometheus only)\n  host: \"0.0.0.0\"\n  port: 9127\n  # Operator console (off by default; see the Web UI guide)\n  ui: false\n  ui_anonymous: false\n```\n");
 
     let _ = writeln!(out, "### Configuration Options\n");
+    let _ = writeln!(out, "Full list — including UI-related fields — lives in [Web Settings](web.md). The minimum to expose `/metrics` is:\n");
 
     let _ = writeln!(out, "| Option | Description | Default |");
     let _ = writeln!(out, "|--------|-------------|---------|");

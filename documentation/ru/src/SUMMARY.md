@@ -24,7 +24,6 @@
 # TLS
 
 - [Клиентский и серверный TLS](guides/tls.md)
-- [Web UI](guides/web-ui.md)
 
 # Пулинг
 
@@ -48,6 +47,7 @@
 # Observability
 
 - [Admin-команды](observability/admin-commands.md)
+- [Web UI](guides/web-ui.md)
 - [Структурированное JSON-логирование](observability/json-logging.md)
 - [Перцентили задержек](observability/percentiles.md)
 

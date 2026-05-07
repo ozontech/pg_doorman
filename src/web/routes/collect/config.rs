@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::config::get_config;
 use crate::web::routes::dto::{ConfigDto, ConfigEntry};
 
@@ -19,13 +21,72 @@ fn is_secret_key(key: &str) -> bool {
         || last_segment.ends_with("_key")
 }
 
-pub(crate) fn collect_config() -> ConfigDto {
-    // Mirrors `show_config` in src/admin/show.rs:429 for the immutables list
-    // (these are the only fields that require a restart to change).
-    const IMMUTABLES: &[&str] = &["host", "port", "connect_timeout"];
+/// Bind-address fields require a restart; everything else takes effect on
+/// the next backend or `RELOAD`. Listed precisely so the UI can render
+/// the right "restart_required" pill instead of marking everything
+/// reloadable.
+const IMMUTABLES: &[&str] = &["host", "port", "connect_timeout"];
 
+/// Flatten a serde JSON value into dotted keys → string values. Operators
+/// have asked for a coverage-complete `/api/config` so they can verify
+/// TLS / auth_query / pool sizing / prepared cache / web settings during
+/// an incident — the previous hand-written `From<&Config>` only exposed
+/// host/port/connect_timeout/idle_timeout/shutdown_timeout plus pool
+/// users/mode, which DBA P3#7 (codex review) flagged as too thin.
+fn flatten_json(prefix: &str, value: &serde_json::Value, out: &mut HashMap<String, String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                let key = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
+                flatten_json(&key, v, out);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            // Render arrays as comma-joined when every element is a leaf,
+            // otherwise as `prefix.<index>` rows. Operators reading
+            // `pools.app_db.users` want one row, not five.
+            if arr.iter().all(|v| {
+                !matches!(
+                    v,
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_)
+                )
+            }) {
+                let joined: Vec<String> = arr.iter().map(json_leaf_to_string).collect();
+                out.insert(prefix.to_string(), joined.join(", "));
+            } else {
+                for (i, v) in arr.iter().enumerate() {
+                    let key = format!("{prefix}.{i}");
+                    flatten_json(&key, v, out);
+                }
+            }
+        }
+        _ => {
+            out.insert(prefix.to_string(), json_leaf_to_string(value));
+        }
+    }
+}
+
+fn json_leaf_to_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+pub(crate) fn collect_config() -> ConfigDto {
     let config = get_config();
-    let flat: std::collections::HashMap<String, String> = (&config).into();
+
+    let mut flat: HashMap<String, String> = HashMap::new();
+    if let Ok(value) = serde_json::to_value(&config) {
+        flatten_json("", &value, &mut flat);
+    }
+    // Drop noisy bookkeeping fields that operators do not act on.
+    flat.retain(|k, _| !is_internal_key(k));
 
     let mut entries: Vec<ConfigEntry> = flat
         .into_iter()
@@ -55,6 +116,13 @@ pub(crate) fn collect_config() -> ConfigDto {
         ts: now_unix_ms(),
         config: entries,
     }
+}
+
+/// Drop fields that exist on the in-memory `Config` purely as state
+/// (file path, parsed include list) and have no "what is the pooler
+/// running with" meaning for an operator.
+fn is_internal_key(key: &str) -> bool {
+    matches!(key, "path") || key.starts_with("include.") || key == "include"
 }
 
 #[cfg(test)]
@@ -99,5 +167,35 @@ mod tests {
         // Only exact equals or exact suffix counts.
         assert!(!super::is_secret_key("password_check_attempts"));
         assert!(!super::is_secret_key("not_a_secret_check"));
+    }
+
+    /// Coverage check: the previous implementation only exposed
+    /// host/port/connect_timeout/idle_timeout/shutdown_timeout plus
+    /// pool users/mode. The flattened serde view now surfaces every
+    /// field in `Config` — verify a representative sample so a future
+    /// refactor that quietly trims keys gets caught.
+    #[test]
+    fn collect_config_exposes_operationally_relevant_fields() {
+        let dto = super::collect_config();
+        let keys: std::collections::HashSet<&str> =
+            dto.config.iter().map(|e| e.key.as_str()).collect();
+        // Spot-check four orthogonal areas DBA P3#7 called out:
+        // TLS server-side, prepared cache size, web listener, shutdown
+        // timeout.
+        assert!(keys.contains("general.host"), "{keys:?}");
+        assert!(keys.contains("general.shutdown_timeout"), "{keys:?}");
+        assert!(keys.contains("general.server_tls_mode"), "{keys:?}");
+        assert!(keys.contains("web.enabled"), "{keys:?}");
+    }
+
+    #[test]
+    fn collect_config_drops_internal_keys() {
+        let dto = super::collect_config();
+        for entry in &dto.config {
+            assert!(
+                !super::is_internal_key(&entry.key),
+                "internal key leaked: {entry:?}"
+            );
+        }
     }
 }

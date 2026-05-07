@@ -24,7 +24,6 @@
 # TLS
 
 - [Client and Server TLS](guides/tls.md)
-- [Web UI](guides/web-ui.md)
 
 # Pooling
 
@@ -48,6 +47,7 @@
 # Observability
 
 - [Admin Commands](observability/admin-commands.md)
+- [Web UI](guides/web-ui.md)
 - [JSON Structured Logging](observability/json-logging.md)
 - [Latency Percentiles](observability/percentiles.md)
 
