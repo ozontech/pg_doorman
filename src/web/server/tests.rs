@@ -12,6 +12,8 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         admin_username: "admin".into(),
         admin_password: "secret".into(),
         sso: None,
+        sso_config_error: None,
+        trusted_proxies: Vec::new(),
     }
 }
 
@@ -37,6 +39,8 @@ fn req<'a>(method: &'a str, raw_path: &'a str) -> ParsedRequest<'a> {
         query,
         authorization: None,
         cookie: None,
+        x_forwarded_for: None,
+        forwarded: None,
         accepts_gzip: false,
         accepts_json: false,
         connection_close: false,
@@ -51,6 +55,8 @@ fn req_json<'a>(method: &'a str, raw_path: &'a str) -> ParsedRequest<'a> {
         query,
         authorization: None,
         cookie: None,
+        x_forwarded_for: None,
+        forwarded: None,
         accepts_gzip: false,
         accepts_json: true,
         connection_close: false,

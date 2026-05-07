@@ -37,8 +37,11 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+    # Bind to loopback only — the demo is not meant to expose Postgres
+    # or pg_doorman to the LAN. Adjust if you intentionally need
+    # external access.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   pg_doorman:
     # Build from the repo root so the demo always runs against local code.
@@ -53,8 +56,8 @@ services:
       - ./keys/sso-public.pem:/etc/pg_doorman/sso-public.pem:ro
     command: ["-c", "/etc/pg_doorman/pg_doorman.toml"]
     ports:
-      - "6432:6432"
-      - "9127:9127"
+      - "127.0.0.1:6432:6432"
+      - "127.0.0.1:9127:9127"
 
   mint-jwt:
     image: python:3.12-slim

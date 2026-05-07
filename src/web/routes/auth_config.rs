@@ -16,6 +16,13 @@ use crate::web::server::wire::Response;
 struct AuthConfigResponse<'a> {
     sso_enabled: bool,
     sso_proxy_url: Option<&'a str>,
+    /// Surfaced when `sso_enabled = true` but the runtime did not load
+    /// (missing key file, empty audience, unparsable PEM, etc.). The
+    /// SPA can render a "SSO is configured but not loaded: <reason>"
+    /// banner so the operator sees a misconfigured rollout instead of
+    /// silently falling back to Basic-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sso_config_error: Option<&'a str>,
     current_user: Option<CurrentUser<'a>>,
 }
 
@@ -45,6 +52,7 @@ pub(crate) fn handle_auth_config(opts: &WebServerOptions, auth: &AuthOutcome) ->
     Response::ok_json(&AuthConfigResponse {
         sso_enabled: sso.is_some(),
         sso_proxy_url: proxy_url,
+        sso_config_error: opts.sso_config_error.as_deref(),
         current_user,
     })
 }

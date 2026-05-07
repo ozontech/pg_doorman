@@ -48,6 +48,32 @@ pub struct Web {
     /// usernames only.
     #[serde(default = "Web::default_sso_allowed_users")]
     pub sso_allowed_users: Vec<String>,
+
+    /// CIDR ranges that the listener trusts to set
+    /// `X-Forwarded-For` / `Forwarded`. When a request arrives from a
+    /// peer in this list, the access log resolves the real client IP
+    /// from the proxy header instead of using the proxy's TCP peer.
+    /// Empty (the default) disables the override — the listener
+    /// trusts only its own peer.
+    #[serde(default)]
+    pub trusted_proxies: Vec<ipnet::IpNet>,
+
+    /// JWT claim name that carries the user's group memberships.
+    /// Used together with `sso_admin_groups`: when the validated JWT
+    /// has a value of this claim that intersects the admin groups
+    /// list, the request resolves to the `Admin` role rather than
+    /// `Sso`. Default `groups` matches Keycloak / Authelia / oauth2-
+    /// proxy out of the box.
+    #[serde(default = "Web::default_sso_groups_claim")]
+    pub sso_groups_claim: String,
+
+    /// Group names that map onto the `Admin` role. An SSO user whose
+    /// JWT carries any of these group names in `sso_groups_claim`
+    /// gets full admin access (including `POST /api/admin/*`).
+    /// Empty (the default) keeps the SSO surface read-only — every
+    /// SSO user resolves to `Sso`.
+    #[serde(default)]
+    pub sso_admin_groups: Vec<String>,
 }
 
 impl Web {
@@ -64,6 +90,9 @@ impl Web {
             sso_public_key_file: None,
             sso_audience: Vec::new(),
             sso_allowed_users: Self::default_sso_allowed_users(),
+            trusted_proxies: Vec::new(),
+            sso_groups_claim: Self::default_sso_groups_claim(),
+            sso_admin_groups: Vec::new(),
         }
     }
 
@@ -109,5 +138,11 @@ impl Web {
     /// restrict to a known set of usernames replace this list explicitly.
     pub fn default_sso_allowed_users() -> Vec<String> {
         vec!["*".to_string()]
+    }
+
+    /// `groups` — the claim name used by Keycloak, oauth2-proxy, and
+    /// Authelia. Operators using a non-standard SSO proxy override this.
+    pub fn default_sso_groups_claim() -> String {
+        "groups".to_string()
     }
 }

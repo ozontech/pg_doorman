@@ -130,29 +130,20 @@ pub fn classify(
     // happens to carry such a cookie should still pass.
     if let Some(rt) = sso {
         if let Some(token) = bearer_token {
-            if let Ok(username) = rt.validate(token) {
-                return AuthOutcome::Sso(AuthIdentity {
-                    username,
-                    source: AuthSource::Sso,
-                });
+            if let Ok(id) = rt.validate(token) {
+                return sso_outcome(id);
             }
         }
         if let Some(token) = query_token {
             tried = true;
-            if let Ok(username) = rt.validate(token) {
-                return AuthOutcome::Sso(AuthIdentity {
-                    username,
-                    source: AuthSource::Sso,
-                });
+            if let Ok(id) = rt.validate(token) {
+                return sso_outcome(id);
             }
         }
         if let Some(token) = cookie_header.and_then(find_sso_cookie) {
             tried = true;
-            if let Ok(username) = rt.validate(token) {
-                return AuthOutcome::Sso(AuthIdentity {
-                    username,
-                    source: AuthSource::Sso,
-                });
+            if let Ok(id) = rt.validate(token) {
+                return sso_outcome(id);
             }
         }
     }
@@ -161,6 +152,23 @@ pub fn classify(
         AuthOutcome::Rejected
     } else {
         AuthOutcome::Anonymous
+    }
+}
+
+/// Build the right `AuthOutcome` for a validated SSO identity. When
+/// the JWT carried an admin group claim, the user gets the `Admin`
+/// role; otherwise read-only `Sso`. The `source` stays `Sso` either
+/// way so the access log and `/api/auth/config` can still tell SSO-
+/// admins apart from Basic admins.
+fn sso_outcome(id: crate::web::sso::ValidatedIdentity) -> AuthOutcome {
+    let identity = AuthIdentity {
+        username: id.username,
+        source: AuthSource::Sso,
+    };
+    if id.is_admin {
+        AuthOutcome::Admin(identity)
+    } else {
+        AuthOutcome::Sso(identity)
     }
 }
 
@@ -214,6 +222,7 @@ mod tests {
             &["pg_doorman".to_string()],
             allowed,
             None,
+            crate::web::sso::AdminBridge::default(),
         )
         .unwrap()
     }

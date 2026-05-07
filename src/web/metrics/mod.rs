@@ -697,3 +697,66 @@ pub(crate) static PATRONI_API_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     REGISTRY.register(Box::new(histogram.clone())).unwrap();
     histogram
 });
+
+// ----------------------------------------------------------------------------
+// Web UI / SSO observability
+// ----------------------------------------------------------------------------
+
+pub(crate) static WEB_SSO_ENABLED: Lazy<prometheus::IntGauge> = Lazy::new(|| {
+    let gauge = prometheus::IntGauge::new(
+        "pg_doorman_web_sso_enabled",
+        "1 when the web UI has SSO configured and the public key loaded successfully, 0 otherwise. Pairs with `pg_doorman_web_sso_config_error_total` to detect a misconfigured rollout.",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static WEB_SSO_CONFIG_ERROR: Lazy<prometheus::IntGauge> = Lazy::new(|| {
+    let gauge = prometheus::IntGauge::new(
+        "pg_doorman_web_sso_config_error",
+        "1 when [web].sso_enabled = true but the runtime failed to load (missing key file, empty audience, unparsable PEM, etc.), 0 otherwise. The exact reason is surfaced through /api/auth/config.sso_config_error.",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static WEB_AUTH_ATTEMPTS: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_web_auth_attempts_total",
+            "Web UI authentication attempts by resolved role and source. `role` is one of admin/sso/anonymous/rejected; `source` is basic/sso/none. Useful for tracking 401/403 spikes and the share of SSO-vs-Basic logins.",
+        ),
+        &["role", "source"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static WEB_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_web_requests_total",
+            "Web UI requests by status class and resolved role. `status_class` is 2xx/3xx/4xx/5xx. Pair with auth attempts to spot e.g. spikes in 4xx for the sso role (broken proxy) without wading through logs.",
+        ),
+        &["status_class", "role"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static WEB_SSO_VALIDATION_ERRORS: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_web_sso_validation_errors_total",
+            "JWT validation failures by reason: signature, expired, audience, no_username, allowlist. A sustained signature spike means the SSO proxy rotated keys without updating sso_public_key_file; allowlist spikes mean someone outside the allowlist is trying to log in.",
+        ),
+        &["reason"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});

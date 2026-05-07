@@ -30,6 +30,8 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         admin_username: "admin".into(),
         admin_password: "secret".into(),
         sso: None,
+        sso_config_error: None,
+        trusted_proxies: Vec::new(),
     }
 }
 
@@ -39,6 +41,7 @@ fn opts_with_sso(ui_anonymous: bool) -> WebServerOptions {
         &["pg_doorman".to_string()],
         AllowedUsers::Any,
         Some("https://sso.example.com/oauth2/start".into()),
+        crate::web::sso::AdminBridge::default(),
     )
     .expect("build sso runtime");
     WebServerOptions {
@@ -47,6 +50,8 @@ fn opts_with_sso(ui_anonymous: bool) -> WebServerOptions {
         admin_username: "admin".into(),
         admin_password: "secret".into(),
         sso: Some(Arc::new(rt)),
+        sso_config_error: None,
+        trusted_proxies: Vec::new(),
     }
 }
 

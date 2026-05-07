@@ -72,6 +72,13 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
         let log_path = parsed.path.to_string();
         let log_query_present = parsed.query.is_some();
 
+        let peer_string = crate::web::peer::render_peer(
+            peer_addr,
+            parsed.x_forwarded_for,
+            parsed.forwarded,
+            &opts.trusted_proxies,
+        );
+
         // /metrics is always served, regardless of ui_active or auth.
         // It writes its body directly through the gzip-aware response
         // writer, so we don't build a Response struct here.
@@ -84,7 +91,7 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
                 200,
                 0,
                 started.elapsed().as_millis() as u64,
-                peer_addr,
+                &peer_string,
                 &AuthOutcome::Anonymous,
             );
             req_buf.drain(..head_end);
@@ -145,7 +152,7 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
             status,
             bytes,
             started.elapsed().as_millis() as u64,
-            peer_addr,
+            &peer_string,
             &auth,
         );
 

@@ -454,6 +454,18 @@ sso_enabled = false
 # Default: ["*"]
 sso_allowed_users = ["*"]
 
+# CIDR ranges trusted to set X-Forwarded-For / Forwarded.
+# Default: []
+# trusted_proxies = ["10.0.0.0/8"]
+
+# JWT claim name that carries the user's group memberships.
+# Default: "groups"
+sso_groups_claim = "groups"
+
+# Group names that map onto the Admin role.
+# Default: []
+# sso_admin_groups = ["pg-doorman-admins"]
+
 # ############################################################################
 # TALOS AUTHENTICATION (Optional)
 # ############################################################################

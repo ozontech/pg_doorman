@@ -54,6 +54,21 @@ struct SsoClaims {
     /// `aud` may be a single string or an array of strings (RFC 7519).
     /// We deserialize the raw value and walk it ourselves below.
     aud: Option<serde_json::Value>,
+    /// Free-form claims map; we look up the configured groups claim by
+    /// name on demand so operators can rename `groups` without code
+    /// changes.
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// Result of a successful JWT validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedIdentity {
+    pub username: String,
+    /// True when the JWT carried a group claim matching one of the
+    /// configured `sso_admin_groups` entries. Lets the caller resolve
+    /// the request to `Admin` rather than `Sso` without re-parsing.
+    pub is_admin: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +103,30 @@ pub struct SsoRuntime {
     leeway_secs: i64,
     allowed_users: AllowedUsers,
     proxy_url: Option<String>,
+    /// JWT claim name carrying group memberships. Empty disables the
+    /// claim-to-Admin bridge.
+    groups_claim: String,
+    /// Group names that promote an SSO user to Admin. Empty keeps the
+    /// SSO surface read-only.
+    admin_groups: HashSet<String>,
+}
+
+/// Configuration knobs for promoting an SSO user to Admin via JWT
+/// claim. `claim` names the JWT field that lists group memberships;
+/// `admin_groups` is the set of values that should map to Admin.
+#[derive(Debug, Clone, Default)]
+pub struct AdminBridge {
+    pub claim: String,
+    pub admin_groups: HashSet<String>,
+}
+
+impl AdminBridge {
+    pub fn from_config(claim: &str, admin_groups: &[String]) -> Self {
+        AdminBridge {
+            claim: claim.to_string(),
+            admin_groups: admin_groups.iter().cloned().collect(),
+        }
+    }
 }
 
 impl SsoRuntime {
@@ -96,9 +135,10 @@ impl SsoRuntime {
         audience: &[String],
         allowed_users: AllowedUsers,
         proxy_url: Option<String>,
+        admin_bridge: AdminBridge,
     ) -> Result<Self, SsoError> {
         let pem = std::fs::read(public_key_path)?;
-        Self::from_pem_bytes(&pem, audience, allowed_users, proxy_url)
+        Self::from_pem_bytes(&pem, audience, allowed_users, proxy_url, admin_bridge)
     }
 
     pub fn from_pem_bytes(
@@ -106,6 +146,7 @@ impl SsoRuntime {
         audience: &[String],
         allowed_users: AllowedUsers,
         proxy_url: Option<String>,
+        admin_bridge: AdminBridge,
     ) -> Result<Self, SsoError> {
         let key = PKey::public_key_from_pem(pem).map_err(SsoError::PublicKeyDecode)?;
         let public_key = PKeyWithDigest {
@@ -118,6 +159,8 @@ impl SsoRuntime {
             leeway_secs: 60,
             allowed_users,
             proxy_url,
+            groups_claim: admin_bridge.claim,
+            admin_groups: admin_bridge.admin_groups,
         })
     }
 
@@ -125,12 +168,23 @@ impl SsoRuntime {
         self.proxy_url.as_deref()
     }
 
-    /// Verify a raw JWT. Returns the resolved username on success.
+    /// Verify a raw JWT. Returns the resolved identity on success
+    /// (username + whether the user maps to Admin via group claim).
     /// Audience matching: at least one of the token's `aud` values
     /// must equal one of the configured audiences. An empty
     /// configured list disables the check (the loader rejects this
     /// case at startup, so it should never happen in production).
-    pub fn validate(&self, token: &str) -> Result<String, SsoError> {
+    pub fn validate(&self, token: &str) -> Result<ValidatedIdentity, SsoError> {
+        match self.validate_inner(token) {
+            Ok(id) => Ok(id),
+            Err(e) => {
+                record_validation_error(&e);
+                Err(e)
+            }
+        }
+    }
+
+    fn validate_inner(&self, token: &str) -> Result<ValidatedIdentity, SsoError> {
         let parsed: Token<Header, SsoClaims, _> =
             VerifyWithKey::verify_with_key(token, &self.public_key)
                 .map_err(SsoError::Verification)?;
@@ -152,6 +206,8 @@ impl SsoRuntime {
             }
         }
 
+        let is_admin = self.matches_admin_group(&claims.extra);
+
         let username = claims
             .preferred_username
             .or(claims.sub)
@@ -159,8 +215,48 @@ impl SsoRuntime {
         if !self.allowed_users.permits(&username) {
             return Err(SsoError::NotAllowed(username));
         }
-        Ok(username)
+        Ok(ValidatedIdentity { username, is_admin })
     }
+
+    /// Walk the configured groups claim. Returns true when at least
+    /// one group value matches one of the admin groups. Empty
+    /// admin_groups disables the bridge entirely.
+    fn matches_admin_group(
+        &self,
+        extra: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> bool {
+        if self.admin_groups.is_empty() || self.groups_claim.is_empty() {
+            return false;
+        }
+        let Some(value) = extra.get(&self.groups_claim) else {
+            return false;
+        };
+        match value {
+            serde_json::Value::String(s) => self.admin_groups.contains(s),
+            serde_json::Value::Array(arr) => arr.iter().any(|item| {
+                item.as_str()
+                    .map(|s| self.admin_groups.contains(s))
+                    .unwrap_or(false)
+            }),
+            _ => false,
+        }
+    }
+}
+
+fn record_validation_error(err: &SsoError) {
+    let reason = match err {
+        SsoError::Verification(_) => "signature",
+        SsoError::NoExp | SsoError::Expired => "expired",
+        SsoError::BadAudience => "audience",
+        SsoError::NoUsername => "no_username",
+        SsoError::NotAllowed(_) => "allowlist",
+        // PublicKeyIo / PublicKeyDecode happen at config load, not in
+        // the request hot path — they cannot reach this function.
+        SsoError::PublicKeyIo(_) | SsoError::PublicKeyDecode(_) => "config",
+    };
+    crate::web::metrics::WEB_SSO_VALIDATION_ERRORS
+        .with_label_values(&[reason])
+        .inc();
 }
 
 fn audience_matches(claim: &serde_json::Value, configured: &[String]) -> bool {
@@ -268,11 +364,16 @@ mod tests {
     }
 
     fn runtime(allowed: AllowedUsers) -> SsoRuntime {
+        runtime_with_admin(allowed, AdminBridge::default())
+    }
+
+    fn runtime_with_admin(allowed: AllowedUsers, bridge: AdminBridge) -> SsoRuntime {
         SsoRuntime::from_pem_bytes(
             test_keys::PUBLIC_PEM.as_bytes(),
             &["pg_doorman".to_string()],
             allowed,
             Some("https://sso.example.com/oauth2/start".to_string()),
+            bridge,
         )
         .unwrap()
     }
@@ -286,7 +387,7 @@ mod tests {
             exp: now() + 600,
         });
         let rt = runtime(AllowedUsers::Any);
-        assert_eq!(rt.validate(&token).unwrap(), "alice");
+        assert_eq!(rt.validate(&token).unwrap().username, "alice");
     }
 
     #[test]
@@ -298,7 +399,7 @@ mod tests {
             exp: now() + 600,
         });
         let rt = runtime(AllowedUsers::Any);
-        assert_eq!(rt.validate(&token).unwrap(), "user-id-1");
+        assert_eq!(rt.validate(&token).unwrap().username, "user-id-1");
     }
 
     #[test]
@@ -340,7 +441,7 @@ mod tests {
             exp: now() + 600,
         });
         let rt = runtime(AllowedUsers::Any);
-        assert_eq!(rt.validate(&token).unwrap(), "alice");
+        assert_eq!(rt.validate(&token).unwrap().username, "alice");
     }
 
     #[test]
@@ -371,7 +472,7 @@ mod tests {
             exp: now() + 600,
         });
         let rt = runtime(AllowedUsers::from_config(&["*".to_string()]));
-        assert_eq!(rt.validate(&token).unwrap(), "charlie");
+        assert_eq!(rt.validate(&token).unwrap().username, "charlie");
     }
 
     #[test]
@@ -385,6 +486,68 @@ mod tests {
             AllowedUsers::from_config(&["*".into()]),
             AllowedUsers::Any
         ));
+    }
+
+    #[test]
+    fn admin_bridge_promotes_when_group_matches() {
+        let bridge = AdminBridge::from_config("groups", &["admins".to_string()]);
+        let rt = runtime_with_admin(AllowedUsers::Any, bridge);
+        // Mint a JWT carrying `groups=["admins","viewers"]`.
+        let header = jwt::Header {
+            algorithm: jwt::AlgorithmType::Rs256,
+            ..Default::default()
+        };
+        let claims = serde_json::json!({
+            "preferred_username": "alice",
+            "aud": "pg_doorman",
+            "exp": now() + 600,
+            "groups": ["admins", "viewers"],
+        });
+        let token = jwt::Token::new(header, claims);
+        let signed = jwt::SignWithKey::sign_with_key(token, &test_helpers::private_key()).unwrap();
+        let id = rt.validate(signed.as_str()).unwrap();
+        assert_eq!(id.username, "alice");
+        assert!(id.is_admin, "alice was in admin group");
+    }
+
+    #[test]
+    fn admin_bridge_no_match_keeps_sso() {
+        let bridge = AdminBridge::from_config("groups", &["admins".to_string()]);
+        let rt = runtime_with_admin(AllowedUsers::Any, bridge);
+        let header = jwt::Header {
+            algorithm: jwt::AlgorithmType::Rs256,
+            ..Default::default()
+        };
+        let claims = serde_json::json!({
+            "preferred_username": "alice",
+            "aud": "pg_doorman",
+            "exp": now() + 600,
+            "groups": ["viewers"],
+        });
+        let token = jwt::Token::new(header, claims);
+        let signed = jwt::SignWithKey::sign_with_key(token, &test_helpers::private_key()).unwrap();
+        let id = rt.validate(signed.as_str()).unwrap();
+        assert!(!id.is_admin);
+    }
+
+    #[test]
+    fn admin_bridge_disabled_when_admin_groups_empty() {
+        let bridge = AdminBridge::from_config("groups", &[]);
+        let rt = runtime_with_admin(AllowedUsers::Any, bridge);
+        let header = jwt::Header {
+            algorithm: jwt::AlgorithmType::Rs256,
+            ..Default::default()
+        };
+        let claims = serde_json::json!({
+            "preferred_username": "alice",
+            "aud": "pg_doorman",
+            "exp": now() + 600,
+            "groups": ["admins"],
+        });
+        let token = jwt::Token::new(header, claims);
+        let signed = jwt::SignWithKey::sign_with_key(token, &test_helpers::private_key()).unwrap();
+        let id = rt.validate(signed.as_str()).unwrap();
+        assert!(!id.is_admin);
     }
 
     #[test]

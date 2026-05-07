@@ -27,6 +27,15 @@ pub struct WebServerOptions {
     /// file failed to load. Threaded into `classify` so the JWT branch
     /// can validate Bearer/cookie/query tokens.
     pub sso: Option<std::sync::Arc<crate::web::sso::SsoRuntime>>,
+    /// Human-readable reason `sso` is `None` despite
+    /// `[web].sso_enabled = true`. Surfaced through `/api/auth/config`
+    /// so the SPA can show "SSO is configured but not loaded:
+    /// <reason>" instead of silently falling back to Basic-only.
+    pub sso_config_error: Option<String>,
+    /// CIDR ranges trusted to set `X-Forwarded-For` / `Forwarded`. When
+    /// the request peer falls in this list, the access log resolves
+    /// the real client IP from the proxy header.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
 }
 
 impl WebServerOptions {
@@ -38,10 +47,13 @@ impl WebServerOptions {
     pub fn from_config(cfg: &Config) -> Self {
         let admin_default =
             cfg.general.admin_password.is_empty() || cfg.general.admin_password == "admin";
-        let sso = if cfg.web.sso_enabled {
-            build_sso_runtime(&cfg.web)
+        let (sso, sso_config_error) = if cfg.web.sso_enabled {
+            match build_sso_runtime(&cfg.web) {
+                Ok(rt) => (Some(rt), None),
+                Err(reason) => (None, Some(reason)),
+            }
         } else {
-            None
+            (None, None)
         };
         WebServerOptions {
             ui_active: cfg.web.ui && !admin_default,
@@ -49,34 +61,45 @@ impl WebServerOptions {
             admin_username: cfg.general.admin_username.clone(),
             admin_password: cfg.general.admin_password.clone(),
             sso,
+            sso_config_error,
+            trusted_proxies: cfg.web.trusted_proxies.clone(),
         }
     }
 }
 
 /// Build the SSO runtime from `[web].sso_*`. Missing or invalid config
-/// is logged at error level; the listener stays up Basic-only rather
-/// than refusing to start, so a typo in the SSO section never knocks
-/// the operator console offline.
-fn build_sso_runtime(web: &crate::config::web::Web) -> Option<Arc<crate::web::sso::SsoRuntime>> {
-    use crate::web::sso::{AllowedUsers, SsoRuntime};
+/// returns an error string instead of aborting the listener, so a typo
+/// in the SSO section never knocks the operator console offline. The
+/// caller logs the error and surfaces it through `/api/auth/config`.
+fn build_sso_runtime(
+    web: &crate::config::web::Web,
+) -> Result<Arc<crate::web::sso::SsoRuntime>, String> {
+    use crate::web::sso::{AdminBridge, AllowedUsers, SsoRuntime};
 
     let Some(path) = web.sso_public_key_file.as_ref() else {
-        log::error!(
-            "[web].sso_enabled=true but sso_public_key_file is missing; \
-             SSO disabled for this run"
-        );
-        return None;
+        let msg = "[web].sso_enabled=true but sso_public_key_file is missing".to_string();
+        log::error!("{msg}; SSO disabled for this run");
+        return Err(msg);
     };
     if web.sso_audience.is_empty() {
-        log::error!("[web].sso_enabled=true but sso_audience is empty; SSO disabled for this run");
-        return None;
+        let msg = "[web].sso_enabled=true but sso_audience is empty".to_string();
+        log::error!("{msg}; SSO disabled for this run");
+        return Err(msg);
     }
     let allowed = AllowedUsers::from_config(&web.sso_allowed_users);
-    match SsoRuntime::from_pem_file(path, &web.sso_audience, allowed, web.sso_proxy_url.clone()) {
-        Ok(rt) => Some(Arc::new(rt)),
+    let admin_bridge = AdminBridge::from_config(&web.sso_groups_claim, &web.sso_admin_groups);
+    match SsoRuntime::from_pem_file(
+        path,
+        &web.sso_audience,
+        allowed,
+        web.sso_proxy_url.clone(),
+        admin_bridge,
+    ) {
+        Ok(rt) => Ok(Arc::new(rt)),
         Err(e) => {
-            log::error!("[web] SSO disabled: {e}");
-            None
+            let msg = format!("SSO public key load failed: {e}");
+            log::error!("[web] {msg}");
+            Err(msg)
         }
     }
 }
@@ -90,6 +113,12 @@ fn build_sso_runtime(web: &crate::config::web::Web) -> Option<Arc<crate::web::ss
 static WEB_OPTIONS: OnceLock<ArcSwap<WebServerOptions>> = OnceLock::new();
 
 pub(super) fn install_options(opts: Arc<WebServerOptions>) {
+    crate::web::metrics::WEB_SSO_ENABLED.set(if opts.sso.is_some() { 1 } else { 0 });
+    crate::web::metrics::WEB_SSO_CONFIG_ERROR.set(if opts.sso_config_error.is_some() {
+        1
+    } else {
+        0
+    });
     if let Some(swap) = WEB_OPTIONS.get() {
         swap.store(opts);
     } else {

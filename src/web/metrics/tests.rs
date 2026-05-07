@@ -38,6 +38,8 @@ async fn test_prometheus_server_basic() {
                 admin_username: "admin".into(),
                 admin_password: "secret".into(),
                 sso: None,
+                sso_config_error: None,
+                trusted_proxies: Vec::new(),
             },
         )
         .await;
@@ -145,6 +147,8 @@ async fn test_prometheus_server_integration() {
                 admin_username: "admin".into(),
                 admin_password: "secret".into(),
                 sso: None,
+                sso_config_error: None,
+                trusted_proxies: Vec::new(),
             },
         )
         .await;

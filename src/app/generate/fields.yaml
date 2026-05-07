@@ -1752,3 +1752,24 @@ fields:
         ru: "Allowlist по claim preferred_username или sub. ['*'] (по умолчанию) принимает любого валидного."
       doc: "['*'] (the default) accepts every valid JWT; an explicit list restricts access to those usernames only."
       default: '["*"]'
+
+    trusted_proxies:
+      config:
+        en: "CIDR ranges trusted to set X-Forwarded-For / Forwarded."
+        ru: "Список CIDR, которым доверено выставлять заголовки X-Forwarded-For и Forwarded."
+      doc: "When the request peer falls in this list, the access log resolves the real client IP from the proxy header instead of using the proxy's TCP peer. Empty (default) trusts only the listener's own peer."
+      default: "[]"
+
+    sso_groups_claim:
+      config:
+        en: "JWT claim name that carries the user's group memberships."
+        ru: "Имя JWT-claim'а, в котором SSO proxy перечисляет группы пользователя."
+      doc: "Used together with sso_admin_groups: a JWT whose value at this claim intersects the admin groups list resolves to the Admin role rather than Sso. Default `groups` matches Keycloak / Authelia / oauth2-proxy."
+      default: "\"groups\""
+
+    sso_admin_groups:
+      config:
+        en: "Group names that map onto the Admin role."
+        ru: "Список групп, которые получают роль Admin (могут управлять пулами)."
+      doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps the SSO surface read-only."
+      default: "[]"

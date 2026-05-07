@@ -1186,6 +1186,38 @@ fn write_web_section(w: &mut ConfigWriter, web: &Web) {
         .join(", ");
     w.kv(fi, "sso_allowed_users", &format!("[{rendered}]"));
     w.blank();
+
+    write_field_comment(w, fi, "web", "trusted_proxies");
+    if web.trusted_proxies.is_empty() {
+        w.commented_kv(fi, "trusted_proxies", "[\"10.0.0.0/8\"]");
+    } else {
+        let rendered = web
+            .trusted_proxies
+            .iter()
+            .map(|n| format!("\"{}\"", n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.kv(fi, "trusted_proxies", &format!("[{rendered}]"));
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_groups_claim");
+    w.kv(fi, "sso_groups_claim", &w.str_val(&web.sso_groups_claim));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_admin_groups");
+    if web.sso_admin_groups.is_empty() {
+        w.commented_kv(fi, "sso_admin_groups", "[\"pg-doorman-admins\"]");
+    } else {
+        let rendered = web
+            .sso_admin_groups
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.kv(fi, "sso_admin_groups", &format!("[{rendered}]"));
+    }
+    w.blank();
 }
 
 fn write_talos_section(w: &mut ConfigWriter) {

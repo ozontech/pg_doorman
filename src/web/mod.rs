@@ -8,6 +8,7 @@ pub mod access_log;
 pub mod auth;
 pub mod log_tap;
 pub mod metrics;
+pub mod peer;
 pub mod routes;
 pub mod server;
 pub mod sso;
