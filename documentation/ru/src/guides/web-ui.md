@@ -1,14 +1,10 @@
 # Web UI
 
-pg_doorman поставляется с операторской консолью, которая обслуживается
-тем же listener'ом, что и Prometheus-экспортёр. SPA-бандл встроен в
-бинарь — то есть деплой остаётся таким же простым: один процесс, один
-бинарь, один TCP-порт.
+В pg_doorman встроена операторская консоль. HTTP-сервер тот же, что отдаёт Prometheus-метрики; собранные файлы фронтенда лежат внутри бинарника. Запуск консоли не добавляет внешних зависимостей: один процесс, один бинарь, один TCP-порт.
 
 ## Включение
 
-UI живёт в секции `[web]`. Старое имя `[prometheus]` принимается как
-alias.
+Консоль настраивается в секции `[web]`. Старое имя секции `[prometheus]` тоже принимается.
 
 ```toml
 [web]
@@ -22,98 +18,64 @@ ui_anonymous = false
 log_tap_max_entries = 8192
 ```
 
-При `web.ui = true` с пустым или равным `"admin"` `general.admin_password`
-сервер тихо понижает консоль до режима «только метрики»: listener
-продолжает отдавать `/metrics`, но SPA и admin-эндпоинты выключаются.
-Задайте настоящий пароль до того как включать `ui = true`; в логе при
-этом появится `web.ui = true ignored: admin_password is default/empty`.
+Если `web.ui = true`, но `general.admin_password` не задан или равен `"admin"`, консоль не запускается. HTTP-сервер продолжает отдавать `/metrics`, но веб-интерфейс и admin-эндпоинты остаются выключенными. В лог пишется `web.ui = true ignored: admin_password is default/empty`. Задайте настоящий пароль до того, как включать `ui = true`.
 
 | Параметр | Описание | По умолчанию |
 |---|---|---|
-| `enabled` | Слушать ли listener вообще. `/metrics` работает независимо от `ui`. | `false` |
-| `host` | Bind-адрес. | `"0.0.0.0"` |
-| `port` | Bind-порт. | `9127` |
-| `ui` | Отдавать SPA по `/` и публичные API-эндпоинты. | `false` |
+| `enabled` | Запускать ли HTTP-сервер. `/metrics` работает независимо от `ui`. | `false` |
+| `host` | Адрес для bind. | `"0.0.0.0"` |
+| `port` | Порт для bind. | `9127` |
+| `ui` | Отдавать веб-интерфейс по `/` и публичные API-эндпоинты. | `false` |
 | `ui_anonymous` | При `true` публичные API (`/api/version`, `/api/overview`, `/api/pools`, ...) принимают запросы без авторизации. Admin-эндпоинты (`/api/logs`, `/api/prepared/text/...`, `/api/interner/top`, `/api/top/queries`, `/api/admin/...`) всегда требуют basic auth. | `false` |
-| `log_tap_max_entries` | Размер кольцевого буфера in-memory log tap, обслуживающего `/api/logs`. `0` отключает эндпоинт. | `8192` |
+| `log_tap_max_entries` | Размер кольцевого буфера в памяти, обслуживающего `/api/logs`. `0` отключает эндпоинт. | `8192` |
 
 ## URL-карта
 
 | URL | Авторизация | Назначение |
 |---|---|---|
-| `/` и любой non-API путь | Всегда публично, когда `web.ui` активен | SPA-оболочка. Прямой переход на `/pools` не должен дёргать нативный basic-auth диалог браузера до того, как откроется React sign-in модалка — `ui_anonymous` SPA-оболочку не гейтит. |
-| `/assets/*` | Всегда публично, когда `web.ui` активен | Хэшированные JS / CSS / шрифты. `Cache-Control: public, max-age=31536000, immutable`. |
-| `/metrics` | Без авторизации | Prometheus exposition format. На `ui` не реагирует. |
-| `/api/version`, `/api/overview`, `/api/pools`, `/api/clients`, `/api/servers`, `/api/connections`, `/api/stats`, `/api/databases`, `/api/users`, `/api/auth_query`, `/api/config`, `/api/log_level`, `/api/pool_coordinator`, `/api/pool_scaling`, `/api/sockets`, `/api/prepared`, `/api/interner`, `/api/top/clients`, `/api/top/prepared`, `/api/apps`, `/api/events` | Публично при `ui_anonymous = true`, иначе admin | Read-only JSON. Поля повторяют шейп `SHOW <admin-command>`. |
-| `/api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | Admin (basic auth) | Admin-only. `/api/logs` активирует tap при первом запросе и сам выключает его через 2 минуты простоя. `/api/top/queries` возвращает первые ~120 символов SQL-кэша — admin-only, потому что превью могут содержать литералы и идентификаторы клиентов. |
+| `/` и любой не-API путь | Без авторизации, когда `web.ui` активен | Оболочка SPA. Прямой переход на `/pools` открывает форму входа React, а не системный диалог браузера; `ui_anonymous` на доступ к оболочке не влияет. |
+| `/assets/*` | Без авторизации, когда `web.ui` активен | Хэшированные JS, CSS и шрифты. `Cache-Control: public, max-age=31536000, immutable`. |
+| `/metrics` | Без авторизации | Prometheus exposition format. От `ui` не зависит. |
+| `/api/version`, `/api/overview`, `/api/pools`, `/api/clients`, `/api/servers`, `/api/connections`, `/api/stats`, `/api/databases`, `/api/users`, `/api/auth_query`, `/api/config`, `/api/log_level`, `/api/pool_coordinator`, `/api/pool_scaling`, `/api/sockets`, `/api/prepared`, `/api/interner`, `/api/top/clients`, `/api/top/prepared`, `/api/apps`, `/api/events` | Без авторизации при `ui_anonymous = true`, иначе admin | Read-only JSON. Поля повторяют формат `SHOW <admin-команда>`. |
+| `/api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | Admin (basic auth) | Только для admin. `/api/logs` подключает буфер логов при первом запросе и отключает его через 2 минуты простоя. `/api/top/queries` возвращает первые ~120 символов SQL-запросов из кэша; превью могут содержать литералы и идентификаторы клиентов, поэтому admin-only. |
 
 ## Авторизация
 
-Консоль использует HTTP basic auth с парой `admin_username` /
-`admin_password` из `[general]`. Сравнение пароля — постоянное время.
-Браузерам отдаётся `WWW-Authenticate: Basic` при 401, чтобы curl, gh и
-сторонние клиенты вели себя нормально. Запросы с
-`Accept: application/json` (то, как ходит SPA через `fetch`) получают 401
-без challenge — иначе браузер закешировал бы то, что ввёл оператор в
-свой OS-диалог, и подменял бы наш React-modal.
+Консоль использует HTTP basic auth с парой `admin_username` / `admin_password` из секции `[general]`. Пароль сравнивается за постоянное время. На 401 браузерам отдаётся `WWW-Authenticate: Basic`, чтобы `curl`, `gh` и сторонние HTTP-клиенты работали как ожидают. Запросы с заголовком `Accept: application/json` (так SPA ходит через `fetch`) получают 401 без challenge: иначе браузер закешировал бы пароль из системного диалога и подставлял его поверх формы входа React.
 
-По умолчанию креды живут только в React state и теряются при hard
-refresh. Чекбокс «Remember me on this device» в sign-in модалке кладёт
-их в `localStorage` браузера, чтобы консоль переживала перезагрузку.
-Очистка site-storage в браузере удаляет запись.
+По умолчанию реквизиты живут только в памяти React и пропадают при перезагрузке страницы. Если в форме входа отметить «Remember me on this device», реквизиты сохранятся в `localStorage` браузера и переживут перезагрузку. Очистка site storage в браузере удаляет эту запись.
 
 ## Страницы
 
-SPA содержит:
+В SPA доступны:
 
-- **Overview** — health-пилл, четыре golden-signals sparkline (latency
-  p95, traffic, errors/s, saturation), connection breakdown stacked area,
-  pool fill heatmap, dual-axis wait + oldest-active-age, top-5 ошибок по
-  пулам и свёрнутый Resource detail.
-- **Pools** — sortable таблица с мини-sparkline в строках.
-- **Pool detail** (`/pools/:poolId`) — полный drill-down: SQLSTATE-
-  разбивка, oldest-active-age, кнопки pause/resume/reconnect.
-- **Clients** — paginated таблица из `/api/clients` с server-side filter
-  и sort.
-- **Apps** — строка на `application_name` с err / 1k q.
-- **Caches** — таблица prepared statements с hit rate и карточка query
-  interner (named / anonymous bytes).
-- **Logs** — live tail LogTap c фильтром по level / target и кнопками
-  pause / auto-scroll.
-- **Config & state** — свёрнутые панели: `[general]`, активный log filter,
-  кэш auth_query, databases, users, sockets, pool scaling, pool coordinator.
-- **War room** (`/wall`) — шесть огромных плиток для incident bridge или
-  стенда на стене.
+- **Overview** — индикатор health, четыре sparkline по golden signals (latency p95, traffic, errors/s, saturation), stacked area по соединениям, heatmap заполнения пулов, двойная ось wait + oldest-active-age, топ-5 ошибок по пулам и свёрнутая панель Resource detail.
+- **Pools** — таблица с сортировкой и mini-sparkline в строках.
+- **Pool detail** (`/pools/:poolId`) — детальный разбор: разбивка по SQLSTATE, oldest-active-age, кнопки pause / resume / reconnect.
+- **Clients** — таблица из `/api/clients` с пагинацией, серверной фильтрацией и сортировкой.
+- **Apps** — строка на каждый `application_name` с долей ошибок на 1k запросов.
+- **Caches** — таблица Prepared Statements с hit rate и карточка query interner (named / anonymous bytes).
+- **Logs** — live-tail LogTap с фильтром по level / target и кнопками pause / auto-scroll.
+- **Config & state** — свёрнутые панели: `[general]`, активный фильтр логов, кэш auth_query, databases, users, sockets, pool scaling, pool coordinator.
+- **War room** (`/wall`) — шесть крупных плиток для incident bridge или стенда на стене.
 
 ## Сборка из исходников
 
-SPA-бандл лежит в git под `frontend/dist/`, чтобы пайплайны
-RPM/DEB/Docker не зависели от node toolchain. Разработчикам, правящим
-SPA, надо пересобрать перед коммитом:
+Собранный фронтенд лежит в git по пути `frontend/dist/`, чтобы пайплайны RPM, DEB и Docker не зависели от node toolchain. Разработчикам, правящим фронтенд, нужно пересобирать его перед коммитом:
 
 ```bash
 cd frontend
 npm ci
-npm run install-hooks   # одноразово: ставит dist-sync pre-commit hook
+npm run install-hooks   # одноразово: ставит pre-commit hook для синхронизации dist
 npm run lint
 npm run typecheck
 npm run build
 ```
 
-`npm run install-hooks` опциональна. CI её не требует: workflow
-`frontend.yml` запускает `npm run check-dist` и блокирует merge, если
-исходники меняли без пересборки `dist/`.
+`npm run install-hooks` опционален. CI его не требует: workflow `frontend.yml` запускает `npm run check-dist` и блокирует merge, если исходники меняли без пересборки `dist/`.
 
-Отдельный workflow `.github/workflows/frontend.yml` запускает те же
-шаги на каждом PR, который трогает `frontend/`.
+Отдельный workflow `.github/workflows/frontend.yml` запускает те же шаги на каждом PR, который трогает `frontend/`.
 
-## Деплой
+## Развёртывание
 
-`/metrics` доступен без авторизации на том же listener'е, что и UI.
-Так было всегда — иначе сломались бы существующие scrape-конфиги. Но
-если pg_doorman стоит за reverse proxy с авторизацией на `/api/*`, она
-**не** распространяется на `/metrics`: метрики раскрывают имена пулов,
-пользователей, БД, давление на коннекты, состояние auth-query и форму
-нагрузки. Либо держите `[web]` на приватном host:port, доступном только
-системе скрейпа, либо ставьте перед listener'ом proxy, который
-добавляет авторизацию на `/metrics` отдельно.
+`/metrics` доступен без авторизации на том же HTTP-сервере, что и консоль. Так задумано: иначе сломались бы существующие scrape-конфиги Prometheus. Если pg_doorman стоит за reverse proxy с авторизацией на `/api/*`, эта авторизация **не** распространяется на `/metrics`. Метрики раскрывают имена пулов, пользователей и БД, давление на пул, состояние auth_query и форму нагрузки. Поэтому либо держите секцию `[web]` на приватном host:port, доступном только системе скрейпа, либо ставьте перед HTTP-сервером proxy, который добавляет авторизацию на `/metrics` отдельно.
