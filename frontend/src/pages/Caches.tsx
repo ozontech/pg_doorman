@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
@@ -71,8 +71,44 @@ type PreparedSortKey =
   | "count_used"
   | "hits"
   | "misses"
-  | "hit_rate";
+  | "hit_rate"
+  | "refs_per_s";
 type SortDir = "asc" | "desc";
+
+type PreparedRefsTotals = Record<string, number>;
+type PreparedRefsRates = Record<string, number>;
+
+// Per-(pool, hash) refs/s — delta of (hits + misses) between consecutive
+// /api/prepared snapshots, divided by the snapshot interval. The hits
+// and misses counters bump on every Parse-time reference, so this rate
+// shows which statements are touched right now versus which sit cold.
+function usePreparedRefsRate(data: PreparedDto | null): PreparedRefsRates {
+  const [rates, setRates] = useState<PreparedRefsRates>({});
+  const prevRef = useRef<{ ts: number; totals: PreparedRefsTotals } | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const totals: PreparedRefsTotals = {};
+    for (const r of data.prepared) {
+      totals[`${r.pool}|${r.hash}`] = r.hits + r.misses;
+    }
+    const prev = prevRef.current;
+    if (prev && prev.ts !== data.ts) {
+      const dt = (data.ts - prev.ts) / 1000;
+      if (dt > 0) {
+        const next: PreparedRefsRates = {};
+        for (const [key, total] of Object.entries(totals)) {
+          const p = prev.totals[key];
+          if (p !== undefined) {
+            next[key] = Math.max(0, (total - p) / dt);
+          }
+        }
+        setRates(next);
+      }
+    }
+    prevRef.current = { ts: data.ts, totals };
+  }, [data]);
+  return rates;
+}
 
 /// Hit-rate sentinel used to keep "no traffic yet" rows below real data
 /// regardless of asc/desc — `hits + misses == 0` rows have nothing to
@@ -89,6 +125,7 @@ function comparePrepared(
   a: PreparedRowDto,
   b: PreparedRowDto,
   key: PreparedSortKey,
+  rates: PreparedRefsRates,
 ): number {
   switch (key) {
     case "pool":
@@ -107,6 +144,8 @@ function comparePrepared(
       return a.misses - b.misses;
     case "hit_rate":
       return hitRateOrSentinel(a) - hitRateOrSentinel(b);
+    case "refs_per_s":
+      return (rates[`${a.pool}|${a.hash}`] ?? 0) - (rates[`${b.pool}|${b.hash}`] ?? 0);
   }
 }
 
@@ -139,6 +178,7 @@ function PreparedTab() {
   // omits the text on purpose (anonymous-safe public endpoint); admins
   // fetch it row-by-row via /api/prepared/text/{hash}.
   const [texts, setTexts] = useState<Record<string, TextCell>>({});
+  const refsRate = usePreparedRefsRate(poll.data);
   // Default to "most-used statements first" — the question an operator
   // opens this page to answer is which statements drive cache pressure.
   const [sortKey, setSortKey] = useState<PreparedSortKey>("count_used");
@@ -163,11 +203,11 @@ function PreparedTab() {
     if (!poll.data) return [];
     const arr = poll.data.prepared.filter((r) => matchesFilters(r, filters));
     arr.sort((a, b) => {
-      const cmp = comparePrepared(a, b, sortKey);
+      const cmp = comparePrepared(a, b, sortKey, refsRate);
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [poll.data, filters, sortKey, sortDir]);
+  }, [poll.data, filters, sortKey, sortDir, refsRate]);
 
   const toggle = (pool: string, hash: string) => {
     const key = `${pool}-${hash}`;
@@ -289,6 +329,13 @@ function PreparedTab() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Parse-time references per second over the last poll interval — delta of (hits + misses) divided by the time gap. Sort desc to find the hot statements right now. Empty (—) until the second snapshot arrives.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("refs_per_s")}>
+                  Refs/s{sortIndicator("refs_per_s")}
+                </span>
+              </InfoLabel>
+            </th>
+            <th className="px-3 py-2 text-right">
               <InfoLabel tip="Parse-time hits — the backend already had this prepared statement, so pg_doorman skipped the round-trip.">
                 <span className="cursor-pointer hover:text-text" onClick={() => onSort("hits")}>
                   Hits{sortIndicator("hits")}
@@ -329,6 +376,12 @@ function PreparedTab() {
                   <td className="px-3 py-1.5 text-xs">{r.name || "—"}</td>
                   <td className="px-3 py-1.5 font-mono text-xs text-text-dim">{r.hash}</td>
                   <td className="px-3 py-1.5 text-right">{r.count_used}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    {(() => {
+                      const v = refsRate[`${r.pool}|${r.hash}`];
+                      return v === undefined ? "—" : v.toFixed(1);
+                    })()}
+                  </td>
                   <td className="px-3 py-1.5 text-right">{r.hits}</td>
                   <td className="px-3 py-1.5 text-right">{r.misses}</td>
                   <td className={`px-3 py-1.5 text-right ${
@@ -340,7 +393,7 @@ function PreparedTab() {
                 </tr>
                 {cell && (
                   <tr className="border-b border-border bg-surface-2">
-                    <td colSpan={8} className="px-4 py-3">
+                    <td colSpan={9} className="px-4 py-3">
                       {cell.loading && <span className="text-xs text-text-dim">loading SQL…</span>}
                       {cell.error && (
                         <span className="text-xs text-danger">SQL fetch failed: {cell.error}</span>
