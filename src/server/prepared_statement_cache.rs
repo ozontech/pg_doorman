@@ -578,6 +578,17 @@ impl PreparedStatementCache {
         self.total_memory_bytes.load(Ordering::Relaxed) as usize
     }
 
+    /// Direct hash lookup. Used by `/api/prepared/text/{hash}` to fetch
+    /// one statement without paying for a `get_entries()` clone of every
+    /// row in every pool — the prior implementation walked all entries
+    /// linearly per pool and allocated a Vec along the way for what was
+    /// always a single-row answer.
+    pub fn lookup_by_hash(&self, hash: u64) -> Option<(Arc<Parse>, CacheEntryKind)> {
+        self.cache
+            .get(&hash)
+            .map(|entry| (entry.parse.clone(), entry.kind()))
+    }
+
     /// Returns all entries with stats. Tuple is
     /// `(hash, parse, count_used, kind, hit_count, miss_count)`.
     pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64, CacheEntryKind, u64, u64)> {
@@ -765,6 +776,22 @@ mod tests {
         cache.get_or_insert(&p2, 1, None);
         let entries = cache.get_entries();
         assert_eq!(entries[0].3, CacheEntryKind::Mixed);
+    }
+
+    #[test]
+    fn lookup_by_hash_returns_none_for_unknown() {
+        let cache = PreparedStatementCache::new(8, 1);
+        assert!(cache.lookup_by_hash(0xdead_beef).is_none());
+    }
+
+    #[test]
+    fn lookup_by_hash_returns_parse_and_kind() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt", "SELECT 1");
+        cache.get_or_insert(&parse, 0xCAFE, Some("stmt"));
+        let (got, kind) = cache.lookup_by_hash(0xCAFE).expect("entry must be present");
+        assert_eq!(kind, CacheEntryKind::Named);
+        assert_eq!(got.query(), "SELECT 1");
     }
 
     #[test]

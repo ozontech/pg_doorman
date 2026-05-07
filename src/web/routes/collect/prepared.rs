@@ -38,17 +38,15 @@ pub(crate) fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
         let Some(cache) = pool.prepared_statement_cache.as_ref() else {
             continue;
         };
-        for (h, parse, _count, kind, _hits, _misses) in cache.get_entries() {
-            if h == hash {
-                return Some(PreparedTextDto {
-                    ts: now_unix_ms(),
-                    hash: format!("{:#x}", hash),
-                    pool: identifier.to_string(),
-                    name: parse.name.clone(),
-                    query: parse.query().to_string(),
-                    kind: kind.as_str().to_string(),
-                });
-            }
+        if let Some((parse, kind)) = cache.lookup_by_hash(hash) {
+            return Some(PreparedTextDto {
+                ts: now_unix_ms(),
+                hash: format!("{:#x}", hash),
+                pool: identifier.to_string(),
+                name: parse.name.clone(),
+                query: parse.query().to_string(),
+                kind: kind.as_str().to_string(),
+            });
         }
     }
     None
