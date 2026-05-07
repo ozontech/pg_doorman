@@ -5,7 +5,7 @@ use log::{error, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
-use crate::admin::operations::{pause_now, reconnect_now, resume_now, AdminEffect};
+use crate::admin::operations::{pause_now, reconnect_now, resume_now, AdminEffect, AdminScope};
 use crate::config::{get_config, reload_config};
 use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
@@ -134,6 +134,18 @@ where
         AdminEffect::NoMatchingDb { db } => {
             admin_error_response(stream, &format!("No pool for database \"{db}\""), "3D000").await
         }
+        // The PG admin protocol path only ever passes Database / AllPools
+        // scopes, so NoMatchingPool cannot land here in practice. Surface
+        // it the same way as NoMatchingDb in case a future caller wires
+        // pool-level scoping into this transport too.
+        AdminEffect::NoMatchingPool { user, db } => {
+            admin_error_response(
+                stream,
+                &format!("No pool for user \"{user}\"@database \"{db}\""),
+                "3D000",
+            )
+            .await
+        }
         AdminEffect::Applied { .. } => {
             let mut res = BytesMut::new();
             res.put(command_complete(command));
@@ -145,6 +157,13 @@ where
     }
 }
 
+fn db_scope(db: Option<String>) -> AdminScope {
+    match db {
+        Some(name) => AdminScope::Database(name),
+        None => AdminScope::AllPools,
+    }
+}
+
 /// Pause connection pools — blocks new backend connection acquisition.
 /// Active transactions continue to work.
 /// If `db` is Some, only pools for that database are paused.
@@ -152,7 +171,7 @@ pub async fn pause<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    render_effect(stream, "PAUSE", pause_now(db)).await
+    render_effect(stream, "PAUSE", pause_now(db_scope(db))).await
 }
 
 /// Resume connection pools — unblocks clients waiting due to PAUSE.
@@ -161,7 +180,7 @@ pub async fn resume<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    render_effect(stream, "RESUME", resume_now(db)).await
+    render_effect(stream, "RESUME", resume_now(db_scope(db))).await
 }
 
 /// Reconnect connection pools — bumps epoch and drains idle connections.
@@ -171,5 +190,5 @@ pub async fn reconnect<T>(stream: &mut T, db: Option<String>) -> Result<(), Erro
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    render_effect(stream, "RECONNECT", reconnect_now(db)).await
+    render_effect(stream, "RECONNECT", reconnect_now(db_scope(db))).await
 }

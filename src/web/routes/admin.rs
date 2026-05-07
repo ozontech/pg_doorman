@@ -14,7 +14,9 @@
 //! the frontend's chart-annotation overlay paints a vertical line at the
 //! moment of the action regardless of which transport triggered it.
 
-use crate::admin::operations::{pause_now, reconnect_now, reload_now, resume_now, AdminEffect};
+use crate::admin::operations::{
+    pause_now, reconnect_now, reload_now, resume_now, AdminEffect, AdminScope,
+};
 use crate::web::routes::collect::now_unix_ms;
 use crate::web::routes::query::{first, parse_query};
 use crate::web::server::Response;
@@ -25,20 +27,30 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
         None => (raw_path, ""),
     };
     let query = parse_query(query_str);
-    let db = first(&query, "db");
 
     // The path always carries the `/api/admin/` prefix at this point — the
     // listener already gated on that.
     let action = path.trim_start_matches("/api/admin/");
+
+    let scope = match parse_scope(&query) {
+        Ok(s) => s,
+        Err(msg) => {
+            return Response::json(
+                400,
+                "Bad Request",
+                &format!(r#"{{"action":"{action}","error":"bad_scope","message":"{msg}"}}"#),
+            )
+        }
+    };
 
     match action {
         "reload" => match reload_now().await {
             Ok(changed) => json_reload(changed),
             Err(err) => json_err("reload", &err.to_string()),
         },
-        "pause" => render_effect("pause", pause_now(db)),
-        "resume" => render_effect("resume", resume_now(db)),
-        "reconnect" => render_effect("reconnect", reconnect_now(db)),
+        "pause" => render_effect("pause", pause_now(scope)),
+        "resume" => render_effect("resume", resume_now(scope)),
+        "reconnect" => render_effect("reconnect", reconnect_now(scope)),
         _ => Response::json(
             404,
             "Not Found",
@@ -47,9 +59,34 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
     }
 }
 
+/// `?pool=user@db` selects one pool, `?db=name` selects every user@db
+/// pool of one database, neither selects every pool. The two are
+/// mutually exclusive — if both are present the request is rejected
+/// rather than silently picking one.
+fn parse_scope(
+    query: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Result<AdminScope, &'static str> {
+    let pool = first(query, "pool");
+    let db = first(query, "db");
+    match (pool, db) {
+        (Some(_), Some(_)) => Err("?pool and ?db are mutually exclusive; pass only one"),
+        (Some(spec), None) => match spec.split_once('@') {
+            Some((user, database)) if !user.is_empty() && !database.is_empty() => {
+                Ok(AdminScope::Pool {
+                    user: user.to_string(),
+                    db: database.to_string(),
+                })
+            }
+            _ => Err("?pool must be in user@database form"),
+        },
+        (None, Some(name)) => Ok(AdminScope::Database(name)),
+        (None, None) => Ok(AdminScope::AllPools),
+    }
+}
+
 /// Same outcome envelope shape across the two transports: 404 with a
-/// `no_matching_db` JSON error when the db filter excluded every pool,
-/// 200 with the count of pools touched otherwise.
+/// typed JSON error when the scope filter excluded every pool, 200 with
+/// the list of touched pool ids otherwise.
 fn render_effect(action: &str, effect: AdminEffect) -> Response {
     match effect {
         AdminEffect::NoMatchingDb { db } => {
@@ -60,14 +97,37 @@ fn render_effect(action: &str, effect: AdminEffect) -> Response {
             );
             Response::json(404, "Not Found", &body)
         }
-        AdminEffect::Applied { affected } => json_ok(action, affected as u64),
+        AdminEffect::NoMatchingPool { user, db } => {
+            let user_escaped = user.replace('"', "\\\"");
+            let db_escaped = db.replace('"', "\\\"");
+            let body = format!(
+                r#"{{"ts":{ts},"action":"{action}","error":"no_matching_pool","user":"{user_escaped}","db":"{db_escaped}"}}"#,
+                ts = now_unix_ms()
+            );
+            Response::json(404, "Not Found", &body)
+        }
+        AdminEffect::Applied { affected } => json_ok(action, &affected),
     }
 }
 
-fn json_ok(action: &str, affected: u64) -> Response {
+fn json_ok(action: &str, affected: &[crate::pool::PoolIdentifier]) -> Response {
+    // List the touched pools as JSON strings so a DBA can see precisely
+    // which user@db rows the action ran against — `affected_pools` as a
+    // bare count was the symptom codex's DBA P2#3 flagged.
+    let mut ids = String::from("[");
+    for (i, identifier) in affected.iter().enumerate() {
+        if i > 0 {
+            ids.push(',');
+        }
+        let user = identifier.user.replace('"', "\\\"");
+        let db = identifier.db.replace('"', "\\\"");
+        ids.push_str(&format!(r#""{user}@{db}""#));
+    }
+    ids.push(']');
     let body = format!(
-        r#"{{"ts":{ts},"action":"{action}","affected_pools":{affected}}}"#,
-        ts = now_unix_ms()
+        r#"{{"ts":{ts},"action":"{action}","affected_pools":{count},"affected":{ids}}}"#,
+        ts = now_unix_ms(),
+        count = affected.len(),
     );
     Response::json(200, "OK", &body)
 }
@@ -134,5 +194,31 @@ mod tests {
         let body = std::str::from_utf8(&r.body).unwrap();
         assert!(body.contains(r#""error":"no_matching_db""#), "{body}");
         assert!(body.contains(r#""db":"ghost""#), "{body}");
+    }
+
+    #[tokio::test]
+    async fn pause_with_missing_pool_filter_returns_404_no_matching_pool() {
+        let r = handle_admin_action("/api/admin/pause?pool=ghost@nope").await;
+        assert_eq!(r.status, 404);
+        let body = std::str::from_utf8(&r.body).unwrap();
+        assert!(body.contains(r#""error":"no_matching_pool""#), "{body}");
+        assert!(body.contains(r#""user":"ghost""#), "{body}");
+        assert!(body.contains(r#""db":"nope""#), "{body}");
+    }
+
+    #[tokio::test]
+    async fn pause_with_pool_and_db_simultaneously_returns_400() {
+        let r = handle_admin_action("/api/admin/pause?pool=u@d&db=x").await;
+        assert_eq!(r.status, 400);
+        let body = std::str::from_utf8(&r.body).unwrap();
+        assert!(body.contains("bad_scope"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn pause_with_malformed_pool_returns_400() {
+        let r = handle_admin_action("/api/admin/pause?pool=just_a_user").await;
+        assert_eq!(r.status, 400);
+        let body = std::str::from_utf8(&r.body).unwrap();
+        assert!(body.contains("user@database"), "{body}");
     }
 }

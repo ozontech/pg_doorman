@@ -17,17 +17,45 @@ use crate::config::reload_config;
 use crate::errors::Error;
 use crate::pool::{get_all_pools, get_client_server_map, ConnectionPool, PoolIdentifier};
 
-/// Outcome of a database-scoped admin action.
+/// Scope filter for `pause` / `resume` / `reconnect`. The REST surface
+/// accepts both `?db=<name>` (every user@db pool of one database) and
+/// `?pool=<user>@<db>` (one specific pool); the admin protocol path
+/// historically only takes a database name, so it always passes
+/// [`AdminScope::Database`] or [`AdminScope::AllPools`].
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum AdminScope {
+    AllPools,
+    Database(String),
+    Pool { user: String, db: String },
+}
+
+impl AdminScope {
+    fn matches(&self, identifier: &PoolIdentifier) -> bool {
+        match self {
+            AdminScope::AllPools => true,
+            AdminScope::Database(name) => identifier.db == *name,
+            AdminScope::Pool { user, db } => identifier.user == *user && identifier.db == *db,
+        }
+    }
+}
+
+/// Outcome of an admin action.
 ///
-/// `Applied { affected: 0 }` is legitimate when no `db` filter is given
-/// but the pooler holds no pools yet. `NoMatchingDb` is reserved for the
-/// case where the caller did pass `db = Some(...)` and no pool matches —
-/// transports turn this into a 404 / SQLSTATE 3D000 so the operator gets
-/// a clear signal that the typo / stale name took no effect.
+/// `Applied { affected: [] }` is legitimate when [`AdminScope::AllPools`]
+/// is used but the pooler holds no pools yet. `NoMatchingDb` /
+/// `NoMatchingPool` are reserved for the case where the caller did pass
+/// a scope filter and no pool matches — transports turn these into a
+/// 404 / SQLSTATE 3D000 so the operator gets a clear signal that the
+/// typo / stale name took no effect.
+///
+/// `affected` is the list of touched pools, not just a count, so DBAs
+/// can see exactly which `user@db` rows the action ran against — useful
+/// when the same database has several users.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AdminEffect {
     NoMatchingDb { db: String },
-    Applied { affected: usize },
+    NoMatchingPool { user: String, db: String },
+    Applied { affected: Vec<PoolIdentifier> },
 }
 
 /// Reload the configuration file. Equivalent to `RELOAD` on the admin
@@ -44,10 +72,9 @@ pub async fn reload_now() -> Result<bool, Error> {
     Ok(changed)
 }
 
-/// Pause every pool whose database segment matches `db`, or every pool
-/// when `db` is None.
-pub fn pause_now(db: Option<String>) -> AdminEffect {
-    apply_per_pool(db, |identifier, pool| {
+/// Pause every pool the scope selects.
+pub fn pause_now(scope: AdminScope) -> AdminEffect {
+    apply_per_pool(scope, |identifier, pool| {
         pool.database.pause();
         crate::admin::events::push_event("PAUSE", format!("pool {identifier} paused"));
         info!("PAUSE: paused pool {identifier}");
@@ -55,8 +82,8 @@ pub fn pause_now(db: Option<String>) -> AdminEffect {
 }
 
 /// Resume — mirror of [`pause_now`].
-pub fn resume_now(db: Option<String>) -> AdminEffect {
-    apply_per_pool(db, |identifier, pool| {
+pub fn resume_now(scope: AdminScope) -> AdminEffect {
+    apply_per_pool(scope, |identifier, pool| {
         pool.database.resume();
         crate::admin::events::push_event("RESUME", format!("pool {identifier} resumed"));
         info!("RESUME: resumed pool {identifier}");
@@ -65,8 +92,8 @@ pub fn resume_now(db: Option<String>) -> AdminEffect {
 
 /// Reconnect — bumps the pool epoch and drains idle connections. Active
 /// connections are refused on return.
-pub fn reconnect_now(db: Option<String>) -> AdminEffect {
-    apply_per_pool(db, |identifier, pool| {
+pub fn reconnect_now(scope: AdminScope) -> AdminEffect {
+    apply_per_pool(scope, |identifier, pool| {
         let new_epoch = pool.database.reconnect();
         crate::admin::events::push_event(
             "RECONNECT",
@@ -76,28 +103,33 @@ pub fn reconnect_now(db: Option<String>) -> AdminEffect {
     })
 }
 
-/// Iterate the pool table once: skip pools that do not match the `db`
-/// filter, return `NoMatchingDb` if a filter was given and matched
-/// nothing, otherwise count how many pools the action ran against.
-fn apply_per_pool<F>(db: Option<String>, mut act: F) -> AdminEffect
+/// Iterate the pool table once: skip pools that do not match the scope,
+/// return `NoMatchingDb` / `NoMatchingPool` if the scope's filter
+/// matched nothing, otherwise return the list of touched pool ids.
+fn apply_per_pool<F>(scope: AdminScope, mut act: F) -> AdminEffect
 where
     F: FnMut(&PoolIdentifier, &ConnectionPool),
 {
     let pools = get_all_pools();
-    if let Some(ref name) = db {
-        if !pools.iter().any(|(identifier, _)| identifier.db == *name) {
-            return AdminEffect::NoMatchingDb { db: name.clone() };
-        }
+    if !pools
+        .iter()
+        .any(|(identifier, _)| scope.matches(identifier))
+    {
+        return match scope {
+            AdminScope::AllPools => AdminEffect::Applied {
+                affected: Vec::new(),
+            },
+            AdminScope::Database(db) => AdminEffect::NoMatchingDb { db },
+            AdminScope::Pool { user, db } => AdminEffect::NoMatchingPool { user, db },
+        };
     }
-    let mut affected = 0usize;
+    let mut affected = Vec::new();
     for (identifier, pool) in pools.iter() {
-        if let Some(ref name) = db {
-            if identifier.db != *name {
-                continue;
-            }
+        if !scope.matches(identifier) {
+            continue;
         }
         act(identifier, pool);
-        affected += 1;
+        affected.push(identifier.clone());
     }
     AdminEffect::Applied { affected }
 }
