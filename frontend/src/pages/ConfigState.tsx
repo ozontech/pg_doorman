@@ -119,20 +119,16 @@ function ConfigPanel() {
                 <td className="px-6 py-1.5 font-mono text-xs">
                   <InfoLabel tip={e.doc || undefined}>{e.key}</InfoLabel>
                 </td>
-                <td className="px-3 py-1.5 font-mono text-xs text-text-dim break-all">
-                  {e.default}
-                </td>
-                <td
-                  className={`px-3 py-1.5 font-mono text-xs break-all ${changed ? "text-accent" : "text-text-muted"}`}
-                >
-                  {changed ? (
-                    <InfoLabel tip="Operator-overridden value (differs from built-in default).">
-                      {e.value}
-                    </InfoLabel>
-                  ) : (
-                    e.value
-                  )}
-                </td>
+                <ConfigValueCell value={e.default} className="text-text-dim" />
+                <ConfigValueCell
+                  value={e.value}
+                  className={changed ? "text-accent" : "text-text-muted"}
+                  baseTip={
+                    changed
+                      ? "Operator-overridden value (differs from built-in default)."
+                      : undefined
+                  }
+                />
                 <td className="px-3 py-1.5 text-xs">
                   <span className={e.changeable === "yes" ? "text-success" : "text-text-dim"}>
                     {e.changeable === "yes" ? "yes" : "restart"}
@@ -144,6 +140,30 @@ function ConfigPanel() {
         </tbody>
       </table>
     </PanelShell>
+  );
+}
+
+/// Truncates long config values so a single outlier (e.g. `talos.keys` with
+/// a comma-joined list of `.pem` paths) cannot blow the table column past
+/// the viewport. The full value stays one hover away in the styled tooltip.
+const VALUE_TRUNCATE_AT = 64;
+
+function ConfigValueCell({
+  value,
+  className,
+  baseTip,
+}: {
+  value: string;
+  className: string;
+  baseTip?: string;
+}) {
+  const truncated = value.length > VALUE_TRUNCATE_AT;
+  const display = truncated ? `${value.slice(0, VALUE_TRUNCATE_AT)}…` : value;
+  const tip = truncated ? value : baseTip;
+  return (
+    <td className={`px-3 py-1.5 font-mono text-xs ${className}`}>
+      {tip ? <InfoLabel tip={tip}>{display}</InfoLabel> : display}
+    </td>
   );
 }
 
