@@ -138,6 +138,33 @@ export default function Clients() {
   );
   const poll = usePoll<ClientsDto>(fetcher, POLL_MS);
   const rates = useClientRates(poll.data);
+  // Client-side sort over the visible page only. /api/clients still
+  // paginates by lifetime counters (the server has no notion of qps), so
+  // the operator sees "the 50 clients the server picked, re-ordered by
+  // current rate". Tooltip on the header explains the scope.
+  const [pageSort, setPageSort] = useState<"qps" | "tps" | null>(null);
+  const [pageSortDir, setPageSortDir] = useState<SortDir>("desc");
+  const onPageSort = (k: "qps" | "tps") => {
+    if (pageSort === k) {
+      setPageSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setPageSort(k);
+      setPageSortDir("desc");
+    }
+  };
+  const pageSortIndicator = (k: "qps" | "tps") =>
+    pageSort === k ? (pageSortDir === "asc" ? " ▲" : " ▼") : "";
+  const visibleClients = useMemo(() => {
+    if (!poll.data) return [];
+    if (!pageSort) return poll.data.clients;
+    const arr = [...poll.data.clients];
+    arr.sort((a, b) => {
+      const av = rates[a.client_id]?.[pageSort] ?? 0;
+      const bv = rates[b.client_id]?.[pageSort] ?? 0;
+      return pageSortDir === "asc" ? av - bv : bv - av;
+    });
+    return arr;
+  }, [poll.data, rates, pageSort, pageSortDir]);
   const filterActive =
     filters.pool !== "" ||
     filters.database !== "" ||
@@ -282,13 +309,17 @@ export default function Clients() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Computed in the browser from the delta between consecutive snapshots — empty (—) on the first tick of a session. Sort happens server-side and only knows the lifetime counter, not the rate.">
-                Q/s
+              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Click to re-order the visible 50 rows by current rate; the server still paginates by lifetime queries, so this sort applies within the page only.">
+                <span className="cursor-pointer" onClick={() => onPageSort("qps")}>
+                  Q/s{pageSortIndicator("qps")}
+                </span>
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Transactions per second over the last poll interval. Compare with Q/s to spot clients running many statements per transaction.">
-                T/s
+              <InfoLabel tip="Transactions per second over the last poll interval. Click to re-order the visible 50 rows; useful next to Q/s to spot clients running many statements per transaction.">
+                <span className="cursor-pointer" onClick={() => onPageSort("tps")}>
+                  T/s{pageSortIndicator("tps")}
+                </span>
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
@@ -309,7 +340,7 @@ export default function Clients() {
           </tr>
         </thead>
         <tbody>
-          {poll.data?.clients.map((c) => (
+          {visibleClients.map((c) => (
             <tr key={c.client_id} className="border-b border-border hover:bg-surface-2">
               <td className="px-3 py-1.5 font-mono text-xs">{c.client_id}</td>
               <td className="px-3 py-1.5 font-mono text-xs text-text-muted">{c.addr || "—"}</td>
