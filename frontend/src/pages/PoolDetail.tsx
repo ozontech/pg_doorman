@@ -333,10 +333,18 @@ export default function PoolDetail() {
 // database-wide blast radius, but the UI's most precise click should
 // not surprise an operator with cross-tenant impact.
 function PoolActions({ pool }: { pool: PoolDto }) {
-  const { authHeader } = useAdminAuth();
+  const { authHeader, role } = useAdminAuth();
   const [pending, setPending] = useState<null | string>(null);
   const [confirm, setConfirm] = useState<null | { action: string; scope: "pool" | "global" }>(null);
   const [feedback, setFeedback] = useState<null | { tone: "ok" | "err"; text: string }>(null);
+
+  // Pool actions hit POST /api/admin/* which the backend gates to Admin
+  // only. Hide the buttons entirely for Anonymous and Sso so the
+  // operator does not have to discover the limit by clicking and
+  // reading a 403 toast.
+  if (role !== "admin") {
+    return null;
+  }
 
   const trigger = async (action: string, scope: "pool" | "global") => {
     setPending(action);

@@ -36,6 +36,20 @@ export interface OverviewDto {
   clients_in_transactions: number;
   shutdown_in_progress: boolean;
   migration_in_progress: boolean;
+  // Database currently holding the most live backend connections, summed
+  // across every user@db pool that targets it. Sidebar surfaces it so
+  // any page shows which database is taking the load right now. Omitted
+  // when no pool has a live backend connection.
+  hottest_database?: HottestDatabaseDto;
+}
+
+export interface HottestDatabaseDto {
+  name: string;
+  // Sum of every state — active, idle, in-use, login. Mirrors the per-pool
+  // `connections` field.
+  total_connections: number;
+  // Subset currently executing a query or carrying a transaction.
+  active_connections: number;
 }
 
 export interface PoolDto {
@@ -408,4 +422,32 @@ export interface PoolCoordinatorRowDto {
 export interface PoolCoordinatorDto {
   ts: number;
   databases: PoolCoordinatorRowDto[];
+}
+
+// Web UI auth types — populated from /api/auth/config.
+export type Role = "anonymous" | "sso" | "admin";
+
+export interface CurrentUser {
+  username: string;
+  source: "basic" | "sso";
+  role: Role;
+}
+
+export interface AuthConfig {
+  sso_enabled: boolean;
+  sso_proxy_url: string | null;
+  /**
+   * Set when [web].sso_enabled = true but the runtime did not load
+   * (missing key file, empty audience, unparsable PEM, etc.). The SPA
+   * renders a banner so the operator sees a misconfigured rollout
+   * instead of silently degrading to Basic-only.
+   */
+  sso_config_error?: string | null;
+  /**
+   * `true` when [web].sso_admin_groups is non-empty — that is, when
+   * SSO can resolve to Admin via group membership. The sign-in modal
+   * uses this to drop the "SSO grants read-only access" copy.
+   */
+  sso_admin_groups_configured?: boolean;
+  current_user: CurrentUser | null;
 }

@@ -11,12 +11,12 @@ use tokio::io::{AsyncReadExt, BufReader, BufWriter};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::TcpStream;
 
-use crate::web::auth::{classify, AuthOutcome};
+use crate::web::auth::{classify, AuthOutcome, Role};
 use crate::web::metrics::write_metrics_response;
 
 use super::router::{dispatch, unauthorized_for};
 use super::state::WebServerOptions;
-use super::wire::{find_double_crlf, write_simple, ParsedRequest, ReadError};
+use super::wire::{find_double_crlf, write_simple, ParsedRequest, ReadError, Response};
 
 /// Soft cap on requests per keep-alive connection. After this many
 /// requests we close so a misbehaving client cannot pin a worker
@@ -29,6 +29,7 @@ const KEEPALIVE_MAX_REQUESTS: u32 = 1000;
 const KEEPALIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOptions>) {
+    let peer_addr = stream.peer_addr().ok();
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut writer = BufWriter::new(write_half);
@@ -50,66 +51,110 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
                 return;
             }
         };
-        let close_after = {
-            let head_bytes = &req_buf[..head_end];
-            let raw = match std::str::from_utf8(head_bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    let _ = write_simple(&mut writer, 400, "Bad Request").await;
-                    return;
-                }
-            };
-            let Some(parsed) = ParsedRequest::parse(raw) else {
+        let started = std::time::Instant::now();
+        let head_bytes = &req_buf[..head_end];
+        let raw = match std::str::from_utf8(head_bytes) {
+            Ok(s) => s,
+            Err(_) => {
                 let _ = write_simple(&mut writer, 400, "Bad Request").await;
                 return;
-            };
-            let close_after = parsed.connection_close;
-
-            // /metrics is always served, regardless of ui_active or auth.
-            if parsed.method == "GET" && parsed.path == "/metrics" {
-                write_metrics_response(&mut writer, parsed.accepts_gzip).await;
-            } else {
-                let auth = classify(
-                    parsed.authorization,
-                    &opts.admin_username,
-                    &opts.admin_password,
-                );
-
-                // /api/logs needs an async handler because it talks to the LogTap consumer
-                // task via mpsc + oneshot; the rest of the API stays sync. Pre-screen
-                // ui_active and admin auth here so dispatch() never sees the path on the
-                // success branch — on auth failure or inactive UI we fall through to
-                // dispatch() which already returns the right 401/404.
-                if opts.ui_active
-                    && parsed.method == "GET"
-                    && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
-                {
-                    if auth != AuthOutcome::Admin {
-                        let _ = unauthorized_for(&parsed).write(&mut writer).await;
-                    } else {
-                        let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
-                        let query = crate::web::routes::query::parse_query(query_str);
-                        let response = crate::web::routes::logs::handle_logs(&query).await;
-                        let _ = response.write(&mut writer).await;
-                    }
-                } else if opts.ui_active
-                    && parsed.method == "POST"
-                    && parsed.path.starts_with("/api/admin/")
-                {
-                    if auth != AuthOutcome::Admin {
-                        let _ = unauthorized_for(&parsed).write(&mut writer).await;
-                    } else {
-                        let response =
-                            crate::web::routes::admin::handle_admin_action(parsed.path).await;
-                        let _ = response.write(&mut writer).await;
-                    }
-                } else {
-                    let response = dispatch(&parsed, &opts, auth);
-                    let _ = response.write(&mut writer).await;
-                }
             }
-            close_after
         };
+        let Some(parsed) = ParsedRequest::parse(raw) else {
+            let _ = write_simple(&mut writer, 400, "Bad Request").await;
+            return;
+        };
+        let close_after = parsed.connection_close;
+
+        // Pre-compute the access-log fields we need from `parsed` before
+        // it goes out of scope.
+        let log_method = parsed.method.to_string();
+        let log_path = parsed.path.to_string();
+        let log_query_present = parsed.query.is_some();
+
+        let peer_string = crate::web::peer::render_peer(
+            peer_addr,
+            parsed.x_forwarded_for,
+            parsed.forwarded,
+            &opts.trusted_proxies,
+        );
+
+        // /metrics is always served, regardless of ui_active or auth.
+        // It writes its body directly through the gzip-aware response
+        // writer, so we don't build a Response struct here.
+        if parsed.method == "GET" && parsed.path == "/metrics" {
+            write_metrics_response(&mut writer, parsed.accepts_gzip).await;
+            crate::web::access_log::write(
+                &log_method,
+                &log_path,
+                log_query_present,
+                200,
+                0,
+                started.elapsed().as_millis() as u64,
+                &peer_string,
+                &AuthOutcome::Anonymous,
+            );
+            req_buf.drain(..head_end);
+            handled += 1;
+            if close_after {
+                return;
+            }
+            continue;
+        }
+
+        let auth = classify(
+            parsed.authorization,
+            parsed.cookie,
+            extract_query_token(parsed.query),
+            &opts.admin_username,
+            &opts.admin_password,
+            opts.sso.as_deref(),
+        );
+
+        // /api/logs needs an async handler because it talks to the LogTap
+        // consumer task via mpsc + oneshot; the rest of the API stays sync.
+        // Pre-screen ui_active and the role here so dispatch() never sees
+        // the path on the success branch — on failure we fall through to
+        // dispatch() which already returns the right 401/404.
+        let response = if opts.ui_active && parsed.method == "GET" && parsed.path == "/api/logs" {
+            // /api/logs needs Sso or Admin (personal data); Anonymous
+            // and Rejected both yield 401, Sso/Admin proceed.
+            if auth.role() < Role::Sso {
+                unauthorized_for(&parsed)
+            } else {
+                let query = crate::web::routes::query::parse_query(parsed.query.unwrap_or(""));
+                crate::web::routes::logs::handle_logs(&query).await
+            }
+        } else if opts.ui_active
+            && parsed.method == "POST"
+            && parsed.path.starts_with("/api/admin/")
+        {
+            if !matches!(auth, AuthOutcome::Admin(_)) {
+                if matches!(auth, AuthOutcome::Sso(_)) {
+                    Response::forbidden("admin role required")
+                } else {
+                    unauthorized_for(&parsed)
+                }
+            } else {
+                crate::web::routes::admin::handle_admin_action(parsed.path).await
+            }
+        } else {
+            dispatch(&parsed, &opts, &auth)
+        };
+
+        let status = response.status;
+        let bytes = response.body.len();
+        let _ = response.write(&mut writer).await;
+        crate::web::access_log::write(
+            &log_method,
+            &log_path,
+            log_query_present,
+            status,
+            bytes,
+            started.elapsed().as_millis() as u64,
+            &peer_string,
+            &auth,
+        );
 
         // Discard the request we just answered; pipelined bytes (a
         // second request that came in the same TCP read) stay at the
@@ -122,6 +167,16 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
     }
     // Hit the per-connection request cap. Close so the client knows to
     // reconnect rather than queue more behind us.
+}
+
+/// Pick `token=<jwt>` out of a raw query string, returning the token
+/// substring without URL-decoding. JWTs are base64url so they round-trip
+/// through query strings unchanged; if the proxy URL-encoded the token
+/// (replacing `+/=`), `SsoRuntime::validate` rejects it and the SPA
+/// retries via Bearer header.
+fn extract_query_token(query: Option<&str>) -> Option<&str> {
+    let q = query?;
+    q.split('&').find_map(|pair| pair.strip_prefix("token="))
 }
 
 /// Extend `buf` with bytes from the wire until the request-header
@@ -170,5 +225,68 @@ async fn read_request_head(
         if buf.len() >= MAX_HEADER_BYTES {
             return Err(ReadError::TooLarge);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_query_token_returns_value_when_only_param() {
+        assert_eq!(
+            extract_query_token(Some("token=abc.def.ghi")),
+            Some("abc.def.ghi")
+        );
+    }
+
+    #[test]
+    fn extract_query_token_returns_value_when_among_others() {
+        assert_eq!(
+            extract_query_token(Some("foo=1&token=jwt&bar=2")),
+            Some("jwt")
+        );
+    }
+
+    #[test]
+    fn extract_query_token_handles_trailing_amp() {
+        assert_eq!(extract_query_token(Some("token=jwt&")), Some("jwt"));
+    }
+
+    #[test]
+    fn extract_query_token_returns_first_match() {
+        // Two `token=` keys would be malformed but the function must be
+        // deterministic — the first wins.
+        assert_eq!(
+            extract_query_token(Some("token=first&token=second")),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn extract_query_token_rejects_keys_with_token_as_substring() {
+        // `mytoken=foo` must NOT match — `strip_prefix("token=")` only
+        // matches at the start of a pair.
+        assert_eq!(extract_query_token(Some("mytoken=foo&other=bar")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_empty_for_token_without_value() {
+        assert_eq!(extract_query_token(Some("token=")), Some(""));
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_for_no_token_key() {
+        assert_eq!(extract_query_token(Some("foo=1&bar=2")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_for_empty_query() {
+        assert_eq!(extract_query_token(Some("")), None);
+    }
+
+    #[test]
+    fn extract_query_token_returns_none_for_none_input() {
+        assert_eq!(extract_query_token(None), None);
     }
 }

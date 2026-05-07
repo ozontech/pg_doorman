@@ -31,8 +31,24 @@ pub(super) fn find_double_crlf(buf: &[u8]) -> Option<usize> {
 #[derive(Debug)]
 pub(super) struct ParsedRequest<'a> {
     pub(super) method: &'a str,
+    /// Path with the query string stripped off. `path` for
+    /// `GET /api/logs?since=10` is `/api/logs`; the `since=10` part lives
+    /// in [`ParsedRequest::query`].
     pub(super) path: &'a str,
+    /// Substring of the original path after `?`, if any. The mux scans
+    /// this for `?token=<jwt>` (SSO query source).
+    pub(super) query: Option<&'a str>,
     pub(super) authorization: Option<&'a str>,
+    /// Raw value of the `Cookie:` header, if present. The mux walks this
+    /// for `sso_access_token=...` (SSO cookie source).
+    pub(super) cookie: Option<&'a str>,
+    /// Raw value of the `X-Forwarded-For:` header, if present. Used by
+    /// the access-log resolver when the listener sits behind a trusted
+    /// reverse proxy.
+    pub(super) x_forwarded_for: Option<&'a str>,
+    /// Raw value of the `Forwarded:` header (RFC 7239). Same role as
+    /// `x_forwarded_for`; both are walked.
+    pub(super) forwarded: Option<&'a str>,
     pub(super) accepts_gzip: bool,
     /// True when the request advertises `Accept: application/json`. The SPA
     /// `fetch()` wrapper sets this on every call; a browser hitting the URL
@@ -54,10 +70,17 @@ impl<'a> ParsedRequest<'a> {
         let request_line = lines.next()?;
         let mut parts = request_line.splitn(3, ' ');
         let method = parts.next()?;
-        let path = parts.next()?;
+        let raw_path = parts.next()?;
         let http_version = parts.next()?;
+        let (path, query) = match raw_path.split_once('?') {
+            Some((p, q)) => (p, Some(q)),
+            None => (raw_path, None),
+        };
 
         let mut authorization = None;
+        let mut cookie = None;
+        let mut x_forwarded_for = None;
+        let mut forwarded = None;
         let mut accepts_gzip = false;
         let mut accepts_json = false;
         let mut connection_close = !http_version.eq_ignore_ascii_case("HTTP/1.1");
@@ -71,6 +94,12 @@ impl<'a> ParsedRequest<'a> {
             // codex perf P3#9.
             if let Some(value) = strip_header_prefix(line, "Authorization") {
                 authorization = Some(value);
+            } else if let Some(value) = strip_header_prefix(line, "Cookie") {
+                cookie = Some(value);
+            } else if let Some(value) = strip_header_prefix(line, "X-Forwarded-For") {
+                x_forwarded_for = Some(value);
+            } else if let Some(value) = strip_header_prefix(line, "Forwarded") {
+                forwarded = Some(value);
             } else if let Some(value) = strip_header_prefix(line, "Accept-Encoding") {
                 if contains_ascii_ci(value, "gzip") {
                     accepts_gzip = true;
@@ -88,7 +117,11 @@ impl<'a> ParsedRequest<'a> {
         Some(ParsedRequest {
             method,
             path,
+            query,
             authorization,
+            cookie,
+            x_forwarded_for,
+            forwarded,
             accepts_gzip,
             accepts_json,
             connection_close,
@@ -140,6 +173,20 @@ impl Response {
     /// our React modal.
     pub(crate) fn unauthorized_silent() -> Self {
         Response::status(401, "Unauthorized")
+    }
+
+    /// 403 with a small JSON envelope the SPA can render as a "needs
+    /// admin role" toast. No `WWW-Authenticate` — the credentials are
+    /// valid, just insufficient for this path, so the auth modal must
+    /// stay closed.
+    pub(crate) fn forbidden(reason: &'static str) -> Self {
+        let body = format!(r#"{{"error":"forbidden","message":"{reason}"}}"#);
+        Response {
+            status: 403,
+            reason: "Forbidden",
+            extra_headers: vec![("Content-Type", "application/json".into())],
+            body: body.into_bytes(),
+        }
     }
 
     /// Serves a static asset (SPA bundle file). Hashed assets get a long

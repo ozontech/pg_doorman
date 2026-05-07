@@ -368,28 +368,20 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         // Web listener (Prometheus exporter + optional UI)
         if config.web.enabled {
-            let admin_password_is_default =
-                config.general.admin_password.is_empty() || config.general.admin_password == "admin";
-            let ui_active = if config.web.ui {
-                if admin_password_is_default {
-                    log::warn!(
-                        "web.ui = true ignored: admin_password is default/empty. \
-                         Set a real admin_password to enable the UI; /metrics keeps working."
-                    );
-                    false
-                } else {
-                    true
-                }
-            } else {
-                false
-            };
+            // Build the snapshot through `from_config` so the SSO runtime
+            // (and any future config-derived fields) populate on cold
+            // start, not only on RELOAD. The function also computes the
+            // `ui_active` demote rule; we still log the warning here so
+            // operators see it once at startup.
+            let opts = WebServerOptions::from_config(&config);
+            if config.web.ui && !opts.ui_active {
+                log::warn!(
+                    "web.ui = true ignored: admin_password is default/empty. \
+                     Set a real admin_password to enable the UI; /metrics keeps working."
+                );
+            }
+            let ui_active_for_reaper = opts.ui_active;
             let host = format!("{}:{}", config.web.host, config.web.port);
-            let opts = WebServerOptions {
-                ui_active,
-                ui_anonymous: config.web.ui_anonymous,
-                admin_username: config.general.admin_username.clone(),
-                admin_password: config.general.admin_password.clone(),
-            };
             // Bind synchronously so a port conflict fails the whole startup
             // instead of leaving the daemon "ready" while /metrics + UI
             // silently die in a panicked detached task.
@@ -405,7 +397,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             });
             // LogTap stays off until /api/logs is hit; the reaper turns it
             // back off when nobody is polling, so spawn it once here.
-            if ui_active && config.web.log_tap_max_entries > 0 {
+            if ui_active_for_reaper && config.web.log_tap_max_entries > 0 {
                 tokio::task::spawn(crate::web::log_tap::run_reaper());
             }
         }

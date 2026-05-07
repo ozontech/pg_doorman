@@ -1717,3 +1717,59 @@ fields:
         ru: "Максимальное количество записей в буфере лога."
       doc: "Cap on how many recent log lines the web UI log tap retains in memory."
       default: "8192"
+
+    sso_enabled:
+      config:
+        en: "Enable JWT-based SSO authentication on the web UI."
+        ru: "Включить JWT-аутентификацию web UI через внешний SSO proxy."
+      doc: "When true, sso_public_key_file and sso_audience must also be set. Misconfigured SSO is logged at error level and the listener stays Basic-only — the operator console never disappears because of an SSO typo."
+      default: "false"
+
+    sso_proxy_url:
+      config:
+        en: "URL of the external SSO proxy used by the SPA for the Sign in via SSO redirect."
+        ru: "URL внешнего SSO proxy для редиректа клиента (кнопка Sign in via SSO во фронтенде)."
+      doc: "Server-side validation does not depend on this — backend only validates the JWT signature against sso_public_key_file. Used purely by the SPA to send the user agent to the proxy."
+      default: "null"
+
+    sso_public_key_file:
+      config:
+        en: "Path to a PEM file with the RSA public key paired with the SSO proxy signing key."
+        ru: "Путь к PEM с RSA public key, которым SSO proxy подписывает JWT."
+      doc: "Read on start and on RELOAD. Required when sso_enabled = true; missing or unreadable file silently demotes SSO to off."
+      default: "null"
+
+    sso_audience:
+      config:
+        en: "Allowed values of the JWT aud claim."
+        ru: "Список допустимых значений claim aud в JWT."
+      doc: "A token is accepted when its audience matches at least one entry. Required when sso_enabled = true."
+      default: "[]"
+
+    sso_allowed_users:
+      config:
+        en: "Allowlist of preferred_username or sub claims."
+        ru: "Allowlist по claim preferred_username или sub. ['*'] (по умолчанию) принимает любого валидного."
+      doc: "['*'] (the default) accepts every valid JWT; an explicit list restricts access to those usernames only."
+      default: '["*"]'
+
+    trusted_proxies:
+      config:
+        en: "CIDR ranges trusted to set X-Forwarded-For / Forwarded."
+        ru: "Список CIDR, которым доверено выставлять заголовки X-Forwarded-For и Forwarded."
+      doc: "When the request peer falls in this list, the access log resolves the real client IP from the proxy header instead of using the proxy's TCP peer. Empty (default) trusts only the listener's own peer."
+      default: "[]"
+
+    sso_groups_claim:
+      config:
+        en: "JWT claim name that carries the user's group memberships."
+        ru: "Имя JWT-claim'а, в котором SSO proxy перечисляет группы пользователя."
+      doc: "Used together with sso_admin_groups: a JWT whose value at this claim intersects the admin groups list resolves to the Admin role rather than Sso. Default `groups` matches Keycloak / Authelia / oauth2-proxy."
+      default: "\"groups\""
+
+    sso_admin_groups:
+      config:
+        en: "Group names that map onto the Admin role."
+        ru: "Список групп, которые получают роль Admin (могут управлять пулами)."
+      doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps the SSO surface read-only."
+      default: "[]"

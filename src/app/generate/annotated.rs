@@ -1130,6 +1130,94 @@ fn write_web_section(w: &mut ConfigWriter, web: &Web) {
         &w.num_val(web.log_tap_max_entries),
     );
     w.blank();
+
+    write_field_comment(w, fi, "web", "sso_enabled");
+    w.kv(fi, "sso_enabled", &w.bool_val(web.sso_enabled));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_proxy_url");
+    if let Some(ref url) = web.sso_proxy_url {
+        w.kv(fi, "sso_proxy_url", &w.str_val(url));
+    } else {
+        w.commented_kv(
+            fi,
+            "sso_proxy_url",
+            "\"https://sso.example.com/oauth2/start\"",
+        );
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_public_key_file");
+    if let Some(ref p) = web.sso_public_key_file {
+        w.kv(
+            fi,
+            "sso_public_key_file",
+            &w.str_val(&p.display().to_string()),
+        );
+    } else {
+        w.commented_kv(
+            fi,
+            "sso_public_key_file",
+            "\"/etc/pg_doorman/sso-public.pem\"",
+        );
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_audience");
+    if web.sso_audience.is_empty() {
+        w.commented_kv(fi, "sso_audience", "[\"pg_doorman\"]");
+    } else {
+        let rendered = web
+            .sso_audience
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.kv(fi, "sso_audience", &format!("[{rendered}]"));
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_allowed_users");
+    let rendered = web
+        .sso_allowed_users
+        .iter()
+        .map(|s| format!("\"{}\"", s))
+        .collect::<Vec<_>>()
+        .join(", ");
+    w.kv(fi, "sso_allowed_users", &format!("[{rendered}]"));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "trusted_proxies");
+    if web.trusted_proxies.is_empty() {
+        w.commented_kv(fi, "trusted_proxies", "[\"10.0.0.0/8\"]");
+    } else {
+        let rendered = web
+            .trusted_proxies
+            .iter()
+            .map(|n| format!("\"{}\"", n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.kv(fi, "trusted_proxies", &format!("[{rendered}]"));
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_groups_claim");
+    w.kv(fi, "sso_groups_claim", &w.str_val(&web.sso_groups_claim));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "sso_admin_groups");
+    if web.sso_admin_groups.is_empty() {
+        w.commented_kv(fi, "sso_admin_groups", "[\"pg-doorman-admins\"]");
+    } else {
+        let rendered = web
+            .sso_admin_groups
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(", ");
+        w.kv(fi, "sso_admin_groups", &format!("[{rendered}]"));
+    }
+    w.blank();
 }
 
 fn write_talos_section(w: &mut ConfigWriter) {

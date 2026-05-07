@@ -1,20 +1,52 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { setOnUnauthorized } from "../api";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { setOnForbidden, setOnUnauthorized } from "../api";
+import {
+  clearSsoToken,
+  getValidSsoToken,
+  safeLocalGet,
+  safeLocalRemove,
+  safeLocalSet,
+  SSO_TOKEN_KEY,
+} from "../lib/jwt";
+import type { Role } from "../types";
 
-interface Credentials {
+interface BasicCreds {
   username: string;
   password: string;
 }
 
+function isBasicCreds(x: unknown): x is BasicCreds {
+  if (typeof x !== "object" || x === null) return false;
+  const obj = x as Record<string, unknown>;
+  return typeof obj.username === "string" && typeof obj.password === "string";
+}
+
 interface AdminAuthValue {
-  creds: Credentials | null;
-  setCreds: (next: Credentials | null, remember?: boolean) => void;
+  /** Basic-auth credentials, when the operator has signed in via the form. */
+  basic: BasicCreds | null;
+  setBasic: (next: BasicCreds | null, remember?: boolean) => void;
+  /** Last known SSO JWT, when present and unexpired. */
+  ssoToken: string | null;
+  setSsoToken: (next: string | null) => void;
+  /** Last role we learned from `/api/auth/config`. */
+  role: Role;
+  setRole: (next: Role) => void;
+  /** Compose the right `Authorization` header for the next request. */
   authHeader: () => Record<string, string>;
   /** Bumps every time api.ts saw a 401. AuthGate watches this. */
   unauthorizedAt: number | null;
-  clearUnauthorized: () => void;
-  /** True when credentials were loaded from localStorage on mount, or saved
-   * via `setCreds(_, remember=true)`. The AuthGate checkbox reflects this. */
+  /** Bumps every time api.ts saw a 403. UI banners watch this. */
+  forbiddenAt: number | null;
+  clearTransients: () => void;
+  /** True when Basic creds were loaded from localStorage on mount, or saved
+   * via `setBasic(_, remember=true)`. The AuthGate checkbox reflects this. */
   remembered: boolean;
 }
 
@@ -22,22 +54,12 @@ const AdminAuthContext = createContext<AdminAuthValue | null>(null);
 
 const STORAGE_KEY = "pgdoorman.admin-auth";
 
-function loadStored(): Credentials | null {
+function loadStored(): BasicCreds | null {
+  const raw = safeLocalGet(STORAGE_KEY);
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "username" in parsed &&
-      "password" in parsed &&
-      typeof (parsed as Credentials).username === "string" &&
-      typeof (parsed as Credentials).password === "string"
-    ) {
-      return parsed as Credentials;
-    }
-    return null;
+    return isBasicCreds(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -45,47 +67,95 @@ function loadStored(): Credentials | null {
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const initial = loadStored();
-  const [creds, setCredsState] = useState<Credentials | null>(initial);
+  const [basic, setBasicState] = useState<BasicCreds | null>(initial);
   const [remembered, setRemembered] = useState<boolean>(initial !== null);
+  const [ssoToken, setSsoTokenState] = useState<string | null>(() =>
+    getValidSsoToken(),
+  );
+  const [role, setRole] = useState<Role>("anonymous");
   const [unauthorizedAt, setUnauthorizedAt] = useState<number | null>(null);
+  const [forbiddenAt, setForbiddenAt] = useState<number | null>(null);
 
   useEffect(() => {
     setOnUnauthorized(() => setUnauthorizedAt(Date.now()));
-    return () => setOnUnauthorized(() => {});
+    setOnForbidden(() => setForbiddenAt(Date.now()));
+    return () => {
+      setOnUnauthorized(() => {});
+      setOnForbidden(() => {});
+    };
   }, []);
 
-  const setCreds = useCallback((next: Credentials | null, remember = false) => {
-    setCredsState(next);
+  const setBasic = useCallback((next: BasicCreds | null, remember = false) => {
+    setBasicState(next);
     setRemembered(remember && next !== null);
-    try {
-      if (next && remember) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } else {
-        // Either user cleared creds, or chose "do not remember" — wipe any
-        // earlier persisted copy so a shared workstation does not leak.
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    } catch {
-      /* private mode / quota / disabled — non-fatal */
+    if (next === null) {
+      // Sign-out is local; collapse the role synchronously so role-aware
+      // UI hides the admin surface in the same render rather than waiting
+      // for the AuthGate probe to come back with current_user=null.
+      setRole("anonymous");
+    }
+    if (next && remember) {
+      safeLocalSet(STORAGE_KEY, JSON.stringify(next));
+    } else {
+      // Either user cleared creds, or chose "do not remember" — wipe any
+      // earlier persisted copy so a shared workstation does not leak.
+      safeLocalRemove(STORAGE_KEY);
     }
   }, []);
 
-  const authHeader = useCallback((): Record<string, string> => {
-    if (!creds) return {};
-    const token = btoa(`${creds.username}:${creds.password}`);
-    return { Authorization: `Basic ${token}` };
-  }, [creds]);
+  const setSsoToken = useCallback((next: string | null) => {
+    if (next) {
+      safeLocalSet(SSO_TOKEN_KEY, next);
+    } else {
+      clearSsoToken();
+      setRole("anonymous");
+    }
+    setSsoTokenState(next);
+  }, []);
 
-  const clearUnauthorized = useCallback(() => setUnauthorizedAt(null), []);
+  // Cross-tab sync: when another tab clears or sets the auth keys we
+  // pick up the change here. `storage` events do not fire in the
+  // originating tab, so this listener never echoes our own writes.
+  useEffect(() => {
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === STORAGE_KEY) setBasicState(loadStored());
+      if (ev.key === SSO_TOKEN_KEY) setSsoTokenState(getValidSsoToken());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const authHeader = useCallback((): Record<string, string> => {
+    // Basic outranks SSO: a known admin password is the strongest
+    // credential the operator can present and the backend's `classify`
+    // honours the same precedence. Pure function — localStorage drift
+    // is reconciled by the `storage` listener above, not here.
+    if (basic) {
+      const token = btoa(`${basic.username}:${basic.password}`);
+      return { Authorization: `Basic ${token}` };
+    }
+    if (ssoToken) return { Authorization: `Bearer ${ssoToken}` };
+    return {};
+  }, [basic, ssoToken]);
+
+  const clearTransients = useCallback(() => {
+    setUnauthorizedAt(null);
+    setForbiddenAt(null);
+  }, []);
 
   return (
     <AdminAuthContext.Provider
       value={{
-        creds,
-        setCreds,
+        basic,
+        setBasic,
+        ssoToken,
+        setSsoToken,
+        role,
+        setRole,
         authHeader,
         unauthorizedAt,
-        clearUnauthorized,
+        forbiddenAt,
+        clearTransients,
         remembered,
       }}
     >
@@ -96,6 +166,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
 export function useAdminAuth(): AdminAuthValue {
   const ctx = useContext(AdminAuthContext);
-  if (!ctx) throw new Error("useAdminAuth must be used inside AdminAuthProvider");
+  if (!ctx)
+    throw new Error("useAdminAuth must be used inside AdminAuthProvider");
   return ctx;
 }

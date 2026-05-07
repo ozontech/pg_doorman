@@ -30,7 +30,7 @@ mod pool;
 mod talos;
 pub mod tls;
 mod user;
-mod web;
+pub mod web;
 
 #[cfg(test)]
 mod tests;

@@ -22,6 +22,25 @@ pub struct WebServerOptions {
     pub ui_anonymous: bool,
     pub admin_username: String,
     pub admin_password: String,
+    /// SSO runtime (RS256 decoding key, validation config, allowlist).
+    /// `None` when `[web].sso_enabled = false` or when the public-key
+    /// file failed to load. Threaded into `classify` so the JWT branch
+    /// can validate Bearer/cookie/query tokens.
+    pub sso: Option<std::sync::Arc<crate::web::sso::SsoRuntime>>,
+    /// Human-readable reason `sso` is `None` despite
+    /// `[web].sso_enabled = true`. Returned through `/api/auth/config`
+    /// so the SPA can show "SSO is configured but not loaded:
+    /// <reason>" instead of silently falling back to Basic-only.
+    pub sso_config_error: Option<String>,
+    /// CIDR ranges trusted to set `X-Forwarded-For` / `Forwarded`. When
+    /// the request peer falls in this list, the access log resolves
+    /// the real client IP from the proxy header.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// `true` when `[web].sso_admin_groups` is non-empty. Surfaced on
+    /// `/api/auth/config` so the SPA's sign-in modal stops promising
+    /// "SSO grants read-only access" when the operator may actually
+    /// land in Admin via group membership.
+    pub sso_admin_groups_configured: bool,
 }
 
 impl WebServerOptions {
@@ -33,11 +52,60 @@ impl WebServerOptions {
     pub fn from_config(cfg: &Config) -> Self {
         let admin_default =
             cfg.general.admin_password.is_empty() || cfg.general.admin_password == "admin";
+        let (sso, sso_config_error) = if cfg.web.sso_enabled {
+            match build_sso_runtime(&cfg.web) {
+                Ok(rt) => (Some(rt), None),
+                Err(reason) => (None, Some(reason)),
+            }
+        } else {
+            (None, None)
+        };
         WebServerOptions {
             ui_active: cfg.web.ui && !admin_default,
             ui_anonymous: cfg.web.ui_anonymous,
             admin_username: cfg.general.admin_username.clone(),
             admin_password: cfg.general.admin_password.clone(),
+            sso,
+            sso_config_error,
+            trusted_proxies: cfg.web.trusted_proxies.clone(),
+            sso_admin_groups_configured: !cfg.web.sso_admin_groups.is_empty(),
+        }
+    }
+}
+
+/// Build the SSO runtime from `[web].sso_*`. Missing or invalid config
+/// returns an error string instead of aborting the listener, so a typo
+/// in the SSO section never knocks the operator console offline. The
+/// caller logs the error and forwards it through `/api/auth/config`.
+fn build_sso_runtime(
+    web: &crate::config::web::Web,
+) -> Result<Arc<crate::web::sso::SsoRuntime>, String> {
+    use crate::web::sso::{AdminBridge, AllowedUsers, SsoRuntime};
+
+    let Some(path) = web.sso_public_key_file.as_ref() else {
+        let msg = "[web].sso_enabled=true but sso_public_key_file is missing".to_string();
+        log::error!("{msg}; SSO disabled for this run");
+        return Err(msg);
+    };
+    if web.sso_audience.is_empty() {
+        let msg = "[web].sso_enabled=true but sso_audience is empty".to_string();
+        log::error!("{msg}; SSO disabled for this run");
+        return Err(msg);
+    }
+    let allowed = AllowedUsers::from_config(&web.sso_allowed_users);
+    let admin_bridge = AdminBridge::from_config(&web.sso_groups_claim, &web.sso_admin_groups);
+    match SsoRuntime::from_pem_file(
+        path,
+        &web.sso_audience,
+        allowed,
+        web.sso_proxy_url.clone(),
+        admin_bridge,
+    ) {
+        Ok(rt) => Ok(Arc::new(rt)),
+        Err(e) => {
+            let msg = format!("SSO public key load failed: {e}");
+            log::error!("[web] {msg}");
+            Err(msg)
         }
     }
 }
@@ -51,6 +119,12 @@ impl WebServerOptions {
 static WEB_OPTIONS: OnceLock<ArcSwap<WebServerOptions>> = OnceLock::new();
 
 pub(super) fn install_options(opts: Arc<WebServerOptions>) {
+    crate::web::metrics::WEB_SSO_ENABLED.set(if opts.sso.is_some() { 1 } else { 0 });
+    crate::web::metrics::WEB_SSO_CONFIG_ERROR.set(if opts.sso_config_error.is_some() {
+        1
+    } else {
+        0
+    });
     if let Some(swap) = WEB_OPTIONS.get() {
         swap.store(opts);
     } else {
@@ -64,8 +138,9 @@ pub(super) fn current_options() -> Arc<WebServerOptions> {
         .map(|swap| swap.load_full())
         .unwrap_or_else(|| {
             // Fallback for code paths that read options before the listener
-            // started. Recomputes from the live config so behavior is at
-            // least defined; `start_web_server` will replace it on bind.
+            // started. Recomputes from the live config so the call has a
+            // deterministic answer; `start_web_server` overwrites the slot
+            // when it binds.
             Arc::new(WebServerOptions::from_config(&crate::config::get_config()))
         })
 }

@@ -4,11 +4,14 @@
 //! Phase 1 wires only the metrics submodule (the former `crate::web::metrics`).
 //! Auth, routes, log_tap, and static_assets are added in subsequent phases.
 
+pub mod access_log;
 pub mod auth;
 pub mod log_tap;
 pub mod metrics;
+pub mod peer;
 pub mod routes;
 pub mod server;
+pub mod sso;
 pub mod static_assets;
 
 #[cfg(test)]

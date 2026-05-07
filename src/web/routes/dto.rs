@@ -43,6 +43,14 @@ pub(crate) struct OverviewDto {
     pub pools_total: u64,
     pub pools_paused: u64,
 
+    /// Database currently holding the most live backend connections,
+    /// summed across every `<user>@<db>` pool that targets it. Surfaces
+    /// in the SPA sidebar so an operator opening any page sees which
+    /// database is taking the load right now. Omitted when no pool has
+    /// a live backend connection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hottest_database: Option<HottestDatabaseDto>,
+
     /// Process resident-set size in bytes, sampled at request time. Linux
     /// reads `/proc/self/statm`; macOS shells out to `ps`. Provides the
     /// "is the pooler leaking memory" tile without requiring Prometheus.
@@ -65,6 +73,18 @@ pub(crate) struct OverviewDto {
     pub shutdown_in_progress: bool,
     /// Set during binary upgrade — clients are migrating to the new process.
     pub migration_in_progress: bool,
+}
+
+/// Database that holds the most live backend connections at the moment
+/// `collect_overview` runs. `total_connections` sums every state — active,
+/// idle, in-use, login — so it matches `connections` on the per-pool
+/// table. `active_connections` is the subset currently executing a query
+/// or carrying a transaction.
+#[derive(Debug, Serialize)]
+pub(crate) struct HottestDatabaseDto {
+    pub name: String,
+    pub total_connections: u64,
+    pub active_connections: u64,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,6 +1,6 @@
 [package]
 name = "pg_doorman"
-version = "3.8.0"
+version = "3.8.5"
 edition = "2021"
 rust-version = "1.87.0"
 license = "MIT"
@@ -57,6 +57,11 @@ native-tls = { version = "0.2.14" }
 tokio-native-tls = { version = "0.3.1" }
 serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }
+# `jwt` (above) is shared with the web UI SSO flow. Both code paths
+# verify RS256 against an RSA public key loaded through openssl, so
+# adding a second JWT crate would only duplicate functionality and
+# pull extra transitive licenses (ring, ISC) into the vendor set.
+thiserror = "1"
 openssl = { version = "0.10.78" }
 openssl-sys = { version = "0.9.114" }
 iota = { version = "0.2.3" }

@@ -1,32 +1,50 @@
-//! Path dispatch and admin-only gating. The router has no knowledge of
+//! Path dispatch and three-role gating. The router has no knowledge of
 //! the wire format beyond what [`ParsedRequest`] exposes — it picks a
 //! handler and returns a [`Response`].
 
-use crate::web::auth::AuthOutcome;
+use crate::web::auth::{AuthOutcome, Role};
 use crate::web::routes;
 use crate::web::routes::query::parse_query;
 
 use super::state::WebServerOptions;
 use super::wire::{ParsedRequest, Response};
 
-/// Admin-only path prefixes (require `Admin` auth regardless of `ui_anonymous`).
-/// Spec section 6.1.
-const ADMIN_ONLY_PREFIXES: &[&str] = &[
+/// Mutating endpoints. Only Admin (Basic) may call them.
+const MANAGEMENT_PREFIXES: &[&str] = &["/api/admin/"];
+
+/// Read-only endpoints that expose personal data — SQL text, logs, top
+/// queries. Sso role and Admin role may call them; Anonymous cannot
+/// regardless of `ui_anonymous`.
+///
+/// `/api/top/queries` returns SQL previews (first 120 chars of cached
+/// statements). Previews can include tenant ids, literal values,
+/// schema names, and secrets accidentally embedded in SQL, so the
+/// path is gated alongside `/api/logs` and the prepared-statement
+/// views.
+const PERSONAL_DATA_PREFIXES: &[&str] = &[
     "/api/logs",
     "/api/prepared/text/",
     "/api/interner/top",
-    // /api/top/queries returns SQL previews — first 120 chars of cached
-    // statements. Tenant ids, literal values, schema names, and the
-    // occasional accidental secret embedded in SQL all leak through;
-    // keep it admin-only regardless of `ui_anonymous`.
     "/api/top/queries",
-    "/api/admin/",
 ];
 
-pub(super) fn is_admin_only(path: &str) -> bool {
-    ADMIN_ONLY_PREFIXES
-        .iter()
-        .any(|prefix| path.starts_with(prefix))
+/// Decide which `Role` an `/api/*` path requires.
+///
+/// - Management paths (mutating admin operations) → `Admin`.
+/// - Personal-data paths (SQL text, logs) → `Sso` (Admin satisfies via
+///   ordering).
+/// - Other public paths → `Sso` when `ui_anonymous=false`, otherwise
+///   `Anonymous`.
+pub(super) fn required_role(path: &str, ui_anonymous: bool) -> Role {
+    if MANAGEMENT_PREFIXES.iter().any(|p| path.starts_with(p)) {
+        return Role::Admin;
+    }
+    let is_personal = PERSONAL_DATA_PREFIXES.iter().any(|p| path.starts_with(p));
+    if is_personal || !ui_anonymous {
+        Role::Sso
+    } else {
+        Role::Anonymous
+    }
 }
 
 /// Picks the right 401 shape for the caller. Browsers and curl get the
@@ -42,18 +60,15 @@ pub(super) fn unauthorized_for(req: &ParsedRequest<'_>) -> Response {
 }
 
 fn route_api(req: &ParsedRequest<'_>) -> Response {
-    let (path, query_str) = match req.path.split_once('?') {
-        Some((p, q)) => (p, q),
-        None => (req.path, ""),
-    };
-    let query = parse_query(query_str);
+    // ParsedRequest already split path on `?` — no further work here.
+    let query = parse_query(req.query.unwrap_or(""));
 
     // Prefix-routed paths first (admin-only; mux already gated auth).
-    if let Some(hash) = path.strip_prefix("/api/prepared/text/") {
+    if let Some(hash) = req.path.strip_prefix("/api/prepared/text/") {
         return routes::prepared_text::handle_prepared_text(hash);
     }
 
-    match path {
+    match req.path {
         "/api/version" => routes::version::handle_version(),
         "/api/overview" => routes::overview::handle_overview(),
         "/api/pools" => routes::pools::handle_pools(),
@@ -90,7 +105,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
 pub(super) fn dispatch(
     req: &ParsedRequest<'_>,
     opts: &WebServerOptions,
-    auth: AuthOutcome,
+    auth: &AuthOutcome,
 ) -> Response {
     let is_admin_post = req.method == "POST" && req.path.starts_with("/api/admin/");
     if req.method != "GET" && req.method != "HEAD" && !is_admin_post {
@@ -103,28 +118,34 @@ pub(super) fn dispatch(
     }
 
     let is_api = req.path.starts_with("/api/");
-    let admin_only = is_api && is_admin_only(req.path);
 
-    // The SPA shell (HTML, CSS, JS, fonts, favicon) carries no operator data
-    // — the basic-auth challenge is reserved for `/api/*`. Letting the shell
-    // load anonymously avoids the double-prompt operators saw on a deep link:
-    // browser-native basic auth on the HTML, then the React `AuthGate` modal
-    // on the first JSON fetch. Now the React modal is the single password
-    // prompt the operator ever sees.
-    let needs_admin = admin_only || (is_api && !opts.ui_anonymous);
-    if needs_admin && auth != AuthOutcome::Admin {
-        return unauthorized_for(req);
+    // /api/auth/config is anonymous on purpose: the SPA needs to learn
+    // whether SSO is configured (and what role the current request holds)
+    // before showing a sign-in screen.
+    if is_api && req.path == "/api/auth/config" {
+        return crate::web::routes::auth_config::handle_auth_config(opts, auth);
     }
 
     if is_api {
+        let needed = required_role(req.path, opts.ui_anonymous);
+        let actual = auth.role();
+        if actual < needed {
+            // Rejected and Anonymous both have role=Anonymous; the
+            // distinction matters only when the path requires Sso or
+            // Admin. Sso role on a Sso-or-higher path is sufficient.
+            return match auth {
+                AuthOutcome::Sso(_) => Response::forbidden("admin role required"),
+                _ => unauthorized_for(req),
+            };
+        }
         return route_api(req);
     }
 
-    // SPA: serve the embedded bundle. Anything that is not /api or /metrics
-    // resolves to a static asset or falls back to the SPA shell so client-side
-    // routes (`/pools`, `/clients/...`) work on a hard refresh.
-    let bundle_path = req.path.split_once('?').map(|(p, _)| p).unwrap_or(req.path);
-    if let Some(asset) = crate::web::static_assets::lookup(bundle_path) {
+    // SPA shell: serve the embedded bundle. Anything that is not /api or
+    // /metrics resolves to a static asset (or 404 — the SPA shell file
+    // is registered through the same lookup) so client-side routes work
+    // on a hard refresh.
+    if let Some(asset) = crate::web::static_assets::lookup(req.path) {
         return Response::static_asset(&asset, req.accepts_gzip);
     }
 

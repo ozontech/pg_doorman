@@ -11,13 +11,16 @@
 //! in the same test binary would clobber each other's slot — a non-issue in
 //! production where exactly one listener exists per process.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::web::sso::test_helpers::{mint_jwt as sso_mint_jwt, ClaimsBuilder};
+use crate::web::sso::{test_keys, AllowedUsers, SsoRuntime};
 use crate::web::{serve_on, WebServerOptions};
 
 fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
@@ -26,7 +29,45 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         ui_anonymous,
         admin_username: "admin".into(),
         admin_password: "secret".into(),
+        sso: None,
+        sso_config_error: None,
+        trusted_proxies: Vec::new(),
+        sso_admin_groups_configured: false,
     }
+}
+
+fn opts_with_sso(ui_anonymous: bool) -> WebServerOptions {
+    let rt = SsoRuntime::from_pem_bytes(
+        test_keys::PUBLIC_PEM.as_bytes(),
+        &["pg_doorman".to_string()],
+        AllowedUsers::Any,
+        Some("https://sso.example.com/oauth2/start".into()),
+        crate::web::sso::AdminBridge::default(),
+    )
+    .expect("build sso runtime");
+    WebServerOptions {
+        ui_active: true,
+        ui_anonymous,
+        admin_username: "admin".into(),
+        admin_password: "secret".into(),
+        sso: Some(Arc::new(rt)),
+        sso_config_error: None,
+        trusted_proxies: Vec::new(),
+        sso_admin_groups_configured: false,
+    }
+}
+
+fn mint_jwt(name: &str, exp_offset: i64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    sso_mint_jwt(&ClaimsBuilder {
+        preferred_username: Some(name),
+        sub: None,
+        aud: serde_json::json!("pg_doorman"),
+        exp: now + exp_offset,
+    })
 }
 
 /// Bind on `127.0.0.1:0`, ask the kernel for an actual port, hand the
@@ -568,4 +609,118 @@ async fn http_keep_alive_serves_two_requests_on_one_connection() {
         raw.contains("\"active_clients\""),
         "second response missing: {raw}"
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn sso_bearer_grants_logs_access() {
+    let port = spawn_server(opts_with_sso(false)).await;
+    let token = mint_jwt("alice", 600);
+    let raw = send(
+        port,
+        &format!(
+            "GET /api/logs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\n\r\n",
+            token
+        ),
+    )
+    .await;
+    // 200 (envelope) or 503 (log_tap unavailable) — both mean Sso role passed.
+    assert!(
+        raw.starts_with("HTTP/1.1 200") || raw.starts_with("HTTP/1.1 503"),
+        "raw={raw}"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn sso_post_admin_returns_403() {
+    let port = spawn_server(opts_with_sso(false)).await;
+    let token = mint_jwt("alice", 600);
+    let raw = send(
+        port,
+        &format!(
+            "POST /api/admin/reload HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\n\r\n",
+            token
+        ),
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 403"), "raw={raw}");
+    assert!(raw.contains("admin role required"), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn auth_config_reports_sso_enabled() {
+    let port = spawn_server(opts_with_sso(false)).await;
+    let raw = send(
+        port,
+        "GET /api/auth/config HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200"), "raw={raw}");
+    assert!(raw.contains(r#""sso_enabled":true"#), "raw={raw}");
+    assert!(
+        raw.contains(r#""sso_proxy_url":"https://sso.example.com/oauth2/start""#),
+        "raw={raw}"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn cookie_fed_jwt_grants_logs_access() {
+    let port = spawn_server(opts_with_sso(false)).await;
+    let token = mint_jwt("alice", 600);
+    let raw = send(
+        port,
+        &format!(
+            "GET /api/logs HTTP/1.1\r\nHost: localhost\r\nCookie: sso_access_token={}\r\n\r\n",
+            token
+        ),
+    )
+    .await;
+    assert!(
+        raw.starts_with("HTTP/1.1 200") || raw.starts_with("HTTP/1.1 503"),
+        "raw={raw}"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn anonymous_personal_data_path_returns_401() {
+    // ui_anonymous=true should still gate /api/logs (it's personal data).
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/logs HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn anonymous_public_passes_with_poison_basic_header() {
+    // Regression: the SPA's `api.ts` sends `Authorization: Basic ` on
+    // every fetch when there are no credentials, to override the
+    // browser's basic-auth cache. The backend used to demote that to
+    // Anonymous; the three-role refactor briefly let it fall through
+    // as Rejected and 401'd every public endpoint. This test pins the
+    // fix.
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/version HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic \r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200"), "raw={raw}");
+    assert!(raw.contains("\"version\""), "raw={raw}");
+}
+
+#[tokio::test]
+#[serial]
+async fn anonymous_personal_data_with_poison_basic_returns_401() {
+    // The poison Basic header still blocks personal-data paths.
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/logs HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic \r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
 }

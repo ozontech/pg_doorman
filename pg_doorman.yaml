@@ -474,6 +474,38 @@ web:
   # Default: 8192
   log_tap_max_entries: 8192
 
+  # Enable JWT-based SSO authentication on the web UI.
+  # Default: false
+  sso_enabled: false
+
+  # URL of the external SSO proxy used by the SPA for the Sign in via SSO redirect.
+  # Default: null
+  # sso_proxy_url: "https://sso.example.com/oauth2/start"
+
+  # Path to a PEM file with the RSA public key paired with the SSO proxy signing key.
+  # Default: null
+  # sso_public_key_file: "/etc/pg_doorman/sso-public.pem"
+
+  # Allowed values of the JWT aud claim.
+  # Default: []
+  # sso_audience: ["pg_doorman"]
+
+  # Allowlist of preferred_username or sub claims.
+  # Default: ["*"]
+  sso_allowed_users: ["*"]
+
+  # CIDR ranges trusted to set X-Forwarded-For / Forwarded.
+  # Default: []
+  # trusted_proxies: ["10.0.0.0/8"]
+
+  # JWT claim name that carries the user's group memberships.
+  # Default: "groups"
+  sso_groups_claim: "groups"
+
+  # Group names that map onto the Admin role.
+  # Default: []
+  # sso_admin_groups: ["pg-doorman-admins"]
+
 # ############################################################################
 # TALOS AUTHENTICATION (Optional)
 # ############################################################################
