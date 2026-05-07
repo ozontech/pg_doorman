@@ -37,11 +37,15 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
     let scope = match parse_scope(&query) {
         Ok(s) => s,
         Err(msg) => {
-            return Response::json(
-                400,
-                "Bad Request",
-                &format!(r#"{{"action":"{action}","error":"bad_scope","message":"{msg}"}}"#),
-            )
+            // serde_json escapes the action / msg strings — `format!` here
+            // would inject any unescaped `"` from the URL into the body
+            // and break the SPA error handler.
+            return Response::ok_json(&json!({
+                "action": action,
+                "error": "bad_scope",
+                "message": msg,
+            }))
+            .with_status(400, "Bad Request");
         }
     };
 

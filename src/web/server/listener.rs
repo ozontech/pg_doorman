@@ -40,17 +40,13 @@ pub fn bind_web_listener(host: &str) -> std::io::Result<TcpListener> {
     Ok(listener)
 }
 
-/// Spawns the HTTP listener for the given address. The provided `opts`
-/// seeds the reload-aware [`WebServerOptions`] slot — subsequent
-/// [`super::refresh_options_from_config`] calls (from `RELOAD`) atomically
-/// replace it, and every request reads the current value through the
-/// state module.
-///
-/// Panics on bind failure. Production callers in `app::server::run_server`
-/// prefer [`bind_web_listener`] + [`serve_on`] so a port collision fails
-/// the whole startup instead of leaving the listener task panicked behind
-/// a successful readiness signal.
-pub async fn start_web_server(host: &str, opts: WebServerOptions) {
+/// Test-only convenience that binds and serves in one call. Production
+/// code uses [`bind_web_listener`] + [`serve_on`] so a port collision
+/// fails the whole startup instead of leaving the listener task
+/// panicked behind a successful readiness signal. Gated on `cfg(test)`
+/// so external embedders cannot trip the panic by accident.
+#[cfg(test)]
+pub(crate) async fn start_web_server(host: &str, opts: WebServerOptions) {
     let listener = bind_web_listener(host)
         .unwrap_or_else(|e| panic!("Failed to bind web listener on {host}: {e}"));
     serve_on(listener, opts).await;

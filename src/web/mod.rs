@@ -11,9 +11,9 @@ pub mod routes;
 pub mod server;
 pub mod static_assets;
 
-pub use server::{
-    bind_web_listener, refresh_options_from_config, serve_on, start_web_server, WebServerOptions,
-};
+#[cfg(test)]
+pub(crate) use server::start_web_server;
+pub use server::{bind_web_listener, refresh_options_from_config, serve_on, WebServerOptions};
 
 #[cfg(test)]
 mod tests;

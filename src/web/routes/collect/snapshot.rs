@@ -59,16 +59,6 @@ pub fn snapshot() -> Arc<Snapshot> {
     fresh
 }
 
-/// Force a fresh snapshot regardless of the cache. Used by tests that
-/// need deterministic state and by the metrics scrape path which has
-/// its own freshness contract.
-#[allow(dead_code)]
-pub fn force_refresh() -> Arc<Snapshot> {
-    let fresh = Arc::new(build());
-    CACHE.store(Arc::new(Some(fresh.clone())));
-    fresh
-}
-
 fn build() -> Snapshot {
     // Snapshot ordering matches `PoolStats::construct_pool_lookup` —
     // POOLS first, then CLIENT_STATS / SERVER_STATS — so the same race

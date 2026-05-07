@@ -70,6 +70,10 @@ pub struct DrainResult {
 
 pub struct LogTap {
     tx: mpsc::Sender<RawEntry>,
+    /// Combined drop counter — bumped on producer-side `try_send` failures
+    /// when the channel is full *and* on consumer-side ring-buffer
+    /// evictions when a viewer is too slow. Operators read this as a
+    /// single "messages I never saw" number.
     pub(crate) dropped_total: Arc<AtomicU64>,
     cmd_tx: mpsc::Sender<TapCommand>,
     pub(crate) last_request_at: Arc<AtomicU64>,
