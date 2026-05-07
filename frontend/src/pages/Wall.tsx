@@ -54,6 +54,8 @@ export default function Wall() {
     }
 
     const fmtMs = (n: number) => {
+      if (n > 0 && n < 1) return `${n.toFixed(2)}ms`;
+      if (n < 10) return `${n.toFixed(1)}ms`;
       if (n < 1000) return `${Math.round(n)}ms`;
       if (n < 60_000) return `${(n / 1000).toFixed(0)}s`;
       const m = Math.floor(n / 60_000);

@@ -48,16 +48,16 @@ pub(crate) fn collect_pools() -> PoolsDto {
             waiting: stats.cl_waiting,
             max_active_age_ms: stats.oldest_active_age_ms,
             // The HDR histograms underneath store microseconds; every DTO
-            // field on `_ms` divides by 1_000. Without this the SHOW STATS
-            // log reported "query_ms p95 = 6.62" while the Web UI showed
-            // "P95 MS = 6620" for the same pool — same number, off by a
-            // factor of a thousand.
-            query_p95_ms: stats.query_percentile.p95 / 1_000,
-            query_p99_ms: stats.query_percentile.p99 / 1_000,
-            transactions_p95_ms: stats.xact_percentile.p95 / 1_000,
-            transactions_p99_ms: stats.xact_percentile.p99 / 1_000,
-            wait_avg_ms: stats.avg_wait_time / 1_000,
-            wait_p95_ms: stats.wait_percentile.p95 / 1_000,
+            // field on `_ms` is divided by 1_000.0 in floating-point so
+            // sub-millisecond percentiles do not collapse to zero — a
+            // pool whose true p95 is 420 µs reports `0.42` rather than
+            // `0` and matches the log line ("query_ms p95 = 0.42").
+            query_p95_ms: stats.query_percentile.p95 as f64 / 1_000.0,
+            query_p99_ms: stats.query_percentile.p99 as f64 / 1_000.0,
+            transactions_p95_ms: stats.xact_percentile.p95 as f64 / 1_000.0,
+            transactions_p99_ms: stats.xact_percentile.p99 as f64 / 1_000.0,
+            wait_avg_ms: stats.avg_wait_time as f64 / 1_000.0,
+            wait_p95_ms: stats.wait_percentile.p95 as f64 / 1_000.0,
             queries_total: stats.total_query_count,
             transactions_total: stats.total_xact_count,
             errors_total: stats.errors,

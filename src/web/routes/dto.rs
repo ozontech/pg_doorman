@@ -92,13 +92,18 @@ pub(crate) struct PoolDto {
 
     pub max_active_age_ms: u64,
 
-    pub query_p95_ms: u64,
-    pub query_p99_ms: u64,
-    pub transactions_p95_ms: u64,
-    pub transactions_p99_ms: u64,
+    /// Latency percentiles in milliseconds. Stored as `f64` rather than
+    /// `u64` so sub-millisecond values survive: a workload whose true
+    /// p95 is 420 µs would otherwise integer-divide to `0 ms` in the
+    /// DTO and render as a bogus zero on the dashboard while the log
+    /// line correctly showed `query_ms p95 = 0.42`.
+    pub query_p95_ms: f64,
+    pub query_p99_ms: f64,
+    pub transactions_p95_ms: f64,
+    pub transactions_p99_ms: f64,
 
-    pub wait_avg_ms: u64,
-    pub wait_p95_ms: u64,
+    pub wait_avg_ms: f64,
+    pub wait_p95_ms: f64,
 
     pub queries_total: u64,
     pub transactions_total: u64,

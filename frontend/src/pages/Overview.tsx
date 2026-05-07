@@ -414,6 +414,11 @@ export default function Overview() {
   // exact precision is in the hover tooltip.
   const fmtMs = (n: number | undefined): string => {
     if (n === undefined) return "—";
+    // Sub-millisecond values arrive as fractions (e.g. 0.42 ms). Show
+    // two decimals so an operator does not see "0ms" for a pool that
+    // actually serves 420-microsecond p95.
+    if (n > 0 && n < 1) return `${n.toFixed(2)}ms`;
+    if (n < 10) return `${n.toFixed(1)}ms`;
     if (n < 1000) return `${Math.round(n)}ms`;
     if (n < 10_000) return `${(n / 1000).toFixed(1)}s`;
     if (n < 60_000) return `${Math.round(n / 1000)}s`;
