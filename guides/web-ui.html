@@ -1,0 +1,321 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Web UI - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/guides/web-ui.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
+<p>pg_doorman ships a small operator console that runs from the same listener
+as the Prometheus exporter. The bundle is embedded into the binary, so the
+deployment story is identical to a UI-less build: one process, one binary,
+one TCP port.</p>
+<h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
+<p>The UI lives under the <code>[web]</code> section of the config. The legacy
+<code>[prometheus]</code> block is still accepted as an alias.</p>
+<pre><code class="language-toml">[web]
+enabled = true
+host = "0.0.0.0"
+port = 9127
+
+# Operator console (default off)
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 8192
+</code></pre>
+<p><code>web.ui = true</code> is silently demoted to "metrics only" at startup when
+<code>general.admin_password</code> is empty or the literal <code>"admin"</code>: the listener
+keeps serving <code>/metrics</code>, but every admin-only endpoint would otherwise
+be trivially open. Set a real password before flipping <code>ui = true</code>; you
+will see <code>web.ui = true ignored: admin_password is default/empty</code> in
+the log when this gate fires.</p>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>enabled</code></td><td>Whether the listener binds at all. <code>/metrics</code> works regardless of <code>ui</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>host</code></td><td>Bind address.</td><td><code>"0.0.0.0"</code></td></tr>
+<tr><td><code>port</code></td><td>Bind port.</td><td><code>9127</code></td></tr>
+<tr><td><code>ui</code></td><td>Serve the operator console on <code>/</code> and the public API endpoints.</td><td><code>false</code></td></tr>
+<tr><td><code>ui_anonymous</code></td><td>When <code>true</code>, public API endpoints (<code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, ...) accept unauthenticated requests. Admin endpoints (<code>/api/logs</code>, <code>/api/prepared/text/...</code>, <code>/api/interner/top</code>, <code>/api/admin/...</code>) always require basic auth.</td><td><code>false</code></td></tr>
+<tr><td><code>log_tap_max_entries</code></td><td>Ring buffer size for the in-memory log tap powering <code>/api/logs</code>. Set to <code>0</code> to disable the endpoint.</td><td><code>8192</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="url-surface"><a class="header" href="#url-surface">URL surface</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Auth</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>/</code> and any non-API path</td><td>Always public when <code>web.ui</code> is active</td><td>The SPA shell. Browsing to <code>/pools</code> directly must not trigger a browser-native basic-auth dialog before the React sign-in modal can render — <code>ui_anonymous</code> does not gate the shell.</td></tr>
+<tr><td><code>/assets/*</code></td><td>Always public when <code>web.ui</code> is active</td><td>Hashed JS / CSS / font bundles. Served with <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
+<tr><td><code>/metrics</code></td><td>None</td><td>Prometheus exposition format. Unaffected by <code>ui</code>.</td></tr>
+<tr><td><code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td>Public when <code>ui_anonymous = true</code>, otherwise admin</td><td>Read-only JSON. Field shapes mirror <code>SHOW &lt;admin-command&gt;</code>.</td></tr>
+<tr><td><code>/api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td>Admin (basic auth)</td><td>Admin-only. <code>/api/logs</code> activates the in-memory tap on first request and self-disables after 2 minutes without traffic. <code>/api/top/queries</code> returns the first ~120 characters of cached SQL text — kept admin-only because previews can include literal values and tenant identifiers.</td></tr>
+</tbody></table>
+</div>
+<h2 id="authentication"><a class="header" href="#authentication">Authentication</a></h2>
+<p>The console uses HTTP basic auth with the <code>admin_username</code> / <code>admin_password</code>
+credentials from <code>[general]</code>. The password is matched in constant time.
+Browsers receive a <code>WWW-Authenticate: Basic</code> challenge on 401, so curl, gh,
+and the like behave normally. Requests that advertise
+<code>Accept: application/json</code> (the SPA's <code>fetch</code> wrapper) get a plain 401
+without the challenge — without that, the browser caches whatever the
+operator typed at the OS-level basic-auth dialog and replays it under the
+SPA modal.</p>
+<p>By default, credentials entered into the console live only in React state
+and are lost on a hard refresh. Tick "Remember me on this device" in the
+sign-in modal to persist them in the browser's <code>localStorage</code> so the
+console survives a reload. Clearing the site's storage in the browser
+wipes the entry.</p>
+<h2 id="pages"><a class="header" href="#pages">Pages</a></h2>
+<p>The SPA exposes:</p>
+<ul>
+<li><strong>Overview</strong> — health pill, four golden-signal sparklines (latency p95,
+traffic, errors/s, saturation), connection breakdown stacked area,
+pool fill heatmap, dual-axis wait + oldest-active-age, top-5 errors
+per pool, and a collapsed resource detail panel.</li>
+<li><strong>Pools</strong> — sortable table with mini-sparklines per row.</li>
+<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — full per-pool drill-down: SQLSTATE
+breakdown, oldest-active-age, pause/resume/reconnect controls.</li>
+<li><strong>Clients</strong> — paginated table backed by <code>/api/clients</code> with server-side
+filter and sort.</li>
+<li><strong>Apps</strong> — one row per <code>application_name</code> with err / 1k q ratio.</li>
+<li><strong>Caches</strong> — Prepared statement table with hit rate, plus a query
+interner card (named vs anonymous bytes).</li>
+<li><strong>Logs</strong> — live tail of the LogTap with level / target filter and
+pause / auto-scroll toggles.</li>
+<li><strong>Config &amp; state</strong> — collapsed panels covering <code>[general]</code> keys, the
+active log filter, <code>auth_query</code> cache, databases, users, sockets,
+pool scaling, pool coordinator.</li>
+<li><strong>War room</strong> (<code>/wall</code>) — six huge tiles, optimized for an incident
+bridge or a wall display.</li>
+</ul>
+<h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
+<p>The frontend bundle is checked into git under <code>frontend/dist/</code> so that
+RPM/DEB/Docker pipelines do not need a node toolchain. Developers editing
+the SPA must rebuild before committing:</p>
+<pre><code class="language-bash">cd frontend
+npm ci
+npm run install-hooks   # one-time: wires the dist-sync pre-commit hook
+npm run lint
+npm run typecheck
+npm run build
+</code></pre>
+<p><code>npm run install-hooks</code> is opt-in. CI does not need it: the
+<code>frontend.yml</code> workflow runs <code>npm run check-dist</code> and refuses to merge
+when a commit changed source files without rebuilding <code>dist/</code>.</p>
+<p>A separate <code>.github/workflows/frontend.yml</code> runs the same gates on every
+PR that touches <code>frontend/</code>.</p>
+<h2 id="deployment"><a class="header" href="#deployment">Deployment</a></h2>
+<p><code>/metrics</code> is unauthenticated on the same listener that can serve the
+UI. That mirrors the historical Prometheus exporter and keeps existing
+scrape configs working. If you put pg_doorman behind a reverse proxy,
+remember that auth on <code>/api/*</code> does <strong>not</strong> propagate to <code>/metrics</code> —
+metrics expose pool names, users, databases, connection pressure,
+auth-query state, and workload shape. Either keep <code>[web]</code> on a private
+host/port that only your scrape system reaches, or front the listener
+with a proxy that adds auth on <code>/metrics</code> separately.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../observability/admin-commands.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../observability/json-logging.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../observability/admin-commands.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../observability/json-logging.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

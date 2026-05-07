@@ -161,7 +161,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="patroni-proxy"><a class="header" href="#patroni-proxy">Patroni Proxy</a></h1>
-<p><code>patroni_proxy</code> — TCP-балансировщик для кластеров PostgreSQL под управлением Patroni. Слушает один или несколько портов, спрашивает у Patroni REST API кто сейчас leader / sync / async, и направляет новые соединения на нужную роль по стратегии least-connections. Не пулит соединения, не парсит wire-протокол, не знает что за SQL внутри — это работа pg_doorman, развёрнутого ниже по цепочке.</p>
+<p><code>patroni_proxy</code> — TCP-балансировщик для кластеров PostgreSQL под управлением Patroni. Слушает один или несколько портов, спрашивает у Patroni REST API кто сейчас leader / sync / async, и направляет новые соединения на нужную роль по стратегии least-connections. Не выполняет пулинг соединений, не парсит wire-протокол, не знает что за SQL внутри — это работа pg_doorman, развёрнутого ниже по цепочке.</p>
 <h2 id="Что-он-делает"><a class="header" href="#Что-он-делает">Что он делает</a></h2>
 <ul>
 <li><strong>Открытие членов кластера</strong> через опрос <code>/cluster</code> с интервалом <code>cluster_update_interval</code> (по умолчанию 3 с) и по запросу <code>GET /update_clusters</code>.</li>
@@ -208,7 +208,7 @@ listen_address: "127.0.0.1:8009"
 
 clusters:
   my_cluster:
-    # Endpoint'ы Patroni API (несколько -- для отказоустойчивости)
+    # Endpoint'ы Patroni API (несколько — для отказоустойчивости)
     hosts:
       - "http://192.168.1.1:8008"
       - "http://192.168.1.2:8008"
@@ -239,12 +239,12 @@ clusters:
 <div class="table-wrapper"><table><thead><tr><th>Параметр</th><th>По умолчанию</th><th>Описание</th></tr></thead><tbody>
 <tr><td><code>cluster_update_interval</code></td><td>3</td><td>Интервал в секундах между опросами Patroni API</td></tr>
 <tr><td><code>listen_address</code></td><td>127.0.0.1:8009</td><td>Адрес для HTTP API</td></tr>
-<tr><td><code>clusters.&lt;name&gt;.hosts</code></td><td>--</td><td>Список endpoint'ов Patroni API</td></tr>
-<tr><td><code>clusters.&lt;name&gt;.tls</code></td><td>--</td><td>Опциональная TLS-конфигурация для Patroni API</td></tr>
-<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.listen</code></td><td>--</td><td>Адрес для listener этого порта</td></tr>
-<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.roles</code></td><td>--</td><td>Список разрешённых ролей</td></tr>
-<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.host_port</code></td><td>--</td><td>Порт PostgreSQL на бэкенд-хостах</td></tr>
-<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.max_lag_in_bytes</code></td><td>--</td><td>Максимальный лаг репликации (опционально)</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.hosts</code></td><td>—</td><td>Список endpoint'ов Patroni API</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.tls</code></td><td>—</td><td>Опциональная TLS-конфигурация для Patroni API</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.listen</code></td><td>—</td><td>Адрес для listener этого порта</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.roles</code></td><td>—</td><td>Список разрешённых ролей</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.host_port</code></td><td>—</td><td>Порт PostgreSQL на бэкенд-хостах</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.max_lag_in_bytes</code></td><td>—</td><td>Максимальный лаг репликации (опционально)</td></tr>
 </tbody></table>
 </div>
 <h2 id="Использование"><a class="header" href="#Использование">Использование</a></h2>

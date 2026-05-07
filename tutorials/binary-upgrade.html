@@ -602,6 +602,17 @@ Confirm old process exits (check PID file or <code>pgrep</code>)</li>
 <li><input disabled="" type="checkbox"/>
 Verify Prometheus metrics show clients on the new process</li>
 </ul>
+<div id="admonition-prometheus-scrape-during-the-drain-window" class="admonition admonish-note" role="note" aria-labelledby="admonition-prometheus-scrape-during-the-drain-window-title">
+<div class="admonition-title">
+<div id="admonition-prometheus-scrape-during-the-drain-window-title">
+<p>Prometheus scrape during the drain window</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-prometheus-scrape-during-the-drain-window"></a>
+</div>
+<div>
+<p>The web listener (which serves <code>/metrics</code>) binds with <code>SO_REUSEPORT</code>. While the old process drains and the new one accepts new clients, both share the same port; the kernel balances scrape requests between them. Counter values may appear to jump backwards on a single scrape until the old process exits. The race window lasts at most <code>shutdown_timeout</code>.</p>
+</div>
+</div>
 
                     </main>
 

@@ -250,7 +250,7 @@ pool_size = 40
 username = "doorman"
 password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
 </code></pre>
-<p>Полный список параметров конфигурации можно получить командой <code>pg_doorman generate --reference --output ref.yaml</code> -- она генерирует аннотированный конфиг со всеми параметрами и значениями по умолчанию.</p>
+<p>Полный список параметров конфигурации можно получить командой <code>pg_doorman generate --reference --output ref.yaml</code> — она генерирует аннотированный конфиг со всеми параметрами и значениями по умолчанию.</p>
 <h3 id="Автоматическая-генерация-конфигурации"><a class="header" href="#Автоматическая-генерация-конфигурации">Автоматическая генерация конфигурации</a></h3>
 <p>Команда <code>generate</code> создаёт файл конфигурации, подключаясь к серверу PostgreSQL и определяя базы данных и пользователей. По умолчанию сгенерированный конфиг содержит inline-комментарии, объясняющие каждый параметр.</p>
 <pre><code class="language-bash"># Посмотреть все доступные опции
@@ -309,11 +309,11 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 <a class="admonition-anchor-link" href="#admonition-passthrough-authentication-по-умолчанию"></a>
 </div>
 <div>
-<p>PgDoorman по умолчанию использует <strong>passthrough authentication</strong>: криптографическое доказательство клиента (MD5-хэш или SCRAM ClientKey) автоматически переиспользуется для аутентификации в backend-сервере PostgreSQL. Plaintext-пароли в конфиге не нужны -- достаточно записать в <code>password</code> хэш из <code>pg_shadow</code> / <code>pg_authid</code>.</p>
+<p>PgDoorman по умолчанию использует <strong>passthrough authentication</strong>: криптографическое доказательство клиента (MD5-хеш или SCRAM ClientKey) автоматически переиспользуется для аутентификации в backend-сервере PostgreSQL. Plaintext-пароли в конфиге не нужны — достаточно записать в <code>password</code> хеш из <code>pg_shadow</code> / <code>pg_authid</code>.</p>
 <p>Указывайте <code>server_username</code> и <code>server_password</code> <strong>только</strong> тогда, когда backend-пользователь отличается от username пула (например, маппинг username или JWT-аутентификация):</p>
 <pre><code class="language-yaml">users:
   - username: "app_user"              # имя для клиента
-    password: "md5..."                # хэш для аутентификации клиента
+    password: "md5..."                # хеш для аутентификации клиента
     server_username: "pg_app_user"    # другой backend-пользователь PostgreSQL
     server_password: "real_password"  # plaintext-пароль для этого пользователя
 </code></pre>
@@ -333,8 +333,8 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 </div>
 <h3 id="Контроль-доступа-клиентов-pg_hba"><a class="header" href="#Контроль-доступа-клиентов-pg_hba">Контроль доступа клиентов (pg_hba)</a></h3>
 <p>PgDoorman может применять правила доступа клиентов в стиле PostgreSQL <code>pg_hba.conf</code> через параметр <code>general.pg_hba</code>.
-Правила можно встроить прямо в конфиг или сослаться на путь к файлу. Полные примеры -- в <a href="../reference/general.html#pg_hba">reference-разделе</a>.</p>
-<p>Trust-режим: когда правило использует <code>trust</code>, PgDoorman принимает соединения без запроса пароля у клиента -- зеркально поведению PostgreSQL. Учитываются TLS-зависимые типы правил: <code>hostssl</code> требует TLS, <code>hostnossl</code> его запрещает.</p>
+Правила можно встроить прямо в конфиг или сослаться на путь к файлу. Полные примеры — в <a href="../reference/general.html#pg_hba">reference-разделе</a>.</p>
+<p>Trust-режим: когда правило использует <code>trust</code>, PgDoorman принимает соединения без запроса пароля у клиента — зеркально поведению PostgreSQL. Учитываются TLS-зависимые типы правил: <code>hostssl</code> требует TLS, <code>hostnossl</code> его запрещает.</p>
 <h3 id="Запуск-pgdoorman"><a class="header" href="#Запуск-pgdoorman">Запуск PgDoorman</a></h3>
 <p>После создания файла конфигурации запустите PgDoorman из командной строки:</p>
 <pre><code class="language-bash">$ pg_doorman pg_doorman.toml
@@ -399,12 +399,12 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <h3 id="Мониторинг-pgdoorman"><a class="header" href="#Мониторинг-pgdoorman">Мониторинг PgDoorman</a></h3>
 <p>Admin-консоль предоставляет несколько команд для мониторинга текущего состояния PgDoorman:</p>
 <ul>
-<li><code>SHOW STATS</code> -- посмотреть статистику производительности.</li>
-<li><code>SHOW CLIENTS</code> -- список текущих клиентских соединений.</li>
-<li><code>SHOW SERVERS</code> -- список текущих серверных соединений.</li>
-<li><code>SHOW POOLS</code> -- состояние пулов соединений.</li>
-<li><code>SHOW DATABASES</code> -- список настроенных баз данных.</li>
-<li><code>SHOW USERS</code> -- список настроенных пользователей.</li>
+<li><code>SHOW STATS</code> — посмотреть статистику производительности.</li>
+<li><code>SHOW CLIENTS</code> — список текущих клиентских соединений.</li>
+<li><code>SHOW SERVERS</code> — список текущих серверных соединений.</li>
+<li><code>SHOW POOLS</code> — состояние пулов соединений.</li>
+<li><code>SHOW DATABASES</code> — список настроенных баз данных.</li>
+<li><code>SHOW USERS</code> — список настроенных пользователей.</li>
 </ul>
 <p>Эти команды подробно описаны в разделе <a href="#%D0%BA%D0%BE%D0%BC%D0%B0%D0%BD%D0%B4%D1%8B-admin-%D0%BA%D0%BE%D0%BD%D1%81%D0%BE%D0%BB%D0%B8">Команды admin-консоли</a> ниже.</p>
 <h3 id="Перечитывание-конфигурации"><a class="header" href="#Перечитывание-конфигурации">Перечитывание конфигурации</a></h3>
@@ -642,7 +642,7 @@ pgdoorman=&gt; SHOW LOG_LEVEL;
 -- Сбросить на стартовое значение
 pgdoorman=&gt; SET log_level = 'default';
 </code></pre>
-<p>Изменения временные -- теряются при перезапуске. Допустимые уровни: <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>, <code>off</code>.</p>
+<p>Изменения временные — теряются при перезапуске. Допустимые уровни: <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>, <code>off</code>.</p>
 <h4 id="reload"><a class="header" href="#reload">RELOAD</a></h4>
 <p>Команда <code>RELOAD</code> обновляет конфигурацию PgDoorman без перезапуска сервиса:</p>
 <pre><code class="language-sql">pgdoorman=&gt; RELOAD;
@@ -666,15 +666,15 @@ pgdoorman=&gt; SET log_level = 'default';
 </div>
 </div>
 <h4 id="pause"><a class="header" href="#pause">PAUSE</a></h4>
-<p>Команда <code>PAUSE [db]</code> блокирует получение новых backend-соединений для указанной базы (или всех баз, если аргумент не задан). Активные транзакции продолжают работать -- блокируются только запросы на новые соединения.</p>
+<p>Команда <code>PAUSE [db]</code> блокирует получение новых backend-соединений для указанной базы (или всех баз, если аргумент не задан). Активные транзакции продолжают работать — блокируются только запросы на новые соединения.</p>
 <pre><code class="language-sql">-- Поставить на паузу все пулы
 pgdoorman=&gt; PAUSE;
 
 -- Поставить на паузу только пулы конкретной базы
 pgdoorman=&gt; PAUSE mydb;
 </code></pre>
-<p>Клиенты, которые запросят новое backend-соединение во время паузы, будут ждать <code>RESUME</code> или истечения <code>query_wait_timeout</code> -- что наступит раньше. Если истечёт таймаут, клиент получит ошибку timeout.</p>
-<p>Используйте <code>SHOW POOLS</code> для проверки состояния паузы -- колонка <code>paused</code> покажет <code>1</code> для приостановленных пулов.</p>
+<p>Клиенты, которые запросят новое backend-соединение во время паузы, будут ждать <code>RESUME</code> или истечения <code>query_wait_timeout</code> — что наступит раньше. Если истечёт таймаут, клиент получит ошибку timeout.</p>
+<p>Используйте <code>SHOW POOLS</code> для проверки состояния паузы — колонка <code>paused</code> покажет <code>1</code> для приостановленных пулов.</p>
 <div id="admonition-Когда-использовать-pause" class="admonition admonish-info" role="note" aria-labelledby="admonition-Когда-использовать-pause-title">
 <div class="admonition-title">
 <div id="admonition-Когда-использовать-pause-title">
@@ -712,7 +712,7 @@ pgdoorman=&gt; RECONNECT mydb;
 <ol>
 <li>Внутренний epoch-счётчик пула увеличивается.</li>
 <li>Все idle-соединения сразу закрываются.</li>
-<li>Активные соединения (которые сейчас обслуживают транзакцию) продолжают работать, но утилизируются при возврате в пул -- они не будут переиспользованы.</li>
+<li>Активные соединения (которые сейчас обслуживают транзакцию) продолжают работать, но утилизируются при возврате в пул — они не будут переиспользованы.</li>
 </ol>
 <p>То есть RECONNECT <strong>не</strong> прерывает активные транзакции. Новые соединения создаются по запросу с текущим epoch, поэтому они будут приняты <code>recycle()</code>.</p>
 <div id="admonition-Шаблоны-ротации-соединений" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Шаблоны-ротации-соединений-title">
@@ -724,9 +724,9 @@ pgdoorman=&gt; RECONNECT mydb;
 </div>
 <div>
 <p><strong>Постепенная ротация</strong> (минимум воздействия):
-Один RECONNECT -- idle-соединения сбрасываются сразу, активные -- по завершении текущей транзакции. Новые соединения создаются по мере необходимости.</p>
+Один RECONNECT — idle-соединения сбрасываются сразу, активные — по завершении текущей транзакции. Новые соединения создаются по мере необходимости.</p>
 <p><strong>Полная ротация</strong> (гарантированно все новые соединения):
-PAUSE → RECONNECT → RESUME -- сначала пауза не даёт стартовать новым транзакциям, потом RECONNECT помечает всё на утилизацию. После RESUME все последующие запросы получают свежие соединения.</p>
+PAUSE → RECONNECT → RESUME — сначала пауза не даёт стартовать новым транзакциям, потом RECONNECT помечает всё на утилизацию. После RESUME все последующие запросы получают свежие соединения.</p>
 </div>
 </div>
 <div id="admonition-reconnect-и-min_pool_size" class="admonition admonish-warning" role="note" aria-labelledby="admonition-reconnect-и-min_pool_size-title">
@@ -748,9 +748,9 @@ PAUSE → RECONNECT → RESUME -- сначала пауза не даёт ста
 <tr><td><strong>RECONNECT для приостановленного пула</strong></td><td>Работает: idle-соединения дренируются, epoch инкрементируется. После RESUME новые соединения создаются с новым epoch.</td></tr>
 <tr><td><strong>PAUSE/RESUME/RECONNECT для несуществующей базы</strong></td><td>Возвращает ошибку: <code>No pool for database "xxx"</code>. Без аргумента-базы команда применяется ко всем пулам (ошибки нет, даже если пулов нет).</td></tr>
 <tr><td><strong><code>query_wait_timeout</code> во время PAUSE</strong></td><td>Клиенты, ожидающие соединение, ожидаемо получают ошибку timeout. Пул остаётся на паузе.</td></tr>
-<tr><td><strong>RELOAD во время PAUSE</strong></td><td>RELOAD пересоздаёт пулы из конфигурации, поэтому состояние паузы теряется. Это ожидаемое поведение -- новая конфигурация означает новые пулы.</td></tr>
+<tr><td><strong>RELOAD во время PAUSE</strong></td><td>RELOAD пересоздаёт пулы из конфигурации, поэтому состояние паузы теряется. Это ожидаемое поведение — новая конфигурация означает новые пулы.</td></tr>
 <tr><td><strong>GC приостановленных динамических пулов</strong></td><td>Приостановленные динамические пулы защищены от garbage collection даже при 0 соединений.</td></tr>
-<tr><td><strong>Replenish во время PAUSE</strong></td><td>Пулы с <code>min_pool_size</code> не дозаполняются, пока на паузе -- новые соединения не создаются. Дозаполнение возобновляется после RESUME.</td></tr>
+<tr><td><strong>Replenish во время PAUSE</strong></td><td>Пулы с <code>min_pool_size</code> не дозаполняются, пока на паузе — новые соединения не создаются. Дозаполнение возобновляется после RESUME.</td></tr>
 <tr><td><strong>Время жизни соединений во время PAUSE</strong></td><td>Retain-задача продолжает закрывать просроченные соединения (idle timeout, server lifetime). Соединения по-прежнему стареют.</td></tr>
 <tr><td><strong>Несколько вызовов RECONNECT</strong></td><td>Каждый вызов увеличивает epoch ещё. Только соединения, созданные после последнего RECONNECT, считаются валидными.</td></tr>
 </tbody></table>
@@ -758,7 +758,7 @@ PAUSE → RECONNECT → RESUME -- сначала пауза не даёт ста
 <h2 id="Обработка-сигналов"><a class="header" href="#Обработка-сигналов">Обработка сигналов</a></h2>
 <p>PgDoorman реагирует на стандартные Unix-сигналы для управления и контроля. Сигналы посылаются через <code>kill</code> (например, <code>kill -HUP &lt;pid&gt;</code>).</p>
 <div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Эффект</th></tr></thead><tbody>
-<tr><td><strong>SIGHUP</strong></td><td>Перечитывание конфигурации -- эквивалент admin-команды <code>RELOAD</code>.</td></tr>
+<tr><td><strong>SIGHUP</strong></td><td>Перечитывание конфигурации — эквивалент admin-команды <code>RELOAD</code>.</td></tr>
 <tr><td><strong>SIGUSR2</strong></td><td>Binary upgrade и graceful shutdown. Валидирует новый бинарник флагом <code>-t</code>, запускает новый процесс, затем завершается. <strong>Рекомендуется для обновлений.</strong> См. <a href="binary-upgrade.html">Binary upgrade</a>.</td></tr>
 <tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): только graceful shutdown (без binary upgrade). <strong>Daemon / без TTY</strong>: binary upgrade и graceful shutdown (legacy-поведение).</td></tr>
 <tr><td><strong>SIGTERM</strong></td><td>Немедленное завершение. Активные соединения обрываются.</td></tr>

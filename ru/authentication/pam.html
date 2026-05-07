@@ -196,7 +196,7 @@ account  required pam_ldap.so
 <li>PAM блокирует поток-обработчик во время вызова аутентификации. Если ваш стек PAM делает сетевые вызовы (LDAP, Kerberos), ждите эпизодических всплесков задержки.</li>
 <li><code>pam_unix.so</code> требует доступ на чтение к <code>/etc/shadow</code> — обычно только для <code>root</code>. Запускайте pg_doorman под пользователем с нужным членством в группе или используйте другой модуль PAM.</li>
 <li>PAM не поддерживает passthrough SCRAM. Соединение с бэкендом всегда использует <code>server_username</code> и <code>server_password</code>.</li>
-<li>Для LDAP без машинерии PAM в pg_doorman нет нативной поддержки LDAP. Используйте Odyssey или PgBouncer 1.25+.</li>
+<li>Прямая поддержка LDAP без PAM в pg_doorman не реализована. Используйте Odyssey или PgBouncer 1.25+.</li>
 </ul>
 
                     </main>

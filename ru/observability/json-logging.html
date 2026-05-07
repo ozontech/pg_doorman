@@ -173,7 +173,7 @@ pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 # Переменная окружения
 LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>По умолчанию — <code>text</code> (человекочитаемый). Флаг <code>--log-format</code> принимает значения <code>text</code>, <code>structured</code> или <code>debug</code>; последнее на данный момент является алиасом для <code>text</code>.</p>
+<p>По умолчанию — <code>text</code> (человекочитаемый). Флаг <code>--log-format</code> принимает значения <code>text</code>, <code>structured</code> или <code>debug</code>; последнее пока работает как <code>text</code>.</p>
 <h2 id="Формат-вывода"><a class="header" href="#Формат-вывода">Формат вывода</a></h2>
 <pre><code class="language-json">{"timestamp":"2026-04-25T08:32:14.512Z","level":"INFO","file":"src/app/server.rs","line":357,"message":"Server is up at 0.0.0.0:6432"}
 {"timestamp":"2026-04-25T08:32:14.514Z","level":"INFO","file":"src/pool/mod.rs","line":421,"message":"Pool 'mydb' initialized: 1 user, pool_size=40"}
@@ -194,7 +194,7 @@ LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 <pre><code class="language-yaml">general:
   log_level: "info"
 </code></pre>
-<pre><code class="language-bash">pg_doorman -l debug -F Structured /etc/pg_doorman/pg_doorman.yaml
+<pre><code class="language-bash">pg_doorman -l debug -F structured /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
 <p>Изменение в рантайме через admin-базу:</p>
 <pre><code class="language-sql">SET log_level = 'debug';
@@ -209,7 +209,7 @@ SHOW LOG_LEVEL;
       image: ghcr.io/ozontech/pg_doorman:latest
       args:
         - "-F"
-        - "Structured"
+        - "structured"
         - "/etc/pg_doorman/pg_doorman.yaml"
       env:
         - name: LOG_LEVEL
@@ -218,14 +218,14 @@ SHOW LOG_LEVEL;
 <p>Логи идут в stdout, рантайм контейнера их захватывает, ваш log shipper (Promtail, Fluent Bit, Vector) пересылает их как есть — JSON сохраняется на всём пути.</p>
 <p>Для systemd:</p>
 <pre><code class="language-ini">[Service]
-ExecStart=/usr/bin/pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+ExecStart=/usr/bin/pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 StandardOutput=journal
 StandardError=journal
 </code></pre>
 <p><code>journalctl -u pg_doorman -o json</code> возвращает JSON обратно.</p>
 <h2 id="Оговорки"><a class="header" href="#Оговорки">Оговорки</a></h2>
 <ul>
-<li>Для production выбирайте <code>Text</code> (терминалы, syslog) или <code>Structured</code> (log shippers). <code>Debug</code> зарезервирован под будущее использование и сейчас равен <code>Text</code>.</li>
+<li>Для production выбирайте <code>text</code> (терминалы, syslog) или <code>structured</code> (log shippers). <code>debug</code> зарезервирован под будущее использование и сейчас равен <code>text</code>.</li>
 <li><code>file</code> и <code>line</code> берутся из мест вызова макроса <code>log</code>. Они доступны в release-сборках, потому что pg_doorman поставляется с включённой отладочной информацией.</li>
 <li>Логгер не включает trace-идентификаторы и корреляцию запросов. Для трассировки на запрос используйте <code>SHOW CLIENTS</code> и Prometheus-метрики.</li>
 </ul>
@@ -240,7 +240,7 @@ StandardError=journal
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../observability/admin-commands.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../guides/web-ui.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -254,7 +254,7 @@ StandardError=journal
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../observability/admin-commands.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../guides/web-ui.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 

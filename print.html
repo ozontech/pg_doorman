@@ -160,8 +160,22 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.7.0</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.8.0</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
+<div id="admonition-built-in-operator-dashboard" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-operator-dashboard-title">
+<div class="admonition-title">
+<div id="admonition-built-in-operator-dashboard-title">
+<p>Built-in operator dashboard</p>
+</div>
+<a class="admonition-anchor-link" href="index.html#admonition-built-in-operator-dashboard"></a>
+</div>
+<div>
+<p>A diagnostic console embedded in the pg_doorman binary, served on the same port as <code>/metrics</code>. What it shows: pool saturation tiles, per-pool latency p95/p99 sparklines, errors split by SQLSTATE per pool, top-N stuck queries, jemalloc memory broken into live allocations / fragmentation / internal caches / code-and-libs / stacks / swap, <code>/proc/self/status</code> fields with one-line explanations next to the numbers, per-thread tokio-worker CPU, prepared cache attribution, query interner contents, live log tail. Sortable, filterable tables on Pools / Clients / Apps / Caches; live qps and tx-per-second per app and per client.</p>
+<p>PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy expose <code>/metrics</code> and a psql admin console. The dashboard you would build on top of them — Prometheus + Grafana + a memory exporter + a custom panel set — is already in pg_doorman.</p>
+<p>Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when <code>[web].ui = true</code> and <code>general.admin_password</code> is non-default; a fresh install with the placeholder password keeps the listener at <code>/metrics</code> only and logs a <code>WARN</code>.</p>
+<p><a href="guides/web-ui.html">Read more →</a></p>
+</div>
+</div>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
 <div id="admonition-pool-coordinator-title">
@@ -378,6 +392,7 @@ pools:
 <p>See <a href="reference/general.html">General settings reference</a>, <a href="reference/pool.html">Pool settings reference</a>.</p>
 <h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Built-in admin web UI (HTML console in the binary)</td><td style="text-align: center">Yes (single-page console on the same port as <code>/metrics</code>, opt-in via <code>[web].ui</code>)</td><td style="text-align: center">No (psql admin console only)</td><td style="text-align: center">No (psql admin console only)</td></tr>
 <tr><td>Prometheus endpoint</td><td style="text-align: center">Built-in <code>/metrics</code></td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">External (Go exporter sidecar that polls the admin console)</td></tr>
 <tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No (averages only in <code>SHOW STATS</code>)</td><td style="text-align: center">Yes via the exporter (TDigest, requires <code>quantiles</code> rule option)</td></tr>
 <tr><td>Prepared statement counters in <code>SHOW STATS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
@@ -4576,6 +4591,17 @@ Confirm old process exits (check PID file or <code>pgrep</code>)</li>
 <li><input disabled="" type="checkbox"/>
 Verify Prometheus metrics show clients on the new process</li>
 </ul>
+<div id="admonition-prometheus-scrape-during-the-drain-window" class="admonition admonish-note" role="note" aria-labelledby="admonition-prometheus-scrape-during-the-drain-window-title">
+<div class="admonition-title">
+<div id="admonition-prometheus-scrape-during-the-drain-window-title">
+<p>Prometheus scrape during the drain window</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/binary-upgrade.html#admonition-prometheus-scrape-during-the-drain-window"></a>
+</div>
+<div>
+<p>The web listener (which serves <code>/metrics</code>) binds with <code>SO_REUSEPORT</code>. While the old process drains and the new one accepts new clients, both share the same port; the kernel balances scrape requests between them. Counter values may appear to jump backwards on a single scrape until the old process exits. The race window lasts at most <code>shutdown_timeout</code>.</p>
+</div>
+</div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="signals-and-reload"><a class="header" href="#signals-and-reload">Signals and Reload</a></h1>
 <p>PgDoorman responds to four POSIX signals: <code>SIGHUP</code>, <code>SIGINT</code>, <code>SIGUSR2</code>, and <code>SIGTERM</code>. Each does one specific thing.</p>
 <h2 id="quick-reference"><a class="header" href="#quick-reference">Quick reference</a></h2>
@@ -4968,9 +4994,113 @@ app  | mydb     | 1        | 12345   | 87         | 3                    | 142  
 <li><a href="observability/../tutorials/pool-pressure.html">Pool Pressure</a> — what <code>SHOW POOL_SCALING</code> is telling you.</li>
 <li><a href="observability/../tutorials/troubleshooting.html">Troubleshooting</a> — common failure modes and their <code>SHOW</code> output.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
+<p>pg_doorman ships a small operator console that runs from the same listener
+as the Prometheus exporter. The bundle is embedded into the binary, so the
+deployment story is identical to a UI-less build: one process, one binary,
+one TCP port.</p>
+<h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
+<p>The UI lives under the <code>[web]</code> section of the config. The legacy
+<code>[prometheus]</code> block is still accepted as an alias.</p>
+<pre><code class="language-toml">[web]
+enabled = true
+host = "0.0.0.0"
+port = 9127
+
+# Operator console (default off)
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 8192
+</code></pre>
+<p><code>web.ui = true</code> is silently demoted to "metrics only" at startup when
+<code>general.admin_password</code> is empty or the literal <code>"admin"</code>: the listener
+keeps serving <code>/metrics</code>, but every admin-only endpoint would otherwise
+be trivially open. Set a real password before flipping <code>ui = true</code>; you
+will see <code>web.ui = true ignored: admin_password is default/empty</code> in
+the log when this gate fires.</p>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>enabled</code></td><td>Whether the listener binds at all. <code>/metrics</code> works regardless of <code>ui</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>host</code></td><td>Bind address.</td><td><code>"0.0.0.0"</code></td></tr>
+<tr><td><code>port</code></td><td>Bind port.</td><td><code>9127</code></td></tr>
+<tr><td><code>ui</code></td><td>Serve the operator console on <code>/</code> and the public API endpoints.</td><td><code>false</code></td></tr>
+<tr><td><code>ui_anonymous</code></td><td>When <code>true</code>, public API endpoints (<code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, ...) accept unauthenticated requests. Admin endpoints (<code>/api/logs</code>, <code>/api/prepared/text/...</code>, <code>/api/interner/top</code>, <code>/api/admin/...</code>) always require basic auth.</td><td><code>false</code></td></tr>
+<tr><td><code>log_tap_max_entries</code></td><td>Ring buffer size for the in-memory log tap powering <code>/api/logs</code>. Set to <code>0</code> to disable the endpoint.</td><td><code>8192</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="url-surface"><a class="header" href="#url-surface">URL surface</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Auth</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>/</code> and any non-API path</td><td>Always public when <code>web.ui</code> is active</td><td>The SPA shell. Browsing to <code>/pools</code> directly must not trigger a browser-native basic-auth dialog before the React sign-in modal can render — <code>ui_anonymous</code> does not gate the shell.</td></tr>
+<tr><td><code>/assets/*</code></td><td>Always public when <code>web.ui</code> is active</td><td>Hashed JS / CSS / font bundles. Served with <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
+<tr><td><code>/metrics</code></td><td>None</td><td>Prometheus exposition format. Unaffected by <code>ui</code>.</td></tr>
+<tr><td><code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td>Public when <code>ui_anonymous = true</code>, otherwise admin</td><td>Read-only JSON. Field shapes mirror <code>SHOW &lt;admin-command&gt;</code>.</td></tr>
+<tr><td><code>/api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td>Admin (basic auth)</td><td>Admin-only. <code>/api/logs</code> activates the in-memory tap on first request and self-disables after 2 minutes without traffic. <code>/api/top/queries</code> returns the first ~120 characters of cached SQL text — kept admin-only because previews can include literal values and tenant identifiers.</td></tr>
+</tbody></table>
+</div>
+<h2 id="authentication-3"><a class="header" href="#authentication-3">Authentication</a></h2>
+<p>The console uses HTTP basic auth with the <code>admin_username</code> / <code>admin_password</code>
+credentials from <code>[general]</code>. The password is matched in constant time.
+Browsers receive a <code>WWW-Authenticate: Basic</code> challenge on 401, so curl, gh,
+and the like behave normally. Requests that advertise
+<code>Accept: application/json</code> (the SPA's <code>fetch</code> wrapper) get a plain 401
+without the challenge — without that, the browser caches whatever the
+operator typed at the OS-level basic-auth dialog and replays it under the
+SPA modal.</p>
+<p>By default, credentials entered into the console live only in React state
+and are lost on a hard refresh. Tick "Remember me on this device" in the
+sign-in modal to persist them in the browser's <code>localStorage</code> so the
+console survives a reload. Clearing the site's storage in the browser
+wipes the entry.</p>
+<h2 id="pages"><a class="header" href="#pages">Pages</a></h2>
+<p>The SPA exposes:</p>
+<ul>
+<li><strong>Overview</strong> — health pill, four golden-signal sparklines (latency p95,
+traffic, errors/s, saturation), connection breakdown stacked area,
+pool fill heatmap, dual-axis wait + oldest-active-age, top-5 errors
+per pool, and a collapsed resource detail panel.</li>
+<li><strong>Pools</strong> — sortable table with mini-sparklines per row.</li>
+<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — full per-pool drill-down: SQLSTATE
+breakdown, oldest-active-age, pause/resume/reconnect controls.</li>
+<li><strong>Clients</strong> — paginated table backed by <code>/api/clients</code> with server-side
+filter and sort.</li>
+<li><strong>Apps</strong> — one row per <code>application_name</code> with err / 1k q ratio.</li>
+<li><strong>Caches</strong> — Prepared statement table with hit rate, plus a query
+interner card (named vs anonymous bytes).</li>
+<li><strong>Logs</strong> — live tail of the LogTap with level / target filter and
+pause / auto-scroll toggles.</li>
+<li><strong>Config &amp; state</strong> — collapsed panels covering <code>[general]</code> keys, the
+active log filter, <code>auth_query</code> cache, databases, users, sockets,
+pool scaling, pool coordinator.</li>
+<li><strong>War room</strong> (<code>/wall</code>) — six huge tiles, optimized for an incident
+bridge or a wall display.</li>
+</ul>
+<h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
+<p>The frontend bundle is checked into git under <code>frontend/dist/</code> so that
+RPM/DEB/Docker pipelines do not need a node toolchain. Developers editing
+the SPA must rebuild before committing:</p>
+<pre><code class="language-bash">cd frontend
+npm ci
+npm run install-hooks   # one-time: wires the dist-sync pre-commit hook
+npm run lint
+npm run typecheck
+npm run build
+</code></pre>
+<p><code>npm run install-hooks</code> is opt-in. CI does not need it: the
+<code>frontend.yml</code> workflow runs <code>npm run check-dist</code> and refuses to merge
+when a commit changed source files without rebuilding <code>dist/</code>.</p>
+<p>A separate <code>.github/workflows/frontend.yml</code> runs the same gates on every
+PR that touches <code>frontend/</code>.</p>
+<h2 id="deployment"><a class="header" href="#deployment">Deployment</a></h2>
+<p><code>/metrics</code> is unauthenticated on the same listener that can serve the
+UI. That mirrors the historical Prometheus exporter and keeps existing
+scrape configs working. If you put pg_doorman behind a reverse proxy,
+remember that auth on <code>/api/*</code> does <strong>not</strong> propagate to <code>/metrics</code> —
+metrics expose pool names, users, databases, connection pressure,
+auth-query state, and workload shape. Either keep <code>[web]</code> on a private
+host/port that only your scrape system reaches, or front the listener
+with a proxy that adds auth on <code>/metrics</code> separately.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="json-structured-logging"><a class="header" href="#json-structured-logging">JSON Structured Logging</a></h1>
 <p>PgDoorman emits structured JSON logs when run with <code>--log-format structured</code>. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.</p>
-<h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
+<h2 id="enabling-1"><a class="header" href="#enabling-1">Enabling</a></h2>
 <p>Three equivalent ways:</p>
 <pre><code class="language-bash"># Command line flag
 pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
@@ -5839,14 +5969,18 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 </div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="prometheus-settings"><a class="header" href="#prometheus-settings">Prometheus Settings</a></h1>
 <p>pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.</p>
-<h2 id="enabling-prometheus-metrics"><a class="header" href="#enabling-prometheus-metrics">Enabling Prometheus Metrics</a></h2>
-<p>To enable the Prometheus metrics exporter, add the following to your configuration file:</p>
-<pre><code class="language-yaml">prometheus:
-  enabled: true
-  host: "0.0.0.0"  # The host on which the metrics server will listen
-  port: 9127       # The port on which the metrics server will listen
+<h2 id="enabling-the-web-listener"><a class="header" href="#enabling-the-web-listener">Enabling the Web Listener</a></h2>
+<p>Both the Prometheus metrics endpoint (<code>/metrics</code>) and the optional operator console (the SPA on <code>/</code>, <code>/api/*</code>) are served by the same <code>[web]</code> listener. The legacy <code>prometheus.*</code> config keys are accepted as aliases for <code>web.*</code>.</p>
+<pre><code class="language-yaml">web:
+  enabled: true     # Bind the listener (Prometheus only)
+  host: "0.0.0.0"
+  port: 9127
+  # Operator console (off by default; see the Web UI guide)
+  ui: false
+  ui_anonymous: false
 </code></pre>
 <h3 id="configuration-options-1"><a class="header" href="#configuration-options-1">Configuration Options</a></h3>
+<p>Full list — including UI-related fields — lives in <a href="reference/web.html">Web Settings</a>. The minimum to expose <code>/metrics</code> is:</p>
 <div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
 <tr><td><code>enabled</code></td><td>Enable or disable the Prometheus metrics exporter.</td><td><code>false</code></td></tr>
 <tr><td><code>host</code></td><td>The host on which the Prometheus metrics exporter will listen.</td><td><code>"0.0.0.0"</code></td></tr>
@@ -6163,6 +6297,57 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="380"><a class="header" href="#380">3.8.0</a></h3>
+<h4 id="added"><a class="header" href="#added">Added</a></h4>
+<p><strong>Built-in operator dashboard.</strong> pg_doorman exposes a single-page
+diagnostic console on the same port as <code>/metrics</code>, served from
+inside the binary and gated on <code>[web].ui = true</code> plus a non-default
+<code>admin_password</code>. Reaching the same view through the existing psql
+admin console means running <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>,
+<code>SHOW STATS</code> and friends in a loop, computing rates by hand between
+two snapshots, and joining the rows mentally. The dashboard does
+that on a 1.5 s tick.</p>
+<p>What it shows that the psql admin console does not:</p>
+<ul>
+<li><strong>Live time-series, not snapshots.</strong> Latency p95/p99, qps,
+errors/s and connection saturation render as sparklines, so
+"spiking now" is visually distinct from "always been like this".</li>
+<li><strong>Errors broken down by SQLSTATE per pool.</strong> Plus top-N stuck
+queries by <code>current_query_age_ms</code>, top-N noisy clients by
+errors, top-N hottest prepared statements by hit rate.</li>
+<li><strong>Process memory by category.</strong> RSS split into jemalloc live
+allocations, jemalloc fragmentation, internal pg_doorman caches,
+code + libs, stacks + page tables, swap and anonymous remainder,
+with cgroup current / max alongside. Every category carries a
+one-line explanation on hover.</li>
+<li><strong>Per-thread tokio-worker CPU.</strong> Drill-down from the threads
+count to per-thread utilisation, so a stuck worker is visible
+without <code>perf top</code> on the host.</li>
+<li><strong>Live log tail.</strong> An in-process LogTap activates on the first
+<code>/api/logs</code> request and self-disables two minutes after the last
+viewer. Level and target filters apply client-side over the
+rolling buffer.</li>
+<li><strong>Sortable, filterable tables.</strong> Pools, Clients, Apps and Caches
+sort by any column and filter by substring; Prepared statements
+adds a kind dropdown on top.</li>
+</ul>
+<p>The dashboard is read-only by default. Pause / Resume / Reconnect /
+Reload are the four writes, scoped to one pool via
+<code>?pool=user@db</code>, to every pool of a database via <code>?db=</code>, or
+globally — the same semantics as the admin protocol.</p>
+<h4 id="notes"><a class="header" href="#notes">Notes</a></h4>
+<ul>
+<li><code>[web].ui_anonymous</code> (default <code>false</code>) controls whether the
+read-only <code>/api/*</code> endpoints answer without basic auth. Admin-
+only endpoints (<code>/api/logs</code>, <code>/api/admin/*</code>,
+<code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>,
+<code>/api/top/queries</code>) always require it regardless of that flag.</li>
+<li>The dashboard polls every 1.5 s, but a 250 ms shared snapshot
+feeds <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>,
+<code>/api/servers</code>, <code>/api/apps</code>, <code>/api/stats</code> and <code>/metrics</code>, so a
+multi-tab dashboard does not multiply pool-stats work by the
+number of open tabs.</li>
+</ul>
 <h3 id="370"><a class="header" href="#370">3.7.0</a></h3>
 <h4 id="action-required-before-upgrading-to-370"><a class="header" href="#action-required-before-upgrading-to-370">ACTION REQUIRED before upgrading to 3.7.0</a></h4>
 <ul>
@@ -6193,7 +6378,7 @@ statements without a re-Parse, set
 <code>query_interner_anon_idle_ttl_seconds: 0</code> to keep the pre-3.7
 unbounded behaviour.</li>
 </ul>
-<h4 id="added"><a class="header" href="#added">Added</a></h4>
+<h4 id="added-1"><a class="header" href="#added-1">Added</a></h4>
 <ul>
 <li>The query interner is split into NAMED (passive <code>Arc::strong_count</code>
 GC) and ANON (idle TTL). Two general knobs control the GC:

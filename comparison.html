@@ -247,6 +247,7 @@
 <p>See <a href="reference/general.html">General settings reference</a>, <a href="reference/pool.html">Pool settings reference</a>.</p>
 <h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Built-in admin web UI (HTML console in the binary)</td><td style="text-align: center">Yes (single-page console on the same port as <code>/metrics</code>, opt-in via <code>[web].ui</code>)</td><td style="text-align: center">No (psql admin console only)</td><td style="text-align: center">No (psql admin console only)</td></tr>
 <tr><td>Prometheus endpoint</td><td style="text-align: center">Built-in <code>/metrics</code></td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">External (Go exporter sidecar that polls the admin console)</td></tr>
 <tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No (averages only in <code>SHOW STATS</code>)</td><td style="text-align: center">Yes via the exporter (TDigest, requires <code>quantiles</code> rule option)</td></tr>
 <tr><td>Prepared statement counters in <code>SHOW STATS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>

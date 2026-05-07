@@ -162,14 +162,18 @@
                     <main>
                         <h1 id="prometheus-settings"><a class="header" href="#prometheus-settings">Prometheus Settings</a></h1>
 <p>pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.</p>
-<h2 id="enabling-prometheus-metrics"><a class="header" href="#enabling-prometheus-metrics">Enabling Prometheus Metrics</a></h2>
-<p>To enable the Prometheus metrics exporter, add the following to your configuration file:</p>
-<pre><code class="language-yaml">prometheus:
-  enabled: true
-  host: "0.0.0.0"  # The host on which the metrics server will listen
-  port: 9127       # The port on which the metrics server will listen
+<h2 id="enabling-the-web-listener"><a class="header" href="#enabling-the-web-listener">Enabling the Web Listener</a></h2>
+<p>Both the Prometheus metrics endpoint (<code>/metrics</code>) and the optional operator console (the SPA on <code>/</code>, <code>/api/*</code>) are served by the same <code>[web]</code> listener. The legacy <code>prometheus.*</code> config keys are accepted as aliases for <code>web.*</code>.</p>
+<pre><code class="language-yaml">web:
+  enabled: true     # Bind the listener (Prometheus only)
+  host: "0.0.0.0"
+  port: 9127
+  # Operator console (off by default; see the Web UI guide)
+  ui: false
+  ui_anonymous: false
 </code></pre>
 <h3 id="configuration-options"><a class="header" href="#configuration-options">Configuration Options</a></h3>
+<p>Full list — including UI-related fields — lives in <a href="web.html">Web Settings</a>. The minimum to expose <code>/metrics</code> is:</p>
 <div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
 <tr><td><code>enabled</code></td><td>Enable or disable the Prometheus metrics exporter.</td><td><code>false</code></td></tr>
 <tr><td><code>host</code></td><td>The host on which the Prometheus metrics exporter will listen.</td><td><code>"0.0.0.0"</code></td></tr>

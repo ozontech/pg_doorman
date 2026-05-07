@@ -351,23 +351,20 @@ pg_doorman generate --no-comments --output config.yaml
 <p>По умолчанию: <code>false</code>.</p>
 <h3 id="tokio_global_queue_interval"><a class="header" href="#tokio_global_queue_interval">tokio_global_queue_interval</a></h3>
 <p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval">Настройки Tokio runtime</a>.
-Управляет тем, как часто шедулер проверяет глобальную очередь задач.
-Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+Задаёт, как часто шедулер проверяет глобальную очередь задач.
+Параметры группы <code>tokio_*</code> и <code>worker_stack_size</code>, <code>max_blocking_threads</code> опциональны: на современных версиях tokio дефолты разумны, и их обычно не нужно трогать.</p>
 <p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
 <h3 id="tokio_event_interval"><a class="header" href="#tokio_event_interval">tokio_event_interval</a></h3>
 <p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.event_interval">Настройки Tokio runtime</a>.
-Управляет тем, как часто шедулер проверяет внешние события (I/O, таймеры).
-Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+Задаёт, как часто шедулер проверяет внешние события (I/O, таймеры).</p>
 <p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
 <h3 id="worker_stack_size"><a class="header" href="#worker_stack_size">worker_stack_size</a></h3>
 <p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.thread_stack_size">Настройки Tokio runtime</a>.
-Задаёт размер стека для worker-потоков.
-Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+Размер стека для worker-потоков.</p>
 <p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
 <h3 id="max_blocking_threads"><a class="header" href="#max_blocking_threads">max_blocking_threads</a></h3>
 <p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.max_blocking_threads">Настройки Tokio runtime</a>.
-Задаёт максимальное число потоков для блокирующих операций.
-Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+Максимальное число потоков для блокирующих операций.</p>
 <p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
 <h3 id="connect_timeout"><a class="header" href="#connect_timeout">connect_timeout</a></h3>
 <p>Максимальное время ожидания при установке нового соединения с сервером PostgreSQL. Если соединение не удаётся установить за это время, попытка прерывается. Аналог <code>server_connect_timeout</code> из PgBouncer.</p>
@@ -413,9 +410,9 @@ pg_doorman generate --no-comments --output config.yaml
 сетевой нестабильностью или рестартами PostgreSQL).</p>
 <p>По умолчанию: <code>60s (60 seconds)</code>.</p>
 <h3 id="server_round_robin"><a class="header" href="#server_round_robin">server_round_robin</a></h3>
-<p>Управляет тем, какое idle-серверное соединение выбирается для следующей транзакции.
-<code>false</code> (LRU): переиспользует самое недавно возвращённое соединение. Держит горячими меньше соединений, лучше для локальности shared buffer в PostgreSQL.
-<code>true</code> (Round Robin): равномерно ротирует все idle-соединения.
+<p>Задаёт, какое idle-серверное соединение выбирается для следующей транзакции.
+<code>false</code> (MRU, LIFO): берётся последнее возвращённое в пул соединение. Горячих соединений меньше, локальность shared buffer в PostgreSQL выше.
+<code>true</code> (Round Robin): равномерная ротация по всем idle-соединениям.
 Аналог <code>server_round_robin</code> из PgBouncer.</p>
 <p>По умолчанию: <code>false</code>.</p>
 <h3 id="sync_server_parameters"><a class="header" href="#sync_server_parameters">sync_server_parameters</a></h3>
@@ -457,11 +454,10 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 <p>Размер буфера для операций чтения и записи при подключении к PostgreSQL через unix-сокет.</p>
 <p>По умолчанию: <code>1048576</code>.</p>
 <h3 id="admin_username"><a class="header" href="#admin_username">admin_username</a></h3>
-<p>Доступ к виртуальной admin-базе осуществляется по имени пользователя и паролю администратора.</p>
+<p>Имя пользователя для виртуальной admin-базы.</p>
 <p>По умолчанию: <code>"admin"</code>.</p>
 <h3 id="admin_password"><a class="header" href="#admin_password">admin_password</a></h3>
-<p>Доступ к виртуальной admin-базе осуществляется по имени пользователя и паролю администратора.
-Замените на ваш секрет.</p>
+<p>Пароль для виртуальной admin-базы. Замените на свой секрет.</p>
 <p>По умолчанию: <code>"admin"</code>.</p>
 <h3 id="prepared_statements"><a class="header" href="#prepared_statements">prepared_statements</a></h3>
 <p>Переключатель для включения/отключения кеширования prepared statements.</p>
@@ -578,10 +574,10 @@ backend-connect, создавая всплески thundering-herd под наг
 <p>Приватный ключ для клиентского сертификата mTLS. Используйте в паре с <code>server_tls_certificate</code>.</p>
 <p>По умолчанию: <code>None</code>.</p>
 <h3 id="hba"><a class="header" href="#hba">hba</a></h3>
-<p>Список IP-адресов, с которых разрешено подключаться к pg-doorman.</p>
+<p>Список IP-сетей в нотации CIDR, с которых разрешено подключение к pg_doorman. Для тонкого контроля доступа per-database и per-user используйте <code>pg_hba</code> (см. ниже).</p>
 <p>По умолчанию: <code>[]</code>.</p>
 <h3 id="pg_hba"><a class="header" href="#pg_hba">pg_hba</a></h3>
-<p>Новый стиль контроля доступа клиентов в нативном формате <code>pg_hba.conf</code> PostgreSQL. Позволяет задавать тонкие правила доступа аналогично PostgreSQL: per-database, per-user, диапазоны адресов, требования TLS.</p>
+<p>Новый стиль контроля доступа клиентов в формате <code>pg_hba.conf</code> PostgreSQL. Позволяет задавать тонкие правила доступа аналогично PostgreSQL: per-database, per-user, диапазоны адресов, требования TLS.</p>
 <p>Указать <code>general.pg_hba</code> можно тремя способами:</p>
 <ul>
 <li>Как многострочную строку с содержимым файла <code>pg_hba.conf</code></li>

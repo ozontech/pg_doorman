@@ -162,8 +162,22 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Drop-in замена для <a href="https://www.pgbouncer.org/">PgBouncer</a> и <a href="https://github.com/yandex/odyssey">Odyssey</a>, альтернатива <a href="https://github.com/postgresml/pgcat">PgCat</a>. Три года в production у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.</p>
-<p><a href="tutorials/installation.html">Скачать PgDoorman 3.7.0</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Скачать PgDoorman 3.8.0</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="Ключевые-возможности"><a class="header" href="#Ключевые-возможности">Ключевые возможности</a></h2>
+<div id="admonition-Встроенный-диагностический-дашборд" class="admonition admonish-success" role="note" aria-labelledby="admonition-Встроенный-диагностический-дашборд-title">
+<div class="admonition-title">
+<div id="admonition-Встроенный-диагностический-дашборд-title">
+<p>Встроенный диагностический дашборд</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Встроенный-диагностический-дашборд"></a>
+</div>
+<div>
+<p>Диагностическая консоль, встроенная в бинарь pg_doorman и обслуживаемая тем же портом, что и <code>/metrics</code>. Что показывает: тайлы насыщения пулов, sparkline p95/p99 латентности по пулам, ошибки в разбивке по SQLSTATE на каждый пул, top-N застрявших запросов, разбор памяти jemalloc по категориям (live allocations / фрагментация / внутренние кеши / code+libs / стеки / swap), значения из <code>/proc/self/status</code> с пояснениями рядом с цифрами, per-thread CPU tokio-worker'ов, атрибуцию prepared cache, содержимое query interner, живой хвост лога. Сортируемые и фильтруемые таблицы Pools / Clients / Apps / Caches; live qps и tx-per-second на каждое приложение и каждого клиента.</p>
+<p>PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy и Cloud SQL Auth Proxy отдают <code>/metrics</code> и admin-консоль через psql. Тот стек, который пришлось бы собирать поверх — Prometheus + Grafana + memory exporter + кастомный набор панелей, — у pg_doorman уже встроен.</p>
+<p>Pause / Resume / Reconnect / Reload запускаются с той же страницы, per-pool или глобально. В остальном read-only. Консоль включается только при <code>[web].ui = true</code> и <code>admin_password</code>, отличном от пустой строки и от значения по умолчанию <code>admin</code>; с незаданным паролем pg_doorman остаётся в режиме «только <code>/metrics</code>» и пишет <code>WARN</code> в лог.</p>
+<p><a href="guides/web-ui.html">Подробнее →</a></p>
+</div>
+</div>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
 <div id="admonition-pool-coordinator-title">
@@ -199,7 +213,7 @@
 </div>
 <div>
 <p>Обновляйте PgDoorman в рабочее время, без maintenance window. Приложения не получают ошибок переподключения, PostgreSQL не накрывает лавиной <code>auth</code>/SCRAM handshake-ов от одновременных reconnect-ов, идущие транзакции не падают.</p>
-<p>По <code>SIGUSR2</code> старый процесс передаёт TCP-сокет каждого idle-клиента новому через <code>SCM_RIGHTS</code> — тот же сокет, без переподключения — вместе с cancel keys и кешем prepared statements. Клиенты внутри транзакции дорабатывают её на старом процессе и мигрируют, как только становятся idle. Со сборкой <code>tls-migration</code> (Linux, opt-in) переезжает и cipher state OpenSSL — TLS-сессии переживают upgrade без re-handshake.</p>
+<p>По <code>SIGUSR2</code> старый процесс передаёт TCP-сокет каждого idle-клиента новому через <code>SCM_RIGHTS</code> — тот же сокет, без переподключения — вместе с cancel keys и кешем prepared statements. Клиенты внутри транзакции дорабатывают её на старом процессе и мигрируют, как только становятся idle. Со сборкой <code>tls-migration</code> (Linux, отключено по умолчанию) переезжает и cipher state OpenSSL — TLS-сессии переживают upgrade без re-handshake.</p>
 <p>Online restart в PgBouncer (<code>-R</code>, deprecated с 1.20; либо rolling restart через <code>so_reuseport</code>) и в Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) устроены одинаково: новый процесс принимает новые соединения, старый дорабатывает до тех пор, пока его клиенты сами не отключатся. Сессии, prepared statements и TLS-состояние между процессами не переезжают.</p>
 <p><a href="tutorials/binary-upgrade.html">Подробнее →</a></p>
 </div>
@@ -212,8 +226,8 @@
 <a class="admonition-anchor-link" href="#admonition-Кеш-плана-для-анонимных-prepared-statements"></a>
 </div>
 <div>
-<p>PostgreSQL не кеширует план анонимных prepared statements (<code>Parse</code> с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый <code>Bind</code> заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное <code>DOORMAN_&lt;N&gt;</code> на бекенде, и план попадает в реестр именованных statement бекенда — переиспользуется между <code>Bind</code>'ами одного клиента и между клиентами одного пула.</p>
-<p>PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для <strong>именованных</strong> statement; анонимный <code>Parse</code> пробрасывается без изменений и каждый раз перепланируется. PgDoorman — тот, кто его переписывает.</p>
+<p>PostgreSQL не кеширует план анонимных prepared statements (<code>Parse</code> с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый <code>Bind</code> заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное <code>DOORMAN_&lt;N&gt;</code> на бэкенде, и план попадает в реестр именованных statement бэкенда — переиспользуется между <code>Bind</code>'ами одного клиента и между клиентами одного пула.</p>
+<p>PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для <strong>именованных</strong> statement; анонимный <code>Parse</code> пробрасывается без изменений и каждый раз перепланируется. PgDoorman переписывает анонимный <code>Parse</code> сам.</p>
 <p>Кеш ограничен и наблюдаем. Анонимные записи истекают по бездействию, именованные освобождаются, как только на них никто не ссылается, а <code>SHOW INTERNER</code> и метрики Prometheus показывают объём в реальном времени — поток сгенерированного SQL больше не удерживает память пулера до перезапуска.</p>
 <p><a href="tutorials/prepared-statements.html">Подробнее →</a></p>
 </div>
@@ -224,7 +238,7 @@
 <li><strong>Многопоточность с одним общим пулом.</strong> Все рабочие потоки делят один пул. PgBouncer однопоточен; рекомендованный способ масштабирования — несколько инстансов за <code>so_reuseport</code> — даёт каждому инстансу свой отдельный пул, и idle-счётчики для одной и той же базы могут расходиться между процессами.</li>
 <li><strong>Подавление thundering herd.</strong> Когда 200 клиентов борются за 4 idle-соединения, PgDoorman ограничивает число параллельно создаваемых backend-соединений (<code>scaling_max_parallel_creates</code>) и направляет возвращающиеся серверы напрямую самому давно ждущему клиенту через in-process oneshot-канал — без перекладывания через idle-очередь.</li>
 <li><strong>Ограниченная хвостовая задержка.</strong> Очередь ожидающих обслуживается строго FIFO — никто не обгоняет того, кто пришёл раньше. Опережающая замена истекающих backend-соединений (на 95% от <code>server_lifetime</code>, до 3 параллельных) удерживает пул прогретым: при ротации поколения соединений нет всплеска checkout-латентности.</li>
-<li><strong>Обнаружение мёртвого backend внутри транзакции.</strong> Если backend умирает посреди транзакции (failover, OOM, network partition), PgDoorman сразу возвращает SQLSTATE <code>08006</code>: чтение клиента состязается с readability backend через 100-мс тик. Без этой проверки клиент завис бы до срабатывания TCP keepalive — на дефолтных настройках Linux это около двух часов плюс 9×75 с probe.</li>
+<li><strong>Обнаружение мёртвого backend внутри транзакции.</strong> Если backend умирает посреди транзакции (failover, OOM, network partition), PgDoorman сразу возвращает SQLSTATE <code>08006</code>: чтение клиента состязается с readability backend через 100-мс тик. Без этой проверки клиент завис бы до срабатывания TCP keepalive — на стандартных настройках Linux это около двух часов плюс 9×75 с probe.</li>
 <li><strong>Сделано для эксплуатации.</strong> Конфиг в YAML или TOML с человекочитаемыми длительностями (<code>30s</code>, <code>5m</code>). <code>pg_doorman generate --host …</code> интроспектирует существующий PostgreSQL и собирает starter-конфиг. <code>pg_doorman -t</code> валидирует конфиг без запуска сервера. Prometheus-эндпоинт <code>/metrics</code> встроен.</li>
 </ul>
 <h2 id="Сравнение"><a class="header" href="#Сравнение">Сравнение</a></h2>
@@ -235,7 +249,7 @@
 <tr><td>Patroni-assisted fallback (встроенный)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Опережающая замена при истечении <code>server_lifetime</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Обнаружение мёртвого backend внутри транзакции</td><td style="text-align: center">Да (мгновенный <code>08006</code>)</td><td style="text-align: center">Нет (ждёт TCP keepalive)</td><td style="text-align: center">Нет (ждёт TCP keepalive)</td></tr>
-<tr><td>Binary upgrade с миграцией сессий</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, TLS state opt-in)</td><td style="text-align: center">Нет (сессии остаются на старом процессе)</td><td style="text-align: center">Нет (сессии остаются на старом процессе)</td></tr>
+<tr><td>Binary upgrade с миграцией сессий</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, TLS state по запросу)</td><td style="text-align: center">Нет (сессии остаются на старом процессе)</td><td style="text-align: center">Нет (сессии остаются на старом процессе)</td></tr>
 <tr><td>Backend TLS к PostgreSQL</td><td style="text-align: center">Да (5 режимов, hot reload по <code>SIGHUP</code>)</td><td style="text-align: center">Да (<code>server_tls_*</code>, hot reload по <code>RELOAD</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Auth: SCRAM passthrough (без plaintext-пароля в конфиге)</td><td style="text-align: center">Да (<code>ClientKey</code> извлекается из proof)</td><td style="text-align: center">Да (encrypted SCRAM secret через <code>auth_query</code>/<code>userlist.txt</code>, с 1.14)</td><td style="text-align: center">Да</td></tr>
 <tr><td>Auth: JWT (RSA-SHA256)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>

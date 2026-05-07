@@ -169,7 +169,7 @@
 <li><a href="https://docs.docker.com/get-docker/">Docker</a> (обязательно)</li>
 <li><a href="https://www.gnu.org/software/make/">Make</a> (обязательно)</li>
 </ul>
-<p><strong>Установка Nix НЕ требуется</strong> -- воспроизводимость тестового окружения обеспечивается Docker-контейнерами, собранными через Nix.</p>
+<p><strong>Установка Nix НЕ требуется</strong> — воспроизводимость тестового окружения обеспечивается Docker-контейнерами, собранными через Nix.</p>
 <p>Для локальной разработки (опционально):</p>
 <ul>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a> (последняя стабильная версия)</li>
@@ -219,7 +219,7 @@ cd pg_doorman
 </li>
 </ol>
 <h2 id="Интеграционное-тестирование"><a class="header" href="#Интеграционное-тестирование">Интеграционное тестирование</a></h2>
-<p>PgDoorman использует BDD-тесты (Behavior-Driven Development) с тестовым окружением на Docker. <strong>Воспроизводимость гарантирована</strong> -- все тесты выполняются внутри Docker-контейнеров с одинаковым окружением.</p>
+<p>PgDoorman использует BDD-тесты (Behavior-Driven Development) с тестовым окружением на Docker. <strong>Воспроизводимость гарантирована</strong> — все тесты выполняются внутри Docker-контейнеров с одинаковым окружением.</p>
 <h3 id="Тестовое-окружение"><a class="header" href="#Тестовое-окружение">Тестовое окружение</a></h3>
 <p>Тестовый Docker-образ (собранный через Nix) включает:</p>
 <ul>
@@ -414,7 +414,7 @@ Feature: Protocol behavior test
 <p>Если в тестовом окружении нужны дополнительные пакеты, отредактируйте <code>tests/nix/flake.nix</code>:</p>
 <ul>
 <li>Python-пакеты добавляются в <code>pythonEnv</code>.</li>
-<li>Системные пакеты -- в <code>runtimePackages</code>.</li>
+<li>Системные пакеты — в <code>runtimePackages</code>.</li>
 </ul>
 <p>После изменения <code>flake.nix</code> пересоберите образ командой <code>make local-build</code>.</p>
 <h2 id="Правила-вклада"><a class="header" href="#Правила-вклада">Правила вклада</a></h2>

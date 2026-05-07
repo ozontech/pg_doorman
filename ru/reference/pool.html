@@ -161,7 +161,7 @@
                 <div id="content" class="content">
                     <main>
                         <h2 id="Настройки-пула"><a class="header" href="#Настройки-пула">Настройки пула</a></h2>
-<p>Каждая запись в pool — это имя виртуальной базы данных, к которой может подключиться клиент pg-doorman.</p>
+<p>Каждая запись в pool — это имя виртуальной базы данных, к которой может подключиться клиент pg_doorman.</p>
 <pre><code class="language-toml">[pools.exampledb] # Объявление базы данных 'exampledb'
 </code></pre>
 <h3 id="server_host"><a class="header" href="#server_host">server_host</a></h3>
@@ -179,10 +179,10 @@
 <p>Максимальное время на установку нового серверного соединения для этого пула, в миллисекундах. Если не задано, используется глобальная настройка connect_timeout.</p>
 <p>По умолчанию: <code>None (uses global setting)</code>.</p>
 <h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
-<p>Закрывать idle-соединения в этом пуле, открытые дольше указанного значения, в миллисекундах. Если не задано, используется глобальная настройка idle_timeout.</p>
+<p>Время жизни idle-соединения в пуле в миллисекундах; соединения старше указанного значения закрываются. Если не задано, берётся глобальный <code>idle_timeout</code>.</p>
 <p>По умолчанию: <code>None (uses global setting)</code>.</p>
 <h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
-<p>Закрывать серверные соединения в этом пуле, открытые дольше указанного значения, в миллисекундах. Применяется только к idle-соединениям. Если не задано, используется глобальная настройка server_lifetime.</p>
+<p>Время жизни серверного соединения в пуле в миллисекундах; idle-соединения старше указанного значения закрываются. Если не задано, берётся глобальный <code>server_lifetime</code>.</p>
 <p>По умолчанию: <code>None (uses global setting)</code>.</p>
 <h3 id="pool_mode"><a class="header" href="#pool_mode">pool_mode</a></h3>
 <p>Когда бэкенд-соединение возвращается в пул.
@@ -193,7 +193,7 @@
 <p>Логировать информацию о любой команде SET в лог.</p>
 <p>По умолчанию: <code>false</code>.</p>
 <h3 id="cleanup_server_connections"><a class="header" href="#cleanup_server_connections">cleanup_server_connections</a></h3>
-<p>Управляет тем, сбрасывает ли pg_doorman состояние сессии при возврате соединения в пул.
+<p>Сбрасывать ли состояние сессии при возврате соединения в пул.
 Когда параметр включён и сессия была изменена, pg_doorman отправляет: <code>RESET ROLE</code>, плюс при необходимости
 <code>RESET ALL</code> (если использовался SET), <code>DEALLOCATE ALL</code> (если использовался PREPARE), <code>CLOSE ALL</code>
 (если открывались курсоры). Замечание: <code>ROLLBACK</code> для открытых транзакций выполняется всегда, независимо

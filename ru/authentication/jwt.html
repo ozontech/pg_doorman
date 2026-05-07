@@ -222,8 +222,8 @@ token = jwt.encode(
 <p>Смотрите <a href="overview.html#%D0%BF%D0%BE%D1%80%D1%8F%D0%B4%D0%BE%D0%BA-%D0%B2%D1%8B%D0%B1%D0%BE%D1%80%D0%B0-%D0%BC%D0%B5%D1%82%D0%BE%D0%B4%D0%B0">Обзор</a>.</p>
 <h2 id="Оговорки"><a class="header" href="#Оговорки">Оговорки</a></h2>
 <ul>
-<li>Claim <code>preferred_username</code> должен совпадать в точности. Сопоставлений или алиасов claim'ов нет.</li>
-<li>Поддержки JWKS-эндпоинта нет: публичный ключ должен быть на диске.</li>
+<li>Claim <code>preferred_username</code> должен совпадать в точности. Псевдонимы или альтернативные имена claim не поддерживаются.</li>
+<li>JWKS-эндпоинт не поддерживается: публичный ключ должен быть на диске.</li>
 <li>Проверки издателя (<code>iss</code>) или аудитории (<code>aud</code>) нет. Если нужны — терминируйте JWT в sidecar и переводите в passthrough-аутентификацию.</li>
 <li>Если идентичность клиента должна нести информацию о роли в базе (например, <code>read_only</code> против <code>read_write</code>), смотрите <a href="talos.html">Talos</a>.</li>
 </ul>

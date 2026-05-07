@@ -1,0 +1,279 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Web UI - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/guides/web-ui.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
+<p>В pg_doorman встроена операторская консоль. HTTP-сервер тот же, что отдаёт Prometheus-метрики; собранные файлы фронтенда лежат внутри бинарника. Запуск консоли не добавляет внешних зависимостей: один процесс, один бинарь, один TCP-порт.</p>
+<h2 id="Включение"><a class="header" href="#Включение">Включение</a></h2>
+<p>Консоль настраивается в секции <code>[web]</code>. Старое имя секции <code>[prometheus]</code> тоже принимается.</p>
+<pre><code class="language-toml">[web]
+enabled = true
+host = "0.0.0.0"
+port = 9127
+
+# Операторская консоль (по умолчанию выключена)
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 8192
+</code></pre>
+<p>Если <code>web.ui = true</code>, но <code>general.admin_password</code> не задан или равен <code>"admin"</code>, консоль не запускается. HTTP-сервер продолжает отдавать <code>/metrics</code>, но веб-интерфейс и admin-эндпоинты остаются выключенными. В лог пишется <code>web.ui = true ignored: admin_password is default/empty</code>. Задайте настоящий пароль до того, как включать <code>ui = true</code>.</p>
+<div class="table-wrapper"><table><thead><tr><th>Параметр</th><th>Описание</th><th>По умолчанию</th></tr></thead><tbody>
+<tr><td><code>enabled</code></td><td>Запускать ли HTTP-сервер. <code>/metrics</code> работает независимо от <code>ui</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>host</code></td><td>Адрес для bind.</td><td><code>"0.0.0.0"</code></td></tr>
+<tr><td><code>port</code></td><td>Порт для bind.</td><td><code>9127</code></td></tr>
+<tr><td><code>ui</code></td><td>Отдавать веб-интерфейс по <code>/</code> и публичные API-эндпоинты.</td><td><code>false</code></td></tr>
+<tr><td><code>ui_anonymous</code></td><td>При <code>true</code> публичные API (<code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, ...) принимают запросы без авторизации. Admin-эндпоинты (<code>/api/logs</code>, <code>/api/prepared/text/...</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code>, <code>/api/admin/...</code>) всегда требуют basic auth.</td><td><code>false</code></td></tr>
+<tr><td><code>log_tap_max_entries</code></td><td>Размер кольцевого буфера в памяти, обслуживающего <code>/api/logs</code>. <code>0</code> отключает эндпоинт.</td><td><code>8192</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="url-карта"><a class="header" href="#url-карта">URL-карта</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Авторизация</th><th>Назначение</th></tr></thead><tbody>
+<tr><td><code>/</code> и любой не-API путь</td><td>Без авторизации, когда <code>web.ui</code> активен</td><td>Оболочка SPA. Прямой переход на <code>/pools</code> открывает форму входа React, а не системный диалог браузера; <code>ui_anonymous</code> на доступ к оболочке не влияет.</td></tr>
+<tr><td><code>/assets/*</code></td><td>Без авторизации, когда <code>web.ui</code> активен</td><td>Хэшированные JS, CSS и шрифты. <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
+<tr><td><code>/metrics</code></td><td>Без авторизации</td><td>Prometheus exposition format. От <code>ui</code> не зависит.</td></tr>
+<tr><td><code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td>Без авторизации при <code>ui_anonymous = true</code>, иначе admin</td><td>Read-only JSON. Поля повторяют формат <code>SHOW &lt;admin-команда&gt;</code>.</td></tr>
+<tr><td><code>/api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td>Admin (basic auth)</td><td>Только для admin. <code>/api/logs</code> подключает буфер логов при первом запросе и отключает его через 2 минуты простоя. <code>/api/top/queries</code> возвращает первые ~120 символов SQL-запросов из кэша; превью могут содержать литералы и идентификаторы клиентов, поэтому admin-only.</td></tr>
+</tbody></table>
+</div>
+<h2 id="Авторизация"><a class="header" href="#Авторизация">Авторизация</a></h2>
+<p>Консоль использует HTTP basic auth с парой <code>admin_username</code> / <code>admin_password</code> из секции <code>[general]</code>. Пароль сравнивается за постоянное время. На 401 браузерам отдаётся <code>WWW-Authenticate: Basic</code>, чтобы <code>curl</code>, <code>gh</code> и сторонние HTTP-клиенты работали как ожидают. Запросы с заголовком <code>Accept: application/json</code> (так SPA ходит через <code>fetch</code>) получают 401 без challenge: иначе браузер закешировал бы пароль из системного диалога и подставлял его поверх формы входа React.</p>
+<p>По умолчанию реквизиты живут только в памяти React и пропадают при перезагрузке страницы. Если в форме входа отметить «Remember me on this device», реквизиты сохранятся в <code>localStorage</code> браузера и переживут перезагрузку. Очистка site storage в браузере удаляет эту запись.</p>
+<h2 id="Страницы"><a class="header" href="#Страницы">Страницы</a></h2>
+<p>В SPA доступны:</p>
+<ul>
+<li><strong>Overview</strong> — индикатор health, четыре sparkline по golden signals (latency p95, traffic, errors/s, saturation), stacked area по соединениям, heatmap заполнения пулов, двойная ось wait + oldest-active-age, топ-5 ошибок по пулам и свёрнутая панель Resource detail.</li>
+<li><strong>Pools</strong> — таблица с сортировкой и mini-sparkline в строках.</li>
+<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — детальный разбор: разбивка по SQLSTATE, oldest-active-age, кнопки pause / resume / reconnect.</li>
+<li><strong>Clients</strong> — таблица из <code>/api/clients</code> с пагинацией, серверной фильтрацией и сортировкой.</li>
+<li><strong>Apps</strong> — строка на каждый <code>application_name</code> с долей ошибок на 1k запросов.</li>
+<li><strong>Caches</strong> — таблица Prepared Statements с hit rate и карточка query interner (named / anonymous bytes).</li>
+<li><strong>Logs</strong> — live-tail LogTap с фильтром по level / target и кнопками pause / auto-scroll.</li>
+<li><strong>Config &amp; state</strong> — свёрнутые панели: <code>[general]</code>, активный фильтр логов, кэш auth_query, databases, users, sockets, pool scaling, pool coordinator.</li>
+<li><strong>War room</strong> (<code>/wall</code>) — шесть крупных плиток для incident bridge или стенда на стене.</li>
+</ul>
+<h2 id="Сборка-из-исходников"><a class="header" href="#Сборка-из-исходников">Сборка из исходников</a></h2>
+<p>Собранный фронтенд лежит в git по пути <code>frontend/dist/</code>, чтобы пайплайны RPM, DEB и Docker не зависели от node toolchain. Разработчикам, правящим фронтенд, нужно пересобирать его перед коммитом:</p>
+<pre><code class="language-bash">cd frontend
+npm ci
+npm run install-hooks   # одноразово: ставит pre-commit hook для синхронизации dist
+npm run lint
+npm run typecheck
+npm run build
+</code></pre>
+<p><code>npm run install-hooks</code> опционален. CI его не требует: workflow <code>frontend.yml</code> запускает <code>npm run check-dist</code> и блокирует merge, если исходники меняли без пересборки <code>dist/</code>.</p>
+<p>Отдельный workflow <code>.github/workflows/frontend.yml</code> запускает те же шаги на каждом PR, который трогает <code>frontend/</code>.</p>
+<h2 id="Развёртывание"><a class="header" href="#Развёртывание">Развёртывание</a></h2>
+<p><code>/metrics</code> доступен без авторизации на том же HTTP-сервере, что и консоль. Так задумано: иначе сломались бы существующие scrape-конфиги Prometheus. Если pg_doorman стоит за reverse proxy с авторизацией на <code>/api/*</code>, эта авторизация <strong>не</strong> распространяется на <code>/metrics</code>. Метрики раскрывают имена пулов, пользователей и БД, давление на пул, состояние auth_query и форму нагрузки. Поэтому либо держите секцию <code>[web]</code> на приватном host:port, доступном только системе скрейпа, либо ставьте перед HTTP-сервером proxy, который добавляет авторизацию на <code>/metrics</code> отдельно.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../observability/admin-commands.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../observability/json-logging.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../observability/admin-commands.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../observability/json-logging.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

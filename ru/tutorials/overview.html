@@ -169,7 +169,7 @@
     App3[Приложение C] --&gt; Pooler
     Pooler --&gt; DB[(PostgreSQL)]
 </pre>
-<p>Изначально PgDoorman был форкнут из <a href="https://github.com/postgresml/pgcat">PgCat</a>, но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и binary upgrade с миграцией живых сессий. Сейчас это самостоятельный кодовый код.</p>
+<p>Изначально PgDoorman был форкнут из <a href="https://github.com/postgresml/pgcat">PgCat</a>, но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и binary upgrade с миграцией живых сессий. Сейчас это самостоятельная кодовая база.</p>
 <h2 id="Зачем-вообще-пулер"><a class="header" href="#Зачем-вообще-пулер">Зачем вообще пулер</a></h2>
 <p>Каждое соединение к PostgreSQL стоит серверу около 10 МБ RAM, отдельный процесс и время на каждый handshake (auth, SCRAM, разрешение <code>search_path</code>). Без пулера приложение, открывающее N короткоживущих соединений в секунду, платит N×время-handshake. Пулер позволяет тем же N клиентам переиспользовать небольшой набор долгоживущих backend-соединений, и стоимость handshake оплачивается один раз на backend, а не один раз на клиента.</p>
 <p>Конкретные эффекты:</p>

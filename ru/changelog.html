@@ -161,6 +161,57 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="380"><a class="header" href="#380">3.8.0</a></h3>
+<h4 id="added"><a class="header" href="#added">Added</a></h4>
+<p><strong>Built-in operator dashboard.</strong> pg_doorman exposes a single-page
+diagnostic console on the same port as <code>/metrics</code>, served from
+inside the binary and gated on <code>[web].ui = true</code> plus a non-default
+<code>admin_password</code>. Reaching the same view through the existing psql
+admin console means running <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>,
+<code>SHOW STATS</code> and friends in a loop, computing rates by hand between
+two snapshots, and joining the rows mentally. The dashboard does
+that on a 1.5 s tick.</p>
+<p>What it shows that the psql admin console does not:</p>
+<ul>
+<li><strong>Live time-series, not snapshots.</strong> Latency p95/p99, qps,
+errors/s and connection saturation render as sparklines, so
+"spiking now" is visually distinct from "always been like this".</li>
+<li><strong>Errors broken down by SQLSTATE per pool.</strong> Plus top-N stuck
+queries by <code>current_query_age_ms</code>, top-N noisy clients by
+errors, top-N hottest prepared statements by hit rate.</li>
+<li><strong>Process memory by category.</strong> RSS split into jemalloc live
+allocations, jemalloc fragmentation, internal pg_doorman caches,
+code + libs, stacks + page tables, swap and anonymous remainder,
+with cgroup current / max alongside. Every category carries a
+one-line explanation on hover.</li>
+<li><strong>Per-thread tokio-worker CPU.</strong> Drill-down from the threads
+count to per-thread utilisation, so a stuck worker is visible
+without <code>perf top</code> on the host.</li>
+<li><strong>Live log tail.</strong> An in-process LogTap activates on the first
+<code>/api/logs</code> request and self-disables two minutes after the last
+viewer. Level and target filters apply client-side over the
+rolling buffer.</li>
+<li><strong>Sortable, filterable tables.</strong> Pools, Clients, Apps and Caches
+sort by any column and filter by substring; Prepared statements
+adds a kind dropdown on top.</li>
+</ul>
+<p>The dashboard is read-only by default. Pause / Resume / Reconnect /
+Reload are the four writes, scoped to one pool via
+<code>?pool=user@db</code>, to every pool of a database via <code>?db=</code>, or
+globally — the same semantics as the admin protocol.</p>
+<h4 id="notes"><a class="header" href="#notes">Notes</a></h4>
+<ul>
+<li><code>[web].ui_anonymous</code> (default <code>false</code>) controls whether the
+read-only <code>/api/*</code> endpoints answer without basic auth. Admin-
+only endpoints (<code>/api/logs</code>, <code>/api/admin/*</code>,
+<code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>,
+<code>/api/top/queries</code>) always require it regardless of that flag.</li>
+<li>The dashboard polls every 1.5 s, but a 250 ms shared snapshot
+feeds <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>,
+<code>/api/servers</code>, <code>/api/apps</code>, <code>/api/stats</code> and <code>/metrics</code>, so a
+multi-tab dashboard does not multiply pool-stats work by the
+number of open tabs.</li>
+</ul>
 <h3 id="370"><a class="header" href="#370">3.7.0</a></h3>
 <h4 id="action-required-before-upgrading-to-370"><a class="header" href="#action-required-before-upgrading-to-370">ACTION REQUIRED before upgrading to 3.7.0</a></h4>
 <ul>
@@ -191,7 +242,7 @@ statements without a re-Parse, set
 <code>query_interner_anon_idle_ttl_seconds: 0</code> to keep the pre-3.7
 unbounded behaviour.</li>
 </ul>
-<h4 id="added"><a class="header" href="#added">Added</a></h4>
+<h4 id="added-1"><a class="header" href="#added-1">Added</a></h4>
 <ul>
 <li>The query interner is split into NAMED (passive <code>Arc::strong_count</code>
 GC) and ANON (idle TTL). Two general knobs control the GC:

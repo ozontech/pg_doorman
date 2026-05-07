@@ -193,7 +193,7 @@
 <tr><td>Минимальная версия TLS настраивается</td><td style="text-align: center">Да (по умолчанию TLS 1.2)</td><td style="text-align: center">Да (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Настраивается, дефолты другие</td></tr>
 <tr><td>Direct TLS handshake (PostgreSQL 17, без <code>SSLRequest</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Контроль TLS 1.3 cipher suites</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Миграция TLS-сессии при binary upgrade</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, opt-in)</td><td style="text-align: center">Нет (TLS-соединения дропаются при online restart)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Миграция TLS-сессии при binary upgrade</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, по запросу)</td><td style="text-align: center">Нет (TLS-соединения отбрасываются при online restart)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="guides/tls.html">TLS</a>.</p>
@@ -247,6 +247,7 @@
 <p>См. <a href="reference/general.html">Справочник по general-настройкам</a>, <a href="reference/pool.html">Справочник по pool-настройкам</a>.</p>
 <h2 id="Наблюдаемость"><a class="header" href="#Наблюдаемость">Наблюдаемость</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Встроенный admin web UI (HTML-консоль в бинаре)</td><td style="text-align: center">Да (HTML-консоль на том же порту, что и <code>/metrics</code>, включается через <code>[web].ui</code>)</td><td style="text-align: center">Нет (только psql admin-консоль)</td><td style="text-align: center">Нет (только psql admin-консоль)</td></tr>
 <tr><td>Prometheus-эндпоинт</td><td style="text-align: center">Встроенный <code>/metrics</code></td><td style="text-align: center">Внешний (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">Внешний (Go-exporter sidecar, опрашивает admin-консоль)</td></tr>
 <tr><td>Перцентили задержки на пул (p50, p90, p95, p99)</td><td style="text-align: center">Да (HDR Histogram)</td><td style="text-align: center">Нет (только средние в <code>SHOW STATS</code>)</td><td style="text-align: center">Да через exporter (TDigest, требует rule-опцию <code>quantiles</code>)</td></tr>
 <tr><td>Счётчики prepared statements в <code>SHOW STATS</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
