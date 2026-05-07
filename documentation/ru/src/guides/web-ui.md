@@ -89,8 +89,40 @@ log_tap_max_entries = 8192
 | `sso_public_key_file` | Путь к PEM-файлу с RSA public key. Читается на старте и при `RELOAD`. | `null` |
 | `sso_audience` | Список допустимых значений claim `aud`. Токен валиден, если хотя бы одно совпадает. Обязательное поле при `sso_enabled = true`. | `[]` |
 | `sso_allowed_users` | Allowlist по `preferred_username` или `sub`. `["*"]` принимает любого. Иначе только перечисленные. | `["*"]` |
+| `sso_groups_claim` | Имя JWT-claim'а с группами пользователя. Используется вместе с `sso_admin_groups`. | `"groups"` |
+| `sso_admin_groups` | Группы, которые получают роль Admin (включая `POST /api/admin/*`). Пустой список оставляет SSO read-only. | `[]` |
+| `trusted_proxies` | CIDR доверенных reverse-proxy. Когда TCP-peer попадает в этот список, access-лог берёт real client IP из `X-Forwarded-For` / `Forwarded`. Пустой список — доверять только своему peer'у. | `[]` |
 
-Если `sso_enabled = true`, но `sso_public_key_file` не задан или PEM не читается, в лог пишется `error` и SSO молча отключается на этот запуск — листенер продолжает работать только на Basic. Это поведение защищает консоль от падения из-за опечатки в SSO-секции.
+Если `sso_enabled = true`, но `sso_public_key_file` не задан или PEM не читается, в лог пишется `error` и SSO молча отключается на этот запуск — листенер продолжает работать только на Basic. Это поведение защищает консоль от падения из-за опечатки в SSO-секции. Причина видна в двух местах:
+
+- `/api/auth/config.sso_config_error` содержит человекочитаемое сообщение; SPA рисует баннер «SSO сконфигурирован, но не работает: <reason>», чтобы оператор не упустил битый rollout.
+- Метрика `pg_doorman_web_sso_config_error` стоит в 1, пока SSO не загружено при `sso_enabled = true`. Вместе с `pg_doorman_web_sso_enabled` подходит для алертов.
+
+### Admin через SSO-группу
+
+По умолчанию SSO-логин даёт роль `Sso` — read-only с доступом к логам и SQL-текстам, но без `POST /api/admin/*`. Чтобы операторы выполняли управляющие операции через SSO без раздачи Basic-пароля, настройте `sso_groups_claim` и `sso_admin_groups`:
+
+```toml
+[web]
+sso_enabled = true
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_groups_claim = "groups"
+sso_admin_groups = ["pg-doorman-admins"]
+```
+
+Если в JWT приходит `"groups": [..., "pg-doorman-admins"]`, pg_doorman возвращает роль `Admin` (с `source=sso`). SPA показывает тот же admin-интерфейс, что и при Basic-логине; в access-логе будет `auth_role=admin auth_source=sso`. Пустой `sso_admin_groups` (по умолчанию) оставляет SSO read-only.
+
+### Real client IP за reverse proxy
+
+Когда pg_doorman стоит за reverse proxy, поле `peer` в access-логе по умолчанию пишет TCP-адрес proxy. Чтобы видеть real IP клиента, добавьте CIDR proxy в `[web].trusted_proxies`:
+
+```toml
+[web]
+trusted_proxies = ["10.0.0.0/8", "192.168.0.0/16"]
+```
+
+Листенер парсит `X-Forwarded-For` (или `Forwarded` по RFC 7239) только когда TCP-peer попадает в trusted-список. Идёт по цепочке справа налево, пропускает trusted-хопы и берёт первый untrusted адрес как `peer`. Untrusted-клиент не может подделать поле — заголовки proxy игнорируются если peer не доверенный.
 
 ### Логин из браузера
 

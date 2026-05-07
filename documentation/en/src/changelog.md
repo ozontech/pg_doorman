@@ -32,6 +32,33 @@ button when the backend reports `sso_proxy_url`. A hidden iframe
 refreshes the JWT before expiry so the user is not redirected to the
 proxy mid-session.
 
+**SSO health surface.** `/api/auth/config` now carries
+`sso_config_error` when `[web].sso_enabled = true` but the runtime
+failed to load. New Prometheus gauges
+`pg_doorman_web_sso_enabled` and `pg_doorman_web_sso_config_error`
+plus counters `pg_doorman_web_auth_attempts_total{role,source}`,
+`pg_doorman_web_requests_total{status_class,role}`, and
+`pg_doorman_web_sso_validation_errors_total{reason}` let an operator
+alert on SSO degradation without grepping logs.
+
+**SSO Admin via group claim.** New `[web].sso_groups_claim` and
+`[web].sso_admin_groups` map a JWT group claim to the Admin role.
+When the validated JWT carries one of the configured admin groups,
+the request resolves to `Admin` (with `source = sso`). Default empty
+list keeps the existing read-only-only contract.
+
+**Real client IP behind reverse proxy.** New `[web].trusted_proxies`
+CIDR list. When the TCP peer falls in this list, the access log
+walks `X-Forwarded-For` / `Forwarded` to surface the real client IP
+instead of the proxy's address. Untrusted peers cannot spoof the
+field — headers are ignored when the request peer is not trusted.
+
+**Access log levels.** Anonymous successful reads of public APIs and
+`/metrics` scrapes now log at `debug` instead of `info`. Admin
+actions, personal-data reads, every non-2xx response, and any
+authenticated request still log at `info`. `RUST_LOG=info` no longer
+drowns in scrape noise.
+
 ### 3.8.0
 
 #### Added

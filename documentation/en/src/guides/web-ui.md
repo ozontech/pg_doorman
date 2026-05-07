@@ -124,11 +124,61 @@ of opening the login screen.
 | `sso_public_key_file` | Path to a PEM-encoded RSA public key. Read on start and on RELOAD. | `null` |
 | `sso_audience` | Allowed `aud` claim values. A token passes when at least one matches. Required when `sso_enabled = true`. | `[]` |
 | `sso_allowed_users` | Allowlist of `preferred_username` (or `sub`) claims. `["*"]` accepts everyone. Otherwise only the listed usernames pass. | `["*"]` |
+| `sso_groups_claim` | JWT claim that lists the user's group memberships. Used together with `sso_admin_groups`. | `"groups"` |
+| `sso_admin_groups` | Group names that promote an SSO user to Admin (full access, including `POST /api/admin/*`). Empty keeps SSO read-only. | `[]` |
+| `trusted_proxies` | CIDR ranges trusted to set `X-Forwarded-For` / `Forwarded`. When the TCP peer falls in this list, the access log walks the proxy header to find the real client IP. Empty trusts only the listener's own peer. | `[]` |
 
 If `sso_enabled = true` but `sso_public_key_file` is missing or the PEM
 fails to load, the listener logs an error and silently keeps SSO off
 for that run, so a misconfigured SSO section cannot take the operator
-console down.
+console down. The reason is exposed in two places:
+
+- `/api/auth/config.sso_config_error` carries a human-readable
+  message; the SPA renders a banner so the operator sees the
+  rollout is broken instead of silently logging in via Basic.
+- `pg_doorman_web_sso_config_error` Prometheus gauge stays at 1
+  while the listener has SSO disabled despite the config asking for
+  it. Pair with `pg_doorman_web_sso_enabled` to alert.
+
+### SSO Admin via group claim
+
+By default an SSO login resolves to the `Sso` role — read-only with
+access to logs and SQL text, but no `POST /api/admin/*`. To let SSO
+operators perform administrative operations without sharing the
+Basic password, configure `sso_groups_claim` and `sso_admin_groups`:
+
+```toml
+[web]
+sso_enabled = true
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_groups_claim = "groups"
+sso_admin_groups = ["pg-doorman-admins"]
+```
+
+When the validated JWT carries `"groups": [..., "pg-doorman-admins"]`,
+pg_doorman resolves the request to `Admin` (with `source=sso`). The
+SPA shows the same admin surface a Basic login would and the access
+log records `auth_role=admin auth_source=sso`. Empty
+`sso_admin_groups` (the default) keeps the SSO surface read-only.
+
+### Real client IP behind a reverse proxy
+
+When pg_doorman sits behind a reverse proxy, the access log's `peer`
+field records the proxy's TCP address by default. To surface the
+real client IP, list the proxy's CIDR in `[web].trusted_proxies`:
+
+```toml
+[web]
+trusted_proxies = ["10.0.0.0/8", "192.168.0.0/16"]
+```
+
+The listener then parses `X-Forwarded-For` (or RFC 7239 `Forwarded`)
+when the request peer is in the trusted list, walks the chain
+right-to-left, skips any further trusted hops, and uses the first
+untrusted address as `peer`. Untrusted clients can no longer spoof
+the field — when the request peer is not in the trusted list, the
+proxy headers are ignored.
 
 ### Signing in from the browser
 
