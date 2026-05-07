@@ -97,7 +97,27 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
   };
   const fmtOpt = (n: number | null) => (n === null ? "—" : fmt(n));
 
-  const total = data.categories.reduce((s, c) => s + c.bytes, 0);
+  // Bar widths scale to RSS (the header value), not to the sum of
+  // categories. jemalloc.allocated tracks "live allocations" by the
+  // allocator's own bookkeeping; the kernel may have reclaimed pages
+  // (MADV_DONTNEED, swap) while jemalloc still considers the objects
+  // live, so categories can sum to more than the kernel-reported RSS.
+  // Without scaling to RSS the bar visually says "100 % of categories"
+  // while the header says "RSS = X" — the operator reads two numbers
+  // that disagree. Render against `rss_bytes` and clip late segments
+  // to the remaining bar width; the table below keeps every category's
+  // honest byte count.
+  const attributedTotal = data.categories.reduce((s, c) => s + c.bytes, 0);
+  const denom = data.rss_bytes > 0 ? data.rss_bytes : attributedTotal;
+  let usedPct = 0;
+  const segments = data.categories.map((c) => {
+    const wanted = denom > 0 ? (c.bytes / denom) * 100 : 0;
+    const remaining = Math.max(0, 100 - usedPct);
+    const pct = Math.min(wanted, remaining);
+    usedPct += pct;
+    return { ...c, pct };
+  });
+  const overAttributed = attributedTotal > data.rss_bytes && data.rss_bytes > 0;
   const palette: Record<string, string> = {
     app_caches: "rgb(255 176 0)",
     jemalloc_live: "rgb(0 212 255)",
@@ -143,50 +163,54 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
           100% width and the bar's border still frames them cleanly.
         */}
         <div className="flex h-8 w-full border border-border bg-bg">
-          {data.categories.map((c) => {
-            const pct = total > 0 ? (c.bytes / total) * 100 : 0;
-            return (
+          {segments.map((c) => (
+            <div
+              key={c.key}
+              className="group/seg relative h-full cursor-help"
+              style={{ width: `${c.pct}%` }}
+            >
               <div
-                key={c.key}
-                className="group/seg relative h-full cursor-help"
-                style={{ width: `${pct}%` }}
+                className="h-full"
+                style={{ background: palette[c.key] ?? "rgb(154 148 133)" }}
+              />
+              {/*
+                Anchor the popover to the segment's left edge instead of
+                centering: a centered popover overflows the viewport on
+                the leftmost segments (the user saw "Live allocations"
+                clipped on the left because the segment starts at the
+                bar's left edge and the centered popover extends 144 px
+                further left). `left-0` keeps the popover on-screen for
+                the typical small-segment-on-the-left case; the
+                rightmost segments may extend past the viewport on the
+                right side, but that is a much rarer hit pattern given
+                the breakdown's typical shape.
+              */}
+              <div
+                role="tooltip"
+                className="
+                  pointer-events-none invisible absolute bottom-full left-0 z-30 mb-2
+                  w-72 max-w-[20rem] border border-border-strong bg-surface px-3 py-2
+                  text-left text-xs leading-snug text-text shadow-xl break-words
+                  opacity-0 transition-opacity duration-100
+                  group-hover/seg:visible group-hover/seg:opacity-100
+                "
               >
-                <div
-                  className="h-full"
-                  style={{ background: palette[c.key] ?? "rgb(154 148 133)" }}
-                />
-                {/*
-                  Anchor the popover to the segment's left edge instead of
-                  centering: a centered popover overflows the viewport on
-                  the leftmost segments (the user saw "Live allocations"
-                  clipped on the left because the segment starts at the
-                  bar's left edge and the centered popover extends 144 px
-                  further left). `left-0` keeps the popover on-screen for
-                  the typical small-segment-on-the-left case; the
-                  rightmost segments may extend past the viewport on the
-                  right side, but that is a much rarer hit pattern given
-                  the breakdown's typical shape.
-                */}
-                <div
-                  role="tooltip"
-                  className="
-                    pointer-events-none invisible absolute bottom-full left-0 z-30 mb-2
-                    w-72 max-w-[20rem] border border-border-strong bg-surface px-3 py-2
-                    text-left text-xs leading-snug text-text shadow-xl break-words
-                    opacity-0 transition-opacity duration-100
-                    group-hover/seg:visible group-hover/seg:opacity-100
-                  "
-                >
-                  <div className="font-mono font-semibold">{c.label}</div>
-                  <div className="mt-1 tabular">
-                    {fmt(c.bytes)} · {pct.toFixed(1)}% of attributed RSS
-                  </div>
-                  <div className="mt-1 text-text-muted">{c.explain}</div>
+                <div className="font-mono font-semibold">{c.label}</div>
+                <div className="mt-1 tabular">
+                  {fmt(c.bytes)} · {denom > 0 ? ((c.bytes / denom) * 100).toFixed(1) : "0"}% of RSS
                 </div>
+                <div className="mt-1 text-text-muted">{c.explain}</div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
+        {overAttributed && (
+          <p className="mt-1 text-[10px] leading-snug text-text-dim">
+            Attributed total {fmt(attributedTotal)} exceeds kernel-reported RSS {fmt(data.rss_bytes)} —
+            jemalloc.allocated counts live objects whose pages the kernel may have reclaimed.
+            Bar widths clip to RSS; the table below keeps each category&rsquo;s full byte count.
+          </p>
+        )}
         <table className="mt-3 w-full text-xs tabular">
           <tbody>
             {data.categories.map((c) => (
