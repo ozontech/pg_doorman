@@ -150,14 +150,10 @@ fn key_to_section_field(key: &str) -> Option<(&'static str, &str)> {
         // pools.<name>.users.<i>.<field>  → ("user", <field>)
         // pools.<name>.auth_query.<field> → ("auth_query", <field>)
         // pools.<name>.<field>            → ("pool", <field>)
-        let mut parts = rest.splitn(2, '.');
-        let _name = parts.next()?;
-        let tail = parts.next()?;
+        let (_name, tail) = rest.split_once('.')?;
         if let Some(user_field) = tail.strip_prefix("users.") {
             // skip past the index
-            let mut p = user_field.splitn(2, '.');
-            let _idx = p.next()?;
-            let f = p.next()?;
+            let (_idx, f) = user_field.split_once('.')?;
             return Some(("user", f));
         }
         if let Some(aq_field) = tail.strip_prefix("auth_query.") {

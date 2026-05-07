@@ -1,13 +1,13 @@
 use std::sync::atomic::Ordering;
 
-use crate::stats::get_server_stats;
 use crate::web::routes::dto::{ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder};
 
-use super::{now_unix_ms, MAX_LIMIT};
+use super::{now_unix_ms, snapshot, MAX_LIMIT};
 
 pub(crate) fn collect_servers(filters: &ServerFilters) -> ServersDto {
-    let snapshot: Vec<_> = get_server_stats().values().cloned().collect();
-    collect_servers_from(snapshot, filters)
+    let snap = snapshot();
+    let servers: Vec<_> = snap.server_states.values().cloned().collect();
+    collect_servers_from(servers, filters)
 }
 
 /// Pure inner logic for `collect_servers` — operates on a pre-built snapshot

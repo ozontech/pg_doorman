@@ -1,11 +1,11 @@
-use crate::stats::pool::PoolStats;
 use crate::web::routes::dto::{StatsDto, StatsRowDto};
 
-use super::now_unix_ms;
+use super::{now_unix_ms, snapshot};
 
 pub(crate) fn collect_stats() -> StatsDto {
-    let pool_lookup = PoolStats::construct_pool_lookup();
-    let mut stats: Vec<StatsRowDto> = pool_lookup
+    let snap = snapshot();
+    let mut stats: Vec<StatsRowDto> = snap
+        .pool_lookup
         .iter()
         .map(|(identifier, s)| StatsRowDto {
             id: format!("{}@{}", identifier.user, identifier.db),

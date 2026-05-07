@@ -24,6 +24,7 @@ mod pools;
 mod prepared;
 mod process;
 mod servers;
+mod snapshot;
 #[cfg(target_os = "linux")]
 mod sockets;
 mod stats;
@@ -47,6 +48,7 @@ pub(crate) use self::pools::collect_pools;
 pub(crate) use self::prepared::{collect_prepared, collect_prepared_text};
 pub(crate) use self::process::{collect_memory_breakdown, collect_process};
 pub(crate) use self::servers::collect_servers;
+pub(crate) use self::snapshot::snapshot;
 #[cfg(target_os = "linux")]
 pub(crate) use self::sockets::collect_sockets;
 pub(crate) use self::stats::collect_stats;

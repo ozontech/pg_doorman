@@ -4,26 +4,20 @@ use crate::app::server::{
     CLIENTS_IN_TRANSACTIONS, CURRENT_CLIENT_COUNT, MIGRATION_IN_PROGRESS, SHUTDOWN_IN_PROGRESS,
     STARTED_AT,
 };
-use crate::stats::pool::PoolStats;
 use crate::stats::{
-    get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
-    TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
+    CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
+    TOTAL_CONNECTION_COUNTER,
 };
 use crate::web::metrics::system::get_process_memory_usage;
 use crate::web::routes::dto::OverviewDto;
 
-use super::{cnt, now_unix_ms};
+use super::{cnt, now_unix_ms, snapshot};
 
 pub(crate) fn collect_overview() -> OverviewDto {
-    // Single snapshot of CLIENT_STATS / SERVER_STATS for the whole
-    // request: the route walks both maps once for client/server-state
-    // counters and once for prepared-cache totals, and reuses the same
-    // pair to build the pool lookup. Calling `construct_pool_lookup()`
-    // here would clone these maps a second time under the same read
-    // lock — visible cost when thousands of clients/servers are live.
-    let client_states = get_client_stats();
-    let server_states = get_server_stats();
-    let pool_lookup = PoolStats::construct_pool_lookup_from(&client_states, &server_states);
+    let snap = snapshot();
+    let client_states = &snap.client_states;
+    let server_states = &snap.server_states;
+    let pool_lookup = &snap.pool_lookup;
 
     let mut active_clients = 0u64;
     let mut idle_clients = 0u64;

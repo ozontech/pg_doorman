@@ -1,13 +1,13 @@
 use std::sync::atomic::Ordering;
 
-use crate::stats::get_client_stats;
 use crate::web::routes::dto::{AppFilters, AppRowDto, AppSort, AppsDto, SortOrder};
 
-use super::now_unix_ms;
+use super::{now_unix_ms, snapshot};
 
 pub(crate) fn collect_apps(filters: &AppFilters) -> AppsDto {
-    let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
-    apps_from(snapshot, filters)
+    let snap = snapshot();
+    let clients: Vec<_> = snap.client_states.values().cloned().collect();
+    apps_from(clients, filters)
 }
 
 fn apps_from(

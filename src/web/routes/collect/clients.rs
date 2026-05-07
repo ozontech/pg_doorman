@@ -1,13 +1,13 @@
 use std::sync::atomic::Ordering;
 
-use crate::stats::get_client_stats;
 use crate::web::routes::dto::{ClientDto, ClientFilters, ClientSort, ClientsDto, SortOrder};
 
-use super::{now_unix_ms, MAX_LIMIT};
+use super::{now_unix_ms, snapshot, MAX_LIMIT};
 
 pub(crate) fn collect_clients(filters: &ClientFilters) -> ClientsDto {
-    let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
-    collect_clients_from(snapshot, filters)
+    let snap = snapshot();
+    let clients: Vec<_> = snap.client_states.values().cloned().collect();
+    collect_clients_from(clients, filters)
 }
 
 /// Pure inner logic for `collect_clients` — operates on a pre-built snapshot

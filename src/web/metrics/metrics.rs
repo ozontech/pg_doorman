@@ -11,7 +11,7 @@ use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS}
 use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
 use crate::stats::{
-    get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
+    CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
     TOTAL_CONNECTION_COUNTER,
 };
 
@@ -90,10 +90,16 @@ fn update_socket_metrics() {
 }
 
 fn update_pool_metrics() {
-    let lookup = PoolStats::construct_pool_lookup();
+    // Reuse the shared 250 ms snapshot — codex Arch P2#6 / Perf P2#6.
+    // /metrics scrapes typically arrive every 15-30 s, but during an
+    // incident the SPA can be polling /api/* on the same listener at
+    // 1.5 s. Without the cache both paths each cloned CLIENT_STATS and
+    // SERVER_STATS under their own read lock; with the cache they
+    // share one snapshot whenever they fall inside the TTL.
+    let snap = crate::web::routes::collect::snapshot();
     reset_pool_metrics();
 
-    for (identifier, stats) in lookup.iter() {
+    for (identifier, stats) in snap.pool_lookup.iter() {
         update_pool_avg_metrics(identifier, stats);
         update_pool_server_metrics(identifier, stats);
         update_client_state_metrics(identifier, stats);
@@ -158,8 +164,11 @@ fn update_server_metrics() {
     SHOW_SERVERS_PREPARED_HITS.reset();
     SHOW_SERVERS_PREPARED_MISSES.reset();
     SHOW_SERVER_TLS_CONNECTIONS.reset();
-    let stats = get_server_stats();
-    for server in stats.values() {
+    // Same snapshot the rest of the scrape used; falls back to a
+    // direct global read if the cache is somehow empty (e.g. the
+    // first scrape racing with TTL expiry).
+    let snap = crate::web::routes::collect::snapshot();
+    for server in snap.server_states.values() {
         // Create owned strings to avoid borrowing issues
         let username = server.username();
         let pool_name = server.pool_name();

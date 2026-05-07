@@ -1,14 +1,14 @@
 use crate::pool::get_all_pools;
-use crate::stats::pool::PoolStats;
 use crate::web::metrics::{
     FALLBACK_ACTIVE, SHOW_SERVER_TLS_CONNECTIONS, SHOW_SERVER_TLS_HANDSHAKE_ERRORS,
 };
 use crate::web::routes::dto::{PoolDto, PoolsDto};
 
-use super::now_unix_ms;
+use super::{now_unix_ms, snapshot};
 
 pub(crate) fn collect_pools() -> PoolsDto {
-    let pool_lookup = PoolStats::construct_pool_lookup();
+    let snap = snapshot();
+    let pool_lookup = &snap.pool_lookup;
     let pools_map = get_all_pools();
 
     let mut pools = Vec::with_capacity(pool_lookup.len());
