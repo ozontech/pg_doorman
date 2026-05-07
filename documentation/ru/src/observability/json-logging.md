@@ -17,7 +17,7 @@ pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
-По умолчанию — `text` (человекочитаемый). Флаг `--log-format` принимает значения `text`, `structured` или `debug`; последнее на данный момент является алиасом для `text`.
+По умолчанию — `text` (человекочитаемый). Флаг `--log-format` принимает значения `text`, `structured` или `debug`; последнее пока работает как `text`.
 
 ## Формат вывода
 
@@ -49,7 +49,7 @@ general:
 ```
 
 ```bash
-pg_doorman -l debug -F Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman -l debug -F structured /etc/pg_doorman/pg_doorman.yaml
 ```
 
 Изменение в рантайме через admin-базу:
@@ -72,7 +72,7 @@ spec:
       image: ghcr.io/ozontech/pg_doorman:latest
       args:
         - "-F"
-        - "Structured"
+        - "structured"
         - "/etc/pg_doorman/pg_doorman.yaml"
       env:
         - name: LOG_LEVEL
@@ -85,7 +85,7 @@ spec:
 
 ```ini
 [Service]
-ExecStart=/usr/bin/pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+ExecStart=/usr/bin/pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 StandardOutput=journal
 StandardError=journal
 ```
@@ -94,7 +94,7 @@ StandardError=journal
 
 ## Оговорки
 
-- Для production выбирайте `Text` (терминалы, syslog) или `Structured` (log shippers). `Debug` зарезервирован под будущее использование и сейчас равен `Text`.
+- Для production выбирайте `text` (терминалы, syslog) или `structured` (log shippers). `debug` зарезервирован под будущее использование и сейчас равен `text`.
 - `file` и `line` берутся из мест вызова макроса `log`. Они доступны в release-сборках, потому что pg_doorman поставляется с включённой отладочной информацией.
 - Логгер не включает trace-идентификаторы и корреляцию запросов. Для трассировки на запрос используйте `SHOW CLIENTS` и Prometheus-метрики.
 

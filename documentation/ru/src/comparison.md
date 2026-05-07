@@ -39,7 +39,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | Минимальная версия TLS настраивается | Да (по умолчанию TLS 1.2) | Да (`tls_protocols`, default `tlsv1.2,tlsv1.3`) | Настраивается, дефолты другие |
 | Direct TLS handshake (PostgreSQL 17, без `SSLRequest`) | Нет | Да (с 1.25) | Нет |
 | Контроль TLS 1.3 cipher suites | Нет | Да (с 1.25, `client_tls13_ciphers`/`server_tls13_ciphers`) | Нет |
-| Миграция TLS-сессии при binary upgrade | Да (сборка `tls-migration`, Linux, opt-in) | Нет (TLS-соединения дропаются при online restart) | Нет |
+| Миграция TLS-сессии при binary upgrade | Да (сборка `tls-migration`, Linux, по запросу) | Нет (TLS-соединения отбрасываются при online restart) | Нет |
 
 См. [TLS](guides/tls.md).
 
