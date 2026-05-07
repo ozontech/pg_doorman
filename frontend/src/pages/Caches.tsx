@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { apiGet } from "../api";
+import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -254,44 +255,60 @@ function PreparedTab() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-3 py-2 text-left">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("pool")}>
-                Pool{sortIndicator("pool")}
-              </span>
+              <InfoLabel tip="user@db pool that owns this cache entry. Each pool has its own prepared cache; the same SQL text in two pools shows up as two rows.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("pool")}>
+                  Pool{sortIndicator("pool")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-left">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("kind")}>
-                Kind{sortIndicator("kind")}
-              </span>
+              <InfoLabel tip="How the client refers to this hash: named = explicit Parse with a non-empty statement name; anonymous = empty Parse name; mixed = both kinds were observed for this hash.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("kind")}>
+                  Kind{sortIndicator("kind")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-left">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("name")}>
-                Name{sortIndicator("name")}
-              </span>
+              <InfoLabel tip="Internal pg_doorman name (DOORMAN_N) assigned to the rewritten Parse. Used in PostgreSQL's pg_prepared_statements view on the backend side.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("name")}>
+                  Name{sortIndicator("name")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-left">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("hash")}>
-                Hash{sortIndicator("hash")}
-              </span>
+              <InfoLabel tip="64-bit hash of the SQL text. Same SQL across pools and clients always produces the same hash — useful when correlating with /api/prepared/text/{hash}.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("hash")}>
+                  Hash{sortIndicator("hash")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("count_used")}>
-                Used{sortIndicator("count_used")}
-              </span>
+              <InfoLabel tip="LRU timestamp — bumped on every reference. Sort desc to find the most-used statements; the bottom of the asc sort is the eviction frontier.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("count_used")}>
+                  Used{sortIndicator("count_used")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("hits")}>
-                Hits{sortIndicator("hits")}
-              </span>
+              <InfoLabel tip="Parse-time hits — the backend already had this prepared statement, so pg_doorman skipped the round-trip.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("hits")}>
+                  Hits{sortIndicator("hits")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("misses")}>
-                Misses{sortIndicator("misses")}
-              </span>
+              <InfoLabel tip="Parse-time misses — pg_doorman had to send a fresh Parse to the backend before answering the client's Bind/Execute.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("misses")}>
+                  Misses{sortIndicator("misses")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <span className="cursor-pointer hover:text-text" onClick={() => onSort("hit_rate")}>
-                Hit rate{sortIndicator("hit_rate")}
-              </span>
+              <InfoLabel tip="hits / (hits + misses). Healthy is ≥ 95 % once warm; below 80 % means most queries pay for a Parse on every call.">
+                <span className="cursor-pointer hover:text-text" onClick={() => onSort("hit_rate")}>
+                  Hit rate{sortIndicator("hit_rate")}
+                </span>
+              </InfoLabel>
             </th>
           </tr>
         </thead>
@@ -414,11 +431,31 @@ function InternerTab() {
           <table className="w-full text-sm tabular">
             <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
               <tr>
-                <th className="px-3 py-2 text-left">Hash</th>
-                <th className="px-3 py-2 text-left">Kind</th>
-                <th className="px-3 py-2 text-right">Bytes</th>
-                <th className="px-3 py-2 text-right">Idle ms</th>
-                <th className="px-3 py-2 text-left">Preview</th>
+                <th className="px-3 py-2 text-left">
+                  <InfoLabel tip="64-bit hash of the SQL text. Same SQL always hashes the same way — paste into the Prepared tab's hash filter to see which pools cache it.">
+                    Hash
+                  </InfoLabel>
+                </th>
+                <th className="px-3 py-2 text-left">
+                  <InfoLabel tip="Which interner half holds this entry: named = prepared statements; anonymous = ad-hoc SQL.">
+                    Kind
+                  </InfoLabel>
+                </th>
+                <th className="px-3 py-2 text-right">
+                  <InfoLabel tip="Bytes the SQL text occupies in the interner. Server has Top 20 sorted desc by this column already.">
+                    Bytes
+                  </InfoLabel>
+                </th>
+                <th className="px-3 py-2 text-right">
+                  <InfoLabel tip="Wall time in ms since this entry was last touched (anonymous side only — named entries never go idle, the column shows '—').">
+                    Idle ms
+                  </InfoLabel>
+                </th>
+                <th className="px-3 py-2 text-left">
+                  <InfoLabel tip="First ~120 characters of the SQL, trimmed at a UTF-8 boundary. Click the matching row in the Prepared tab to fetch the full statement.">
+                    Preview
+                  </InfoLabel>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -459,11 +496,23 @@ function Card({
     <div className="rounded border border-border bg-surface p-4">
       <h3 className="mb-3 text-sm font-semibold text-text">{title}</h3>
       <dl className="grid grid-cols-2 gap-y-2 text-sm tabular">
-        <dt className="text-text-muted">Entries</dt>
+        <dt className="text-text-muted">
+          <InfoLabel tip="Live count of unique SQL texts held by this interner half. Bounded by passive GC (named) or per-entry TTL (anonymous).">
+            Entries
+          </InfoLabel>
+        </dt>
         <dd className="text-right">{entries}</dd>
-        <dt className="text-text-muted">Total bytes</dt>
+        <dt className="text-text-muted">
+          <InfoLabel tip="Sum of every interned text's byte length plus per-entry overhead. Shown alongside RSS in /api/process/memory under interner.">
+            Total bytes
+          </InfoLabel>
+        </dt>
         <dd className="text-right">{fmtBytes(bytes)}</dd>
-        <dt className="text-text-muted">Avg bytes / entry</dt>
+        <dt className="text-text-muted">
+          <InfoLabel tip="Total bytes / entries. A useful proxy for SQL shape — small avg = many short statements; large avg = a few big DML / DDL strings dominate.">
+            Avg bytes / entry
+          </InfoLabel>
+        </dt>
         <dd className="text-right">{entries > 0 ? fmtBytes(Math.round(bytes / entries)) : "—"}</dd>
       </dl>
     </div>
