@@ -489,6 +489,7 @@ export default function Overview() {
                 logY
                 syncKey="overview"
                 events={chartEvents}
+                tip="Worst per-pool query p95 across all pools, in milliseconds. Amber dashed line at 100 ms, red at 500 ms. Click the tile for the 1-hour panel with p50/p95/p99."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("traffic")}>
@@ -498,6 +499,7 @@ export default function Overview() {
                 series={sigSeries((s) => s.qps)}
                 syncKey="overview"
                 events={chartEvents}
+                tip="Aggregate rate across all pools. q/s = client-issued statements per second; t/s = transactions completed per second. The sparkline tracks q/s; both numbers in the value column."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("errors")}>
@@ -509,6 +511,7 @@ export default function Overview() {
                 crit={10}
                 syncKey="overview"
                 events={chartEvents}
+                tip="Aggregate errors per second across all pools (any non-zero SQLSTATE). Amber at 1/s, red at 10/s. Click the tile for the SQLSTATE breakdown."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("saturation")}>
@@ -520,6 +523,7 @@ export default function Overview() {
                 crit={90}
                 syncKey="overview"
                 events={chartEvents}
+                tip="Highest single-pool saturation right now, in percent of pool_size. Amber at 70 %, red at 90 %. The heatmap below identifies which pool is hot."
               />
             </ChartLink>
           </div>

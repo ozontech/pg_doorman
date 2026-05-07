@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import uPlot, { type Options } from "uplot";
 import "uplot/dist/uPlot.min.css";
+import { InfoLabel } from "./InfoLabel";
 
 export interface ChartEvent {
   /// Unix timestamp in seconds (uPlot convention). Frontend converts ms → s.
@@ -18,6 +19,11 @@ interface SparklineProps {
   logY?: boolean;
   syncKey?: string;
   events?: ChartEvent[];
+  /// Optional one-sentence explanation, rendered as a hover tooltip on the
+  /// title via InfoLabel. Operators new to pg_doorman want to know what
+  /// the sparkline measures and what healthy looks like without leaving
+  /// for the docs.
+  tip?: string;
 }
 
 const HEIGHT_PX = 64;
@@ -46,6 +52,7 @@ export function Sparkline({
   logY,
   syncKey,
   events,
+  tip,
 }: SparklineProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -166,7 +173,16 @@ export function Sparkline({
       className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-surface p-3"
     >
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[10px] uppercase tracking-[0.18em] text-text-dim">{label}</span>
+        {tip ? (
+          <InfoLabel
+            tip={tip}
+            className="text-[10px] uppercase tracking-[0.18em] text-text-dim"
+          >
+            {label}
+          </InfoLabel>
+        ) : (
+          <span className="text-[10px] uppercase tracking-[0.18em] text-text-dim">{label}</span>
+        )}
         <span
           className="whitespace-nowrap truncate font-mono text-sm font-semibold text-text tabular"
           title={valueText}
