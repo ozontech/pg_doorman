@@ -200,8 +200,14 @@ export interface TcpCounts {
 }
 
 export interface UnixStreamCounts {
-  established: number;
-  listen: number;
+  // Mirrors `/proc/net/unix` SOCK_STREAM state column. `connected` is the
+  // analogue of TCP `established`; `unconnected` covers listening server
+  // sockets and sockets without a peer yet.
+  free: number;
+  unconnected: number;
+  connecting: number;
+  connected: number;
+  disconnecting: number;
 }
 
 export interface SocketsDto {

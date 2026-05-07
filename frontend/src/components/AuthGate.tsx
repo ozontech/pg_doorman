@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { apiGet, Unauthorized } from "../api";
+import { apiGet, setOnUnauthorized, Unauthorized } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import type { VersionDto } from "../types";
 
@@ -18,6 +18,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState(true);
+
+  // Any 401 from the rest of the app (logs, prepared text, admin actions)
+  // should re-arm the sign-in modal — without this hook, the operator stays
+  // stuck on a red error after credentials expire mid-session.
+  useEffect(() => {
+    setOnUnauthorized(() => setNeedsAuth(true));
+    return () => setOnUnauthorized(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

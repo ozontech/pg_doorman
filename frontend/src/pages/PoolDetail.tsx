@@ -237,11 +237,12 @@ export default function PoolDetail() {
   );
 }
 
-// Admin action bar — Pause / Resume / Reconnect against this pool's
-// database via POST /api/admin/{action}?db=<database>, plus the global
-// Reload at the right edge. Each click opens a confirmation modal: write
-// actions on a live pool are easy to mis-click and the modal makes the
-// operator type "yes" before the network call goes out.
+// Admin action bar — Pause / Resume / Reconnect target every user@db pool
+// of this database via POST /api/admin/{action}?db=<database>, plus the
+// global Reload at the right edge. The backend admin protocol is database-
+// scoped, not pool-scoped: clicking Pause from one pool row pauses every
+// user that connects to the same database. Confirmation modals spell that
+// out so the operator does not mis-click.
 function PoolActions({ pool }: { pool: PoolDto }) {
   const { authHeader } = useAdminAuth();
   const [pending, setPending] = useState<null | string>(null);
@@ -289,7 +290,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null || pool.paused}
           onClick={() => setConfirm({ action: "pause", scope: "pool" })}
           className={buttonClass("warning")}
-          title="PAUSE: stop handing out backends on this pool. In-flight transactions keep running. Use during a deploy or schema migration."
+          title="PAUSE: stop handing out backends on every user@db pool of this database. In-flight transactions keep running. Use during a deploy or schema migration."
         >
           pause
         </button>
@@ -298,7 +299,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null || !pool.paused}
           onClick={() => setConfirm({ action: "resume", scope: "pool" })}
           className={buttonClass("default")}
-          title="RESUME: undo PAUSE. Queued clients get backends as soon as they are returned."
+          title="RESUME: undo PAUSE on every user@db pool of this database. Queued clients get backends as soon as they are returned."
         >
           resume
         </button>
@@ -307,7 +308,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null}
           onClick={() => setConfirm({ action: "reconnect", scope: "pool" })}
           className={buttonClass("warning")}
-          title="RECONNECT: drop idle backends now and refuse the active ones when they finish. Use after a Postgres role/grant change so cached connections pick it up."
+          title="RECONNECT: drop idle backends on every user@db pool of this database and refuse the active ones when they finish. Use after a Postgres role/grant change so cached connections pick it up."
         >
           reconnect
         </button>
@@ -361,11 +362,11 @@ function ConfirmModal({
   const body = (() => {
     switch (action) {
       case "pause":
-        return `Pause stops new checkouts on database '${database}'. Existing transactions continue.`;
+        return `Pause stops new checkouts on every user@db pool of database '${database}'. Existing transactions continue.`;
       case "resume":
-        return `Resume re-enables checkouts on database '${database}'.`;
+        return `Resume re-enables checkouts on every user@db pool of database '${database}'.`;
       case "reconnect":
-        return `Reconnect drops idle backends on database '${database}' and refuses the active ones when they return. Use after a role or grant change.`;
+        return `Reconnect drops idle backends on every user@db pool of database '${database}' and refuses the active ones when they return. Use after a role or grant change.`;
       case "reload":
         return "Reload re-reads pg_doorman.toml on every pool. Pool sizes shrink via natural drain.";
       default:

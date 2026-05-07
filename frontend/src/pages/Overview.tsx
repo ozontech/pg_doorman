@@ -941,7 +941,7 @@ function ResourceDetail({
               <tr><td className="pr-3 text-text-muted">tcp close-wait</td><td>{sockets.tcp.close_wait}</td></tr>
               <tr><td className="pr-3 text-text-muted">tcp listen</td><td>{sockets.tcp.listen}</td></tr>
               <tr><td className="pr-3 text-text-muted">tcp6 established</td><td>{sockets.tcp6.established}</td></tr>
-              <tr><td className="pr-3 text-text-muted">unix-stream</td><td>{sockets.unix_stream.established}</td></tr>
+              <tr><td className="pr-3 text-text-muted">unix-stream connected</td><td>{sockets.unix_stream.connected}</td></tr>
             </tbody>
           </table>
         ) : (

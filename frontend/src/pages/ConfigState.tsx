@@ -308,8 +308,10 @@ function SocketsPanel() {
         <KV label="close-wait" value={s.tcp6.close_wait} />
       </SocketCard>
       <SocketCard title="Unix stream">
-        <KV label="established" value={s.unix_stream.established} />
-        <KV label="listen" value={s.unix_stream.listen} />
+        <KV label="connected" value={s.unix_stream.connected} />
+        <KV label="unconnected" value={s.unix_stream.unconnected} />
+        <KV label="connecting" value={s.unix_stream.connecting} />
+        <KV label="disconnecting" value={s.unix_stream.disconnecting} />
       </SocketCard>
     </div>
   );
