@@ -53,10 +53,14 @@ jobs:
 
       - name: Verify dist exists and is non-empty
         # Pin working-directory so paths are unambiguous regardless of
-        # whether the step inherits the previous step's directory.
+        # whether the step inherits the previous step's directory. The
+        # post-build step pre-gzips every compressible asset (.js, .css,
+        # .html, .svg) and removes the originals — include_dir!()
+        # embeds only the .gz form. The assertions therefore look for
+        # the .gz neighbours, not the raw files.
         working-directory: frontend
         run: |
-          test -s dist/index.html
+          test -s dist/index.html.gz
           test -d dist/assets
-          test "$(ls dist/assets/*.js 2>/dev/null | wc -l)" -ge 1
+          test "$(ls dist/assets/*.js.gz 2>/dev/null | wc -l)" -ge 1
           echo "frontend/dist/ shipped with $(ls dist/assets | wc -l) assets"
