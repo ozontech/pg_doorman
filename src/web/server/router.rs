@@ -112,7 +112,7 @@ pub(super) fn dispatch(
     // on the first JSON fetch. Now the React modal is the single password
     // prompt the operator ever sees.
     let needs_admin = admin_only || (is_api && !opts.ui_anonymous);
-    if needs_admin && auth != AuthOutcome::Admin {
+    if needs_admin && !matches!(auth, AuthOutcome::Admin(_)) {
         return unauthorized_for(req);
     }
 

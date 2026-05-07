@@ -1,20 +1,62 @@
-//! Basic-auth parser for the web mux.
+//! Authentication classifier for the web mux.
 //!
-//! HTTP/1.1 `Authorization: Basic <base64(user:pass)>` header parsing
-//! plus constant-time credential comparison.
+//! Recognises both `Basic` (Admin role) and `Bearer` JWTs (Sso role),
+//! plus query/cookie SSO sources, and produces an `AuthOutcome` that the
+//! router translates into 200 / 401 / 403.
 
 use base64::Engine;
 use subtle::ConstantTimeEq;
 
-/// Authentication outcome for an inbound request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthOutcome {
-    /// Request carries no Authorization header.
+/// Logical role for a request. Ordered: `Admin > Sso > Anonymous`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Role {
     Anonymous,
-    /// Authorization header present and matched the configured admin credentials.
+    Sso,
     Admin,
-    /// Authorization header present but malformed or did not match.
+}
+
+/// How the operator presented their credentials.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthSource {
+    Basic,
+    Sso,
+}
+
+/// Identity attached to a successfully authenticated request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthIdentity {
+    pub username: String,
+    pub source: AuthSource,
+}
+
+/// Authentication outcome for an inbound request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthOutcome {
+    /// No credentials were presented.
+    Anonymous,
+    /// A valid JWT was presented; read-only role.
+    Sso(AuthIdentity),
+    /// Valid Basic credentials were presented; full-access role.
+    Admin(AuthIdentity),
+    /// At least one credential was presented and all failed.
     Rejected,
+}
+
+impl AuthOutcome {
+    pub fn role(&self) -> Role {
+        match self {
+            AuthOutcome::Admin(_) => Role::Admin,
+            AuthOutcome::Sso(_) => Role::Sso,
+            AuthOutcome::Anonymous | AuthOutcome::Rejected => Role::Anonymous,
+        }
+    }
+
+    pub fn identity(&self) -> Option<&AuthIdentity> {
+        match self {
+            AuthOutcome::Admin(id) | AuthOutcome::Sso(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 /// Inspect the value of an HTTP `Authorization` header (or `None` if absent),
@@ -50,7 +92,10 @@ pub fn classify(
     let matches = bool::from(user.as_bytes().ct_eq(admin_username.as_bytes()))
         & bool::from(pass.as_bytes().ct_eq(admin_password.as_bytes()));
     if matches {
-        AuthOutcome::Admin
+        AuthOutcome::Admin(AuthIdentity {
+            username: admin_username.to_string(),
+            source: AuthSource::Basic,
+        })
     } else {
         AuthOutcome::Rejected
     }
@@ -64,6 +109,13 @@ mod tests {
         base64::engine::general_purpose::STANDARD.encode(s)
     }
 
+    fn admin(name: &str) -> AuthOutcome {
+        AuthOutcome::Admin(AuthIdentity {
+            username: name.to_string(),
+            source: AuthSource::Basic,
+        })
+    }
+
     #[test]
     fn anonymous_when_header_missing() {
         assert_eq!(classify(None, "admin", "secret"), AuthOutcome::Anonymous);
@@ -72,10 +124,7 @@ mod tests {
     #[test]
     fn admin_when_credentials_match() {
         let header = format!("Basic {}", b64("admin:secret"));
-        assert_eq!(
-            classify(Some(&header), "admin", "secret"),
-            AuthOutcome::Admin
-        );
+        assert_eq!(classify(Some(&header), "admin", "secret"), admin("admin"));
     }
 
     #[test]
@@ -136,9 +185,20 @@ mod tests {
     fn admin_when_password_contains_colon() {
         // Per RFC 7617 only the FIRST colon is the separator.
         let header = format!("Basic {}", b64("admin:p:a:s:s"));
-        assert_eq!(
-            classify(Some(&header), "admin", "p:a:s:s"),
-            AuthOutcome::Admin
-        );
+        assert_eq!(classify(Some(&header), "admin", "p:a:s:s"), admin("admin"));
+    }
+
+    #[test]
+    fn role_and_identity_helpers() {
+        let a = admin("admin");
+        assert_eq!(a.role(), Role::Admin);
+        assert_eq!(a.identity().unwrap().username, "admin");
+        assert_eq!(AuthOutcome::Anonymous.role(), Role::Anonymous);
+        assert_eq!(AuthOutcome::Anonymous.identity(), None);
+        assert_eq!(AuthOutcome::Rejected.role(), Role::Anonymous);
+        assert_eq!(AuthOutcome::Rejected.identity(), None);
+        // Role ordering: Admin > Sso > Anonymous.
+        assert!(Role::Admin > Role::Sso);
+        assert!(Role::Sso > Role::Anonymous);
     }
 }

@@ -1984,3 +1984,53 @@ pool_size = 5
     assert!(!cfg.web.ui_anonymous);
     assert_eq!(cfg.web.log_tap_max_entries, 8192);
 }
+
+#[test]
+fn web_section_sso_defaults() {
+    let toml_str = r#"
+host = "0.0.0.0"
+port = 9127
+enabled = false
+ui = false
+ui_anonymous = false
+log_tap_max_entries = 8192
+"#;
+    let web: crate::config::web::Web = toml::from_str(toml_str).unwrap();
+    assert!(!web.sso_enabled);
+    assert!(web.sso_proxy_url.is_none());
+    assert!(web.sso_public_key_file.is_none());
+    assert!(web.sso_audience.is_empty());
+    assert_eq!(web.sso_allowed_users, vec!["*".to_string()]);
+}
+
+#[test]
+fn web_section_round_trips_sso_fields() {
+    let toml_str = r#"
+host = "0.0.0.0"
+port = 9127
+enabled = true
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 8192
+sso_enabled = true
+sso_proxy_url = "https://sso.example.com/oauth2/start"
+sso_public_key_file = "/etc/pg_doorman/sso.pem"
+sso_audience = ["pg_doorman"]
+sso_allowed_users = ["alice", "bob"]
+"#;
+    let web: crate::config::web::Web = toml::from_str(toml_str).unwrap();
+    assert!(web.sso_enabled);
+    assert_eq!(
+        web.sso_proxy_url.as_deref(),
+        Some("https://sso.example.com/oauth2/start")
+    );
+    assert_eq!(
+        web.sso_public_key_file.as_deref().and_then(|p| p.to_str()),
+        Some("/etc/pg_doorman/sso.pem")
+    );
+    assert_eq!(web.sso_audience, vec!["pg_doorman".to_string()]);
+    assert_eq!(
+        web.sso_allowed_users,
+        vec!["alice".to_string(), "bob".to_string()]
+    );
+}

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::web::auth::AuthOutcome;
+use crate::web::auth::{AuthIdentity, AuthOutcome, AuthSource};
 
 use super::router::{dispatch, is_admin_only};
 use super::state::WebServerOptions;
@@ -12,6 +12,13 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         admin_username: "admin".into(),
         admin_password: "secret".into(),
     }
+}
+
+fn admin_outcome() -> AuthOutcome {
+    AuthOutcome::Admin(AuthIdentity {
+        username: "admin".into(),
+        source: AuthSource::Basic,
+    })
 }
 
 fn req<'a>(method: &'a str, path: &'a str) -> ParsedRequest<'a> {
@@ -247,7 +254,7 @@ fn dispatch_401_on_anonymous_public_when_ui_anonymous_false() {
 
 #[test]
 fn dispatch_serves_spa_shell_at_root() {
-    let r = dispatch(&req("GET", "/"), &opts(true, true), AuthOutcome::Admin);
+    let r = dispatch(&req("GET", "/"), &opts(true, true), admin_outcome());
     assert_eq!(r.status, 200);
     assert!(
         r.extra_headers
@@ -260,7 +267,7 @@ fn dispatch_serves_spa_shell_at_root() {
 #[test]
 fn dispatch_serves_spa_shell_for_unknown_route() {
     // Client-side router hits this path on a hard refresh of a deep link.
-    let r = dispatch(&req("GET", "/pools"), &opts(true, true), AuthOutcome::Admin);
+    let r = dispatch(&req("GET", "/pools"), &opts(true, true), admin_outcome());
     assert_eq!(r.status, 200);
     assert!(
         r.extra_headers
@@ -315,7 +322,7 @@ fn dispatch_returns_404_for_unknown_asset_when_index_missing() {
     let r = dispatch(
         &req("GET", "/assets/missing.js"),
         &opts(true, true),
-        AuthOutcome::Admin,
+        admin_outcome(),
     );
     // SPA fallback always returns 200 with the index when the bundle is
     // present. If we ever ship without dist, this would be 404.
@@ -515,7 +522,7 @@ fn dispatch_interner_top_admin_returns_200() {
     let r = dispatch(
         &req("GET", "/api/interner/top?n=10"),
         &opts(true, true),
-        AuthOutcome::Admin,
+        admin_outcome(),
     );
     assert_eq!(r.status, 200);
 }
@@ -535,7 +542,7 @@ fn dispatch_prepared_text_admin_unknown_hash_returns_404() {
     let r = dispatch(
         &req("GET", "/api/prepared/text/0xdeadbeef"),
         &opts(true, true),
-        AuthOutcome::Admin,
+        admin_outcome(),
     );
     assert_eq!(r.status, 404);
 }
@@ -567,7 +574,7 @@ fn dispatch_top_queries_admin_returns_200() {
     let r = dispatch(
         &req("GET", "/api/top/queries"),
         &opts(true, true),
-        AuthOutcome::Admin,
+        admin_outcome(),
     );
     assert_eq!(r.status, 200);
 }

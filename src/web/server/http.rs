@@ -84,7 +84,7 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
                     && parsed.method == "GET"
                     && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
                 {
-                    if auth != AuthOutcome::Admin {
+                    if !matches!(auth, AuthOutcome::Admin(_)) {
                         let _ = unauthorized_for(&parsed).write(&mut writer).await;
                     } else {
                         let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
@@ -96,7 +96,7 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
                     && parsed.method == "POST"
                     && parsed.path.starts_with("/api/admin/")
                 {
-                    if auth != AuthOutcome::Admin {
+                    if !matches!(auth, AuthOutcome::Admin(_)) {
                         let _ = unauthorized_for(&parsed).write(&mut writer).await;
                     } else {
                         let response =

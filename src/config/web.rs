@@ -1,5 +1,7 @@
 //! Web UI and metrics endpoint configuration.
 
+use std::path::PathBuf;
+
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -16,6 +18,36 @@ pub struct Web {
     pub ui_anonymous: bool,
     #[serde(default = "Web::default_log_tap_max_entries")]
     pub log_tap_max_entries: u32,
+
+    /// Enable JWT-based SSO authentication on the web UI. When `true`,
+    /// `sso_public_key_file` and `sso_audience` must also be set; missing
+    /// values silently demote SSO to disabled (logged at error level) so
+    /// the listener still serves Basic-only requests.
+    #[serde(default)]
+    pub sso_enabled: bool,
+
+    /// URL of the external SSO proxy used by the SPA for the
+    /// "Sign in via SSO" redirect. Server-side validation does not depend
+    /// on this — backend only validates the JWT signature against
+    /// `sso_public_key_file`.
+    #[serde(default)]
+    pub sso_proxy_url: Option<String>,
+
+    /// Path to a PEM file containing the RSA public key paired with the
+    /// SSO proxy's signing key.
+    #[serde(default)]
+    pub sso_public_key_file: Option<PathBuf>,
+
+    /// Allowed values of the `aud` JWT claim. A token is accepted when
+    /// its audience matches at least one entry in this list.
+    #[serde(default)]
+    pub sso_audience: Vec<String>,
+
+    /// Allowed `preferred_username`/`sub` claims. `["*"]` (the default)
+    /// accepts every valid JWT; a literal list restricts access to those
+    /// usernames only.
+    #[serde(default = "Web::default_sso_allowed_users")]
+    pub sso_allowed_users: Vec<String>,
 }
 
 impl Web {
@@ -27,6 +59,11 @@ impl Web {
             ui: Self::default_ui(),
             ui_anonymous: Self::default_ui_anonymous(),
             log_tap_max_entries: Self::default_log_tap_max_entries(),
+            sso_enabled: false,
+            sso_proxy_url: None,
+            sso_public_key_file: None,
+            sso_audience: Vec::new(),
+            sso_allowed_users: Self::default_sso_allowed_users(),
         }
     }
 
@@ -66,5 +103,11 @@ impl Web {
     /// live-tail usefulness on a hot pooler; larger values waste RSS for the default.
     pub fn default_log_tap_max_entries() -> u32 {
         8192
+    }
+
+    /// `["*"]` — any valid JWT grants Sso role. Operators wanting to
+    /// restrict to a known set of usernames replace this list explicitly.
+    pub fn default_sso_allowed_users() -> Vec<String> {
+        vec!["*".to_string()]
     }
 }
