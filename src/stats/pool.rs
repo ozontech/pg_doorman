@@ -304,10 +304,29 @@ impl PoolStats {
         let client_map = super::get_client_stats();
         let server_map = super::get_server_stats();
 
-        // Update client and server state counters
         Self::update_client_server_states(&mut virtual_map, &client_map, &server_map);
+        Self::aggregate_pool_stats(virtual_map)
+    }
 
-        // Get pool statistics (no aggregation needed since virtual pools were removed)
+    /// Build the pool lookup from caller-supplied client/server snapshots.
+    /// Used by routes that already cloned those maps for their own
+    /// rendering (e.g. `/api/overview`) — without this entry point the
+    /// route paid for two round-trips through the read lock + two HashMap
+    /// clones per request.
+    ///
+    /// Snapshot ordering inversion vs [`construct_pool_lookup`]: callers
+    /// of this function clone client/server maps **before** we read POOLS,
+    /// so a pool GC'd between those snapshots leaves an orphan
+    /// `ServerStats` in `server_map`. `update_client_server_states` skips
+    /// such entries with a debug log; the orphan is harmless because the
+    /// disconnect path already updated address.stats.
+    pub fn construct_pool_lookup_from(
+        client_map: &HashMap<u64, Arc<ClientStats>>,
+        server_map: &HashMap<i32, Arc<ServerStats>>,
+    ) -> HashMap<PoolIdentifier, PoolStats> {
+        let mut virtual_map: HashMap<PoolIdentifier, PoolStats> = HashMap::new();
+        Self::initialize_pool_stats(&mut virtual_map);
+        Self::update_client_server_states(&mut virtual_map, client_map, server_map);
         Self::aggregate_pool_stats(virtual_map)
     }
 
@@ -716,5 +735,48 @@ impl IntoIterator for PoolStats {
             ("maxwait_us".to_string(), self.maxwait % 1_000_000),
         ]
         .into_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Sanity check on the new entry point: empty client/server maps
+    /// must not panic and must return either an empty lookup (no pools
+    /// registered in this test process) or a lookup whose entries all
+    /// have zero state counters (parallel test populated POOLS but no
+    /// clients/servers exist in our maps).
+    #[test]
+    fn construct_pool_lookup_from_empty_maps_returns_zero_counters() {
+        let client_map: HashMap<u64, Arc<ClientStats>> = HashMap::new();
+        let server_map: HashMap<i32, Arc<ServerStats>> = HashMap::new();
+        let result = PoolStats::construct_pool_lookup_from(&client_map, &server_map);
+        for (id, stats) in result.iter() {
+            assert_eq!(stats.cl_active, 0, "{id} cl_active should be 0");
+            assert_eq!(stats.cl_idle, 0, "{id} cl_idle should be 0");
+            assert_eq!(stats.cl_waiting, 0, "{id} cl_waiting should be 0");
+            assert_eq!(stats.sv_active, 0, "{id} sv_active should be 0");
+            assert_eq!(stats.sv_idle, 0, "{id} sv_idle should be 0");
+        }
+    }
+
+    /// Both entry points must agree on shape when fed the same global
+    /// POOLS state and equivalent client/server maps. Validates that
+    /// `construct_pool_lookup_from` is a structural extract of
+    /// `construct_pool_lookup` rather than a divergent path.
+    #[test]
+    fn convenience_wrapper_matches_caller_supplied_path() {
+        let client_map = super::super::get_client_stats();
+        let server_map = super::super::get_server_stats();
+        let from_wrapper = PoolStats::construct_pool_lookup();
+        let from_explicit = PoolStats::construct_pool_lookup_from(&client_map, &server_map);
+        let wrapper_keys: HashSet<&PoolIdentifier> = from_wrapper.keys().collect();
+        let explicit_keys: HashSet<&PoolIdentifier> = from_explicit.keys().collect();
+        assert_eq!(
+            wrapper_keys, explicit_keys,
+            "the two entry points should report the same pool set"
+        );
     }
 }

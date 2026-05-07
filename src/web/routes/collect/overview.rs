@@ -15,9 +15,15 @@ use crate::web::routes::dto::OverviewDto;
 use super::{cnt, now_unix_ms};
 
 pub(crate) fn collect_overview() -> OverviewDto {
-    let pool_lookup = PoolStats::construct_pool_lookup();
+    // Single snapshot of CLIENT_STATS / SERVER_STATS for the whole
+    // request: the route walks both maps once for client/server-state
+    // counters and once for prepared-cache totals, and reuses the same
+    // pair to build the pool lookup. Calling `construct_pool_lookup()`
+    // here would clone these maps a second time under the same read
+    // lock — visible cost when thousands of clients/servers are live.
     let client_states = get_client_stats();
     let server_states = get_server_stats();
+    let pool_lookup = PoolStats::construct_pool_lookup_from(&client_states, &server_states);
 
     let mut active_clients = 0u64;
     let mut idle_clients = 0u64;
