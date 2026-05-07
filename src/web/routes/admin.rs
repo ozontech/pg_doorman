@@ -14,6 +14,8 @@
 //! the frontend's chart-annotation overlay paints a vertical line at the
 //! moment of the action regardless of which transport triggered it.
 
+use serde_json::json;
+
 use crate::admin::operations::{
     pause_now, reconnect_now, reload_now, resume_now, AdminEffect, AdminScope,
 };
@@ -51,11 +53,11 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
         "pause" => render_effect("pause", pause_now(scope)),
         "resume" => render_effect("resume", resume_now(scope)),
         "reconnect" => render_effect("reconnect", reconnect_now(scope)),
-        _ => Response::json(
-            404,
-            "Not Found",
-            &format!(r#"{{"error":"unknown_action","message":"unknown admin action: {action}"}}"#),
-        ),
+        _ => Response::ok_json(&json!({
+            "error": "unknown_action",
+            "message": format!("unknown admin action: {action}"),
+        }))
+        .with_status(404, "Not Found"),
     }
 }
 
@@ -86,50 +88,46 @@ fn parse_scope(
 
 /// Same outcome envelope shape across the two transports: 404 with a
 /// typed JSON error when the scope filter excluded every pool, 200 with
-/// the list of touched pool ids otherwise.
+/// the list of touched pool ids otherwise. Uses serde_json::json! so
+/// every value goes through the SerDe escaper — codex Arch P2#4
+/// flagged the previous hand-formatted JSON because `db.replace('"', '\\"')`
+/// missed control characters that PostgreSQL identifier rules technically
+/// allow.
 fn render_effect(action: &str, effect: AdminEffect) -> Response {
     match effect {
-        AdminEffect::NoMatchingDb { db } => {
-            let escaped = db.replace('"', "\\\"");
-            let body = format!(
-                r#"{{"ts":{ts},"action":"{action}","error":"no_matching_db","db":"{escaped}"}}"#,
-                ts = now_unix_ms()
-            );
-            Response::json(404, "Not Found", &body)
-        }
-        AdminEffect::NoMatchingPool { user, db } => {
-            let user_escaped = user.replace('"', "\\\"");
-            let db_escaped = db.replace('"', "\\\"");
-            let body = format!(
-                r#"{{"ts":{ts},"action":"{action}","error":"no_matching_pool","user":"{user_escaped}","db":"{db_escaped}"}}"#,
-                ts = now_unix_ms()
-            );
-            Response::json(404, "Not Found", &body)
-        }
+        AdminEffect::NoMatchingDb { db } => Response::ok_json(&json!({
+            "ts": now_unix_ms(),
+            "action": action,
+            "error": "no_matching_db",
+            "db": db,
+        }))
+        .with_status(404, "Not Found"),
+        AdminEffect::NoMatchingPool { user, db } => Response::ok_json(&json!({
+            "ts": now_unix_ms(),
+            "action": action,
+            "error": "no_matching_pool",
+            "user": user,
+            "db": db,
+        }))
+        .with_status(404, "Not Found"),
         AdminEffect::Applied { affected } => json_ok(action, &affected),
     }
 }
 
 fn json_ok(action: &str, affected: &[crate::pool::PoolIdentifier]) -> Response {
-    // List the touched pools as JSON strings so a DBA can see precisely
-    // which user@db rows the action ran against — `affected_pools` as a
-    // bare count was the symptom codex's DBA P2#3 flagged.
-    let mut ids = String::from("[");
-    for (i, identifier) in affected.iter().enumerate() {
-        if i > 0 {
-            ids.push(',');
-        }
-        let user = identifier.user.replace('"', "\\\"");
-        let db = identifier.db.replace('"', "\\\"");
-        ids.push_str(&format!(r#""{user}@{db}""#));
-    }
-    ids.push(']');
-    let body = format!(
-        r#"{{"ts":{ts},"action":"{action}","affected_pools":{count},"affected":{ids}}}"#,
-        ts = now_unix_ms(),
-        count = affected.len(),
-    );
-    Response::json(200, "OK", &body)
+    // `affected_pools` keeps the bare count for backward compat; the
+    // typed `affected` array is what codex DBA P2#3 wanted so a DBA
+    // can see exactly which user@db rows the action ran against.
+    let ids: Vec<String> = affected
+        .iter()
+        .map(|id| format!("{}@{}", id.user, id.db))
+        .collect();
+    Response::ok_json(&json!({
+        "ts": now_unix_ms(),
+        "action": action,
+        "affected_pools": affected.len(),
+        "affected": ids,
+    }))
 }
 
 /// `reload` is global, so `affected_pools` is meaningless (codex DBA
@@ -137,20 +135,20 @@ fn json_ok(action: &str, affected: &[crate::pool::PoolIdentifier]) -> Response {
 /// `changed: true|false` instead — DBAs need that signal to tell a
 /// "config actually rotated" reload from a no-op SIGHUP.
 fn json_reload(changed: bool) -> Response {
-    let body = format!(
-        r#"{{"ts":{ts},"action":"reload","changed":{changed}}}"#,
-        ts = now_unix_ms()
-    );
-    Response::json(200, "OK", &body)
+    Response::ok_json(&json!({
+        "ts": now_unix_ms(),
+        "action": "reload",
+        "changed": changed,
+    }))
 }
 
 fn json_err(action: &str, message: &str) -> Response {
-    let escaped = message.replace('"', "\\\"");
-    let body = format!(
-        r#"{{"ts":{ts},"action":"{action}","error":"{escaped}"}}"#,
-        ts = now_unix_ms()
-    );
-    Response::json(500, "Internal Server Error", &body)
+    Response::ok_json(&json!({
+        "ts": now_unix_ms(),
+        "action": action,
+        "error": message,
+    }))
+    .with_status(500, "Internal Server Error")
 }
 
 #[cfg(test)]

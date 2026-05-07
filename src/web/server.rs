@@ -384,32 +384,22 @@ impl<'a> ParsedRequest<'a> {
             if line.is_empty() {
                 break;
             }
-            if let Some(value) = line.strip_prefix("Authorization: ") {
+            // Headers are case-insensitive per RFC 7230. Match by case-
+            // insensitive prefix without allocating a lowercase copy of
+            // the header value — `to_lowercase()` per request line was
+            // codex perf P3#9.
+            if let Some(value) = strip_header_prefix(line, "Authorization") {
                 authorization = Some(value);
-            } else if let Some(value) = line.strip_prefix("authorization: ") {
-                authorization = Some(value);
-            } else if let Some(value) = line.strip_prefix("Accept-Encoding: ") {
-                if value.to_lowercase().contains("gzip") {
+            } else if let Some(value) = strip_header_prefix(line, "Accept-Encoding") {
+                if contains_ascii_ci(value, "gzip") {
                     accepts_gzip = true;
                 }
-            } else if let Some(value) = line.strip_prefix("accept-encoding: ") {
-                if value.to_lowercase().contains("gzip") {
-                    accepts_gzip = true;
-                }
-            } else if let Some(value) = line.strip_prefix("Accept: ") {
-                if value.to_lowercase().contains("application/json") {
+            } else if let Some(value) = strip_header_prefix(line, "Accept") {
+                if contains_ascii_ci(value, "application/json") {
                     accepts_json = true;
                 }
-            } else if let Some(value) = line.strip_prefix("accept: ") {
-                if value.to_lowercase().contains("application/json") {
-                    accepts_json = true;
-                }
-            } else if let Some(value) = line.strip_prefix("Connection: ") {
-                if value.to_lowercase().contains("close") {
-                    connection_close = true;
-                }
-            } else if let Some(value) = line.strip_prefix("connection: ") {
-                if value.to_lowercase().contains("close") {
+            } else if let Some(value) = strip_header_prefix(line, "Connection") {
+                if contains_ascii_ci(value, "close") {
                     connection_close = true;
                 }
             }
@@ -509,6 +499,16 @@ impl Response {
         }
     }
 
+    /// Override the status line on a Response built via [`Response::ok_json`].
+    /// Useful when the body shape is the same JSON envelope but the
+    /// outcome should travel back as 4xx/5xx — codex Arch P2#4 admin
+    /// route refactor.
+    pub(crate) fn with_status(mut self, status: u16, reason: &'static str) -> Self {
+        self.status = status;
+        self.reason = reason;
+        self
+    }
+
     pub(crate) fn ok_json<T: serde::Serialize>(value: &T) -> Self {
         match serde_json::to_vec(value) {
             Ok(body) => Response {
@@ -561,6 +561,39 @@ fn is_admin_only(path: &str) -> bool {
     ADMIN_ONLY_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
+}
+
+/// Strip a case-insensitive `Header: ` prefix (header name + `: `)
+/// without allocating. Returns the header value when the prefix matches,
+/// `None` otherwise. ASCII-only by design — HTTP header names are
+/// strictly ASCII per RFC 7230.
+fn strip_header_prefix<'a>(line: &'a str, header: &str) -> Option<&'a str> {
+    let need = header.len() + 2; // ": "
+    let bytes = line.as_bytes();
+    if bytes.len() < need {
+        return None;
+    }
+    if !line.as_bytes()[..header.len()].eq_ignore_ascii_case(header.as_bytes()) {
+        return None;
+    }
+    if &bytes[header.len()..need] != b": " {
+        return None;
+    }
+    Some(&line[need..])
+}
+
+/// Case-insensitive `contains` over ASCII bytes. Avoids the
+/// `value.to_lowercase()` allocation that codex P3#9 flagged.
+fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() {
+        return true;
+    }
+    if h.len() < n.len() {
+        return false;
+    }
+    h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
 /// Cache of gzipped static asset bodies, keyed by the asset's path. The
