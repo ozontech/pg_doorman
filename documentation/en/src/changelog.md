@@ -4,14 +4,15 @@
 
 #### Added
 
-- **Built-in admin web UI.** A single-page React app embedded in the
-  pg_doorman binary, served on the same port as `/metrics`. Read-
-  only by default: pools, clients, servers, applications, prepared
-  cache, query interner, current config, log tail, process memory
-  breakdown (jemalloc / `/proc/self/status` / cgroup), pool
-  coordinator, pool scaling counters, errors broken down by
-  SQLSTATE. Pause / Resume / Reconnect / Reload from the same page,
-  scoped per pool or globally.
+- **Built-in operator dashboard.** A single-page React app embedded
+  in the pg_doorman binary, served on the same port as `/metrics`.
+  Read-only by default: pools, clients, servers, applications,
+  prepared cache, query interner, current config, log tail, process
+  memory breakdown (jemalloc / `/proc/self/status` / cgroup),
+  per-thread tokio-worker CPU, pool coordinator, pool scaling
+  counters, errors broken down by SQLSTATE per pool. Pause /
+  Resume / Reconnect / Reload from the same page, scoped per pool
+  or globally.
 - **Web UI is opt-in and gated.** It activates only when `[web].ui =
   true` and `general.admin_password` is non-default; an empty or
   `"admin"` password demotes the listener to `/metrics` only and
@@ -39,10 +40,8 @@
   number of open tabs.
 - HTTP/1.1 keep-alive is on by default; long-running operator
   sessions reuse one TCP connection per tab.
-- The frontend bundle (≈365 kB JavaScript, ≈31 kB CSS, both gzipped
-  on the wire) is embedded in the binary via `include_dir!`. No
-  network fetch from the browser to anything but pg_doorman itself,
-  no node toolchain in the RPM/DEB/Docker pipelines.
+- The frontend bundle is shipped inside the binary, no node
+  toolchain or external CDN required at deploy time.
 
 ### 3.7.0
 

@@ -6,6 +6,16 @@ A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replaceme
 
 ## Headline features
 
+```admonish success title="Built-in operator dashboard"
+A diagnostic console embedded in the pg_doorman binary, served on the same port as `/metrics`. What it shows: pool saturation tiles, per-pool latency p95/p99 sparklines, errors split by SQLSTATE per pool, top-N stuck queries, jemalloc memory broken into live allocations / fragmentation / internal caches / code-and-libs / stacks / swap, `/proc/self/status` fields with one-line explanations next to the numbers, per-thread tokio-worker CPU, prepared cache attribution, query interner contents, live log tail. Sortable, filterable tables on Pools / Clients / Apps / Caches; live qps and tx-per-second per app and per client.
+
+PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy expose `/metrics` and a psql admin console. The dashboard you would build on top of them — Prometheus + Grafana + a memory exporter + a custom panel set — is already in pg_doorman.
+
+Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when `[web].ui = true` and `general.admin_password` is non-default; a fresh install with the placeholder password keeps the listener at `/metrics` only and logs a `WARN`.
+
+[Read more →](guides/web-ui.md)
+```
+
 ```admonish success title="Pool Coordinator"
 PgDoorman caps total backend connections per database. When `max_db_connections` is reached, the coordinator evicts an idle connection from the user with the most spare capacity, ranking candidates by p95 transaction time so the slowest pools yield first. A reserve pool absorbs short bursts; per-user `min_guaranteed_pool_size` keeps critical workloads off the eviction list.
 
@@ -30,16 +40,6 @@ On `SIGUSR2` the old process hands each idle client's TCP socket to the new one 
 PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport` rolling restart) and Odyssey's online restart (`SIGUSR2` + `bindwith_reuseport`) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.
 
 [Read more →](tutorials/binary-upgrade.md)
-```
-
-```admonish success title="Built-in admin web UI"
-PgDoorman bundles a single-page admin console in the binary, served on the same port as `/metrics`. Read-only by default: pools, clients, applications, prepared cache, query interner, current config, log tail, and a process memory breakdown. Pause / Resume / Reconnect / Reload are the only writes, scoped per pool or globally.
-
-PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy do not include a comparable operator dashboard in the pooler binary. They expose `/metrics` and a psql admin console, and visualisation lives in Grafana, CloudWatch, or external admin sites.
-
-The console activates only when `[web].ui = true` and `general.admin_password` is non-default. A fresh install with the placeholder password keeps the listener at `/metrics` only and logs a `WARN`.
-
-[Read more →](guides/web-ui.md)
 ```
 
 ```admonish success title="Anonymous Prepared Statement Caching"
