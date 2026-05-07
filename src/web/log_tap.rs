@@ -135,8 +135,12 @@ struct BoundedWriter {
 
 impl BoundedWriter {
     fn new(cap: usize) -> Self {
+        // Pre-allocate up to 512 bytes — covers the median pg_doorman log
+        // line without a regrow, and stays well under PER_ENTRY_BYTE_CAP
+        // even if cap is large. Without this hint each push() reallocs
+        // a couple of times as the format! writer grows the String.
         Self {
-            buf: String::new(),
+            buf: String::with_capacity(cap.min(512)),
             cap,
             overflow: false,
         }

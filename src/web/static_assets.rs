@@ -17,8 +17,11 @@ static SPA: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/frontend/dist");
 
 /// Asset payload returned to the mux: bytes, mime type, and whether the asset
 /// is content-hashed (immutable forever) so the mux can pick the right
-/// Cache-Control header.
+/// Cache-Control header. `path` is the bundle-relative file name; the gzip
+/// cache uses it as a stable key so the per-asset compressed body is
+/// computed once and reused across requests.
 pub(crate) struct Asset {
+    pub path: &'static str,
     pub bytes: &'static [u8],
     pub mime: &'static str,
     pub immutable: bool,
@@ -43,10 +46,16 @@ pub(crate) fn lookup(path: &str) -> Option<Asset> {
         SPA.get_file("index.html")?
     };
 
-    let path_str = target.path().to_string_lossy();
-    let mime = mime_for(&path_str);
+    // `target.path()` returns `&'a Path` with `'a` tied to the embedded
+    // `Dir<'static>`, so `to_str()` likewise yields `&'static str`.
+    // Spelling the lifetimes out explicitly lets us hand the path to
+    // the gzip cache as a `&'static str` key without `unsafe`.
+    let target_path: &'static std::path::Path = target.path();
+    let path_str: &'static str = target_path.to_str().unwrap_or("");
+    let mime = mime_for(path_str);
     let immutable = path_str.starts_with("assets/");
     Some(Asset {
+        path: path_str,
         bytes: target.contents(),
         mime,
         immutable,

@@ -32,19 +32,37 @@ pub(crate) fn collect_top_prepared(filters: &TopPreparedFilters) -> TopPreparedD
         }
     }
 
-    rows.sort_by(|a, b| match filters.by {
+    truncate_top_n(&mut rows, n as usize, |a, b| match filters.by {
         TopPreparedBy::Hits => b.hits.cmp(&a.hits),
         TopPreparedBy::Misses => b.misses.cmp(&a.misses),
     });
-
-    let prepared: Vec<_> = rows.into_iter().take(n as usize).collect();
 
     TopPreparedDto {
         ts: now_unix_ms(),
         by: filters.by.as_str().to_string(),
         n,
-        prepared,
+        prepared: rows,
     }
+}
+
+/// Partition `rows` so the first `n` items are the top-N according to
+/// `cmp`, then sort just those for stable display order. Avoids the
+/// O(n log n) cost of fully sorting a 10k-entry interner snapshot when
+/// the operator only needs the leading 20.
+fn truncate_top_n<T, F>(rows: &mut Vec<T>, n: usize, mut cmp: F)
+where
+    F: FnMut(&T, &T) -> std::cmp::Ordering,
+{
+    if rows.len() <= n {
+        rows.sort_by(&mut cmp);
+        return;
+    }
+    // select_nth_unstable_by partitions in O(n); the truncate that
+    // follows is the actual size cap, and the final sort runs against
+    // the n winners only.
+    rows.select_nth_unstable_by(n, &mut cmp);
+    rows.truncate(n);
+    rows.sort_by(&mut cmp);
 }
 
 pub(crate) fn collect_top_clients(filters: &TopClientFilters) -> TopClientsDto {
@@ -88,7 +106,7 @@ fn top_clients_from(
         })
         .collect();
 
-    rows.sort_by(|a, b| {
+    truncate_top_n(&mut rows, n as usize, |a, b| {
         // All Top-N sorts are descending — operators want busiest first.
         match filters.by {
             TopClientBy::Qps => b
@@ -100,13 +118,11 @@ fn top_clients_from(
         }
     });
 
-    let clients: Vec<_> = rows.into_iter().take(n as usize).collect();
-
     TopClientsDto {
         ts: now_unix_ms(),
         by: filters.by.as_str().to_string(),
         n,
-        clients,
+        clients: rows,
     }
 }
 
@@ -152,7 +168,7 @@ pub(crate) fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
         });
     }
 
-    rows.sort_by(|a, b| match filters.by {
+    truncate_top_n(&mut rows, n as usize, |a, b| match filters.by {
         TopQueryBy::Count => b.count.cmp(&a.count),
         TopQueryBy::Duration => b
             .avg_duration_ms
@@ -160,13 +176,11 @@ pub(crate) fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
             .unwrap_or(std::cmp::Ordering::Equal),
     });
 
-    let queries: Vec<_> = rows.into_iter().take(n as usize).collect();
-
     TopQueriesDto {
         ts: now_unix_ms(),
         by: filters.by.as_str().to_string(),
         n,
-        queries,
+        queries: rows,
     }
 }
 

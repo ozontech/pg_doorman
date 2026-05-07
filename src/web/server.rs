@@ -13,7 +13,9 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use log::{error, info};
+use once_cell::sync::Lazy;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 
@@ -479,10 +481,6 @@ impl Response {
         asset: &crate::web::static_assets::Asset,
         accepts_gzip: bool,
     ) -> Self {
-        use flate2::write::GzEncoder;
-        use flate2::Compression;
-        use std::io::Write;
-
         let cache = if asset.immutable {
             "public, max-age=31536000, immutable"
         } else {
@@ -493,15 +491,12 @@ impl Response {
             ("Cache-Control", cache.into()),
         ];
         let body = if accepts_gzip && is_compressible(asset.mime) && asset.bytes.len() > 256 {
-            let mut compressed = Vec::with_capacity(asset.bytes.len() / 2);
-            {
-                let mut gz = GzEncoder::new(&mut compressed, Compression::default());
-                if gz.write_all(asset.bytes).is_ok() && gz.finish().is_ok() {
+            match gzip_cached(asset) {
+                Some(bytes) => {
                     headers.push(("Content-Encoding", "gzip".into()));
-                    compressed
-                } else {
-                    asset.bytes.to_vec()
+                    bytes
                 }
+                None => asset.bytes.to_vec(),
             }
         } else {
             asset.bytes.to_vec()
@@ -566,6 +561,31 @@ fn is_admin_only(path: &str) -> bool {
     ADMIN_ONLY_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
+}
+
+/// Cache of gzipped static asset bodies, keyed by the asset's path. The
+/// SPA bundle is immutable per release, so compressing the JS/CSS once
+/// and serving the cached `Vec<u8>` on subsequent requests turns each
+/// poll's static-asset hit from "allocate + zlib + compress" into a
+/// single Arc clone.
+static GZIP_CACHE: Lazy<DashMap<&'static str, Arc<Vec<u8>>>> = Lazy::new(DashMap::new);
+
+fn gzip_cached(asset: &crate::web::static_assets::Asset) -> Option<Vec<u8>> {
+    if let Some(entry) = GZIP_CACHE.get(asset.path) {
+        return Some(entry.value().as_ref().clone());
+    }
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut compressed = Vec::with_capacity(asset.bytes.len() / 2);
+    {
+        let mut gz = GzEncoder::new(&mut compressed, Compression::default());
+        gz.write_all(asset.bytes).ok()?;
+        gz.finish().ok()?;
+    }
+    let arc = Arc::new(compressed);
+    GZIP_CACHE.insert(asset.path, arc.clone());
+    Some(arc.as_ref().clone())
 }
 
 /// Compressing a 200-byte favicon PNG buys nothing and risks negative
