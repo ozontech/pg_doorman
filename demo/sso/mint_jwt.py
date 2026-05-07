@@ -3,6 +3,13 @@
 Argv:
     mint_jwt.py [username] [audience] [ttl_seconds]
 
+Environment:
+    SSO_GROUPS         Comma-separated group names to put into the
+                       JWT (default: empty, no group claim).
+    SSO_GROUPS_CLAIM   Claim name for the group list (default:
+                       "groups"). Mirror this in pg_doorman.toml's
+                       [web].sso_groups_claim.
+
 Prints the JWT on stdout. This script is for the demo only; the
 private key in this directory is throwaway and exists in version
 control so the demo runs without external setup. Never deploy this
@@ -11,6 +18,7 @@ key.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -31,6 +39,12 @@ def main() -> int:
         "exp": int(time.time()) + ttl,
         "iat": int(time.time()),
     }
+
+    groups_csv = os.environ.get("SSO_GROUPS", "").strip()
+    if groups_csv:
+        claim_name = os.environ.get("SSO_GROUPS_CLAIM", "groups")
+        payload[claim_name] = [g.strip() for g in groups_csv.split(",") if g.strip()]
+
     token = jwt.encode(payload, private_key, algorithm="RS256")
     sys.stdout.write(token)
     return 0

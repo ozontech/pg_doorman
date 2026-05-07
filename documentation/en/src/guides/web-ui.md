@@ -96,8 +96,8 @@ proxy:
 1. Obtain the RSA public key the proxy uses to sign JWTs and store it in a
    PEM file (e.g. `/etc/pg_doorman/sso-public.pem`). For oauth2-proxy,
    extract it from the private key with
-   `openssl rsa -in private.pem -pubout -out public.pem`. For Keycloak, copy
-   the realm's RSA public key from Realm Settings → Keys.
+   `openssl rsa -in private.pem -pubout -out public.pem`. For Keycloak,
+   see [Keycloak](#keycloak) below.
 2. Add the SSO fields to `[web]`:
 
    ```toml
@@ -153,6 +153,45 @@ the request resolves to `Admin`. The access log records the promotion as
 from Basic admins. `/api/auth/config` reports
 `sso_admin_groups_configured = true`, which lets the SPA stop promising
 "SSO grants read-only access" in the sign-in modal.
+
+### Keycloak
+
+Keycloak signs every JWT with the realm's RSA key. Export the public
+half once per realm into a PEM file pg_doorman can read.
+
+The non-interactive way uses the realm's JWKS endpoint:
+
+```bash
+REALM=https://kc.example.com/realms/operators
+curl -s "$REALM/protocol/openid-connect/certs" \
+  | jq -r '.keys[] | select(.alg=="RS256") | "-----BEGIN CERTIFICATE-----\n" + .x5c[0] + "\n-----END CERTIFICATE-----"' \
+  | openssl x509 -pubkey -noout \
+  > /etc/pg_doorman/sso-public.pem
+```
+
+Or copy it from the admin UI: **Realm settings** → **Keys** → row with
+`Algorithm = RS256` and `Use = SIG` → **Public key** → wrap the
+copied base64 body into a `-----BEGIN PUBLIC KEY-----` PEM file.
+
+A Keycloak-backed `[web]` section then looks like this:
+
+```toml
+[web]
+sso_enabled = true
+sso_proxy_url = "https://kc.example.com/realms/operators/protocol/openid-connect/auth"
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]    # client_id configured on Keycloak
+sso_groups_claim = "groups"      # default with the "groups" mapper enabled
+sso_admin_groups = ["pg-doorman-admins"]
+```
+
+For Admin via group claim to work, add a **Group Membership** mapper
+to the client (Clients → your client → **Mappers**). Without that
+mapper Keycloak issues tokens without `groups`, and every operator
+stays on `Sso`.
+
+When Keycloak rotates the realm signing key, refetch the PEM and
+issue `RELOAD`. pg_doorman picks the new key up without a restart.
 
 ### When SSO config is broken
 

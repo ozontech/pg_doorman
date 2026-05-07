@@ -30,6 +30,16 @@ sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
 sso_audience = ["pg_doorman"]
 sso_allowed_users = ["*"]
 
+# Promote SSO users to the Admin role when the JWT carries the group
+# "pg-doorman-admins" in its `groups` claim. Mint such a token with:
+#   SSO_GROUPS=pg-doorman-admins docker compose run --rm -e SSO_GROUPS mint-jwt
+# (the -e flag forwards the host env into the container; without it,
+# docker-compose substitutes the literal default "" from the service's
+# `environment:` block).
+# Leave the array empty to keep every SSO login on read-only Sso.
+sso_groups_claim = "groups"
+sso_admin_groups = ["pg-doorman-admins"]
+
 [pools.demo]
 server_host = "postgres"
 server_port = 5432

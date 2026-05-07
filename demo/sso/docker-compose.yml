@@ -75,3 +75,7 @@ services:
       SSO_USER: alice
       SSO_AUDIENCE: pg_doorman
       SSO_TTL: 3600
+      # Set SSO_GROUPS=pg-doorman-admins to mint a JWT that resolves to
+      # the Admin role via [web].sso_admin_groups (see README.md).
+      SSO_GROUPS: ""
+      SSO_GROUPS_CLAIM: groups
