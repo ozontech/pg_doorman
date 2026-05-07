@@ -24,21 +24,63 @@ export function captureTokenFromUrl(): boolean {
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
   if (!token) return false;
-  localStorage.setItem(SSO_TOKEN_KEY, token);
+  // Always rewrite the URL clean of `?token=`, even when the value is
+  // garbage — otherwise a bad redirect loops on the same broken token
+  // every time the SPA re-mounts.
   params.delete("token");
   const qs = params.toString();
   const newUrl = qs
     ? `${window.location.pathname}?${qs}`
     : window.location.pathname;
   window.history.replaceState({}, "", newUrl);
+  if (!parseJwt(token)) {
+    // Shape-valid JWT only. Backend will reject signature anyway, but we
+    // refuse to feed obvious junk into localStorage / Authorization.
+    return false;
+  }
+  try {
+    localStorage.setItem(SSO_TOKEN_KEY, token);
+  } catch {
+    /* private mode / quota — non-fatal, the token will not survive a
+     * reload but the in-memory state path still works. */
+  }
   return true;
 }
 
-/** Send the user agent to the SSO proxy with the current href as redirect target. */
+/**
+ * Send the user agent to the SSO proxy with the current href as
+ * redirect target. Validates the proxy URL: must parse, must use https
+ * (or be localhost for development). A bad URL logs to the console and
+ * does NOT navigate, so a typo in `pg_doorman.toml` becomes a visible
+ * error instead of a confusing in-app crash.
+ */
 export function redirectToSso(proxyUrl: string): void {
-  const url = new URL(proxyUrl);
+  const url = safeProxyUrl(proxyUrl);
+  if (!url) return;
   url.searchParams.set("redirect_to", window.location.href);
   window.location.href = url.toString();
+}
+
+function safeProxyUrl(proxyUrl: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(proxyUrl);
+  } catch {
+    console.error("sso_proxy_url is not a valid URL:", proxyUrl);
+    return null;
+  }
+  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol !== "https:" && !isLocal) {
+    console.error(
+      "sso_proxy_url must use https (got",
+      url.protocol,
+      "for",
+      url.hostname,
+      ")",
+    );
+    return null;
+  }
+  return url;
 }
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -65,18 +107,20 @@ export function silentRefresh(proxyUrl: string): Promise<boolean> {
 
     const cleanup = () => {
       settled = true;
-      refreshInFlight = null;
       window.removeEventListener("message", onMessage);
       clearTimeout(timer);
-      // Defer DOM removal so the iframe gets a chance to finish loading;
-      // tearing it down mid-load occasionally races with the postMessage
-      // delivery on Firefox.
+      // Defer DOM removal so the iframe finishes loading; tearing it
+      // down in the same task as the postMessage dispatch loses the
+      // message on Firefox. Reset `refreshInFlight` only after the
+      // iframe is gone — otherwise a follow-up caller starts a fresh
+      // refresh while the previous iframe still sits in the DOM.
       setTimeout(() => {
         try {
           document.body.removeChild(iframe);
         } catch {
           // already removed
         }
+        refreshInFlight = null;
       }, 100);
     };
 
@@ -101,9 +145,14 @@ export function silentRefresh(proxyUrl: string): Promise<boolean> {
 
     window.addEventListener("message", onMessage);
 
+    const ssoUrl = safeProxyUrl(proxyUrl);
+    if (!ssoUrl) {
+      cleanup();
+      resolve(false);
+      return;
+    }
     const callbackUrl = new URL(window.location.origin);
     callbackUrl.searchParams.set("sso_silent", "1");
-    const ssoUrl = new URL(proxyUrl);
     ssoUrl.searchParams.set("redirect_to", callbackUrl.toString());
     iframe.src = ssoUrl.toString();
     document.body.appendChild(iframe);

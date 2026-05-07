@@ -169,9 +169,16 @@ function AuthModal({
     onSubmit({ username, password }, remember);
   };
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+      className="fixed inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm"
+    >
       <div className="w-80 rounded border border-border bg-surface p-6 shadow-xl">
-        <h2 className="mb-4 text-md font-semibold">Sign in</h2>
+        <h2 id="auth-modal-title" className="mb-4 text-md font-semibold">
+          Sign in
+        </h2>
         {ssoProxyUrl && (
           <div className="mb-4">
             <button

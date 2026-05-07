@@ -89,6 +89,12 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const setBasic = useCallback((next: BasicCreds | null, remember = false) => {
     setBasicState(next);
     setRemembered(remember && next !== null);
+    if (next === null) {
+      // Sign-out is local; collapse the role synchronously so role-aware
+      // UI hides the admin surface in the same render rather than waiting
+      // for the AuthGate probe to come back with current_user=null.
+      setRole("anonymous");
+    }
     try {
       if (next && remember) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -111,24 +117,33 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       }
     } else {
       clearSsoToken();
+      setRole("anonymous");
     }
     setSsoTokenState(next);
+  }, []);
+
+  // Cross-tab sync: when another tab clears or sets the auth keys we
+  // pick up the change here. `storage` events do not fire in the
+  // originating tab, so this listener never echoes our own writes.
+  useEffect(() => {
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === STORAGE_KEY) setBasicState(loadStored());
+      if (ev.key === SSO_TOKEN_KEY) setSsoTokenState(getValidSsoToken());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const authHeader = useCallback((): Record<string, string> => {
     // Basic outranks SSO: a known admin password is the strongest
     // credential the operator can present and the backend's `classify`
-    // honours the same precedence.
+    // honours the same precedence. Pure function — localStorage drift
+    // is reconciled by the `storage` listener above, not here.
     if (basic) {
       const token = btoa(`${basic.username}:${basic.password}`);
       return { Authorization: `Basic ${token}` };
     }
-    const sso = getValidSsoToken();
-    if (sso !== ssoToken) {
-      // Reconcile state with localStorage in case another tab cleared it.
-      setSsoTokenState(sso);
-    }
-    if (sso) return { Authorization: `Bearer ${sso}` };
+    if (ssoToken) return { Authorization: `Bearer ${ssoToken}` };
     return {};
   }, [basic, ssoToken]);
 
