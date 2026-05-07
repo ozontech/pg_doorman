@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { tip } from "../lib/tooltips";
 import { apiGet } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { PageHero } from "../components/PageHero";
@@ -230,36 +231,56 @@ export default function Pools() {
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
-            <th className="cursor-pointer px-4 py-2 text-left" onClick={() => onSort("id")}>
+            <th
+              className="cursor-pointer px-4 py-2 text-left"
+              onClick={() => onSort("id")}
+              title={tip.poolId}
+            >
               Pool{sortIndicator("id")}
             </th>
-            <th className="px-4 py-2 text-left">Mode</th>
+            <th className="px-4 py-2 text-left" title={tip.poolMode}>
+              Mode
+            </th>
             <th
               className="cursor-pointer px-4 py-2 text-right"
               onClick={() => onSort("saturation")}
+              title={tip.saturation}
             >
               Saturation{sortIndicator("saturation")}
             </th>
-            <th className="px-4 py-2 text-center">Trend</th>
+            <th
+              className="px-4 py-2 text-center"
+              title="Mini-sparklines: saturation last 60 s (left) and query p95 last 60 s (right)."
+            >
+              Trend
+            </th>
             <th
               className="cursor-pointer px-4 py-2 text-right"
               onClick={() => onSort("waiting")}
+              title={tip.waiting}
             >
               Waiting{sortIndicator("waiting")}
             </th>
             <th
               className="cursor-pointer px-4 py-2 text-right"
               onClick={() => onSort("query_p95_ms")}
+              title={tip.queryP95}
             >
               p95 ms{sortIndicator("query_p95_ms")}
             </th>
             <th
               className="cursor-pointer px-4 py-2 text-right"
               onClick={() => onSort("errors_total")}
+              title={tip.errorsTotal}
             >
               Errors{sortIndicator("errors_total")}
             </th>
-            <th className="px-4 py-2 text-left">State</th>
+            <th
+              className="px-4 py-2 text-left"
+              title="Threshold engine verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second."
+            >
+              State
+            </th>
           </tr>
         </thead>
         <tbody>
