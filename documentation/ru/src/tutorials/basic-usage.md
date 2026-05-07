@@ -152,14 +152,14 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 ```
 
 `````admonish info title="Passthrough Authentication (по умолчанию)"
-PgDoorman по умолчанию использует **passthrough authentication**: криптографическое доказательство клиента (MD5-хэш или SCRAM ClientKey) автоматически переиспользуется для аутентификации в backend-сервере PostgreSQL. Plaintext-пароли в конфиге не нужны — достаточно записать в `password` хэш из `pg_shadow` / `pg_authid`.
+PgDoorman по умолчанию использует **passthrough authentication**: криптографическое доказательство клиента (MD5-хеш или SCRAM ClientKey) автоматически переиспользуется для аутентификации в backend-сервере PostgreSQL. Plaintext-пароли в конфиге не нужны — достаточно записать в `password` хеш из `pg_shadow` / `pg_authid`.
 
 Указывайте `server_username` и `server_password` **только** тогда, когда backend-пользователь отличается от username пула (например, маппинг username или JWT-аутентификация):
 
 ```yaml
 users:
   - username: "app_user"              # имя для клиента
-    password: "md5..."                # хэш для аутентификации клиента
+    password: "md5..."                # хеш для аутентификации клиента
     server_username: "pg_app_user"    # другой backend-пользователь PostgreSQL
     server_password: "real_password"  # plaintext-пароль для этого пользователя
 ```
