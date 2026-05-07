@@ -18,7 +18,7 @@ export const tip = {
   poolMode:
     "transaction = backend returns to pool on commit/rollback. session = backend pinned for the client's lifetime (legacy / LISTEN). statement = returns after every statement (autocommit only).",
   saturation:
-    "connections / max_connections. Amber ≥ 70%, red ≥ 90%. At 100% new checkouts queue for query_wait_timeout.",
+    "active backends / max_connections. Amber ≥ 70%, red ≥ 90%. At 100% new checkouts queue for query_wait_timeout. Idle backends still held from a prior burst do not count — they are not pressure.",
   connectionsTotal:
     "sv_active + sv_idle + sv_used + sv_login at snapshot time. Includes backends still in the SCRAM/LOGIN phase.",
   connectionsActiveIdle:

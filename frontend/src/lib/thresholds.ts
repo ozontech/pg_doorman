@@ -124,26 +124,45 @@ export function evaluatePool(
   };
 
   if (pool.max_connections > 0) {
-    const sat = pool.connections / pool.max_connections;
-    if (sat >= SATURATION_CRIT) note("critical", `saturation ${(sat * 100).toFixed(0)}% ≥ 90%`);
-    else if (sat >= SATURATION_WARN) note("degraded", `saturation ${(sat * 100).toFixed(0)}% ≥ 70%`);
+    // Saturation = active / max_connections, not connections / max.
+    // `connections` counts every held backend (active + idle + used +
+    // login). After a traffic spike the pool sits with many warm idle
+    // backends that have not yet hit `server_idle_timeout`; they are
+    // not pressure, so flagging the pool as CRITICAL because of held
+    // count is a false alarm. The real overload signal is "active
+    // backends high relative to capacity" plus the WAITING threshold
+    // below.
+    const sat = pool.active / pool.max_connections;
+    if (sat >= SATURATION_CRIT) note("critical", `active ${(sat * 100).toFixed(0)}% ≥ 90%`);
+    else if (sat >= SATURATION_WARN) note("degraded", `active ${(sat * 100).toFixed(0)}% ≥ 70%`);
   }
 
+  // Backend-origin signals (query latency, oldest active query, error rate)
+  // are reported as DEGRADED max. The pooler is the messenger here, not the
+  // cause — clients are slow because PostgreSQL is slow, holding locks, or
+  // returning errors. Painting the pool CRITICAL on these would make the
+  // /overview pill red for problems the operator must fix on the database
+  // side, not in pg_doorman. Saturation, waiting count, reconnect, gate
+  // budget, and coordinator exhaustion stay CRITICAL: those are the signals
+  // where the pooler itself is in trouble (clients queueing, can't add
+  // capacity, internal admission control hitting limits).
   if (pool.max_active_age_ms > ACTIVE_AGE_CRIT_MS) {
-    note("critical", `oldest-active ${pool.max_active_age_ms} ms > 300 s`);
+    note("degraded", `backend oldest-active ${pool.max_active_age_ms} ms > 300 s`);
   } else if (pool.max_active_age_ms > ACTIVE_AGE_WARN_MS) {
-    note("degraded", `oldest-active ${pool.max_active_age_ms} ms > 30 s`);
+    note("degraded", `backend oldest-active ${pool.max_active_age_ms} ms > 30 s`);
   }
 
   if (pool.query_p95_ms > QUERY_P95_CRIT_MS)
-    note("critical", `p95 ${pool.query_p95_ms} ms > 500`);
+    note("degraded", `backend p95 ${pool.query_p95_ms} ms > 500`);
   else if (pool.query_p95_ms > QUERY_P95_WARN_MS)
-    note("degraded", `p95 ${pool.query_p95_ms} ms > 100`);
+    note("degraded", `backend p95 ${pool.query_p95_ms} ms > 100`);
   if (pool.query_p99_ms > QUERY_P99_CRIT_MS)
-    note("critical", `p99 ${pool.query_p99_ms} ms > 2000`);
+    note("degraded", `backend p99 ${pool.query_p99_ms} ms > 2000`);
   else if (pool.query_p99_ms > QUERY_P99_WARN_MS)
-    note("degraded", `p99 ${pool.query_p99_ms} ms > 500`);
+    note("degraded", `backend p99 ${pool.query_p99_ms} ms > 500`);
 
+  // wait_avg_ms / wait_p95_ms are pooler-side: they measure how long a
+  // client sat waiting for an idle backend. Real CRITICAL signals.
   if (pool.wait_avg_ms > WAIT_AVG_CRIT_MS)
     note("critical", `wait avg ${pool.wait_avg_ms} ms > 50`);
   else if (pool.wait_avg_ms > WAIT_AVG_WARN_MS)
@@ -156,9 +175,9 @@ export function evaluatePool(
   const eps = history ? errorsPerSecond(history) : null;
   if (eps !== null && history) {
     if (sustainedAbove(history, SUSTAIN_30S_POINTS, () => eps > ERRORS_PER_SEC_CRIT)) {
-      note("critical", `errors ${eps.toFixed(2)}/s > 1.0 sustained`);
+      note("degraded", `backend errors ${eps.toFixed(2)}/s > 1.0 sustained`);
     } else if (sustainedAbove(history, SUSTAIN_30S_POINTS, () => eps > ERRORS_PER_SEC_WARN)) {
-      note("degraded", `errors ${eps.toFixed(2)}/s > 0.1 sustained`);
+      note("degraded", `backend errors ${eps.toFixed(2)}/s > 0.1 sustained`);
     }
   }
 

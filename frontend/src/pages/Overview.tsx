@@ -210,7 +210,7 @@ export default function Overview() {
       errors_per_s: errPs,
       saturation_max_pct:
         pools.pools.reduce((m, p) => {
-          const s = p.max_connections > 0 ? p.connections / p.max_connections : 0;
+          const s = p.max_connections > 0 ? p.active / p.max_connections : 0;
           return Math.max(m, s);
         }, 0) * 100,
       active_clients: ov.active_clients,
@@ -250,7 +250,7 @@ export default function Overview() {
         coordinator_exhaustions_total: coordByDb.get(p.database),
       };
       satSnap[p.id] = {
-        saturation: p.max_connections > 0 ? p.connections / p.max_connections : 0,
+        saturation: p.max_connections > 0 ? p.active / p.max_connections : 0,
         max_connections: p.max_connections,
         label: p.id,
       };

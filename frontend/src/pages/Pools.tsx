@@ -70,7 +70,7 @@ export default function Pools() {
     for (const p of poll.data.pools) {
       snap[p.id] = {
         ts,
-        saturation: p.max_connections > 0 ? p.connections / p.max_connections : 0,
+        saturation: p.max_connections > 0 ? p.active / p.max_connections : 0,
         query_p95_ms: p.query_p95_ms,
         errors_total: p.errors_total,
         waiting: p.waiting,
@@ -131,7 +131,7 @@ export default function Pools() {
     return poll.data.pools.map((p) => ({
       pool: p,
       eval: evaluatePool(p, undefined),
-      saturation: p.max_connections > 0 ? p.connections / p.max_connections : 0,
+      saturation: p.max_connections > 0 ? p.active / p.max_connections : 0,
     }));
   }, [poll.data]);
 
@@ -326,14 +326,14 @@ function PoolRowView({
       <td className="px-4 py-2 text-text-muted">{pool.pool_mode}</td>
       <td
         className="px-4 py-2 text-right"
-        title={`${pool.connections} of ${pool.max_connections} backends in use (${(saturation * 100).toFixed(0)} %). Above 70 % means you are close to making clients wait; above 90 % means new clients are queueing.`}
+        title={`active=${pool.active} of max_connections=${pool.max_connections} (${(saturation * 100).toFixed(0)} %). Plus ${pool.connections - pool.active} warm-idle backends still held from prior bursts. Color reflects active / max — above 70 % is amber, above 90 % is red.`}
       >
         <span
           className={
             saturation >= 0.9 ? "text-danger" : saturation >= 0.7 ? "text-warning" : ""
           }
         >
-          {pool.connections}/{pool.max_connections}
+          {pool.active}/{pool.max_connections}
         </span>{" "}
         <span className="text-text-dim text-xs">
           ({(saturation * 100).toFixed(0)}%)

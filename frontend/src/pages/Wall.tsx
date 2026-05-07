@@ -42,15 +42,23 @@ export default function Wall() {
     let paused = 0;
     for (const p of pools.data.pools) {
       if (p.query_p95_ms > maxP95) maxP95 = p.query_p95_ms;
+      // Saturation = active / max_connections to match the threshold engine
+      // in lib/thresholds.ts. Idle backends still held from a prior burst
+      // are not pressure on the pool, so they do not count here either.
       if (p.max_connections > 0) {
-        const s = (p.connections / p.max_connections) * 100;
+        const s = (p.active / p.max_connections) * 100;
         if (s > maxSat) maxSat = s;
       }
       if (p.max_active_age_ms > maxOldest) maxOldest = p.max_active_age_ms;
       waitingTotal += p.waiting;
       if (p.paused) paused += 1;
-      if (p.errors_total > 0 && p.query_p95_ms > 500) critical += 1;
-      else if (p.query_p95_ms > 100 || p.waiting > 0) degraded += 1;
+      // Pool counted CRITICAL only on pooler-side pressure (high active or
+      // a backlog of waiting clients). Backend latency / errors stay in the
+      // DEGRADED bucket — slow PostgreSQL is not a pooler-critical signal.
+      const sat = p.max_connections > 0 ? p.active / p.max_connections : 0;
+      if (sat >= 0.9 || p.waiting >= 10) critical += 1;
+      else if (sat >= 0.7 || p.waiting > 0 || p.query_p95_ms > 100 || p.errors_total > 0)
+        degraded += 1;
     }
 
     const fmtMs = (n: number) => {
@@ -64,11 +72,14 @@ export default function Wall() {
     };
 
     return [
+      // Backend latency tiles cap at "warning" tone — slow PostgreSQL is not
+      // a pooler-critical signal. The pooler tiles below (max sat, waiting)
+      // own the "danger" colour.
       {
         label: "max p95",
         value: fmtMs(maxP95),
-        detail: maxP95 > 500 ? "crit > 500ms" : maxP95 > 100 ? "warn > 100ms" : "healthy",
-        tone: maxP95 > 500 ? "danger" : maxP95 > 100 ? "warning" : "ok",
+        detail: maxP95 > 500 ? "backend slow > 500ms" : maxP95 > 100 ? "backend warn > 100ms" : "healthy",
+        tone: maxP95 > 100 ? "warning" : "ok",
       },
       {
         label: "errors / s",
@@ -91,8 +102,8 @@ export default function Wall() {
       {
         label: "oldest active",
         value: fmtMs(maxOldest),
-        detail: maxOldest > 300_000 ? "crit > 5m" : maxOldest > 30_000 ? "warn > 30s" : "healthy",
-        tone: maxOldest > 300_000 ? "danger" : maxOldest > 30_000 ? "warning" : "ok",
+        detail: maxOldest > 300_000 ? "backend stuck > 5m" : maxOldest > 30_000 ? "backend warn > 30s" : "healthy",
+        tone: maxOldest > 30_000 ? "warning" : "ok",
       },
       {
         label: "pools",

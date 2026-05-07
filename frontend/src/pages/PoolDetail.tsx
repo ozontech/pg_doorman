@@ -109,7 +109,7 @@ export default function PoolDetail() {
   // `usePoll`, so this is safe and matches the pattern used in Overview.tsx).
   const last = history.history[history.history.length - 1];
   if (!last || last.ts !== poll.data!.ts) {
-    const saturation = pool.max_connections > 0 ? pool.connections / pool.max_connections : 0;
+    const saturation = pool.max_connections > 0 ? pool.active / pool.max_connections : 0;
     let qps = 0;
     let eps = 0;
     if (last) {
@@ -132,7 +132,7 @@ export default function PoolDetail() {
   }
 
   const series = (extract: (s: RowSnap) => number) => history.history.map(extract);
-  const saturation = pool.max_connections > 0 ? pool.connections / pool.max_connections : 0;
+  const saturation = pool.max_connections > 0 ? pool.active / pool.max_connections : 0;
   const latestQps = history.history[history.history.length - 1]?.qps ?? 0;
   const latestEps = history.history[history.history.length - 1]?.errors_per_s ?? 0;
 
