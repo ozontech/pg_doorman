@@ -101,6 +101,7 @@ PgCat намеренно опущен: у него центр тяжести —
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
+| Встроенный admin web UI (HTML-консоль в бинаре) | Да (HTML-консоль на том же порту, что и `/metrics`, включается через `[web].ui`) | Нет (только psql admin-консоль) | Нет (только psql admin-консоль) |
 | Prometheus-эндпоинт | Встроенный `/metrics` | Внешний (`pgbouncer_exporter`) | Внешний (Go-exporter sidecar, опрашивает admin-консоль) |
 | Перцентили задержки на пул (p50, p90, p95, p99) | Да (HDR Histogram) | Нет (только средние в `SHOW STATS`) | Да через exporter (TDigest, требует rule-опцию `quantiles`) |
 | Счётчики prepared statements в `SHOW STATS` | Да | Да (с 1.24) | Нет |

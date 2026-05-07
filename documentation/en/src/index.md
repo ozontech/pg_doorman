@@ -32,6 +32,16 @@ PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport` rolli
 [Read more →](tutorials/binary-upgrade.md)
 ```
 
+```admonish success title="Built-in admin web UI"
+PgDoorman bundles a single-page admin console in the binary, served on the same port as `/metrics`. Read-only by default: pools, clients, applications, prepared cache, query interner, current config, log tail, and a process memory breakdown. Pause / Resume / Reconnect / Reload are the only writes, scoped per pool or globally.
+
+PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy do not include a comparable operator dashboard in the pooler binary. They expose `/metrics` and a psql admin console, and visualisation lives in Grafana, CloudWatch, or external admin sites.
+
+The console activates only when `[web].ui = true` and `general.admin_password` is non-default. A fresh install with the placeholder password keeps the listener at `/metrics` only and logs a `WARN`.
+
+[Read more →](guides/web-ui.md)
+```
+
 ```admonish success title="Anonymous Prepared Statement Caching"
 PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-name `Parse` most drivers send for one-shot parameterised queries) — every `Bind` re-runs the planner from scratch. PgDoorman transparently rewrites the empty name to an internal `DOORMAN_<N>` on the backend, so the plan lands in the backend's named prepared registry and gets reused across `Bind`s of the same client and across clients sharing the pool.
 

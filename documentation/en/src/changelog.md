@@ -1,5 +1,49 @@
 # Changelog
 
+### 3.8.0
+
+#### Added
+
+- **Built-in admin web UI.** A single-page React app embedded in the
+  pg_doorman binary, served on the same port as `/metrics`. Read-
+  only by default: pools, clients, servers, applications, prepared
+  cache, query interner, current config, log tail, process memory
+  breakdown (jemalloc / `/proc/self/status` / cgroup), pool
+  coordinator, pool scaling counters, errors broken down by
+  SQLSTATE. Pause / Resume / Reconnect / Reload from the same page,
+  scoped per pool or globally.
+- **Web UI is opt-in and gated.** It activates only when `[web].ui =
+  true` and `general.admin_password` is non-default; an empty or
+  `"admin"` password demotes the listener to `/metrics` only and
+  logs a `WARN` at startup. `[web].ui_anonymous` controls whether
+  read-only `/api/*` endpoints answer without basic auth (default
+  `false`).
+- **Tooltips on every column and panel.** Each table header carries
+  a one-sentence ⓘ that explains what the column counts and what
+  healthy looks like.
+- **Live qps and tx-per-second on Apps and Clients tables.**
+  Computed in the browser from the delta between consecutive
+  `/api/*` snapshots.
+- **Filters on Prepared statements** (pool, name, hash, kind) and
+  **on Clients** (labelled inputs, clear button).
+- **Process memory drill-down.** A stacked breakdown bar over RSS
+  plus jemalloc, `/proc/self/status`, and pg_doorman cache
+  attribution, each row with a one-sentence explanation on hover.
+
+#### Notes
+
+- The dashboard polls every 1.5 s, but a 250 ms shared snapshot
+  feeds `/api/overview`, `/api/pools`, `/api/clients`,
+  `/api/servers`, `/api/apps`, `/api/stats` and `/metrics`, so a
+  multi-tab dashboard does not multiply pool-stats work by the
+  number of open tabs.
+- HTTP/1.1 keep-alive is on by default; long-running operator
+  sessions reuse one TCP connection per tab.
+- The frontend bundle (≈365 kB JavaScript, ≈31 kB CSS, both gzipped
+  on the wire) is embedded in the binary via `include_dir!`. No
+  network fetch from the browser to anything but pg_doorman itself,
+  no node toolchain in the RPM/DEB/Docker pipelines.
+
 ### 3.7.0
 
 #### ACTION REQUIRED before upgrading to 3.7.0

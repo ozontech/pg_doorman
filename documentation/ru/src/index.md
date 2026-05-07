@@ -32,6 +32,16 @@ Online restart в PgBouncer (`-R`, deprecated с 1.20; либо rolling restart 
 [Подробнее →](tutorials/binary-upgrade.md)
 ```
 
+```admonish success title="Встроенный admin web UI"
+PgDoorman встраивает в бинарь admin-консоль на том же порту, что и `/metrics`. Read-only по умолчанию: пулы, клиенты, приложения, prepared cache, query interner, текущий конфиг, последние записи лога, разбор памяти процесса. Запись делают только Pause / Resume / Reconnect / Reload — каждое можно выполнить per-pool или глобально.
+
+В PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy и Cloud SQL Auth Proxy сравнимой операторской консоли в бинаре пулера нет. Они отдают `/metrics` и admin-консоль через psql, а визуализация живёт в Grafana, CloudWatch или внешних admin-приложениях.
+
+Консоль включается только при `[web].ui = true` и `admin_password`, отличном от пустой строки и от дефолтного `admin`. С незаданным паролем pg_doorman остаётся в режиме «только `/metrics`» и пишет `WARN` в лог.
+
+[Подробнее →](guides/web-ui.md)
+```
+
 ```admonish success title="Кеш плана для анонимных prepared statements"
 PostgreSQL не кеширует план анонимных prepared statements (`Parse` с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый `Bind` заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное `DOORMAN_<N>` на бекенде, и план попадает в реестр именованных statement бекенда — переиспользуется между `Bind`'ами одного клиента и между клиентами одного пула.
 
