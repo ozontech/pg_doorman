@@ -47,13 +47,17 @@ pub(crate) fn collect_pools() -> PoolsDto {
             active: stats.sv_active,
             waiting: stats.cl_waiting,
             max_active_age_ms: stats.oldest_active_age_ms,
-            // Percentile fields are plain u64, not methods.
-            query_p95_ms: stats.query_percentile.p95,
-            query_p99_ms: stats.query_percentile.p99,
-            transactions_p95_ms: stats.xact_percentile.p95,
-            transactions_p99_ms: stats.xact_percentile.p99,
-            wait_avg_ms: stats.avg_wait_time / 1_000, // micros -> ms
-            wait_p95_ms: stats.wait_percentile.p95 / 1_000, // micros -> ms
+            // The HDR histograms underneath store microseconds; every DTO
+            // field on `_ms` divides by 1_000. Without this the SHOW STATS
+            // log reported "query_ms p95 = 6.62" while the Web UI showed
+            // "P95 MS = 6620" for the same pool — same number, off by a
+            // factor of a thousand.
+            query_p95_ms: stats.query_percentile.p95 / 1_000,
+            query_p99_ms: stats.query_percentile.p99 / 1_000,
+            transactions_p95_ms: stats.xact_percentile.p95 / 1_000,
+            transactions_p99_ms: stats.xact_percentile.p99 / 1_000,
+            wait_avg_ms: stats.avg_wait_time / 1_000,
+            wait_p95_ms: stats.wait_percentile.p95 / 1_000,
             queries_total: stats.total_query_count,
             transactions_total: stats.total_xact_count,
             errors_total: stats.errors,
