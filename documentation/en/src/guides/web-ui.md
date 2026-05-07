@@ -18,7 +18,7 @@ port = 9127
 
 # Operator console (default off)
 ui = true
-ui_anonymous = true
+ui_anonymous = false
 log_tap_max_entries = 8192
 ```
 
@@ -32,7 +32,7 @@ trivially open. Set a real password before flipping `ui = true`.
 | `host` | Bind address. | `"0.0.0.0"` |
 | `port` | Bind port. | `9127` |
 | `ui` | Serve the operator console on `/` and the public API endpoints. | `false` |
-| `ui_anonymous` | When `true`, public API endpoints (`/api/version`, `/api/overview`, `/api/pools`, ...) accept unauthenticated requests. Admin endpoints (`/api/logs`, `/api/prepared/text/...`, `/api/interner/top`) always require basic auth. | `true` |
+| `ui_anonymous` | When `true`, public API endpoints (`/api/version`, `/api/overview`, `/api/pools`, ...) accept unauthenticated requests. Admin endpoints (`/api/logs`, `/api/prepared/text/...`, `/api/interner/top`, `/api/admin/...`) always require basic auth. | `false` |
 | `log_tap_max_entries` | Ring buffer size for the in-memory log tap powering `/api/logs`. Set to `0` to disable the endpoint. | `8192` |
 
 ## URL surface
@@ -56,8 +56,11 @@ without the challenge — without that, the browser caches whatever the
 operator typed at the OS-level basic-auth dialog and replays it under the
 SPA modal.
 
-Credentials entered into the console live only in React state and are lost
-on a hard refresh.
+By default, credentials entered into the console live only in React state
+and are lost on a hard refresh. Tick "Remember me on this device" in the
+sign-in modal to persist them in the browser's `localStorage` so the
+console survives a reload. Clearing the site's storage in the browser
+wipes the entry.
 
 ## Pages
 
