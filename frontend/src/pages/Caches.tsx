@@ -109,6 +109,25 @@ function comparePrepared(
   }
 }
 
+interface PreparedFilters {
+  pool: string;
+  name: string;
+  hash: string;
+  // "any" matches all kinds. The remaining values are exact matches against
+  // the row's `kind` field as serialised by the backend.
+  kind: "any" | "named" | "anonymous" | "mixed";
+}
+
+const EMPTY_FILTERS: PreparedFilters = { pool: "", name: "", hash: "", kind: "any" };
+
+function matchesFilters(r: PreparedRowDto, f: PreparedFilters): boolean {
+  if (f.pool && !r.pool.toLowerCase().includes(f.pool.toLowerCase())) return false;
+  if (f.name && !(r.name || "").toLowerCase().includes(f.name.toLowerCase())) return false;
+  if (f.hash && !r.hash.toLowerCase().includes(f.hash.toLowerCase())) return false;
+  if (f.kind !== "any" && r.kind !== f.kind) return false;
+  return true;
+}
+
 function PreparedTab() {
   const { authHeader } = useAdminAuth();
   const poll = usePoll<PreparedDto>(
@@ -123,6 +142,12 @@ function PreparedTab() {
   // opens this page to answer is which statements drive cache pressure.
   const [sortKey, setSortKey] = useState<PreparedSortKey>("count_used");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [filters, setFilters] = useState<PreparedFilters>(EMPTY_FILTERS);
+  const filterActive =
+    filters.pool !== "" ||
+    filters.name !== "" ||
+    filters.hash !== "" ||
+    filters.kind !== "any";
   const onSort = (k: PreparedSortKey) => {
     if (k === sortKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -135,13 +160,13 @@ function PreparedTab() {
     sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
   const sorted = useMemo(() => {
     if (!poll.data) return [];
-    const arr = [...poll.data.prepared];
+    const arr = poll.data.prepared.filter((r) => matchesFilters(r, filters));
     arr.sort((a, b) => {
       const cmp = comparePrepared(a, b, sortKey);
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [poll.data, sortKey, sortDir]);
+  }, [poll.data, filters, sortKey, sortDir]);
 
   const toggle = (pool: string, hash: string) => {
     const key = `${pool}-${hash}`;
@@ -179,6 +204,51 @@ function PreparedTab() {
         how="Click a row to expand the SQL body — admin credentials required, fetched once per row and kept until you collapse it. Updates every 3 s."
         normal="Hit rate ≥ 95 % once the pool is warm. If a pool sits below 95 % for several minutes, raise prepared_statements_cache_size. Below 80 % means most queries pay for a Parse — that is a hot-path regression."
       />
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+        <input
+          placeholder="filter pool"
+          value={filters.pool}
+          onChange={(e) => setFilters((f) => ({ ...f, pool: e.target.value }))}
+          className="w-44 rounded border border-border-strong bg-surface-2 px-2 py-1 font-mono text-xs text-text"
+        />
+        <input
+          placeholder="filter name (DOORMAN_…)"
+          value={filters.name}
+          onChange={(e) => setFilters((f) => ({ ...f, name: e.target.value }))}
+          className="w-56 rounded border border-border-strong bg-surface-2 px-2 py-1 font-mono text-xs text-text"
+        />
+        <input
+          placeholder="filter hash"
+          value={filters.hash}
+          onChange={(e) => setFilters((f) => ({ ...f, hash: e.target.value }))}
+          className="w-44 rounded border border-border-strong bg-surface-2 px-2 py-1 font-mono text-xs text-text"
+        />
+        <select
+          value={filters.kind}
+          onChange={(e) =>
+            setFilters((f) => ({ ...f, kind: e.target.value as PreparedFilters["kind"] }))
+          }
+          className="rounded border border-border-strong bg-surface-2 px-2 py-1 font-mono text-xs text-text"
+        >
+          <option value="any">any kind</option>
+          <option value="named">named</option>
+          <option value="anonymous">anonymous</option>
+          <option value="mixed">mixed</option>
+        </select>
+        {filterActive && (
+          <button
+            type="button"
+            onClick={() => setFilters(EMPTY_FILTERS)}
+            className="border border-border-strong px-2 py-1 text-xs font-mono uppercase tracking-wider text-text-muted hover:text-accent"
+            title="Clear all filters"
+          >
+            clear
+          </button>
+        )}
+        <span className="ml-auto text-xs text-text-dim tabular">
+          {sorted.length} of {poll.data.prepared.length} statements
+        </span>
+      </div>
       <div className="overflow-x-auto">
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
@@ -287,6 +357,9 @@ function PreparedTab() {
       </table>
       {poll.data.prepared.length === 0 && (
         <p className="p-4 text-sm text-text-dim">No prepared statements yet. The cache fills as clients send Parse over the wire — open the Clients page to confirm traffic is flowing.</p>
+      )}
+      {poll.data.prepared.length > 0 && sorted.length === 0 && (
+        <p className="p-4 text-sm text-text-dim">No statements match these filters. Click clear to see them all again.</p>
       )}
       </div>
     </>
