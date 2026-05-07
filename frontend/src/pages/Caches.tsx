@@ -1,11 +1,17 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { apiGet } from "../api";
 import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import { prettySql } from "../lib/prettySql";
-import type { InternerDto, InternerTopDto, PreparedDto, PreparedTextDto } from "../types";
+import type {
+  InternerDto,
+  InternerTopDto,
+  PreparedDto,
+  PreparedRowDto,
+  PreparedTextDto,
+} from "../types";
 
 const POLL_MS = 3000;
 
@@ -56,6 +62,53 @@ interface TextCell {
   error?: string;
 }
 
+type PreparedSortKey =
+  | "pool"
+  | "kind"
+  | "name"
+  | "hash"
+  | "count_used"
+  | "hits"
+  | "misses"
+  | "hit_rate";
+type SortDir = "asc" | "desc";
+
+/// Hit-rate sentinel used to keep "no traffic yet" rows below real data
+/// regardless of asc/desc — `hits + misses == 0` rows have nothing to
+/// compare and dragging them to the top would bury the rows operators
+/// actually care about.
+const HIT_RATE_NO_DATA = -1;
+
+function hitRateOrSentinel(r: PreparedRowDto): number {
+  const total = r.hits + r.misses;
+  return total > 0 ? r.hits / total : HIT_RATE_NO_DATA;
+}
+
+function comparePrepared(
+  a: PreparedRowDto,
+  b: PreparedRowDto,
+  key: PreparedSortKey,
+): number {
+  switch (key) {
+    case "pool":
+      return a.pool.localeCompare(b.pool);
+    case "kind":
+      return a.kind.localeCompare(b.kind);
+    case "name":
+      return (a.name || "").localeCompare(b.name || "");
+    case "hash":
+      return a.hash.localeCompare(b.hash);
+    case "count_used":
+      return a.count_used - b.count_used;
+    case "hits":
+      return a.hits - b.hits;
+    case "misses":
+      return a.misses - b.misses;
+    case "hit_rate":
+      return hitRateOrSentinel(a) - hitRateOrSentinel(b);
+  }
+}
+
 function PreparedTab() {
   const { authHeader } = useAdminAuth();
   const poll = usePoll<PreparedDto>(
@@ -66,6 +119,29 @@ function PreparedTab() {
   // omits the text on purpose (anonymous-safe public endpoint); admins
   // fetch it row-by-row via /api/prepared/text/{hash}.
   const [texts, setTexts] = useState<Record<string, TextCell>>({});
+  // Default to "most-used statements first" — the question an operator
+  // opens this page to answer is which statements drive cache pressure.
+  const [sortKey, setSortKey] = useState<PreparedSortKey>("count_used");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const onSort = (k: PreparedSortKey) => {
+    if (k === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      setSortDir("desc");
+    }
+  };
+  const sortIndicator = (k: PreparedSortKey) =>
+    sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+  const sorted = useMemo(() => {
+    if (!poll.data) return [];
+    const arr = [...poll.data.prepared];
+    arr.sort((a, b) => {
+      const cmp = comparePrepared(a, b, sortKey);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [poll.data, sortKey, sortDir]);
 
   const toggle = (pool: string, hash: string) => {
     const key = `${pool}-${hash}`;
@@ -107,18 +183,50 @@ function PreparedTab() {
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
-            <th className="px-3 py-2 text-left">Pool</th>
-            <th className="px-3 py-2 text-left">Kind</th>
-            <th className="px-3 py-2 text-left">Name</th>
-            <th className="px-3 py-2 text-left">Hash</th>
-            <th className="px-3 py-2 text-right">Used</th>
-            <th className="px-3 py-2 text-right">Hits</th>
-            <th className="px-3 py-2 text-right">Misses</th>
-            <th className="px-3 py-2 text-right">Hit rate</th>
+            <th className="px-3 py-2 text-left">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("pool")}>
+                Pool{sortIndicator("pool")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-left">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("kind")}>
+                Kind{sortIndicator("kind")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-left">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("name")}>
+                Name{sortIndicator("name")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-left">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("hash")}>
+                Hash{sortIndicator("hash")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("count_used")}>
+                Used{sortIndicator("count_used")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("hits")}>
+                Hits{sortIndicator("hits")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("misses")}>
+                Misses{sortIndicator("misses")}
+              </span>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <span className="cursor-pointer hover:text-text" onClick={() => onSort("hit_rate")}>
+                Hit rate{sortIndicator("hit_rate")}
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {poll.data.prepared.map((r) => {
+          {sorted.map((r) => {
             const total = r.hits + r.misses;
             const hitRate = total > 0 ? r.hits / total : null;
             const key = `${r.pool}-${r.hash}`;
