@@ -388,6 +388,12 @@ pub struct PreparedStatementState {
     /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
     pub last_anonymous_hash: Option<u64>,
 
+    /// Hash of the last Bind in the current batch, plus the anonymous flag.
+    /// Cleared on Sync completion. Used by /api/top/queries duration
+    /// instrumentation to attribute the batch's elapsed time to a single
+    /// interner entry.
+    pub last_bound_for_top: Option<(u64, bool)>,
+
     /// Tracks skipped Parse messages that need synthetic ParseComplete responses.
     /// Each entry contains the statement name and what response we're waiting for.
     pub skipped_parses: Vec<SkippedParse>,
@@ -424,6 +430,7 @@ impl PreparedStatementState {
             async_client: false,
             cache: PreparedStatementCache::new(anon_cache_size),
             last_anonymous_hash: None,
+            last_bound_for_top: None,
             skipped_parses: Vec::new(),
             batch_operations: Vec::new(),
             parses_sent_in_batch: 0,

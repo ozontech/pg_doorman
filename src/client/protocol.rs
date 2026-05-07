@@ -249,7 +249,7 @@ where
         // eviction rate at zero capacity pressure.
         if let PutOutcome::Evicted(_) = self.prepared.cache.put(cache_key, cached) {
             self.prepared.anonymous_evictions += 1;
-            crate::prometheus::observe_anonymous_eviction(&self.username, &self.pool_name);
+            crate::web::metrics::observe_anonymous_eviction(&self.username, &self.pool_name);
         }
 
         // Update prepared cache stats after modification
@@ -263,7 +263,18 @@ where
 
         // Check if server already has this prepared statement
         // For async clients with unique names, this will always be false (new unique name)
-        if server.has_prepared_statement(&server_stmt_name) {
+        let server_has_it = server.has_prepared_statement(&server_stmt_name);
+        if let Some(cache) = pool.prepared_statement_cache.as_ref() {
+            // Per-CacheEntry hit/miss for /api/top/prepared. Silent no-op
+            // when the entry was evicted between register_parse_to_cache and
+            // here — same lock-free policy as /api/top/queries.
+            if server_has_it {
+                cache.record_hit(hash);
+            } else {
+                cache.record_miss(hash);
+            }
+        }
+        if server_has_it {
             // For async clients, always send Parse to get real ParseComplete from server
             if self.prepared.async_client {
                 debug!(
@@ -371,7 +382,7 @@ where
                             self.username, self.pool_name, self.connection_id,
                         );
                     }
-                    crate::prometheus::record_synthetic_miss();
+                    crate::web::metrics::record_synthetic_miss();
                     // SQLSTATE 26000 (invalid_sql_statement_name) matches the
                     // error native PostgreSQL raises for the same condition;
                     // see src/backend/tcop/postgres.c exec_bind_message.
@@ -462,6 +473,14 @@ where
                     statement_name: server_name,
                 });
 
+                // /api/top/queries instrumentation. Accept the cache miss /
+                // race where the interner entry has been GC'd between intern
+                // and Bind — the no-op behaviour in record_query_count is
+                // intended to keep the hot path lock-free.
+                let is_anonymous = client_given_name.is_empty();
+                crate::server::record_query_count(cached.hash, is_anonymous);
+                self.prepared.last_bound_for_top = Some((cached.hash, is_anonymous));
+
                 Ok(())
             }
             None => {
@@ -485,7 +504,7 @@ where
                             self.username, self.pool_name, self.connection_id,
                         );
                     }
-                    crate::prometheus::record_synthetic_miss();
+                    crate::web::metrics::record_synthetic_miss();
                     error_response(
                         &mut self.write,
                         "unnamed prepared statement does not exist",
@@ -639,7 +658,7 @@ where
                             self.username, self.pool_name, self.connection_id,
                         );
                     }
-                    crate::prometheus::record_synthetic_miss();
+                    crate::web::metrics::record_synthetic_miss();
                     error_response(
                         &mut self.write,
                         "unnamed prepared statement does not exist",

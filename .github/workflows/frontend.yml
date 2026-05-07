@@ -1,0 +1,66 @@
+name: Frontend lint, typecheck, dist sync
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint-typecheck-build:
+    name: lint + typecheck + dist sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: frontend
+
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: frontend
+
+      - name: Verify committed dist matches source-hash
+        # The build itself is not byte-stable across machines (esbuild native
+        # binaries differ), so we hash the source tree instead and compare it
+        # against `dist/.source-hash` written by `npm run build`. A mismatch
+        # means a contributor changed source files without rebuilding dist.
+        run: npm run check-dist
+        working-directory: frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+
+      - name: Verify dist exists and is non-empty
+        # Pin working-directory so paths are unambiguous regardless of
+        # whether the step inherits the previous step's directory. The
+        # post-build step pre-gzips every compressible asset (.js, .css,
+        # .html, .svg) and removes the originals — include_dir!()
+        # embeds only the .gz form. The assertions therefore look for
+        # the .gz neighbours, not the raw files.
+        working-directory: frontend
+        run: |
+          test -s dist/index.html.gz
+          test -d dist/assets
+          test "$(ls dist/assets/*.js.gz 2>/dev/null | wc -l)" -ge 1
+          echo "frontend/dist/ shipped with $(ls dist/assets | wc -l) assets"

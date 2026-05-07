@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
-use crate::config::{Config, ConfigFormat, Pool, PoolMode, Prometheus, User};
+use crate::config::{Config, ConfigFormat, Pool, PoolMode, User, Web};
 
 // ---------------------------------------------------------------------------
 // YAML field descriptions — single source of truth
@@ -49,7 +49,7 @@ pub(crate) struct FieldsMap {
     pub pool: HashMap<String, FieldDesc>,
     pub user: HashMap<String, FieldDesc>,
     pub auth_query: HashMap<String, FieldDesc>,
-    pub prometheus: HashMap<String, FieldDesc>,
+    pub web: HashMap<String, FieldDesc>,
 }
 
 #[derive(Deserialize)]
@@ -60,13 +60,29 @@ pub(crate) struct FieldsData {
 }
 
 impl FieldsData {
+    /// Same lookup as [`Self::field`] but returns `None` instead of
+    /// panicking on an unknown section/field. Used by the web layer to
+    /// surface field descriptions in `/api/config`, where unknown keys
+    /// are normal (operator-defined pool names, talos role names, etc.).
+    pub(crate) fn try_field(&self, section: &str, name: &str) -> Option<&FieldDesc> {
+        let map = match section {
+            "general" => &self.fields.general,
+            "pool" => &self.fields.pool,
+            "user" => &self.fields.user,
+            "auth_query" => &self.fields.auth_query,
+            "web" => &self.fields.web,
+            _ => return None,
+        };
+        map.get(name)
+    }
+
     pub(crate) fn field(&self, section: &str, name: &str) -> &FieldDesc {
         let map = match section {
             "general" => &self.fields.general,
             "pool" => &self.fields.pool,
             "user" => &self.fields.user,
             "auth_query" => &self.fields.auth_query,
-            "prometheus" => &self.fields.prometheus,
+            "web" => &self.fields.web,
             _ => panic!("Unknown section: {section}"),
         };
         map.get(name)
@@ -186,7 +202,7 @@ pub fn generate_annotated_config(config: &Config, format: ConfigFormat, russian:
     write_header(&mut w);
     write_include_section(&mut w);
     write_general_section(&mut w, config);
-    write_prometheus_section(&mut w, &config.prometheus);
+    write_web_section(&mut w, &config.web);
     write_talos_section(&mut w);
     write_pools_section(&mut w, config);
 
@@ -1081,22 +1097,38 @@ fn write_pg_hba_rule_examples(w: &mut ConfigWriter, fi: usize) {
     }
 }
 
-fn write_prometheus_section(w: &mut ConfigWriter, prom: &Prometheus) {
+fn write_web_section(w: &mut ConfigWriter, web: &Web) {
     let f = &*FIELDS;
-    w.major_separator(f.text("prometheus_title").get(w.russian));
-    w.section(0, "prometheus");
+    w.major_separator(f.text("web_title").get(w.russian));
+    w.section(0, "web");
     let fi = w.field_indent();
 
-    write_field_comment(w, fi, "prometheus", "enabled");
-    w.kv(fi, "enabled", &w.bool_val(prom.enabled));
+    write_field_comment(w, fi, "web", "enabled");
+    w.kv(fi, "enabled", &w.bool_val(web.enabled));
     w.blank();
 
-    write_field_comment(w, fi, "prometheus", "host");
-    w.kv(fi, "host", &w.str_val(&prom.host));
+    write_field_comment(w, fi, "web", "host");
+    w.kv(fi, "host", &w.str_val(&web.host));
     w.blank();
 
-    write_field_comment(w, fi, "prometheus", "port");
-    w.kv(fi, "port", &w.num_val(prom.port));
+    write_field_comment(w, fi, "web", "port");
+    w.kv(fi, "port", &w.num_val(web.port));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "ui");
+    w.kv(fi, "ui", &w.bool_val(web.ui));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "ui_anonymous");
+    w.kv(fi, "ui_anonymous", &w.bool_val(web.ui_anonymous));
+    w.blank();
+
+    write_field_comment(w, fi, "web", "log_tap_max_entries");
+    w.kv(
+        fi,
+        "log_tap_max_entries",
+        &w.num_val(web.log_tap_max_entries),
+    );
     w.blank();
 }
 
@@ -2037,7 +2069,7 @@ mod tests {
             ("General", include_str!("../../config/general.rs")),
             ("Pool", include_str!("../../config/pool.rs")),
             ("User", include_str!("../../config/user.rs")),
-            ("Prometheus", include_str!("../../config/prometheus.rs")),
+            ("Web", include_str!("../../config/web.rs")),
             ("Talos", include_str!("../../config/talos.rs")),
             ("Include", include_str!("../../config/include.rs")),
         ];
@@ -2121,7 +2153,7 @@ mod tests {
             ("General", include_str!("../../config/general.rs")),
             ("Pool", include_str!("../../config/pool.rs")),
             ("User", include_str!("../../config/user.rs")),
-            ("Prometheus", include_str!("../../config/prometheus.rs")),
+            ("Web", include_str!("../../config/web.rs")),
             ("AuthQueryConfig", include_str!("../../config/pool.rs")),
         ];
 
@@ -2129,7 +2161,7 @@ mod tests {
             ("General", "general"),
             ("Pool", "pool"),
             ("User", "user"),
-            ("Prometheus", "prometheus"),
+            ("Web", "web"),
             ("AuthQueryConfig", "auth_query"),
         ];
 
@@ -2162,7 +2194,7 @@ mod tests {
                         "pool" => &fields.fields.pool,
                         "user" => &fields.fields.user,
                         "auth_query" => &fields.fields.auth_query,
-                        "prometheus" => &fields.fields.prometheus,
+                        "web" => &fields.fields.web,
                         _ => unreachable!(),
                     };
                     map.contains_key(field.as_str())

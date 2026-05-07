@@ -1,6 +1,6 @@
 # Patroni Proxy
 
-`patroni_proxy` — TCP-балансировщик для кластеров PostgreSQL под управлением Patroni. Слушает один или несколько портов, спрашивает у Patroni REST API кто сейчас leader / sync / async, и направляет новые соединения на нужную роль по стратегии least-connections. Не пулит соединения, не парсит wire-протокол, не знает что за SQL внутри — это работа pg_doorman, развёрнутого ниже по цепочке.
+`patroni_proxy` — TCP-балансировщик для кластеров PostgreSQL под управлением Patroni. Слушает один или несколько портов, спрашивает у Patroni REST API кто сейчас leader / sync / async, и направляет новые соединения на нужную роль по стратегии least-connections. Не выполняет пулинг соединений, не парсит wire-протокол, не знает что за SQL внутри — это работа pg_doorman, развёрнутого ниже по цепочке.
 
 ## Что он делает
 
@@ -56,7 +56,7 @@ listen_address: "127.0.0.1:8009"
 
 clusters:
   my_cluster:
-    # Endpoint'ы Patroni API (несколько -- для отказоустойчивости)
+    # Endpoint'ы Patroni API (несколько — для отказоустойчивости)
     hosts:
       - "http://192.168.1.1:8008"
       - "http://192.168.1.2:8008"
@@ -90,12 +90,12 @@ clusters:
 |----------|--------------|----------|
 | `cluster_update_interval` | 3 | Интервал в секундах между опросами Patroni API |
 | `listen_address` | 127.0.0.1:8009 | Адрес для HTTP API |
-| `clusters.<name>.hosts` | -- | Список endpoint'ов Patroni API |
-| `clusters.<name>.tls` | -- | Опциональная TLS-конфигурация для Patroni API |
-| `clusters.<name>.ports.<name>.listen` | -- | Адрес для listener этого порта |
-| `clusters.<name>.ports.<name>.roles` | -- | Список разрешённых ролей |
-| `clusters.<name>.ports.<name>.host_port` | -- | Порт PostgreSQL на бэкенд-хостах |
-| `clusters.<name>.ports.<name>.max_lag_in_bytes` | -- | Максимальный лаг репликации (опционально) |
+| `clusters.<name>.hosts` | — | Список endpoint'ов Patroni API |
+| `clusters.<name>.tls` | — | Опциональная TLS-конфигурация для Patroni API |
+| `clusters.<name>.ports.<name>.listen` | — | Адрес для listener этого порта |
+| `clusters.<name>.ports.<name>.roles` | — | Список разрешённых ролей |
+| `clusters.<name>.ports.<name>.host_port` | — | Порт PostgreSQL на бэкенд-хостах |
+| `clusters.<name>.ports.<name>.max_lag_in_bytes` | — | Максимальный лаг репликации (опционально) |
 
 ## Использование
 

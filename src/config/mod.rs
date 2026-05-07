@@ -27,10 +27,10 @@ mod duration;
 mod general;
 mod include;
 mod pool;
-mod prometheus;
 mod talos;
 pub mod tls;
 mod user;
+mod web;
 
 #[cfg(test)]
 mod tests;
@@ -42,10 +42,10 @@ pub use duration::Duration;
 pub use general::General;
 pub use include::{GeneralWithInclude, Include, ServerConfig};
 pub use pool::{AuthQueryConfig, Pool};
-pub use prometheus::Prometheus;
 pub use talos::Talos;
 pub use tls::{ServerTlsConfig, ServerTlsMode};
 pub use user::User;
+pub use web::Web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -213,9 +213,9 @@ pub struct Config {
     // General and global settings.
     pub general: General,
 
-    // Prometheus settings.
-    #[serde(default = "Prometheus::empty")]
-    pub prometheus: Prometheus,
+    // Web UI / metrics settings.
+    #[serde(default = "Web::empty", alias = "prometheus")]
+    pub web: Web,
 
     // Talos settings.
     #[serde(default = "Talos::empty", skip_serializing_if = "Talos::is_empty")]
@@ -243,7 +243,7 @@ impl Default for Config {
         Config {
             path: Self::default_path(),
             general: General::default(),
-            prometheus: Prometheus::empty(),
+            web: Web::empty(),
             pools: HashMap::default(),
             talos: Talos {
                 keys: vec![],
@@ -791,6 +791,13 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     };
 
     let new_config = get_config();
+    // Refresh the web listener's reload-aware options whether or not
+    // pools changed: `[web]` and `[general].admin_*` updates can land
+    // independently of pool config and still need the listener to pick
+    // them up without a process restart. Done here (vs each caller) so
+    // every reload path — admin protocol RELOAD, REST POST /api/admin/
+    // reload, SIGHUP — gets the same behaviour.
+    crate::web::refresh_options_from_config();
 
     if old_config != new_config {
         info!("Config changed, reloading");

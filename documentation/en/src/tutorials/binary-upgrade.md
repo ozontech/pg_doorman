@@ -506,3 +506,7 @@ Before rolling out binary upgrade to production:
       upgrade
 - [ ] Confirm old process exits (check PID file or `pgrep`)
 - [ ] Verify Prometheus metrics show clients on the new process
+
+```admonish note title="Prometheus scrape during the drain window"
+The web listener (which serves `/metrics`) binds with `SO_REUSEPORT`. While the old process drains and the new one accepts new clients, both share the same port; the kernel balances scrape requests between them. Counter values may appear to jump backwards on a single scrape until the old process exits. The race window lasts at most `shutdown_timeout`.
+```

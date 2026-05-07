@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Guard frontend/dist/ against drift from frontend/src/.
+#
+# Runs only when staged changes touch frontend source. If node is available
+# locally, the hook checks the source-hash committed in dist/.source-hash and
+# fails with a remediation message when the bundle is stale. Without node,
+# the hook stays out of the way — CI runs the same check.
+set -euo pipefail
+
+if ! git diff --cached --name-only --diff-filter=ACMR | \
+    grep -qE '^frontend/(src/|public/|index\.html$|package\.json$|package-lock\.json$|vite\.config\.ts$|tsconfig\.json$)'; then
+  exit 0
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found; skipping frontend/dist/ sync check (CI will run it)" >&2
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT/frontend"
+if ! node scripts/check-source-hash.mjs; then
+  echo "" >&2
+  echo "pre-commit: frontend/dist/ is stale. Either" >&2
+  echo "  1) cd frontend && npm run build && git add dist" >&2
+  echo "  2) commit with --no-verify if you intentionally bypass the rebuild (CI will fail)" >&2
+  exit 1
+fi

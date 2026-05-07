@@ -5,12 +5,13 @@ use log::{error, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
+use crate::admin::operations::{pause_now, reconnect_now, resume_now, AdminEffect, AdminScope};
 use crate::config::{get_config, reload_config};
 use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::{get_all_pools, ClientServerMap, PoolMap};
+use crate::pool::ClientServerMap;
 
 /// Reload the configuration file without restarting the process.
 pub async fn reload<T>(stream: &mut T, client_server_map: ClientServerMap) -> Result<(), Error>
@@ -20,6 +21,7 @@ where
     info!("Reloading config");
 
     reload_config(client_server_map).await?;
+    crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
 
     get_config().show();
 
@@ -122,29 +124,44 @@ where
     write_all_half(stream, &res).await
 }
 
-/// Check that the specified database has at least one pool.
-/// Returns `Ok(true)` if pools exist (or no db filter was given).
-/// Returns `Ok(false)` after sending an error response if db was specified but no pools matched.
-async fn check_db_has_pools<T>(
-    stream: &mut T,
-    db: &Option<String>,
-    pools: &PoolMap,
-) -> Result<bool, Error>
+/// Map an [`AdminEffect`] to either a postgres-protocol error response
+/// (for `NoMatchingDb`) or a `CommandComplete` reply (for `Applied`).
+async fn render_effect<T>(stream: &mut T, command: &str, effect: AdminEffect) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    if let Some(ref db_name) = db {
-        if !pools.keys().any(|id| id.db == *db_name) {
+    match effect {
+        AdminEffect::NoMatchingDb { db } => {
+            admin_error_response(stream, &format!("No pool for database \"{db}\""), "3D000").await
+        }
+        // The PG admin protocol path only ever passes Database / AllPools
+        // scopes, so NoMatchingPool cannot land here in practice. Surface
+        // it the same way as NoMatchingDb in case a future caller wires
+        // pool-level scoping into this transport too.
+        AdminEffect::NoMatchingPool { user, db } => {
             admin_error_response(
                 stream,
-                &format!("No pool for database \"{}\"", db_name),
+                &format!("No pool for user \"{user}\"@database \"{db}\""),
                 "3D000",
             )
-            .await?;
-            return Ok(false);
+            .await
+        }
+        AdminEffect::Applied { .. } => {
+            let mut res = BytesMut::new();
+            res.put(command_complete(command));
+            res.put_u8(b'Z');
+            res.put_i32(5);
+            res.put_u8(b'I');
+            write_all_half(stream, &res).await
         }
     }
-    Ok(true)
+}
+
+fn db_scope(db: Option<String>) -> AdminScope {
+    match db {
+        Some(name) => AdminScope::Database(name),
+        None => AdminScope::AllPools,
+    }
 }
 
 /// Pause connection pools — blocks new backend connection acquisition.
@@ -154,26 +171,7 @@ pub async fn pause<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    let pools = get_all_pools();
-    if !check_db_has_pools(stream, &db, &pools).await? {
-        return Ok(());
-    }
-    for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
-        }
-        pool.database.pause();
-        info!("PAUSE: paused pool {}", identifier);
-    }
-
-    let mut res = BytesMut::new();
-    res.put(command_complete("PAUSE"));
-    res.put_u8(b'Z');
-    res.put_i32(5);
-    res.put_u8(b'I');
-    write_all_half(stream, &res).await
+    render_effect(stream, "PAUSE", pause_now(db_scope(db))).await
 }
 
 /// Resume connection pools — unblocks clients waiting due to PAUSE.
@@ -182,26 +180,7 @@ pub async fn resume<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    let pools = get_all_pools();
-    if !check_db_has_pools(stream, &db, &pools).await? {
-        return Ok(());
-    }
-    for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
-        }
-        pool.database.resume();
-        info!("RESUME: resumed pool {}", identifier);
-    }
-
-    let mut res = BytesMut::new();
-    res.put(command_complete("RESUME"));
-    res.put_u8(b'Z');
-    res.put_i32(5);
-    res.put_u8(b'I');
-    write_all_half(stream, &res).await
+    render_effect(stream, "RESUME", resume_now(db_scope(db))).await
 }
 
 /// Reconnect connection pools — bumps epoch and drains idle connections.
@@ -211,27 +190,5 @@ pub async fn reconnect<T>(stream: &mut T, db: Option<String>) -> Result<(), Erro
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    let pools = get_all_pools();
-    if !check_db_has_pools(stream, &db, &pools).await? {
-        return Ok(());
-    }
-    for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
-        }
-        let new_epoch = pool.database.reconnect();
-        info!(
-            "RECONNECT: reconnected pool {} (new epoch: {})",
-            identifier, new_epoch
-        );
-    }
-
-    let mut res = BytesMut::new();
-    res.put(command_complete("RECONNECT"));
-    res.put_u8(b'Z');
-    res.put_i32(5);
-    res.put_u8(b'I');
-    write_all_half(stream, &res).await
+    render_effect(stream, "RECONNECT", reconnect_now(db_scope(db))).await
 }

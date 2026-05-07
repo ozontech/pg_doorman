@@ -101,6 +101,7 @@ See [General settings reference](reference/general.md), [Pool settings reference
 
 | Feature | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
+| Built-in admin web UI (HTML console in the binary) | Yes (single-page console on the same port as `/metrics`, opt-in via `[web].ui`) | No (psql admin console only) | No (psql admin console only) |
 | Prometheus endpoint | Built-in `/metrics` | External (`pgbouncer_exporter`) | External (Go exporter sidecar that polls the admin console) |
 | Latency percentiles per pool (p50, p90, p95, p99) | Yes (HDR Histogram) | No (averages only in `SHOW STATS`) | Yes via the exporter (TDigest, requires `quantiles` rule option) |
 | Prepared statement counters in `SHOW STATS` | Yes | Yes (since 1.24) | No |

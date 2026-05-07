@@ -12,7 +12,7 @@ graph LR
     Pooler --> DB[(PostgreSQL)]
 ```
 
-Изначально PgDoorman был форкнут из [PgCat](https://github.com/postgresml/pgcat), но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и binary upgrade с миграцией живых сессий. Сейчас это самостоятельный кодовый код.
+Изначально PgDoorman был форкнут из [PgCat](https://github.com/postgresml/pgcat), но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и binary upgrade с миграцией живых сессий. Сейчас это самостоятельная кодовая база.
 
 ## Зачем вообще пулер
 

@@ -31,45 +31,45 @@ enum SocketAddr {
 }
 
 #[derive(Default)]
-struct TcpStateCount {
+pub struct TcpStateCount {
     // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/net/tcp_states.h
-    established: u16,
-    syn_sent: u16,
-    syn_recv: u16,
-    fin_wait1: u16,
-    fin_wait2: u16,
-    time_wait: u16,
-    close: u16,
-    close_wait: u16,
-    last_ack: u16,
-    listen: u16,
-    closing: u16,
-    new_syn_recv: u16,
-    bound_inactive: u16,
+    pub established: u16,
+    pub syn_sent: u16,
+    pub syn_recv: u16,
+    pub fin_wait1: u16,
+    pub fin_wait2: u16,
+    pub time_wait: u16,
+    pub close: u16,
+    pub close_wait: u16,
+    pub last_ack: u16,
+    pub listen: u16,
+    pub closing: u16,
+    pub new_syn_recv: u16,
+    pub bound_inactive: u16,
 
-    total_count: u32,
+    pub total_count: u32,
 }
 
 #[derive(Default)]
-struct UnixStreamStateCount {
+pub struct UnixStreamStateCount {
     // https://github.com/ecki/net-tools/blob/master/netstat.c#L121
-    free: u16,          /* not allocated                */
-    unconnected: u16,   /* unconnected to any socket    */
-    connecting: u16,    /* in process of connecting     */
-    connected: u16,     /* connected to socket          */
-    disconnecting: u16, /* in process of disconnecting  */
+    pub free: u16,          /* not allocated                */
+    pub unconnected: u16,   /* unconnected to any socket    */
+    pub connecting: u16,    /* in process of connecting     */
+    pub connected: u16,     /* connected to socket          */
+    pub disconnecting: u16, /* in process of disconnecting  */
 
-    total_count: u32,
+    pub total_count: u32,
 }
 
 #[derive(Default)]
 pub struct SocketStateCount {
-    tcp: TcpStateCount,
-    tcp6: TcpStateCount,
-    unix_stream: UnixStreamStateCount,
-    unix_dgram: u16,
-    unix_seq_packet: u16,
-    unknown: u16,
+    pub tcp: TcpStateCount,
+    pub tcp6: TcpStateCount,
+    pub unix_stream: UnixStreamStateCount,
+    pub unix_dgram: u16,
+    pub unix_seq_packet: u16,
+    pub unknown: u16,
 }
 
 impl SocketStateCount {

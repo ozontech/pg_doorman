@@ -20,6 +20,9 @@ build/
 dist/
 wheels/
 *.egg-info
+# Frontend build output is committed (Web UI decision #22).
+!frontend/dist/
+!frontend/dist/**
 
 # Virtual environments
 .venv
@@ -53,3 +56,8 @@ flamegraph-output/
 
 # Superpowers brainstorm session workdir (VC mockups, server state)
 .superpowers/
+
+# Per-session agent handoff scratchpads — not part of public history.
+.local/
+
+Dockerfile.ubuntu22-tls

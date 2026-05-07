@@ -39,7 +39,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | Минимальная версия TLS настраивается | Да (по умолчанию TLS 1.2) | Да (`tls_protocols`, default `tlsv1.2,tlsv1.3`) | Настраивается, дефолты другие |
 | Direct TLS handshake (PostgreSQL 17, без `SSLRequest`) | Нет | Да (с 1.25) | Нет |
 | Контроль TLS 1.3 cipher suites | Нет | Да (с 1.25, `client_tls13_ciphers`/`server_tls13_ciphers`) | Нет |
-| Миграция TLS-сессии при binary upgrade | Да (сборка `tls-migration`, Linux, opt-in) | Нет (TLS-соединения дропаются при online restart) | Нет |
+| Миграция TLS-сессии при binary upgrade | Да (сборка `tls-migration`, Linux, по запросу) | Нет (TLS-соединения отбрасываются при online restart) | Нет |
 
 См. [TLS](guides/tls.md).
 
@@ -101,6 +101,7 @@ PgCat намеренно опущен: у него центр тяжести —
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
+| Встроенный admin web UI (HTML-консоль в бинаре) | Да (HTML-консоль на том же порту, что и `/metrics`, включается через `[web].ui`) | Нет (только psql admin-консоль) | Нет (только psql admin-консоль) |
 | Prometheus-эндпоинт | Встроенный `/metrics` | Внешний (`pgbouncer_exporter`) | Внешний (Go-exporter sidecar, опрашивает admin-консоль) |
 | Перцентили задержки на пул (p50, p90, p95, p99) | Да (HDR Histogram) | Нет (только средние в `SHOW STATS`) | Да через exporter (TDigest, требует rule-опцию `quantiles`) |
 | Счётчики prepared statements в `SHOW STATS` | Да | Да (с 1.24) | Нет |

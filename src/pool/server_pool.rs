@@ -307,7 +307,7 @@ impl ServerPool {
                 if is_backend_unreachable(&err) {
                     if let Some(ref fallback) = self.fallback_state {
                         fallback.blacklist();
-                        crate::prometheus::FALLBACK_ACTIVE
+                        crate::web::metrics::FALLBACK_ACTIVE
                             .with_label_values(&[&self.address.pool_name])
                             .set(1.0);
                         info!(
@@ -431,7 +431,7 @@ impl ServerPool {
         let (targets, source) = match fallback.get_fallback_targets().await {
             Ok(pair) => pair,
             Err(e) => {
-                crate::prometheus::PATRONI_API_ERRORS_TOTAL
+                crate::web::metrics::PATRONI_API_ERRORS_TOTAL
                     .with_label_values(&[&self.address.pool_name])
                     .inc();
                 warn!(
@@ -472,7 +472,7 @@ impl ServerPool {
                 target.port,
                 target.role
             );
-            crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
+            crate::web::metrics::FALLBACK_CONNECTIONS_TOTAL
                 .with_label_values(&[&self.address.pool_name])
                 .inc();
             return match self.try_fallback_target(&target).await {
@@ -570,7 +570,7 @@ impl ServerPool {
         // entry — not per candidate. The metric measures fallback usage
         // pressure, not per-host attempt counts (those live in
         // `_candidate_failures_total`).
-        crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
+        crate::web::metrics::FALLBACK_CONNECTIONS_TOTAL
             .with_label_values(&[&self.address.pool_name])
             .inc();
         let _ = source; // reserved for future wave-source-specific logic

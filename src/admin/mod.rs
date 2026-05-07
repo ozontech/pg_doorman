@@ -6,6 +6,9 @@
 mod commands;
 mod show;
 
+pub mod events;
+pub mod operations;
+
 use bytes::{Buf, BufMut, BytesMut};
 use log::{debug, warn};
 

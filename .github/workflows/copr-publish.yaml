@@ -125,9 +125,11 @@ jobs:
           WORK_DIR=$(mktemp -d)
           mkdir -p "$WORK_DIR/pg-doorman-${VERSION}"
           
-          # Define what we want to package
-          FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches rust-toolchain.toml LICENSE"
-          
+          # Define what we want to package. `frontend/dist` carries the
+          # pre-built SPA referenced by include_dir!() in src/web/static_assets.rs;
+          # without it the rpm build fails with "frontend/dist is not a directory".
+          FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches rust-toolchain.toml LICENSE frontend/dist"
+
           # Debug: show what we're going to copy
           echo "Files/directories to copy:"
           for item in $FILES_TO_COPY; do
@@ -137,11 +139,12 @@ jobs:
               echo "  [MISSING] $item"
             fi
           done
-          
-          # Copy files
+
+          # Copy files. `cp --parents` preserves intermediate directories so
+          # that `frontend/dist` lands at the same path inside the tarball.
           for item in $FILES_TO_COPY; do
             if [ -e "$item" ]; then
-              cp -r "$item" "$WORK_DIR/pg-doorman-${VERSION}/"
+              cp -r --parents "$item" "$WORK_DIR/pg-doorman-${VERSION}/"
             fi
           done
           

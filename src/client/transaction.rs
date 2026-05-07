@@ -384,6 +384,12 @@ where
         server.set_async_mode(false);
         server.set_expected_responses(0);
 
+        // Defensively clear any pending extended-protocol attribution.
+        // A simple query is opaque to the interner; whatever last_bound_for_top
+        // held was from a prior extended batch and would otherwise leak its
+        // hash into the next Sync.
+        self.prepared.last_bound_for_top = None;
+
         self.execute_server_roundtrip(Some(message), server).await?;
         self.stats.query();
         server.stats.query(
@@ -485,10 +491,16 @@ where
         server.has_pending_cache_entries = false;
 
         self.stats.query();
-        server.stats.query(
-            query_start_at.elapsed().as_micros() as u64,
-            self.server_parameters.get_application_name(),
-        );
+        // /api/top/queries duration accounting. The whole batch's elapsed
+        // time is attributed to the last Bind's hash; multi-Bind batches
+        // give the duration to whichever Bind was last (approximation).
+        let micros = query_start_at.elapsed().as_micros() as u64;
+        if let Some((hash, anon)) = self.prepared.last_bound_for_top.take() {
+            crate::server::record_query_duration_us(hash, anon, micros);
+        }
+        server
+            .stats
+            .query(micros, self.server_parameters.get_application_name());
 
         self.buffer.clear();
         // Reset batch state for next batch
@@ -744,7 +756,10 @@ where
                             // We'll send back an error message and clean the extended
                             // protocol buffer
                             self.stats.idle_read();
-                            current_pool.address.stats.error();
+                            // Mirrors the SQLSTATE in the ErrorResponse below
+                            // so the per-pool breakdown reflects checkout
+                            // failures alongside PG-side errors.
+                            current_pool.address.stats.error_with_sqlstate("53300");
                             self.stats.checkout_error();
 
                             if message[0] as char == 'S' {
@@ -767,11 +782,13 @@ where
                     };
                 };
                 let server = conn.deref_mut();
-                server.stats.active(self.stats.application_name());
+                server
+                    .stats
+                    .active(self.stats.application_name().to_string());
                 let checkout_us = connecting_at.elapsed().as_micros() as u64;
                 server
                     .stats
-                    .checkout_time(checkout_us, self.stats.application_name());
+                    .checkout_time(checkout_us, self.stats.application_name().to_string());
                 // Update client-side wait tracking so SHOW POOLS maxwait
                 // reflects real checkout peaks, not the zero from init.
                 self.stats

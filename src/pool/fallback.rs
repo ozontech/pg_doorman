@@ -186,7 +186,7 @@ impl FallbackState {
                 *guard = None;
                 drop(guard);
 
-                crate::prometheus::FALLBACK_ACTIVE
+                crate::web::metrics::FALLBACK_ACTIVE
                     .with_label_values(&[&self.pool_name])
                     .set(0.0);
                 self.blacklist_logged.store(false, Ordering::Relaxed);
@@ -197,7 +197,7 @@ impl FallbackState {
                     wl.take()
                 };
                 if let Some((host, port, _)) = old_host {
-                    let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
+                    let _ = crate::web::metrics::FALLBACK_HOST.remove_label_values(&[
                         &self.pool_name,
                         &host,
                         &port.to_string(),
@@ -231,7 +231,7 @@ impl FallbackState {
             guard.take()
         };
         if let Some((host, port, _)) = old_host {
-            let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
+            let _ = crate::web::metrics::FALLBACK_HOST.remove_label_values(&[
                 &self.pool_name,
                 &host,
                 &port.to_string(),
@@ -239,7 +239,7 @@ impl FallbackState {
         }
         self.unhealthy_candidates.lock().clear();
         self.blacklist_logged.store(false, Ordering::Relaxed);
-        crate::prometheus::FALLBACK_ACTIVE
+        crate::web::metrics::FALLBACK_ACTIVE
             .with_label_values(&[&self.pool_name])
             .set(0.0);
     }
@@ -267,7 +267,7 @@ impl FallbackState {
             guard.take()
         };
         if let Some((host, port, _)) = old {
-            let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
+            let _ = crate::web::metrics::FALLBACK_HOST.remove_label_values(&[
                 &self.pool_name,
                 &host,
                 &port.to_string(),
@@ -292,7 +292,7 @@ impl FallbackState {
     /// `COOLDOWN_MAX = 60s` puts a hard ceiling on how long any one entry
     /// stays active.
     pub fn mark_unhealthy(&self, host: &str, port: u16, reason: FailureReason) {
-        crate::prometheus::FALLBACK_CANDIDATE_FAILURES_TOTAL
+        crate::web::metrics::FALLBACK_CANDIDATE_FAILURES_TOTAL
             .with_label_values(&[self.pool_name.as_str(), reason.as_str()])
             .inc();
 
@@ -408,7 +408,7 @@ impl FallbackState {
                         "[pool: {}] fallback: returning whitelisted host {}:{}",
                         self.pool_name, host_owned, port
                     );
-                    crate::prometheus::FALLBACK_CACHE_HITS_TOTAL
+                    crate::web::metrics::FALLBACK_CACHE_HITS_TOTAL
                         .with_label_values(&[&self.pool_name])
                         .inc();
                     return Ok((
@@ -484,7 +484,7 @@ impl FallbackState {
         };
         if let Some((old_host, old_port, _)) = old {
             if (old_host.as_str(), old_port) != (host.as_str(), port) {
-                let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
+                let _ = crate::web::metrics::FALLBACK_HOST.remove_label_values(&[
                     &self.pool_name,
                     &old_host,
                     &old_port.to_string(),
@@ -495,7 +495,7 @@ impl FallbackState {
             "[pool: {}] fallback: whitelisted {}:{} (role: {:?})",
             self.pool_name, host, port, role
         );
-        crate::prometheus::FALLBACK_HOST
+        crate::web::metrics::FALLBACK_HOST
             .with_label_values(&[&self.pool_name, &host, &port.to_string()])
             .set(1.0);
     }
@@ -520,7 +520,7 @@ impl FallbackState {
         };
 
         if is_creator {
-            crate::prometheus::PATRONI_API_REQUESTS_TOTAL
+            crate::web::metrics::PATRONI_API_REQUESTS_TOTAL
                 .with_label_values(&[&self.pool_name])
                 .inc();
         }
@@ -530,7 +530,7 @@ impl FallbackState {
 
         // Joiners measure wait time, not discovery time — only the creator records it.
         if is_creator {
-            crate::prometheus::PATRONI_API_DURATION
+            crate::web::metrics::PATRONI_API_DURATION
                 .with_label_values(&[&self.pool_name])
                 .observe(start.elapsed().as_secs_f64());
         }
@@ -903,20 +903,20 @@ mod tests {
         .unwrap();
 
         state.set_whitelisted("10.0.0.1".to_string(), 5432, Role::SyncStandby);
-        let v1 = crate::prometheus::FALLBACK_HOST
+        let v1 = crate::web::metrics::FALLBACK_HOST
             .with_label_values(&[pool, "10.0.0.1", "5432"])
             .get();
         assert_eq!(v1, 1.0);
 
         state.set_whitelisted("10.0.0.2".to_string(), 5432, Role::SyncStandby);
         // Old label cleared during overwrite.
-        let v_old = crate::prometheus::FALLBACK_HOST
+        let v_old = crate::web::metrics::FALLBACK_HOST
             .with_label_values(&[pool, "10.0.0.1", "5432"])
             .get();
         // remove_label_values drops the metric entirely; reading again
         // recreates it at default 0.0. Either way, never 1.0 here.
         assert_eq!(v_old, 0.0);
-        let v_new = crate::prometheus::FALLBACK_HOST
+        let v_new = crate::web::metrics::FALLBACK_HOST
             .with_label_values(&[pool, "10.0.0.2", "5432"])
             .get();
         assert_eq!(v_new, 1.0);
@@ -1167,12 +1167,12 @@ mod tests {
         )
         .unwrap();
 
-        let before = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
+        let before = crate::web::metrics::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_fail"])
             .get();
         let _ = state.fetch_cluster_coalesced().await;
         let _ = state.fetch_cluster_coalesced().await;
-        let after = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
+        let after = crate::web::metrics::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_fail"])
             .get();
 
@@ -1324,12 +1324,12 @@ mod tests {
         )
         .unwrap();
 
-        let before = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
+        let before = crate::web::metrics::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_ok_coalesce"])
             .get();
         let r1 = state.fetch_cluster_coalesced().await;
         let r2 = state.fetch_cluster_coalesced().await;
-        let after = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
+        let after = crate::web::metrics::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_ok_coalesce"])
             .get();
 

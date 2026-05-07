@@ -357,31 +357,31 @@ impl ServerStats {
     // State conversion utilities
     // ------------------------------------------------------------------------------------------
 
-    /// Converts the server state to a human-readable string.
+    /// Returns the server state as a static string slice.
     ///
     /// # Returns
     ///
-    /// A string representation of the server state: "active", "idle", "login", or "unknown"
-    pub fn state_to_string(&self) -> String {
+    /// One of "active", "idle", "login", or "unknown".
+    pub fn state_str(&self) -> &'static str {
         match self.state() {
-            SERVER_STATE_ACTIVE => "active".to_string(),
-            SERVER_STATE_IDLE => "idle".to_string(),
-            SERVER_STATE_LOGIN => "login".to_string(),
-            _ => "unknown".to_string(),
+            SERVER_STATE_ACTIVE => "active",
+            SERVER_STATE_IDLE => "idle",
+            SERVER_STATE_LOGIN => "login",
+            _ => "unknown",
         }
     }
 
-    /// Converts the server wait status to a human-readable string.
+    /// Returns the server wait status as a static string slice.
     ///
     /// # Returns
     ///
-    /// A string representation of the wait status: "idle", "read", "write", or "unknown"
-    pub fn wait_to_string(&self) -> String {
+    /// One of "idle", "read", "write", or "unknown".
+    pub fn wait_str(&self) -> &'static str {
         match self.wait() {
-            SERVER_WAIT_IDLE => "idle".to_string(),
-            SERVER_WAIT_READ => "read".to_string(),
-            SERVER_WAIT_WRITE => "write".to_string(),
-            _ => "unknown".to_string(),
+            SERVER_WAIT_IDLE => "idle",
+            SERVER_WAIT_READ => "read",
+            SERVER_WAIT_WRITE => "write",
+            _ => "unknown",
         }
     }
 
@@ -555,18 +555,26 @@ impl ServerStats {
     // ------------------------------------------------------------------------------------------
 
     /// Returns the name of the connection pool this server is using.
-    pub fn pool_name(&self) -> String {
-        self.address.pool_name.clone()
+    pub fn pool_name(&self) -> &str {
+        &self.address.pool_name
     }
 
     /// Returns the PostgreSQL username used for the connection.
-    pub fn username(&self) -> String {
-        self.address.username.clone()
+    pub fn username(&self) -> &str {
+        &self.address.username
     }
 
     /// Returns the address name (host:port) for this server connection.
     pub fn address_name(&self) -> String {
         self.address.name()
+    }
+
+    /// Returns the current application name for this server connection.
+    ///
+    /// Returns an owned `String` because the field sits behind a Mutex; the
+    /// lock cannot escape to bind a `&str` to `&self`.
+    pub fn application_name(&self) -> String {
+        self.application_name.lock().clone()
     }
 
     /// Returns the server connection timestamp.
@@ -804,31 +812,31 @@ mod tests {
     fn test_state_conversion_methods() {
         let stats = create_test_server_stats();
 
-        // Test state_to_string
+        // Test state_str
         stats.set_state(SERVER_STATE_LOGIN);
-        assert_eq!(stats.state_to_string(), "login");
+        assert_eq!(stats.state_str(), "login");
 
         stats.set_state(SERVER_STATE_ACTIVE);
-        assert_eq!(stats.state_to_string(), "active");
+        assert_eq!(stats.state_str(), "active");
 
         stats.set_state(SERVER_STATE_IDLE);
-        assert_eq!(stats.state_to_string(), "idle");
+        assert_eq!(stats.state_str(), "idle");
 
         stats.set_state(0); // Invalid state
-        assert_eq!(stats.state_to_string(), "unknown");
+        assert_eq!(stats.state_str(), "unknown");
 
-        // Test wait_to_string
+        // Test wait_str
         stats.set_wait(SERVER_WAIT_IDLE);
-        assert_eq!(stats.wait_to_string(), "idle");
+        assert_eq!(stats.wait_str(), "idle");
 
         stats.set_wait(SERVER_WAIT_READ);
-        assert_eq!(stats.wait_to_string(), "read");
+        assert_eq!(stats.wait_str(), "read");
 
         stats.set_wait(SERVER_WAIT_WRITE);
-        assert_eq!(stats.wait_to_string(), "write");
+        assert_eq!(stats.wait_str(), "write");
 
         stats.set_wait(0); // Invalid wait state
-        assert_eq!(stats.wait_to_string(), "unknown");
+        assert_eq!(stats.wait_str(), "unknown");
     }
 
     #[test]

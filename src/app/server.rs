@@ -19,11 +19,12 @@ use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
 use crate::messages::{configure_tcp_socket, configure_unix_socket};
 use crate::pool::{retain, ClientServerMap, ConnectionPool};
-use crate::prometheus::{record_interner_gc, start_prometheus_server};
 use crate::server::{gc_sweep_anon, gc_sweep_named};
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
+use crate::web::metrics::record_interner_gc;
+use crate::web::WebServerOptions;
 use socket2::SockRef;
 #[cfg(not(windows))]
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -46,6 +47,14 @@ pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
 
 /// Global flag: migration to new process is active. Clients should self-migrate at idle points.
 pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Process start time. Captured the first time `STARTED_AT` is read (i.e.
+/// during the first poll into `OverviewDto.uptime_seconds`); for the
+/// foreground listener path that happens within a few hundred milliseconds
+/// of `main()` so the value approximates the binary's real boot time
+/// closely enough for an operator console.
+pub static STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
+    std::sync::LazyLock::new(std::time::SystemTime::now);
 
 /// Channel sender for migration payloads. Set once when migration starts.
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
@@ -357,14 +366,48 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let shutdown_timeout = config.general.shutdown_timeout.as_std();
 
-        // Prometheus metrics exporter
-        if config.prometheus.enabled {
+        // Web listener (Prometheus exporter + optional UI)
+        if config.web.enabled {
+            let admin_password_is_default =
+                config.general.admin_password.is_empty() || config.general.admin_password == "admin";
+            let ui_active = if config.web.ui {
+                if admin_password_is_default {
+                    log::warn!(
+                        "web.ui = true ignored: admin_password is default/empty. \
+                         Set a real admin_password to enable the UI; /metrics keeps working."
+                    );
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+            let host = format!("{}:{}", config.web.host, config.web.port);
+            let opts = WebServerOptions {
+                ui_active,
+                ui_anonymous: config.web.ui_anonymous,
+                admin_username: config.general.admin_username.clone(),
+                admin_password: config.general.admin_password.clone(),
+            };
+            // Bind synchronously so a port conflict fails the whole startup
+            // instead of leaving the daemon "ready" while /metrics + UI
+            // silently die in a panicked detached task.
+            let web_listener = match crate::web::bind_web_listener(&host) {
+                Ok(l) => l,
+                Err(e) => {
+                    error!("web listener bind failed on {host}: {e}");
+                    std::process::exit(exitcode::OSERR);
+                }
+            };
             tokio::task::spawn(async move {
-                start_prometheus_server(
-                    format!("{}:{}", config.prometheus.host, config.prometheus.port).as_str(),
-                )
-                .await;
+                crate::web::serve_on(web_listener, opts).await;
             });
+            // LogTap stays off until /api/logs is hit; the reaper turns it
+            // back off when nobody is polling, so spawn it once here.
+            if ui_active && config.web.log_tap_max_entries > 0 {
+                tokio::task::spawn(crate::web::log_tap::run_reaper());
+            }
         }
 
         // Signal readiness to parent process (for binary upgrade in foreground mode)

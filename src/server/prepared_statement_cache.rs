@@ -41,6 +41,14 @@ const GC_STATE_MARKED: u8 = 1;
 pub struct NamedEntry {
     text: Arc<str>,
     gc_state: AtomicU8,
+    /// Cumulative count of Bind events that referenced this hash.
+    /// Used by `/api/top/queries?by=count`. Approximate: see plan.
+    count: AtomicU64,
+    /// Cumulative microseconds spent across all Sync's that ended a batch
+    /// whose last Bind referenced this hash. Approximate per-batch
+    /// attribution — multi-Bind batches give the entire duration to the
+    /// last hash. See plan for the trade-off.
+    total_duration_us: AtomicU64,
 }
 
 impl NamedEntry {
@@ -48,6 +56,8 @@ impl NamedEntry {
         Self {
             text,
             gc_state: AtomicU8::new(GC_STATE_ACTIVE),
+            count: AtomicU64::new(0),
+            total_duration_us: AtomicU64::new(0),
         }
     }
 
@@ -58,6 +68,16 @@ impl NamedEntry {
     pub fn text(&self) -> &Arc<str> {
         &self.text
     }
+
+    /// Approximate count of Bind references. Used by `/api/top/queries`.
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    /// Approximate cumulative execution time in microseconds.
+    pub fn total_duration_us(&self) -> u64 {
+        self.total_duration_us.load(Ordering::Relaxed)
+    }
 }
 
 /// Entry in the anonymous interner. Bounded by per-entry TTL over
@@ -66,6 +86,8 @@ pub struct AnonEntry {
     text: Arc<str>,
     last_used: AtomicU64,
     gc_state: AtomicU8,
+    count: AtomicU64,
+    total_duration_us: AtomicU64,
 }
 
 impl AnonEntry {
@@ -74,6 +96,8 @@ impl AnonEntry {
             text,
             last_used: AtomicU64::new(now_ms),
             gc_state: AtomicU8::new(GC_STATE_ACTIVE),
+            count: AtomicU64::new(0),
+            total_duration_us: AtomicU64::new(0),
         }
     }
 
@@ -88,6 +112,14 @@ impl AnonEntry {
 
     pub fn idle_ms(&self, now_ms: u64) -> u64 {
         now_ms.saturating_sub(self.last_used.load(Ordering::Relaxed))
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    pub fn total_duration_us(&self) -> u64 {
+        self.total_duration_us.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
@@ -112,6 +144,31 @@ pub fn now_monotonic_ms() -> u64 {
     use std::time::Instant;
     static START: Lazy<Instant> = Lazy::new(Instant::now);
     START.elapsed().as_millis() as u64
+}
+
+/// Increments the Bind-count atomic on the interner entry that owns `hash`.
+/// No-op if the entry has been GC'd or not yet inserted; we accept the
+/// resulting count gap to keep the hot path lock-free.
+pub fn record_query_count(hash: u64, is_anonymous: bool) {
+    if is_anonymous {
+        if let Some(entry) = ANON_INTERNER.get(&hash) {
+            entry.count.fetch_add(1, Ordering::Relaxed);
+        }
+    } else if let Some(entry) = NAMED_INTERNER.get(&hash) {
+        entry.count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Adds `micros` to the cumulative duration on the interner entry. Same
+/// no-op-on-miss policy as `record_query_count`.
+pub fn record_query_duration_us(hash: u64, is_anonymous: bool, micros: u64) {
+    if is_anonymous {
+        if let Some(entry) = ANON_INTERNER.get(&hash) {
+            entry.total_duration_us.fetch_add(micros, Ordering::Relaxed);
+        }
+    } else if let Some(entry) = NAMED_INTERNER.get(&hash) {
+        entry.total_duration_us.fetch_add(micros, Ordering::Relaxed);
+    }
 }
 
 /// Interns the query string into the matching half of the interner.
@@ -300,6 +357,13 @@ struct CacheEntry {
     /// bit 1 = seen as anonymous. At least one bit is always set after
     /// construction (`CacheEntry::new`); bits only ever flip from 0 to 1.
     kind_flags: AtomicU8,
+    /// Cumulative count of Parse-time has_prepared_statement(server_name) hits
+    /// for this hash. Approximate per-pool counter — see plan for the LRU
+    /// eviction caveat.
+    hit_count: AtomicU64,
+    /// Cumulative count of Parse-time has_prepared_statement(server_name)
+    /// misses for this hash.
+    miss_count: AtomicU64,
 }
 
 impl CacheEntry {
@@ -316,6 +380,8 @@ impl CacheEntry {
             parse,
             count_used,
             kind_flags: AtomicU8::new(bits),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
         }
     }
 
@@ -386,6 +452,30 @@ pub struct PreparedStatementCache {
     max_size: usize,
     /// Global counter for LRU ordering
     counter: AtomicU64,
+    /// Live cumulative byte cost of every entry currently in `cache`. Kept
+    /// in sync with insert/evict so `memory_usage()` answers in one atomic
+    /// load instead of walking every entry; the walk version was an O(N)
+    /// hotspot on every `/api/pools` poll for instances with large
+    /// per-pool prepared caches.
+    ///
+    /// Approximate, not exact: two threads racing the slow path on the
+    /// same hash both `fetch_add` while DashMap keeps a single entry,
+    /// leaving a phantom-entry overshoot until the slot eventually
+    /// evicts. The pre-existing walk was also racy under concurrent
+    /// inserts; this counter trades one shape of approximation for one
+    /// that is far cheaper to read.
+    total_memory_bytes: AtomicU64,
+}
+
+/// Per-entry overhead independent of the Parse content (DashMap key + the
+/// CacheEntry record itself). Variable part is `parse.memory_usage()`.
+const ENTRY_OVERHEAD_BYTES: usize = std::mem::size_of::<u64>() + std::mem::size_of::<CacheEntry>();
+
+/// Byte cost of a single cache entry built around `parse`. Same shape as
+/// the original walk in `memory_usage` so the new incremental counter
+/// converges to identical totals.
+fn entry_bytes(parse: &Parse) -> u64 {
+    (parse.memory_usage() + ENTRY_OVERHEAD_BYTES) as u64
 }
 
 impl std::fmt::Debug for PreparedStatementCache {
@@ -408,6 +498,7 @@ impl PreparedStatementCache {
             cache: new_dashmap_with_capacity(size, worker_threads),
             max_size: size,
             counter: AtomicU64::new(0),
+            total_memory_bytes: AtomicU64::new(0),
         }
     }
 
@@ -455,10 +546,13 @@ impl PreparedStatementCache {
         // Insert first, then evict excess. Reversing the order closes
         // the race where N concurrent callers all pass len() >= max_size
         // before any eviction runs, pushing the cache far above the limit.
+        let inserted_bytes = entry_bytes(&new_parse);
         self.cache.insert(
             hash,
             CacheEntry::new(new_parse.clone(), timestamp, initial_kind),
         );
+        self.total_memory_bytes
+            .fetch_add(inserted_bytes, Ordering::Relaxed);
 
         while self.cache.len() > self.max_size {
             self.evict_oldest();
@@ -477,21 +571,27 @@ impl PreparedStatementCache {
         self.cache.is_empty()
     }
 
-    /// Approximate memory usage of the cache in bytes
+    /// Approximate memory usage of the cache in bytes. Single atomic load
+    /// — kept in sync with `get_or_insert` and `evict_oldest` so the
+    /// dashboard polling path does not pay an O(N) walk on every snapshot.
     pub fn memory_usage(&self) -> usize {
-        let mut total = 0;
-        for entry in self.cache.iter() {
-            total += entry.parse.memory_usage();
-            total += std::mem::size_of::<u64>(); // Key
-            total += std::mem::size_of::<CacheEntry>();
-        }
-        total
+        self.total_memory_bytes.load(Ordering::Relaxed) as usize
     }
 
-    /// Returns a list of all entries in the cache, including the derived
-    /// `CacheEntryKind` reflecting whether clients have used this hash via
-    /// named statements, anonymous statements, or both.
-    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64, CacheEntryKind)> {
+    /// Direct hash lookup. Used by `/api/prepared/text/{hash}` to fetch
+    /// one statement without paying for a `get_entries()` clone of every
+    /// row in every pool — the prior implementation walked all entries
+    /// linearly per pool and allocated a Vec along the way for what was
+    /// always a single-row answer.
+    pub fn lookup_by_hash(&self, hash: u64) -> Option<(Arc<Parse>, CacheEntryKind)> {
+        self.cache
+            .get(&hash)
+            .map(|entry| (entry.parse.clone(), entry.kind()))
+    }
+
+    /// Returns all entries with stats. Tuple is
+    /// `(hash, parse, count_used, kind, hit_count, miss_count)`.
+    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64, CacheEntryKind, u64, u64)> {
         self.cache
             .iter()
             .map(|entry| {
@@ -500,9 +600,27 @@ impl PreparedStatementCache {
                     entry.parse.clone(),
                     entry.count_used,
                     entry.kind(),
+                    entry.hit_count.load(Ordering::Relaxed),
+                    entry.miss_count.load(Ordering::Relaxed),
                 )
             })
             .collect()
+    }
+
+    /// Atomically increments the hit counter on the entry for `hash`.
+    /// Silently no-ops when the entry was evicted or never inserted —
+    /// keeps the hot path lock-free.
+    pub fn record_hit(&self, hash: u64) {
+        if let Some(entry) = self.cache.get(&hash) {
+            entry.hit_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Same as `record_hit`, but for misses.
+    pub fn record_miss(&self, hash: u64) {
+        if let Some(entry) = self.cache.get(&hash) {
+            entry.miss_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Marks the hash as most recently used if it exists
@@ -531,6 +649,8 @@ impl PreparedStatementCache {
         // Remove the oldest entry
         if let Some(key) = oldest_key {
             if let Some((_, entry)) = self.cache.remove(&key) {
+                self.total_memory_bytes
+                    .fetch_sub(entry_bytes(&entry.parse), Ordering::Relaxed);
                 let query = entry.parse.query().replace(['\n', '\r'], " ");
                 let truncated: String = query.chars().take(80).collect();
                 let ellipsis = if query.chars().count() > 80 {
@@ -656,6 +776,78 @@ mod tests {
         cache.get_or_insert(&p2, 1, None);
         let entries = cache.get_entries();
         assert_eq!(entries[0].3, CacheEntryKind::Mixed);
+    }
+
+    #[test]
+    fn lookup_by_hash_returns_none_for_unknown() {
+        let cache = PreparedStatementCache::new(8, 1);
+        assert!(cache.lookup_by_hash(0xdead_beef).is_none());
+    }
+
+    #[test]
+    fn lookup_by_hash_returns_parse_and_kind() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt", "SELECT 1");
+        cache.get_or_insert(&parse, 0xCAFE, Some("stmt"));
+        let (got, kind) = cache.lookup_by_hash(0xCAFE).expect("entry must be present");
+        assert_eq!(kind, CacheEntryKind::Named);
+        assert_eq!(got.query(), "SELECT 1");
+    }
+
+    #[test]
+    fn memory_usage_zero_when_empty() {
+        let cache = PreparedStatementCache::new(8, 1);
+        assert_eq!(cache.memory_usage(), 0);
+    }
+
+    #[test]
+    fn memory_usage_tracks_inserts_and_eviction() {
+        let cache = PreparedStatementCache::new(2, 1);
+        let p1 = make_parse("a", "SELECT 1");
+        let p2 = make_parse("b", "SELECT 22");
+        let p3 = make_parse("c", "SELECT 333");
+
+        cache.get_or_insert(&p1, 1, Some("a"));
+        let after_one = cache.memory_usage();
+        assert!(after_one > 0, "single insert must register bytes");
+
+        cache.get_or_insert(&p2, 2, Some("b"));
+        let after_two = cache.memory_usage();
+        assert!(
+            after_two > after_one,
+            "second insert must add bytes ({after_one} -> {after_two})"
+        );
+
+        // Third insert pushes the cache past max_size, forcing one eviction.
+        // The post-eviction total must equal the bytes for the two surviving
+        // entries — the counter must have been decremented on remove.
+        cache.get_or_insert(&p3, 3, Some("c"));
+        let after_three = cache.memory_usage();
+        assert_eq!(
+            cache.len(),
+            2,
+            "max_size=2 must hold after the third insert + evict"
+        );
+        let walk: usize = cache
+            .cache
+            .iter()
+            .map(|e| entry_bytes(&e.parse) as usize)
+            .sum();
+        assert_eq!(
+            after_three, walk,
+            "incremental counter must match the per-entry walk after eviction"
+        );
+    }
+
+    #[test]
+    fn memory_usage_unchanged_on_repeat_hit() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt", "SELECT 1");
+        cache.get_or_insert(&parse, 1, Some("stmt"));
+        let after_one = cache.memory_usage();
+        // Second call hits the fast path — must not double-count.
+        cache.get_or_insert(&parse, 1, Some("stmt"));
+        assert_eq!(cache.memory_usage(), after_one);
     }
 
     /// A repeated hit with the same kind must not mutate the bitmask
@@ -819,5 +1011,58 @@ mod tests {
             gc_sweep_anon(u64::MAX);
         }
         assert!(anon_entry_for_test(0x105).is_some());
+    }
+
+    #[test]
+    #[serial(query_interner)]
+    fn record_query_count_increments_named_entry() {
+        reset_interners_for_test();
+        let _ = intern_query("select 100", 0xC0FFEE, false);
+        super::record_query_count(0xC0FFEE, false);
+        super::record_query_count(0xC0FFEE, false);
+        let snap = super::named_snapshot();
+        let (_, e) = snap.iter().find(|(h, _)| *h == 0xC0FFEE).unwrap();
+        assert!(e.count() >= 2);
+    }
+
+    #[test]
+    fn record_query_count_no_op_on_unknown_hash() {
+        // Intentionally use a hash that is not interned — must not panic.
+        super::record_query_count(0xDEADC0DE, false);
+        super::record_query_count(0xDEADC0DE, true);
+    }
+
+    #[test]
+    fn record_hit_no_op_when_hash_absent() {
+        let cache = PreparedStatementCache::new(8, 1);
+        cache.record_hit(0xDEADBEEF);
+        cache.record_miss(0xDEADBEEF);
+        // No panic = pass; counters unobservable on absent hash.
+    }
+
+    #[test]
+    fn record_hit_increments_existing_entry() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt", "SELECT 1");
+        cache.get_or_insert(&parse, 0x1111, Some("stmt"));
+        cache.record_hit(0x1111);
+        cache.record_hit(0x1111);
+        cache.record_miss(0x1111);
+        let entries = cache.get_entries();
+        let row = entries.iter().find(|e| e.0 == 0x1111).unwrap();
+        assert_eq!(row.4, 2, "hits");
+        assert_eq!(row.5, 1, "misses");
+    }
+
+    #[test]
+    #[serial(query_interner)]
+    fn record_query_duration_us_accumulates() {
+        reset_interners_for_test();
+        let _ = intern_query("select 200", 0xD00D00, false);
+        super::record_query_duration_us(0xD00D00, false, 100);
+        super::record_query_duration_us(0xD00D00, false, 250);
+        let snap = super::named_snapshot();
+        let (_, e) = snap.iter().find(|(h, _)| *h == 0xD00D00).unwrap();
+        assert_eq!(e.total_duration_us(), 350);
     }
 }

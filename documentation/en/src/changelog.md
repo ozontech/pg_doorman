@@ -1,5 +1,60 @@
 # Changelog
 
+### 3.8.0
+
+#### Added
+
+**Built-in operator dashboard.** pg_doorman exposes a single-page
+diagnostic console on the same port as `/metrics`, served from
+inside the binary and gated on `[web].ui = true` plus a non-default
+`admin_password`. Reaching the same view through the existing psql
+admin console means running `SHOW POOLS`, `SHOW CLIENTS`,
+`SHOW STATS` and friends in a loop, computing rates by hand between
+two snapshots, and joining the rows mentally. The dashboard does
+that on a 1.5 s tick.
+
+What it shows that the psql admin console does not:
+
+- **Live time-series, not snapshots.** Latency p95/p99, qps,
+  errors/s and connection saturation render as sparklines, so
+  "spiking now" is visually distinct from "always been like this".
+- **Errors broken down by SQLSTATE per pool.** Plus top-N stuck
+  queries by `current_query_age_ms`, top-N noisy clients by
+  errors, top-N hottest prepared statements by hit rate.
+- **Process memory by category.** RSS split into jemalloc live
+  allocations, jemalloc fragmentation, internal pg_doorman caches,
+  code + libs, stacks + page tables, swap and anonymous remainder,
+  with cgroup current / max alongside. Every category carries a
+  one-line explanation on hover.
+- **Per-thread tokio-worker CPU.** Drill-down from the threads
+  count to per-thread utilisation, so a stuck worker is visible
+  without `perf top` on the host.
+- **Live log tail.** An in-process LogTap activates on the first
+  `/api/logs` request and self-disables two minutes after the last
+  viewer. Level and target filters apply client-side over the
+  rolling buffer.
+- **Sortable, filterable tables.** Pools, Clients, Apps and Caches
+  sort by any column and filter by substring; Prepared statements
+  adds a kind dropdown on top.
+
+The dashboard is read-only by default. Pause / Resume / Reconnect /
+Reload are the four writes, scoped to one pool via
+`?pool=user@db`, to every pool of a database via `?db=`, or
+globally — the same semantics as the admin protocol.
+
+#### Notes
+
+- `[web].ui_anonymous` (default `false`) controls whether the
+  read-only `/api/*` endpoints answer without basic auth. Admin-
+  only endpoints (`/api/logs`, `/api/admin/*`,
+  `/api/prepared/text/{hash}`, `/api/interner/top`,
+  `/api/top/queries`) always require it regardless of that flag.
+- The dashboard polls every 1.5 s, but a 250 ms shared snapshot
+  feeds `/api/overview`, `/api/pools`, `/api/clients`,
+  `/api/servers`, `/api/apps`, `/api/stats` and `/metrics`, so a
+  multi-tab dashboard does not multiply pool-stats work by the
+  number of open tabs.
+
 ### 3.7.0
 
 #### ACTION REQUIRED before upgrading to 3.7.0
