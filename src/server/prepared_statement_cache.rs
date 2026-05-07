@@ -452,6 +452,30 @@ pub struct PreparedStatementCache {
     max_size: usize,
     /// Global counter for LRU ordering
     counter: AtomicU64,
+    /// Live cumulative byte cost of every entry currently in `cache`. Kept
+    /// in sync with insert/evict so `memory_usage()` answers in one atomic
+    /// load instead of walking every entry; the walk version was an O(N)
+    /// hotspot on every `/api/pools` poll for instances with large
+    /// per-pool prepared caches.
+    ///
+    /// Approximate, not exact: two threads racing the slow path on the
+    /// same hash both `fetch_add` while DashMap keeps a single entry,
+    /// leaving a phantom-entry overshoot until the slot eventually
+    /// evicts. The pre-existing walk was also racy under concurrent
+    /// inserts; this counter trades one shape of approximation for one
+    /// that is far cheaper to read.
+    total_memory_bytes: AtomicU64,
+}
+
+/// Per-entry overhead independent of the Parse content (DashMap key + the
+/// CacheEntry record itself). Variable part is `parse.memory_usage()`.
+const ENTRY_OVERHEAD_BYTES: usize = std::mem::size_of::<u64>() + std::mem::size_of::<CacheEntry>();
+
+/// Byte cost of a single cache entry built around `parse`. Same shape as
+/// the original walk in `memory_usage` so the new incremental counter
+/// converges to identical totals.
+fn entry_bytes(parse: &Parse) -> u64 {
+    (parse.memory_usage() + ENTRY_OVERHEAD_BYTES) as u64
 }
 
 impl std::fmt::Debug for PreparedStatementCache {
@@ -474,6 +498,7 @@ impl PreparedStatementCache {
             cache: new_dashmap_with_capacity(size, worker_threads),
             max_size: size,
             counter: AtomicU64::new(0),
+            total_memory_bytes: AtomicU64::new(0),
         }
     }
 
@@ -521,10 +546,13 @@ impl PreparedStatementCache {
         // Insert first, then evict excess. Reversing the order closes
         // the race where N concurrent callers all pass len() >= max_size
         // before any eviction runs, pushing the cache far above the limit.
+        let inserted_bytes = entry_bytes(&new_parse);
         self.cache.insert(
             hash,
             CacheEntry::new(new_parse.clone(), timestamp, initial_kind),
         );
+        self.total_memory_bytes
+            .fetch_add(inserted_bytes, Ordering::Relaxed);
 
         while self.cache.len() > self.max_size {
             self.evict_oldest();
@@ -543,15 +571,11 @@ impl PreparedStatementCache {
         self.cache.is_empty()
     }
 
-    /// Approximate memory usage of the cache in bytes
+    /// Approximate memory usage of the cache in bytes. Single atomic load
+    /// — kept in sync with `get_or_insert` and `evict_oldest` so the
+    /// dashboard polling path does not pay an O(N) walk on every snapshot.
     pub fn memory_usage(&self) -> usize {
-        let mut total = 0;
-        for entry in self.cache.iter() {
-            total += entry.parse.memory_usage();
-            total += std::mem::size_of::<u64>(); // Key
-            total += std::mem::size_of::<CacheEntry>();
-        }
-        total
+        self.total_memory_bytes.load(Ordering::Relaxed) as usize
     }
 
     /// Returns all entries with stats. Tuple is
@@ -614,6 +638,8 @@ impl PreparedStatementCache {
         // Remove the oldest entry
         if let Some(key) = oldest_key {
             if let Some((_, entry)) = self.cache.remove(&key) {
+                self.total_memory_bytes
+                    .fetch_sub(entry_bytes(&entry.parse), Ordering::Relaxed);
                 let query = entry.parse.query().replace(['\n', '\r'], " ");
                 let truncated: String = query.chars().take(80).collect();
                 let ellipsis = if query.chars().count() > 80 {
@@ -739,6 +765,62 @@ mod tests {
         cache.get_or_insert(&p2, 1, None);
         let entries = cache.get_entries();
         assert_eq!(entries[0].3, CacheEntryKind::Mixed);
+    }
+
+    #[test]
+    fn memory_usage_zero_when_empty() {
+        let cache = PreparedStatementCache::new(8, 1);
+        assert_eq!(cache.memory_usage(), 0);
+    }
+
+    #[test]
+    fn memory_usage_tracks_inserts_and_eviction() {
+        let cache = PreparedStatementCache::new(2, 1);
+        let p1 = make_parse("a", "SELECT 1");
+        let p2 = make_parse("b", "SELECT 22");
+        let p3 = make_parse("c", "SELECT 333");
+
+        cache.get_or_insert(&p1, 1, Some("a"));
+        let after_one = cache.memory_usage();
+        assert!(after_one > 0, "single insert must register bytes");
+
+        cache.get_or_insert(&p2, 2, Some("b"));
+        let after_two = cache.memory_usage();
+        assert!(
+            after_two > after_one,
+            "second insert must add bytes ({after_one} -> {after_two})"
+        );
+
+        // Third insert pushes the cache past max_size, forcing one eviction.
+        // The post-eviction total must equal the bytes for the two surviving
+        // entries — the counter must have been decremented on remove.
+        cache.get_or_insert(&p3, 3, Some("c"));
+        let after_three = cache.memory_usage();
+        assert_eq!(
+            cache.len(),
+            2,
+            "max_size=2 must hold after the third insert + evict"
+        );
+        let walk: usize = cache
+            .cache
+            .iter()
+            .map(|e| entry_bytes(&e.parse) as usize)
+            .sum();
+        assert_eq!(
+            after_three, walk,
+            "incremental counter must match the per-entry walk after eviction"
+        );
+    }
+
+    #[test]
+    fn memory_usage_unchanged_on_repeat_hit() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt", "SELECT 1");
+        cache.get_or_insert(&parse, 1, Some("stmt"));
+        let after_one = cache.memory_usage();
+        // Second call hits the fast path — must not double-count.
+        cache.get_or_insert(&parse, 1, Some("stmt"));
+        assert_eq!(cache.memory_usage(), after_one);
     }
 
     /// A repeated hit with the same kind must not mutate the bitmask
