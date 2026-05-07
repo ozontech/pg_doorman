@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { apiGet } from "../api";
+import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -153,66 +154,64 @@ export default function Clients() {
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
-            <th
-              className="px-3 py-2 text-left"
-              title="Internal client id pg_doorman uses in logs and metrics. Format #cN; useful when grepping the LogTap."
-            >
-              Client
+            <th className="px-3 py-2 text-left">
+              <InfoLabel tip="Internal client id pg_doorman uses in logs and metrics. Format #cN; useful when grepping the LogTap.">
+                Client
+              </InfoLabel>
             </th>
-            <th
-              className="px-3 py-2 text-left"
-              title="Peer ip:port. Empty for unix-socket connections. Cross-reference with pg_stat_activity.client_addr."
-            >
-              Addr
+            <th className="px-3 py-2 text-left">
+              <InfoLabel tip="Peer ip:port. Empty for unix-socket connections. Cross-reference with pg_stat_activity.client_addr.">
+                Addr
+              </InfoLabel>
             </th>
-            <th
-              className="px-3 py-2 text-left"
-              title="user@database the client is bound to. Click the row in Pools to drill down."
-            >
-              Pool
+            <th className="px-3 py-2 text-left">
+              <InfoLabel tip="user@database the client is bound to. Click the row in Pools to drill down.">
+                Pool
+              </InfoLabel>
             </th>
-            <th
-              className="px-3 py-2 text-left"
-              title="application_name the client sent in the startup parameters. Empty when the driver does not set it."
-            >
-              App
+            <th className="px-3 py-2 text-left">
+              <InfoLabel tip="application_name the client sent in the startup parameters. Empty when the driver does not set it.">
+                App
+              </InfoLabel>
             </th>
-            <th
-              className="px-3 py-2 text-left"
-              title="active = currently running a query / transaction. idle = checked in. waiting = queued for a backend."
-            >
-              State
+            <th className="px-3 py-2 text-left">
+              <InfoLabel tip="active = currently running a query / transaction. idle = checked in. waiting = queued for a backend.">
+                State
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right" title="Why the client is waiting (e.g. lock, server) and for how long.">
               Wait
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("current_query_age_ms")}
-              title="Wall-clock age of the in-flight query in ms. 0 = no query in flight. > 30 000 ms = stuck query."
-            >
-              Q age ms{sortIndicator("current_query_age_ms")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Wall-clock age of the in-flight query in ms. 0 = no query in flight. > 30 000 ms = stuck query.">
+                <span
+                  className="cursor-pointer"
+                  onClick={() => onSort("current_query_age_ms")}
+                >
+                  Q age ms{sortIndicator("current_query_age_ms")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("age_seconds")}
-              title="Lifetime of the client connection in seconds since startup. Sort to find the oldest sessions during a leak hunt."
-            >
-              Age s{sortIndicator("age_seconds")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Lifetime of the client connection in seconds since startup. Sort to find the oldest sessions during a leak hunt.">
+                <span className="cursor-pointer" onClick={() => onSort("age_seconds")}>
+                  Age s{sortIndicator("age_seconds")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("queries_total")}
-              title="Total queries this client has run since connection. Resets on reconnect."
-            >
-              Queries{sortIndicator("queries_total")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Total queries this client has run since connection. Resets on reconnect.">
+                <span className="cursor-pointer" onClick={() => onSort("queries_total")}>
+                  Queries{sortIndicator("queries_total")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("errors_total")}
-              title="Total errors observed for this client. Sort to find the noisy ones — stuck transactions or auth retries."
-            >
-              Errors{sortIndicator("errors_total")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Total errors observed for this client. Sort to find the noisy ones — stuck transactions or auth retries.">
+                <span className="cursor-pointer" onClick={() => onSort("errors_total")}>
+                  Errors{sortIndicator("errors_total")}
+                </span>
+              </InfoLabel>
             </th>
             <th className="px-3 py-2 text-left" title="Client connected over TLS. Empty cell = plaintext on the loopback or on a trusted network.">TLS</th>
           </tr>

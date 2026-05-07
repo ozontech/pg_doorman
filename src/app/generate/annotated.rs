@@ -60,6 +60,22 @@ pub(crate) struct FieldsData {
 }
 
 impl FieldsData {
+    /// Same lookup as [`Self::field`] but returns `None` instead of
+    /// panicking on an unknown section/field. Used by the web layer to
+    /// surface field descriptions in `/api/config`, where unknown keys
+    /// are normal (operator-defined pool names, talos role names, etc.).
+    pub(crate) fn try_field(&self, section: &str, name: &str) -> Option<&FieldDesc> {
+        let map = match section {
+            "general" => &self.fields.general,
+            "pool" => &self.fields.pool,
+            "user" => &self.fields.user,
+            "auth_query" => &self.fields.auth_query,
+            "web" => &self.fields.web,
+            _ => return None,
+        };
+        map.get(name)
+    }
+
     pub(crate) fn field(&self, section: &str, name: &str) -> &FieldDesc {
         let map = match section {
             "general" => &self.fields.general,

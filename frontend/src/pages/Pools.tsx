@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { InfoLabel } from "../components/InfoLabel";
 import { tip } from "../lib/tooltips";
 import { apiGet } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
@@ -231,55 +232,53 @@ export default function Pools() {
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
-            <th
-              className="cursor-pointer px-4 py-2 text-left"
-              onClick={() => onSort("id")}
-              title={tip.poolId}
-            >
-              Pool{sortIndicator("id")}
+            <th className="px-4 py-2 text-left">
+              <InfoLabel tip={tip.poolId}>
+                <span className="cursor-pointer" onClick={() => onSort("id")}>
+                  Pool{sortIndicator("id")}
+                </span>
+              </InfoLabel>
             </th>
-            <th className="px-4 py-2 text-left" title={tip.poolMode}>
-              Mode
+            <th className="px-4 py-2 text-left">
+              <InfoLabel tip={tip.poolMode}>Mode</InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-4 py-2 text-right"
-              onClick={() => onSort("saturation")}
-              title={tip.saturation}
-            >
-              Saturation{sortIndicator("saturation")}
+            <th className="px-4 py-2 text-right">
+              <InfoLabel tip={tip.saturation}>
+                <span className="cursor-pointer" onClick={() => onSort("saturation")}>
+                  Saturation{sortIndicator("saturation")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="px-4 py-2 text-center"
-              title="Mini-sparklines: saturation last 60 s (left) and query p95 last 60 s (right)."
-            >
-              Trend
+            <th className="px-4 py-2 text-center">
+              <InfoLabel tip="Mini-sparklines: saturation last 60 s (left) and query p95 last 60 s (right).">
+                Trend
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-4 py-2 text-right"
-              onClick={() => onSort("waiting")}
-              title={tip.waiting}
-            >
-              Waiting{sortIndicator("waiting")}
+            <th className="px-4 py-2 text-right">
+              <InfoLabel tip={tip.waiting}>
+                <span className="cursor-pointer" onClick={() => onSort("waiting")}>
+                  Waiting{sortIndicator("waiting")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-4 py-2 text-right"
-              onClick={() => onSort("query_p95_ms")}
-              title={tip.queryP95}
-            >
-              p95 ms{sortIndicator("query_p95_ms")}
+            <th className="px-4 py-2 text-right">
+              <InfoLabel tip={tip.queryP95}>
+                <span className="cursor-pointer" onClick={() => onSort("query_p95_ms")}>
+                  p95 ms{sortIndicator("query_p95_ms")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-4 py-2 text-right"
-              onClick={() => onSort("errors_total")}
-              title={tip.errorsTotal}
-            >
-              Errors{sortIndicator("errors_total")}
+            <th className="px-4 py-2 text-right">
+              <InfoLabel tip={tip.errorsTotal}>
+                <span className="cursor-pointer" onClick={() => onSort("errors_total")}>
+                  Errors{sortIndicator("errors_total")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="px-4 py-2 text-left"
-              title="Threshold engine verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second."
-            >
-              State
+            <th className="px-4 py-2 text-left">
+              <InfoLabel tip="Threshold engine verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second.">
+                State
+              </InfoLabel>
             </th>
           </tr>
         </thead>

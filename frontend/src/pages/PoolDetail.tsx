@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiGet, apiPost } from "../api";
+import { InfoLabel } from "../components/InfoLabel";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
@@ -555,11 +556,10 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function KV({ label, value, tip }: { label: string; value: string; tip?: string }) {
   return (
-    <div
-      className="flex items-baseline justify-between border-b border-border/50 py-1 last:border-b-0"
-      title={tip}
-    >
-      <span className="text-text-muted">{label}</span>
+    <div className="flex items-baseline justify-between border-b border-border/50 py-1 last:border-b-0">
+      <InfoLabel tip={tip} className="text-text-muted">
+        {label}
+      </InfoLabel>
       <span className="font-mono text-text tabular">{value}</span>
     </div>
   );

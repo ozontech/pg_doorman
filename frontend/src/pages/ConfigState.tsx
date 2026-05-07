@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { apiGet } from "../api";
 import { Collapsible } from "../components/Collapsible";
+import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
@@ -105,24 +106,41 @@ function ConfigPanel() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-6 py-2 text-left">Key</th>
-            <th className="px-3 py-2 text-left">Value</th>
+            <th className="px-3 py-2 text-left">Default</th>
+            <th className="px-3 py-2 text-left">Current</th>
             <th className="px-3 py-2 text-left">Reload-able</th>
           </tr>
         </thead>
         <tbody>
-          {filtered.map((e) => (
-            <tr key={e.key} className="border-b border-border/40 hover:bg-surface-2">
-              <td className="px-6 py-1.5 font-mono text-xs">{e.key}</td>
-              <td className="px-3 py-1.5 font-mono text-xs text-text-muted break-all">
-                {e.value}
-              </td>
-              <td className="px-3 py-1.5 text-xs">
-                <span className={e.changeable === "yes" ? "text-success" : "text-text-dim"}>
-                  {e.changeable === "yes" ? "yes" : "restart"}
-                </span>
-              </td>
-            </tr>
-          ))}
+          {filtered.map((e) => {
+            const changed = e.default !== "-" && e.default !== e.value;
+            return (
+              <tr key={e.key} className="border-b border-border/40 hover:bg-surface-2">
+                <td className="px-6 py-1.5 font-mono text-xs">
+                  <InfoLabel tip={e.doc || undefined}>{e.key}</InfoLabel>
+                </td>
+                <td className="px-3 py-1.5 font-mono text-xs text-text-dim break-all">
+                  {e.default}
+                </td>
+                <td
+                  className={`px-3 py-1.5 font-mono text-xs break-all ${changed ? "text-accent" : "text-text-muted"}`}
+                >
+                  {changed ? (
+                    <InfoLabel tip="Operator-overridden value (differs from built-in default).">
+                      {e.value}
+                    </InfoLabel>
+                  ) : (
+                    e.value
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-xs">
+                  <span className={e.changeable === "yes" ? "text-success" : "text-text-dim"}>
+                    {e.changeable === "yes" ? "yes" : "restart"}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </PanelShell>

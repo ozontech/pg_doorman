@@ -464,12 +464,17 @@ pub(crate) struct ConfigDto {
 pub(crate) struct ConfigEntry {
     pub key: String,
     pub value: String,
-    /// Marker text used by `SHOW CONFIG` for the default-value column.
-    /// pg_doorman has never populated real defaults here; kept for shape parity.
-    pub default: &'static str,
+    /// Built-in default (computed by serializing `Config::default()`).
+    /// `"-"` when the field has no representation in the default config
+    /// (e.g. user-defined pools).
+    pub default: String,
     /// `"yes"` for keys that take effect on `RELOAD`, `"no"` for keys that
     /// require a restart. Mirrors the `immutables` list inside `show_config`.
     pub changeable: &'static str,
+    /// EN-language description sourced from `fields.yaml`. Empty for
+    /// fields without a documented surface (operator-defined sections,
+    /// internal bookkeeping). Operators see this as the per-row tooltip.
+    pub doc: String,
 }
 
 /// `GET /api/log_level` — the active log filter (RUST_LOG-style).

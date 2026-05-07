@@ -305,9 +305,15 @@ export interface LogsDto {
 
 export interface ConfigEntry {
   key: string;
+  /// Currently effective value. `"***"` for secret keys (password / token).
   value: string;
+  /// Built-in default from `Config::default()`. `"-"` when no default
+  /// representation exists (user-defined pools, talos keys, etc.).
   default: string;
+  /// `"yes"` when the key takes effect on RELOAD, `"no"` when restart-only.
   changeable: string;
+  /// EN description from `fields.yaml`. Empty for keys without docs.
+  doc: string;
 }
 
 export interface ConfigDto {

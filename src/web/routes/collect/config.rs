@@ -85,27 +85,38 @@ pub(crate) fn collect_config() -> ConfigDto {
     if let Ok(value) = serde_json::to_value(&config) {
         flatten_json("", &value, &mut flat);
     }
-    // Drop noisy bookkeeping fields that operators do not act on.
     flat.retain(|k, _| !is_internal_key(k));
+
+    // Diff against `Config::default()` so the UI can show what is at
+    // its built-in default vs. what an operator changed via the config
+    // file. The defaults map is computed once per request — cheap, and
+    // a stable comparison surface for codex DBA P3#7.
+    let mut defaults: HashMap<String, String> = HashMap::new();
+    if let Ok(value) = serde_json::to_value(crate::config::Config::default()) {
+        flatten_json("", &value, &mut defaults);
+    }
 
     let mut entries: Vec<ConfigEntry> = flat
         .into_iter()
         .map(|(key, value)| {
-            let value = if is_secret_key(&key) {
-                "***".to_string()
-            } else {
-                value
-            };
+            let secret = is_secret_key(&key);
+            let value = if secret { "***".to_string() } else { value };
+            let default = defaults
+                .get(&key)
+                .map(|d| if secret { "***".to_string() } else { d.clone() })
+                .unwrap_or_else(|| "-".to_string());
             let changeable = if IMMUTABLES.iter().any(|c| *c == key) {
                 "no"
             } else {
                 "yes"
             };
+            let doc = lookup_doc(&key);
             ConfigEntry {
                 key,
                 value,
-                default: "-",
+                default,
                 changeable,
+                doc,
             }
         })
         .collect();
@@ -123,6 +134,50 @@ pub(crate) fn collect_config() -> ConfigDto {
 /// running with" meaning for an operator.
 fn is_internal_key(key: &str) -> bool {
     matches!(key, "path") || key.starts_with("include.") || key == "include"
+}
+
+/// Map a flattened config key to (section, field-name) suitable for
+/// `FieldsData::try_field`. Returns `None` for nested keys we have no
+/// doc for (e.g. the integers inside a pools.<name>.users array).
+fn key_to_section_field(key: &str) -> Option<(&'static str, &str)> {
+    if let Some(rest) = key.strip_prefix("general.") {
+        return Some(("general", rest));
+    }
+    if let Some(rest) = key.strip_prefix("web.") {
+        return Some(("web", rest));
+    }
+    if let Some(rest) = key.strip_prefix("pools.") {
+        // pools.<name>.users.<i>.<field>  → ("user", <field>)
+        // pools.<name>.auth_query.<field> → ("auth_query", <field>)
+        // pools.<name>.<field>            → ("pool", <field>)
+        let mut parts = rest.splitn(2, '.');
+        let _name = parts.next()?;
+        let tail = parts.next()?;
+        if let Some(user_field) = tail.strip_prefix("users.") {
+            // skip past the index
+            let mut p = user_field.splitn(2, '.');
+            let _idx = p.next()?;
+            let f = p.next()?;
+            return Some(("user", f));
+        }
+        if let Some(aq_field) = tail.strip_prefix("auth_query.") {
+            return Some(("auth_query", aq_field));
+        }
+        return Some(("pool", tail));
+    }
+    None
+}
+
+/// EN documentation string for a config key, or empty if not in fields.yaml.
+fn lookup_doc(key: &str) -> String {
+    let Some((section, field)) = key_to_section_field(key) else {
+        return String::new();
+    };
+    crate::app::generate::annotated::FIELDS
+        .try_field(section, field)
+        .and_then(|f| f.config.as_ref())
+        .map(|i18n| i18n.get(false).trim().to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@
 
 import { useMemo, useState } from "react";
 import { apiGet } from "../api";
+import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
 import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -99,46 +100,51 @@ export default function Apps() {
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
-            <th
-              className="cursor-pointer px-3 py-2 text-left"
-              onClick={() => onSort("application_name")}
-              title="application_name as reported by the client at startup (libpq, JDBC, etc.). Use to identify which app is misbehaving."
-            >
-              application_name{sortIndicator("application_name")}
+            <th className="px-3 py-2 text-left">
+              <InfoLabel tip="application_name as reported by the client at startup (libpq, JDBC, etc.). Use to identify which app is misbehaving.">
+                <span
+                  className="cursor-pointer"
+                  onClick={() => onSort("application_name")}
+                >
+                  application_name{sortIndicator("application_name")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("clients")}
-              title="Currently-connected clients with this application_name."
-            >
-              clients{sortIndicator("clients")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Currently-connected clients with this application_name.">
+                <span className="cursor-pointer" onClick={() => onSort("clients")}>
+                  clients{sortIndicator("clients")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("queries_total")}
-              title="Total queries from this app since pg_doorman started."
-            >
-              queries{sortIndicator("queries_total")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Total queries from this app since pg_doorman started.">
+                <span className="cursor-pointer" onClick={() => onSort("queries_total")}>
+                  queries{sortIndicator("queries_total")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("transactions_total")}
-              title="Total transactions from this app since pg_doorman started."
-            >
-              transactions{sortIndicator("transactions_total")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Total transactions from this app since pg_doorman started.">
+                <span
+                  className="cursor-pointer"
+                  onClick={() => onSort("transactions_total")}
+                >
+                  transactions{sortIndicator("transactions_total")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="cursor-pointer px-3 py-2 text-right"
-              onClick={() => onSort("errors_total")}
-              title="Total errors observed from this app's clients."
-            >
-              errors{sortIndicator("errors_total")}
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Total errors observed from this app's clients.">
+                <span className="cursor-pointer" onClick={() => onSort("errors_total")}>
+                  errors{sortIndicator("errors_total")}
+                </span>
+              </InfoLabel>
             </th>
-            <th
-              className="px-3 py-2 text-right"
-              title="errors / queries × 1000. Above 1 is unusual; above 10 = look at the app's recent deploy."
-            >
-              err / 1k q
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="errors / queries × 1000. Above 1 is unusual; above 10 = look at the app's recent deploy.">
+                err / 1k q
+              </InfoLabel>
             </th>
           </tr>
         </thead>
