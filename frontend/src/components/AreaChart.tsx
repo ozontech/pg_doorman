@@ -60,11 +60,20 @@ export function AreaChart({
         ...labels.map((label, i) => ({
           label,
           stroke: fills[i],
-          fill: fills[i],
+          // Only the bottom series fills from the X-axis baseline.
+          // Higher series get coloured via `bands` (between series i
+          // and i-1) so a top layer whose values are zero everywhere
+          // does not repaint the layers below it with its own colour.
+          fill: i === 0 ? fills[i] : undefined,
           width: 1,
-          // Paint on top — uPlot draws series in order; we already stacked.
         })),
       ],
+      bands: labels.slice(1).map((_, idx) => ({
+        // [top, bottom]: paint the area between series idx+2 and idx+1
+        // with the top series' colour.
+        series: [idx + 2, idx + 1] as [number, number],
+        fill: fills[idx + 1],
+      })),
       hooks: {
         setCursor: [
           (u: uPlot) => {

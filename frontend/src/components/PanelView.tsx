@@ -152,15 +152,28 @@ export function PanelView({
         ...labels.map((label, i) => {
           const stroke = fills?.[i] ?? "rgb(255 176 0)";
           const onRight = rightSeries?.includes(i + 1);
+          // Stacked area: only the bottom series fills from the X-axis
+          // baseline. Higher series get their colour via `bands` below
+          // (band between series i and i-1) so a top series whose
+          // values collapse to zero never repaints the layers under it.
+          const fill = isStack && i === 0 ? stroke : undefined;
           return {
             label,
             stroke,
-            fill: isStack ? stroke : undefined,
+            fill,
             width: 1.5,
             scale: onRight ? "y2" : "y",
           };
         }),
       ],
+      bands: isStack
+        ? labels.slice(1).map((_, idx) => ({
+            // [top, bottom] — uPlot fills the area between the two
+            // cumulative series with the top series' colour.
+            series: [idx + 2, idx + 1] as [number, number],
+            fill: fills?.[idx + 1] ?? "rgb(255 176 0)",
+          }))
+        : undefined,
       hooks: {
         setCursor: [
           (u: uPlot) => {
