@@ -95,10 +95,14 @@ export default function Pools() {
   const [sortKey, setSortKeyState] = useState<SortKey>(initialSortKey);
   const [sortDir, setSortDirState] = useState<SortDir>(initialSortDir);
 
-  const syncUrl = (next: { filters?: Filters; sortKey?: SortKey; sortDir?: SortDir }) => {
-    const f = next.filters ?? filters;
-    const sk = next.sortKey ?? sortKey;
-    const sd = next.sortDir ?? sortDir;
+  // Single source of truth for URL ↔ state sync. Callers always pass the
+  // full target state for the dimensions they want to change; the helper
+  // re-derives the URL from those values plus the still-current ones for
+  // unchanged dimensions. Without this shape, two consecutive
+  // setSearchParams calls in one handler (e.g. flipping sortKey then
+  // sortDir) read stale closures and the URL ends up sorted by one key
+  // while the UI is sorted by another.
+  const writeUrl = (f: Filters, sk: SortKey, sd: SortDir) => {
     const sp = new URLSearchParams(searchParams);
     if (f.query) sp.set("q", f.query);
     else sp.delete("q");
@@ -115,20 +119,7 @@ export default function Pools() {
   ) => {
     setFiltersState((prev) => {
       const value = typeof update === "function" ? update(prev) : update;
-      syncUrl({ filters: value });
-      return value;
-    });
-  };
-  const setSortKey = (key: SortKey) => {
-    setSortKeyState(key);
-    syncUrl({ sortKey: key });
-  };
-  const setSortDir = (
-    update: SortDir | ((prev: SortDir) => SortDir),
-  ) => {
-    setSortDirState((prev) => {
-      const value = typeof update === "function" ? update(prev) : update;
-      syncUrl({ sortDir: value });
+      writeUrl(value, sortKey, sortDir);
       return value;
     });
   };
@@ -180,12 +171,11 @@ export default function Pools() {
   }, [evaluated, filters, sortKey, sortDir]);
 
   const onSort = (key: SortKey) => {
-    if (key === sortKey) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir(key === "id" ? "asc" : "desc");
-    }
+    const nextDir: SortDir =
+      key === sortKey ? (sortDir === "asc" ? "desc" : "asc") : key === "id" ? "asc" : "desc";
+    setSortKeyState(key);
+    setSortDirState(nextDir);
+    writeUrl(filters, key, nextDir);
   };
   const sortIndicator = (key: SortKey) =>
     sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
