@@ -161,88 +161,338 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
-<p>pg_doorman ships a small operator console that runs from the same listener
-as the Prometheus exporter. The bundle is embedded into the binary, so the
-deployment story is identical to a UI-less build: one process, one binary,
+<p>pg_doorman ships a single-page operator console that runs on the same listener
+as the Prometheus exporter. The frontend bundle is embedded in the binary, so
+the deployment story is identical to a UI-less build: one process, one binary,
 one TCP port.</p>
 <h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
-<p>The UI lives under the <code>[web]</code> section of the config. The legacy
-<code>[prometheus]</code> block is still accepted as an alias.</p>
+<p>The console lives under the <code>[web]</code> section of the config. The legacy
+<code>[prometheus]</code> block name is still accepted as an alias.</p>
 <pre><code class="language-toml">[web]
 enabled = true
 host = "0.0.0.0"
 port = 9127
 
-# Operator console (default off)
+# Operator console (off by default)
 ui = true
 ui_anonymous = false
 log_tap_max_entries = 8192
 </code></pre>
 <p><code>web.ui = true</code> is silently demoted to "metrics only" at startup when
-<code>general.admin_password</code> is empty or the literal <code>"admin"</code>: the listener
+<code>general.admin_password</code> is empty or the literal <code>"admin"</code>. The listener
 keeps serving <code>/metrics</code>, but every admin-only endpoint would otherwise
-be trivially open. Set a real password before flipping <code>ui = true</code>; you
-will see <code>web.ui = true ignored: admin_password is default/empty</code> in
-the log when this gate fires.</p>
+be trivially open. Set a real password before flipping <code>ui = true</code>. The
+log line <code>web.ui = true ignored: admin_password is default/empty</code> confirms
+this gate fired.</p>
 <div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
 <tr><td><code>enabled</code></td><td>Whether the listener binds at all. <code>/metrics</code> works regardless of <code>ui</code>.</td><td><code>false</code></td></tr>
 <tr><td><code>host</code></td><td>Bind address.</td><td><code>"0.0.0.0"</code></td></tr>
 <tr><td><code>port</code></td><td>Bind port.</td><td><code>9127</code></td></tr>
-<tr><td><code>ui</code></td><td>Serve the operator console on <code>/</code> and the public API endpoints.</td><td><code>false</code></td></tr>
-<tr><td><code>ui_anonymous</code></td><td>When <code>true</code>, public API endpoints (<code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, ...) accept unauthenticated requests. Admin endpoints (<code>/api/logs</code>, <code>/api/prepared/text/...</code>, <code>/api/interner/top</code>, <code>/api/admin/...</code>) always require basic auth.</td><td><code>false</code></td></tr>
-<tr><td><code>log_tap_max_entries</code></td><td>Ring buffer size for the in-memory log tap powering <code>/api/logs</code>. Set to <code>0</code> to disable the endpoint.</td><td><code>8192</code></td></tr>
+<tr><td><code>ui</code></td><td>Serve the SPA on <code>/</code> and the public API endpoints.</td><td><code>false</code></td></tr>
+<tr><td><code>ui_anonymous</code></td><td>When <code>true</code>, public API endpoints accept unauthenticated requests. See <a href="#access-roles">Access roles</a>.</td><td><code>false</code></td></tr>
+<tr><td><code>log_tap_max_entries</code></td><td>Ring-buffer size for the in-memory log tap behind <code>/api/logs</code>. <code>0</code> disables the endpoint.</td><td><code>8192</code></td></tr>
 </tbody></table>
 </div>
 <h2 id="url-surface"><a class="header" href="#url-surface">URL surface</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Auth</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>/</code> and any non-API path</td><td>Always public when <code>web.ui</code> is active</td><td>The SPA shell. Browsing to <code>/pools</code> directly must not trigger a browser-native basic-auth dialog before the React sign-in modal can render — <code>ui_anonymous</code> does not gate the shell.</td></tr>
-<tr><td><code>/assets/*</code></td><td>Always public when <code>web.ui</code> is active</td><td>Hashed JS / CSS / font bundles. Served with <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
-<tr><td><code>/metrics</code></td><td>None</td><td>Prometheus exposition format. Unaffected by <code>ui</code>.</td></tr>
-<tr><td><code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td>Public when <code>ui_anonymous = true</code>, otherwise admin</td><td>Read-only JSON. Field shapes mirror <code>SHOW &lt;admin-command&gt;</code>.</td></tr>
-<tr><td><code>/api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td>Admin (basic auth)</td><td>Admin-only. <code>/api/logs</code> activates the in-memory tap on first request and self-disables after 2 minutes without traffic. <code>/api/top/queries</code> returns the first ~120 characters of cached SQL text — kept admin-only because previews can include literal values and tenant identifiers.</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Required role</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>/</code>, <code>/pools</code>, any non-API path</td><td>none</td><td>The SPA shell. Served anonymously even when <code>ui_anonymous = false</code>, so deep links do not trip a browser-native Basic-auth dialog before the React sign-in modal can render.</td></tr>
+<tr><td><code>/assets/*</code></td><td>none</td><td>Hashed JS, CSS, font, and SVG bundles. Served with <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
+<tr><td><code>/metrics</code></td><td>none</td><td>Prometheus exposition format. Unaffected by <code>ui</code>.</td></tr>
+<tr><td><code>GET /api/auth/config</code></td><td>none</td><td>Tells the SPA whether SSO is wired and what role the current request holds.</td></tr>
+<tr><td><code>GET /api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td><code>Anonymous</code> when <code>ui_anonymous = true</code>, otherwise <code>Sso</code></td><td>Read-only JSON that mirrors the <code>SHOW &lt;admin-command&gt;</code> shape.</td></tr>
+<tr><td><code>GET /api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td><code>Sso</code></td><td>Read-only personal-data endpoints. <code>/api/logs</code> activates the in-memory tap on first request and self-disables after 2 minutes without traffic. <code>/api/top/queries</code> returns the first ~120 characters of cached SQL text — kept off the public surface because previews can carry literal values and tenant identifiers.</td></tr>
+<tr><td><code>POST /api/admin/{reload,pause,resume,reconnect}</code></td><td><code>Admin</code></td><td>Mutating admin actions. Same semantics as the psql admin protocol.</td></tr>
 </tbody></table>
 </div>
-<h2 id="authentication"><a class="header" href="#authentication">Authentication</a></h2>
-<p>The console uses HTTP basic auth with the <code>admin_username</code> / <code>admin_password</code>
-credentials from <code>[general]</code>. The password is matched in constant time.
-Browsers receive a <code>WWW-Authenticate: Basic</code> challenge on 401, so curl, gh,
-and the like behave normally. Requests that advertise
-<code>Accept: application/json</code> (the SPA's <code>fetch</code> wrapper) get a plain 401
-without the challenge — without that, the browser caches whatever the
-operator typed at the OS-level basic-auth dialog and replays it under the
-SPA modal.</p>
-<p>By default, credentials entered into the console live only in React state
-and are lost on a hard refresh. Tick "Remember me on this device" in the
-sign-in modal to persist them in the browser's <code>localStorage</code> so the
-console survives a reload. Clearing the site's storage in the browser
-wipes the entry.</p>
+<h2 id="access-roles"><a class="header" href="#access-roles">Access roles</a></h2>
+<p>The listener resolves every request to one of three roles. The role check runs
+on the server; the SPA mirrors it on the client only to hide controls the
+operator cannot use.</p>
+<div class="table-wrapper"><table><thead><tr><th>Role</th><th>How the request earns it</th><th>What the role grants</th></tr></thead><tbody>
+<tr><td><code>Anonymous</code></td><td>No credentials, and <code>[web].ui_anonymous = true</code>.</td><td>Public read-only <code>/api/*</code> endpoints listed above, plus <code>/metrics</code>. Personal-data paths and <code>/api/admin/*</code> return <code>401</code>.</td></tr>
+<tr><td><code>Sso</code></td><td>A valid JWT in <code>Authorization: Bearer</code>, in cookie <code>sso_access_token=</code>, or in query <code>?token=</code>, that does <strong>not</strong> match an admin group.</td><td>All read endpoints, including personal-data paths. <code>POST /api/admin/*</code> returns <code>403</code>.</td></tr>
+<tr><td><code>Admin</code></td><td>Either a correct Basic credential pair against <code>[general].admin_username</code>/<code>admin_password</code>, or a valid JWT whose <code>[web].sso_groups_claim</code> value intersects <code>[web].sso_admin_groups</code>.</td><td>Everything, including <code>POST /api/admin/{reload,pause,resume,reconnect}</code>.</td></tr>
+</tbody></table>
+</div>
+<p>When a request carries both Basic and an SSO token, the listener prefers
+Basic. A correct admin password resolves to <code>Admin</code> regardless of any SSO
+state. A wrong Basic password does not block the SSO branch: the SSO
+sources still validate, and a valid JWT resolves to <code>Sso</code> (or <code>Admin</code>,
+depending on the group claim). This covers the common case of a stale
+JWT in <code>localStorage</code> next to a working Basic password.</p>
+<p>The Basic password compare runs in constant time relative to the configured
+credentials. JWTs are validated against the public key in
+<code>[web].sso_public_key_file</code>; the listener caches the parsed key for the
+process lifetime and reloads it on <code>RELOAD</code>.</p>
+<p>The SPA <code>fetch</code> wrapper sends <code>Accept: application/json</code>, which makes the
+listener emit a plain <code>401</code> without <code>WWW-Authenticate: Basic</code>. Without that,
+the browser would cache whatever the operator typed in its native Basic
+dialog and replay it on top of the React sign-in modal. Tools that send
+<code>Accept: */*</code> (curl, gh) still receive the challenge and behave normally.</p>
+<p><code>401 Unauthorized</code> is returned when no credentials reached the listener
+or every credential failed to parse or validate. <code>403 Forbidden</code> is
+returned when credentials validated but the resolved role is too low for
+the path; the body is <code>{"error":"forbidden","message":"admin role required"}</code>.
+The SPA re-opens the sign-in modal on <code>401</code> and shows a non-blocking
+"admin role required" banner on <code>403</code>.</p>
+<h2 id="configuring-sso"><a class="header" href="#configuring-sso">Configuring SSO</a></h2>
+<p>SSO is opt-in. With <code>[web].sso_enabled = false</code> (the default), the listener
+serves only the Anonymous and Admin (Basic) roles. To wire an external SSO
+proxy:</p>
+<ol>
+<li>
+<p>Obtain the RSA public key the proxy uses to sign JWTs and store it in a
+PEM file (e.g. <code>/etc/pg_doorman/sso-public.pem</code>). For oauth2-proxy,
+extract it from the private key with
+<code>openssl rsa -in private.pem -pubout -out public.pem</code>. For Keycloak,
+see <a href="#keycloak">Keycloak</a> below.</p>
+</li>
+<li>
+<p>Add the SSO fields to <code>[web]</code>:</p>
+<pre><code class="language-toml">[web]
+enabled = true
+ui = true
+host = "127.0.0.1"
+port = 9127
+ui_anonymous = false
+
+sso_enabled = true
+sso_proxy_url = "https://sso.example.com/oauth2/start"
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_allowed_users = ["*"]
+</code></pre>
+</li>
+<li>
+<p>Reload the config with <code>kill -SIGHUP &lt;pid&gt;</code> or
+<code>psql -h &lt;host&gt; -p 6432 -U admin -d pgbouncer -c 'RELOAD'</code>.</p>
+</li>
+<li>
+<p>Verify with <code>curl http://&lt;host&gt;:9127/api/auth/config</code>. The response
+should carry <code>"sso_enabled":true</code> and the configured <code>sso_proxy_url</code>.</p>
+</li>
+</ol>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Purpose</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>sso_enabled</code></td><td>Turns the SSO branch on. JWTs are not validated when this is <code>false</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>sso_proxy_url</code></td><td>URL the SPA redirects the browser to for "Sign in via SSO". The backend never calls this URL itself.</td><td><code>null</code></td></tr>
+<tr><td><code>sso_public_key_file</code></td><td>Path to a PEM-encoded RSA public key. Read on start and on <code>RELOAD</code>.</td><td><code>null</code></td></tr>
+<tr><td><code>sso_audience</code></td><td>Allowed <code>aud</code> claim values. A token passes when at least one matches. Required when <code>sso_enabled = true</code>.</td><td><code>[]</code></td></tr>
+<tr><td><code>sso_allowed_users</code></td><td>Allowlist on the <code>preferred_username</code> (or <code>sub</code>) claim. <code>["*"]</code> accepts every valid JWT; a literal list restricts access to those usernames.</td><td><code>["*"]</code></td></tr>
+<tr><td><code>sso_groups_claim</code></td><td>Name of the JWT claim that carries the user's group memberships. Read together with <code>sso_admin_groups</code>.</td><td><code>"groups"</code></td></tr>
+<tr><td><code>sso_admin_groups</code></td><td>Group names that promote an SSO user to <code>Admin</code>. Empty keeps every SSO login at the read-only <code>Sso</code> role.</td><td><code>[]</code></td></tr>
+<tr><td><code>trusted_proxies</code></td><td>CIDR ranges trusted to set <code>X-Forwarded-For</code> / <code>Forwarded</code>. Empty trusts only the listener's own peer. See <a href="#access-log">Access log</a>.</td><td><code>[]</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="promoting-sso-users-to-admin-via-group-claim"><a class="header" href="#promoting-sso-users-to-admin-via-group-claim">Promoting SSO users to Admin via group claim</a></h3>
+<p>By default an SSO login lands in <code>Sso</code> — read-only with access to logs and
+SQL text, but no <code>POST /api/admin/*</code>. To let SSO operators run mutating
+admin actions without sharing the Basic password, configure
+<code>sso_groups_claim</code> and <code>sso_admin_groups</code>:</p>
+<pre><code class="language-toml">[web]
+sso_enabled = true
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_groups_claim = "groups"
+sso_admin_groups = ["pg-doorman-admins"]
+</code></pre>
+<p>When the validated JWT carries <code>"groups": [..., "pg-doorman-admins"]</code>,
+the request resolves to <code>Admin</code>. The access log records the promotion as
+<code>auth_role=admin auth_source=sso</code>, so SSO admins are still distinguishable
+from Basic admins. <code>/api/auth/config</code> reports
+<code>sso_admin_groups_configured = true</code>, which lets the SPA stop promising
+"SSO grants read-only access" in the sign-in modal.</p>
+<h3 id="keycloak"><a class="header" href="#keycloak">Keycloak</a></h3>
+<p>Keycloak signs every JWT with the realm's RSA key. Export the public
+half once per realm into a PEM file pg_doorman can read.</p>
+<p>The non-interactive way uses the realm's JWKS endpoint:</p>
+<pre><code class="language-bash">REALM=https://kc.example.com/realms/operators
+curl -s "$REALM/protocol/openid-connect/certs" \
+  | jq -r '.keys[] | select(.alg=="RS256") | "-----BEGIN CERTIFICATE-----\n" + .x5c[0] + "\n-----END CERTIFICATE-----"' \
+  | openssl x509 -pubkey -noout \
+  &gt; /etc/pg_doorman/sso-public.pem
+</code></pre>
+<p>Or copy it from the admin UI: <strong>Realm settings</strong> → <strong>Keys</strong> → row with
+<code>Algorithm = RS256</code> and <code>Use = SIG</code> → <strong>Public key</strong> → wrap the
+copied base64 body into a <code>-----BEGIN PUBLIC KEY-----</code> PEM file.</p>
+<p>A Keycloak-backed <code>[web]</code> section then looks like this:</p>
+<pre><code class="language-toml">[web]
+sso_enabled = true
+sso_proxy_url = "https://kc.example.com/realms/operators/protocol/openid-connect/auth"
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]    # client_id configured on Keycloak
+sso_groups_claim = "groups"      # default with the "groups" mapper enabled
+sso_admin_groups = ["pg-doorman-admins"]
+</code></pre>
+<p>For Admin via group claim to work, add a <strong>Group Membership</strong> mapper
+to the client (Clients → your client → <strong>Mappers</strong>). Without that
+mapper Keycloak issues tokens without <code>groups</code>, and every operator
+stays on <code>Sso</code>.</p>
+<p>When Keycloak rotates the realm signing key, refetch the PEM and
+issue <code>RELOAD</code>. pg_doorman picks the new key up without a restart.</p>
+<h3 id="when-sso-config-is-broken"><a class="header" href="#when-sso-config-is-broken">When SSO config is broken</a></h3>
+<p>A typo in the SSO section never knocks the operator console offline. When
+<code>sso_enabled = true</code> but the runtime cannot load (missing PEM file, empty
+audience, unparsable PEM), the listener logs the reason at <code>error</code> level,
+keeps SSO disabled for that run, and serves only Basic and Anonymous
+requests. The same reason surfaces in two places so an operator notices
+the broken rollout instead of silently falling back:</p>
+<ul>
+<li><code>/api/auth/config.sso_config_error</code> carries a human-readable message.
+The SPA renders a banner with that text in the sign-in modal.</li>
+<li>The <code>pg_doorman_web_sso_config_error</code> Prometheus gauge stays at <code>1</code>
+while SSO is asked-for but not loaded. Pair it with
+<code>pg_doorman_web_sso_enabled</code> to alert.</li>
+</ul>
+<h2 id="browser-sign-in-flow"><a class="header" href="#browser-sign-in-flow">Browser sign-in flow</a></h2>
+<p>On first load the SPA fetches <code>/api/auth/config</code> and renders the sign-in
+modal. When the response carries <code>sso_proxy_url</code>, the modal shows a
+<strong>Sign in via SSO</strong> button next to the Basic form; otherwise only the
+Basic form appears.</p>
+<p>Clicking <strong>Sign in via SSO</strong> sends the browser to
+<code>${sso_proxy_url}?redirect_to=&lt;current href&gt;</code>. The proxy runs the
+OAuth/OIDC flow and bounces the browser back with <code>?token=&lt;jwt&gt;</code>. The
+SPA stores the token in <code>localStorage</code>, rewrites the URL clean of the
+parameter, and sends <code>Authorization: Bearer &lt;jwt&gt;</code> on every later
+request.</p>
+<p>The sidebar footer shows the resolved username: <code>admin</code> for Basic, or
+<code>sso: &lt;preferred_username&gt;</code> for SSO. <strong>Sign out</strong> clears both
+<code>pgdoorman.admin-auth</code> and <code>pgdoorman.sso-token</code> from <code>localStorage</code>
+and re-opens the sign-in modal.</p>
+<p>A silent-refresh poller wakes every 60 seconds. When the JWT is less
+than 90 seconds from <code>exp</code>, the SPA opens a hidden iframe at
+<code>${origin}/?sso_silent=1</code>. The App router renders a minimal
+<code>SilentCallback</code> component there (no normal polling effects), which
+posts the new token to the parent via <code>window.postMessage</code>. If silent
+refresh fails:</p>
+<ul>
+<li>when a Basic credential is also present, the SPA discards the SSO
+token without redirecting and falls back to Basic for further
+requests;</li>
+<li>otherwise the SPA performs a full redirect through the SSO proxy.</li>
+</ul>
+<p>Configure JWT lifetime to at least 5 minutes; tokens shorter than that
+may expire before the refresh fires.</p>
+<p>The SPA never sends cookies (<code>credentials: "omit"</code> on every fetch). The
+<code>sso_access_token</code> cookie path exists for sidecars, curl, and
+oauth2-proxy variants that paste the token into a cookie on the
+shared domain.</p>
+<p>The Basic credential lives only in React state by default and is lost
+on a hard refresh. <strong>Remember me on this device</strong> in the sign-in modal
+persists it in <code>localStorage</code> so the console survives a reload.
+Clearing site storage in the browser wipes both the Basic and the SSO
+entry.</p>
+<h2 id="access-log"><a class="header" href="#access-log">Access log</a></h2>
+<p>Every response (200/401/403/404/5xx, <code>/metrics</code> scrapes included) emits
+one logfmt line on the <code>pg_doorman::web::access</code> target:</p>
+<pre><code>INFO pg_doorman::web::access method=GET path=/api/admin/reload query=false status=200 bytes=42 latency_ms=12 peer=10.0.1.5:42312 auth_role=admin auth_source=basic auth_user=admin
+</code></pre>
+<p>Fields:</p>
+<ul>
+<li><code>method</code>, <code>path</code> — verb and URL path. Bodies are not logged.</li>
+<li><code>query=true|false</code> — whether the request carried a query string. The
+string itself is reduced to a presence flag so JWTs in <code>?token=</code>
+never reach the log.</li>
+<li><code>status</code>, <code>bytes</code>, <code>latency_ms</code> — response status, body size, and
+end-to-end latency.</li>
+<li><code>peer</code> — the request peer address. By default this is the TCP peer.
+When the TCP peer falls in <code>[web].trusted_proxies</code>, the listener
+parses <code>X-Forwarded-For</code> (or <code>Forwarded</code>, RFC 7239), walks right to
+left skipping any further trusted hops, and uses the first untrusted
+address as <code>peer</code>. An untrusted client cannot spoof the field — the
+proxy headers are ignored when the peer is not trusted.</li>
+<li><code>auth_role</code> — <code>admin</code>, <code>sso</code>, <code>anonymous</code>, or <code>rejected</code>.</li>
+<li><code>auth_source</code> — <code>basic</code>, <code>sso</code>, or <code>-</code>.</li>
+<li><code>auth_user</code> — resolved username, or <code>-</code> for anonymous and rejected.</li>
+</ul>
+<p>Levels:</p>
+<ul>
+<li><code>info</code> — every admin action (<code>POST /api/admin/*</code>), every
+personal-data read (<code>/api/logs</code>, <code>/api/prepared/text/*</code>,
+<code>/api/interner/top</code>, <code>/api/top/queries</code>), every non-2xx response,
+and every authenticated request (Sso or Admin role).</li>
+<li><code>debug</code> — anonymous successful reads of public APIs and <code>/metrics</code>
+scrapes. Prometheus scrapes every few seconds and the SPA polls
+the overview / pools endpoints, so keeping these off <code>info</code> lets
+<code>RUST_LOG=info</code> stay readable.</li>
+</ul>
+<p>The dedicated <code>pg_doorman::web::access</code> target lets operators filter
+the access feed independently of the rest of the logger. The LogTap
+filter dropdown in the <strong>Logs</strong> page can include or exclude this
+target with one click.</p>
+<h3 id="real-client-ip-behind-a-reverse-proxy"><a class="header" href="#real-client-ip-behind-a-reverse-proxy">Real client IP behind a reverse proxy</a></h3>
+<p>By default <code>peer</code> records the TCP address that connected to the
+listener, which is the proxy when pg_doorman sits behind one. List
+the proxy's CIDR in <code>[web].trusted_proxies</code> to surface the real
+client IP:</p>
+<pre><code class="language-toml">[web]
+trusted_proxies = ["10.0.0.0/8", "192.168.0.0/16"]
+</code></pre>
+<p>Both <code>X-Forwarded-For</code> and <code>Forwarded</code> are recognised. Multiple
+trusted hops in the chain are skipped. An untrusted client that
+sends <code>X-Forwarded-For</code> is ignored, so this knob does not give
+arbitrary callers control over the access-log field.</p>
+<h2 id="metrics"><a class="header" href="#metrics">Metrics</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Type</th><th>Labels</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_web_sso_enabled</code></td><td>gauge</td><td>—</td><td><code>1</code> when SSO loaded successfully, <code>0</code> otherwise.</td></tr>
+<tr><td><code>pg_doorman_web_sso_config_error</code></td><td>gauge</td><td>—</td><td><code>1</code> when <code>sso_enabled = true</code> but the runtime failed to load.</td></tr>
+<tr><td><code>pg_doorman_web_auth_attempts_total</code></td><td>counter</td><td><code>role</code>, <code>source</code></td><td>Authentication attempts by resolved role (<code>admin</code>/<code>sso</code>/<code>anonymous</code>/<code>rejected</code>) and source (<code>basic</code>/<code>sso</code>/<code>none</code>).</td></tr>
+<tr><td><code>pg_doorman_web_requests_total</code></td><td>counter</td><td><code>status_class</code>, <code>role</code></td><td>Web requests by HTTP status class (<code>1xx</code>–<code>5xx</code>) and resolved role.</td></tr>
+<tr><td><code>pg_doorman_web_sso_validation_errors_total</code></td><td>counter</td><td><code>reason</code></td><td>JWT validation failures by reason: <code>signature</code>, <code>expired</code>, <code>audience</code>, <code>no_username</code>, <code>allowlist</code>.</td></tr>
+</tbody></table>
+</div>
+<p>A sustained spike in <code>signature</code> means the SSO proxy rotated keys without
+updating <code>sso_public_key_file</code>. A spike in <code>allowlist</code> means a JWT outside
+<code>sso_allowed_users</code> is repeatedly trying to log in. A spike in <code>4xx</code> for
+the <code>sso</code> role usually points at a broken proxy in front of pg_doorman.</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<p><strong><code>401</code> on a JWT that should be valid.</strong> Check that <code>aud</code> matches one of
+the <code>sso_audience</code> values and that <code>exp</code> has not passed. Validate the
+PEM with <code>openssl rsa -pubin -in &lt;pem&gt; -text -noout</code>. The
+<code>pg_doorman_web_sso_validation_errors_total{reason}</code> counter shows which
+check failed.</p>
+<p><strong><code>403</code> on a JWT that should be valid.</strong> The path requires <code>Admin</code> (e.g.
+<code>POST /api/admin/reload</code>). Either log in with the Basic admin password,
+or add the user's group to <code>[web].sso_admin_groups</code> and reload the
+config.</p>
+<p><strong>SPA never offers Sign in via SSO.</strong> <code>/api/auth/config</code> is not
+returning <code>sso_proxy_url</code>. Either <code>[web].sso_enabled = false</code>, or
+<code>sso_proxy_url</code> is unset, or the runtime failed to load (look for
+<code>sso_config_error</code> in the same response).</p>
+<p><strong>Silent refresh does not fire.</strong> The SSO proxy must return a fresh
+token without rendering a login screen when the iframe carries an
+active session. With oauth2-proxy, set <code>--silent-refresh=true</code>.</p>
+<p><strong>Cookie-based JWT is ignored.</strong> The cookie must reach pg_doorman on
+the same domain, and <code>aud</code> must be in <code>sso_audience</code>. The SPA itself
+sends no cookies; cookie auth targets curl, sidecars, and oauth2-proxy
+variants that forward the token via cookie on the shared domain.</p>
 <h2 id="pages"><a class="header" href="#pages">Pages</a></h2>
 <p>The SPA exposes:</p>
 <ul>
-<li><strong>Overview</strong> — health pill, four golden-signal sparklines (latency p95,
-traffic, errors/s, saturation), connection breakdown stacked area,
-pool fill heatmap, dual-axis wait + oldest-active-age, top-5 errors
-per pool, and a collapsed resource detail panel.</li>
+<li><strong>Overview</strong> — health pill, four golden-signal sparklines (latency
+p95, traffic, errors/s, saturation), connection breakdown stacked
+area, pool fill heatmap, dual-axis wait + oldest-active-age, top-5
+errors per pool, and a collapsed Resource detail panel.</li>
 <li><strong>Pools</strong> — sortable table with mini-sparklines per row.</li>
-<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — full per-pool drill-down: SQLSTATE
-breakdown, oldest-active-age, pause/resume/reconnect controls.</li>
-<li><strong>Clients</strong> — paginated table backed by <code>/api/clients</code> with server-side
-filter and sort.</li>
+<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — full per-pool drill-down:
+SQLSTATE breakdown, oldest-active-age, pause/resume/reconnect
+controls.</li>
+<li><strong>Clients</strong> — paginated table backed by <code>/api/clients</code> with
+server-side filter and sort.</li>
 <li><strong>Apps</strong> — one row per <code>application_name</code> with err / 1k q ratio.</li>
 <li><strong>Caches</strong> — Prepared statement table with hit rate, plus a query
 interner card (named vs anonymous bytes).</li>
 <li><strong>Logs</strong> — live tail of the LogTap with level / target filter and
 pause / auto-scroll toggles.</li>
-<li><strong>Config &amp; state</strong> — collapsed panels covering <code>[general]</code> keys, the
-active log filter, <code>auth_query</code> cache, databases, users, sockets,
-pool scaling, pool coordinator.</li>
-<li><strong>War room</strong> (<code>/wall</code>) — six huge tiles, optimized for an incident
+<li><strong>Config &amp; state</strong> — collapsed panels covering <code>[general]</code> keys,
+the active log filter, <code>auth_query</code> cache, databases, users,
+sockets, pool scaling, pool coordinator.</li>
+<li><strong>War room</strong> (<code>/wall</code>) — six oversized tiles for an incident
 bridge or a wall display.</li>
 </ul>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
-<p>The frontend bundle is checked into git under <code>frontend/dist/</code> so that
-RPM/DEB/Docker pipelines do not need a node toolchain. Developers editing
-the SPA must rebuild before committing:</p>
+<p>The frontend bundle is checked into git under <code>frontend/dist/</code> so RPM,
+DEB, and Docker pipelines do not need a node toolchain. Developers
+editing the SPA must rebuild before committing:</p>
 <pre><code class="language-bash">cd frontend
 npm ci
 npm run install-hooks   # one-time: wires the dist-sync pre-commit hook
@@ -251,19 +501,19 @@ npm run typecheck
 npm run build
 </code></pre>
 <p><code>npm run install-hooks</code> is opt-in. CI does not need it: the
-<code>frontend.yml</code> workflow runs <code>npm run check-dist</code> and refuses to merge
-when a commit changed source files without rebuilding <code>dist/</code>.</p>
-<p>A separate <code>.github/workflows/frontend.yml</code> runs the same gates on every
-PR that touches <code>frontend/</code>.</p>
+<code>.github/workflows/frontend.yml</code> workflow runs <code>npm run check-dist</code> and
+refuses to merge when a commit changed source files without rebuilding
+<code>dist/</code>. The same workflow runs lint and typecheck on every PR that
+touches <code>frontend/</code>.</p>
 <h2 id="deployment"><a class="header" href="#deployment">Deployment</a></h2>
-<p><code>/metrics</code> is unauthenticated on the same listener that can serve the
-UI. That mirrors the historical Prometheus exporter and keeps existing
-scrape configs working. If you put pg_doorman behind a reverse proxy,
-remember that auth on <code>/api/*</code> does <strong>not</strong> propagate to <code>/metrics</code> —
-metrics expose pool names, users, databases, connection pressure,
-auth-query state, and workload shape. Either keep <code>[web]</code> on a private
-host/port that only your scrape system reaches, or front the listener
-with a proxy that adds auth on <code>/metrics</code> separately.</p>
+<p><code>/metrics</code> is unauthenticated on the same listener that serves the UI.
+This mirrors the historical Prometheus exporter and keeps existing
+scrape configs working. Auth on <code>/api/*</code> does <strong>not</strong> propagate to
+<code>/metrics</code> — the metrics surface exposes pool names, users, databases,
+connection pressure, auth-query state, and workload shape. Either bind
+<code>[web]</code> to a private host/port that only your scrape system reaches,
+or front the listener with a proxy that adds auth on <code>/metrics</code>
+separately.</p>
 
                     </main>
 

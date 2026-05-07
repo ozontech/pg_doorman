@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Drop-in замена для <a href="https://www.pgbouncer.org/">PgBouncer</a> и <a href="https://github.com/yandex/odyssey">Odyssey</a>, альтернатива <a href="https://github.com/postgresml/pgcat">PgCat</a>. Три года в production у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.</p>
-<p><a href="tutorials/installation.html">Скачать PgDoorman 3.8.0</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Скачать PgDoorman 3.8.5</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="Ключевые-возможности"><a class="header" href="#Ключевые-возможности">Ключевые возможности</a></h2>
 <div id="admonition-Встроенный-диагностический-дашборд" class="admonition admonish-success" role="note" aria-labelledby="admonition-Встроенный-диагностический-дашборд-title">
 <div class="admonition-title">
@@ -5092,9 +5092,13 @@ app  | mydb     | 1        | 12345   | 87         | 3                    | 142  
 <li><a href="observability/../tutorials/troubleshooting.html">Troubleshooting</a> — типичные сбои и их вывод в <code>SHOW</code>.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
-<p>В pg_doorman встроена операторская консоль. HTTP-сервер тот же, что отдаёт Prometheus-метрики; собранные файлы фронтенда лежат внутри бинарника. Запуск консоли не добавляет внешних зависимостей: один процесс, один бинарь, один TCP-порт.</p>
+<p>В pg_doorman встроена операторская веб-консоль. Она работает на том же
+HTTP-сервере, что отдаёт Prometheus-метрики; собранный фронтенд лежит
+внутри бинарника. Запуск консоли не добавляет внешних зависимостей: один
+процесс, один бинарь, один TCP-порт.</p>
 <h2 id="Включение"><a class="header" href="#Включение">Включение</a></h2>
-<p>Консоль настраивается в секции <code>[web]</code>. Старое имя секции <code>[prometheus]</code> тоже принимается.</p>
+<p>Консоль настраивается в секции <code>[web]</code>. Старое имя секции <code>[prometheus]</code>
+тоже принимается как алиас.</p>
 <pre><code class="language-toml">[web]
 enabled = true
 host = "0.0.0.0"
@@ -5105,43 +5109,319 @@ ui = true
 ui_anonymous = false
 log_tap_max_entries = 8192
 </code></pre>
-<p>Если <code>web.ui = true</code>, но <code>general.admin_password</code> не задан или равен <code>"admin"</code>, консоль не запускается. HTTP-сервер продолжает отдавать <code>/metrics</code>, но веб-интерфейс и admin-эндпоинты остаются выключенными. В лог пишется <code>web.ui = true ignored: admin_password is default/empty</code>. Задайте настоящий пароль до того, как включать <code>ui = true</code>.</p>
+<p>При <code>web.ui = true</code> и <code>general.admin_password</code>, равном пустой строке или
+литералу <code>"admin"</code>, консоль на старте молча переходит в режим «только
+metrics». HTTP-сервер продолжает отдавать <code>/metrics</code>, но admin-эндпоинты
+иначе оказались бы открыты любому. Задайте настоящий пароль до того, как
+включать <code>ui = true</code>. Срабатывание этой проверки видно в логе по строке
+<code>web.ui = true ignored: admin_password is default/empty</code>.</p>
 <div class="table-wrapper"><table><thead><tr><th>Параметр</th><th>Описание</th><th>По умолчанию</th></tr></thead><tbody>
 <tr><td><code>enabled</code></td><td>Запускать ли HTTP-сервер. <code>/metrics</code> работает независимо от <code>ui</code>.</td><td><code>false</code></td></tr>
 <tr><td><code>host</code></td><td>Адрес для bind.</td><td><code>"0.0.0.0"</code></td></tr>
 <tr><td><code>port</code></td><td>Порт для bind.</td><td><code>9127</code></td></tr>
-<tr><td><code>ui</code></td><td>Отдавать веб-интерфейс по <code>/</code> и публичные API-эндпоинты.</td><td><code>false</code></td></tr>
-<tr><td><code>ui_anonymous</code></td><td>При <code>true</code> публичные API (<code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, ...) принимают запросы без авторизации. Admin-эндпоинты (<code>/api/logs</code>, <code>/api/prepared/text/...</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code>, <code>/api/admin/...</code>) всегда требуют basic auth.</td><td><code>false</code></td></tr>
-<tr><td><code>log_tap_max_entries</code></td><td>Размер кольцевого буфера в памяти, обслуживающего <code>/api/logs</code>. <code>0</code> отключает эндпоинт.</td><td><code>8192</code></td></tr>
+<tr><td><code>ui</code></td><td>Отдавать SPA по <code>/</code> и публичные API-эндпоинты.</td><td><code>false</code></td></tr>
+<tr><td><code>ui_anonymous</code></td><td>При <code>true</code> публичные API-эндпоинты принимают запросы без авторизации. См. <a href="guides/web-ui.html#%D1%80%D0%BE%D0%BB%D0%B8-%D0%B4%D0%BE%D1%81%D1%82%D1%83%D0%BF%D0%B0">Роли доступа</a>.</td><td><code>false</code></td></tr>
+<tr><td><code>log_tap_max_entries</code></td><td>Размер кольцевого буфера в памяти для <code>/api/logs</code>. <code>0</code> отключает эндпоинт.</td><td><code>8192</code></td></tr>
 </tbody></table>
 </div>
 <h2 id="url-карта"><a class="header" href="#url-карта">URL-карта</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Авторизация</th><th>Назначение</th></tr></thead><tbody>
-<tr><td><code>/</code> и любой не-API путь</td><td>Без авторизации, когда <code>web.ui</code> активен</td><td>Оболочка SPA. Прямой переход на <code>/pools</code> открывает форму входа React, а не системный диалог браузера; <code>ui_anonymous</code> на доступ к оболочке не влияет.</td></tr>
-<tr><td><code>/assets/*</code></td><td>Без авторизации, когда <code>web.ui</code> активен</td><td>Хэшированные JS, CSS и шрифты. <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
-<tr><td><code>/metrics</code></td><td>Без авторизации</td><td>Prometheus exposition format. От <code>ui</code> не зависит.</td></tr>
-<tr><td><code>/api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td>Без авторизации при <code>ui_anonymous = true</code>, иначе admin</td><td>Read-only JSON. Поля повторяют формат <code>SHOW &lt;admin-команда&gt;</code>.</td></tr>
-<tr><td><code>/api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td>Admin (basic auth)</td><td>Только для admin. <code>/api/logs</code> подключает буфер логов при первом запросе и отключает его через 2 минуты простоя. <code>/api/top/queries</code> возвращает первые ~120 символов SQL-запросов из кэша; превью могут содержать литералы и идентификаторы клиентов, поэтому admin-only.</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>URL</th><th>Требуемая роль</th><th>Назначение</th></tr></thead><tbody>
+<tr><td><code>/</code>, <code>/pools</code>, любой не-API путь</td><td>нет</td><td>Оболочка SPA. Отдаётся анонимно даже при <code>ui_anonymous = false</code>, чтобы прямой переход на deep link не открывал системный диалог Basic-авторизации браузера до того, как успеет отрендериться форма входа React.</td></tr>
+<tr><td><code>/assets/*</code></td><td>нет</td><td>Хэшированные JS, CSS, шрифты и SVG. <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
+<tr><td><code>/metrics</code></td><td>нет</td><td>Prometheus exposition format. От <code>ui</code> не зависит.</td></tr>
+<tr><td><code>GET /api/auth/config</code></td><td>нет</td><td>Сообщает SPA, подключён ли SSO и какая роль у текущего запроса.</td></tr>
+<tr><td><code>GET /api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td><code>Anonymous</code>, когда <code>ui_anonymous = true</code>, иначе <code>Sso</code></td><td>Read-only JSON, повторяет формат <code>SHOW &lt;admin-команда&gt;</code>.</td></tr>
+<tr><td><code>GET /api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td><code>Sso</code></td><td>Read-only эндпоинты с персональными данными. <code>/api/logs</code> подключает буфер логов на первом запросе и отключает его через 2 минуты простоя. <code>/api/top/queries</code> возвращает первые ~120 символов SQL-текста из кэша. Эти данные не вынесены в публичную поверхность, потому что превью могут содержать литералы и идентификаторы клиентов.</td></tr>
+<tr><td><code>POST /api/admin/{reload,pause,resume,reconnect}</code></td><td><code>Admin</code></td><td>Управляющие admin-операции. Семантика та же, что и у psql admin-протокола.</td></tr>
 </tbody></table>
 </div>
-<h2 id="Авторизация"><a class="header" href="#Авторизация">Авторизация</a></h2>
-<p>Консоль использует HTTP basic auth с парой <code>admin_username</code> / <code>admin_password</code> из секции <code>[general]</code>. Пароль сравнивается за постоянное время. На 401 браузерам отдаётся <code>WWW-Authenticate: Basic</code>, чтобы <code>curl</code>, <code>gh</code> и сторонние HTTP-клиенты работали как ожидают. Запросы с заголовком <code>Accept: application/json</code> (так SPA ходит через <code>fetch</code>) получают 401 без challenge: иначе браузер закешировал бы пароль из системного диалога и подставлял его поверх формы входа React.</p>
-<p>По умолчанию реквизиты живут только в памяти React и пропадают при перезагрузке страницы. Если в форме входа отметить «Remember me on this device», реквизиты сохранятся в <code>localStorage</code> браузера и переживут перезагрузку. Очистка site storage в браузере удаляет эту запись.</p>
+<h2 id="Роли-доступа"><a class="header" href="#Роли-доступа">Роли доступа</a></h2>
+<p>Сервер на каждом запросе вычисляет одну из трёх ролей. Проверка работает
+на стороне сервера; SPA дублирует её на клиенте только для того, чтобы
+скрыть кнопки, которыми оператор всё равно не может воспользоваться.</p>
+<div class="table-wrapper"><table><thead><tr><th>Роль</th><th>Как запрос её получает</th><th>Что роль даёт</th></tr></thead><tbody>
+<tr><td><code>Anonymous</code></td><td>Учётных данных нет, <code>[web].ui_anonymous = true</code>.</td><td>Read-only публичные <code>/api/*</code> из таблицы выше плюс <code>/metrics</code>. На пути с персональными данными и <code>/api/admin/*</code> возвращается <code>401</code>.</td></tr>
+<tr><td><code>Sso</code></td><td>Валидный JWT в <code>Authorization: Bearer</code>, в cookie <code>sso_access_token=</code> или в query <code>?token=</code>, который <strong>не</strong> попадает в admin-группу.</td><td>Все read-эндпоинты, включая пути с персональными данными. На <code>POST /api/admin/*</code> отдаётся <code>403</code>.</td></tr>
+<tr><td><code>Admin</code></td><td>Либо корректная пара Basic из <code>[general].admin_username</code> / <code>admin_password</code>, либо валидный JWT, у которого значение <code>[web].sso_groups_claim</code> пересекается с <code>[web].sso_admin_groups</code>.</td><td>Полный доступ, включая <code>POST /api/admin/{reload,pause,resume,reconnect}</code>.</td></tr>
+</tbody></table>
+</div>
+<p>Когда в одном запросе есть и Basic, и SSO-токен, приоритет у Basic.
+Корректный admin-пароль даёт <code>Admin</code> независимо от состояния SSO.
+Неверный Basic-пароль не блокирует SSO-ветку: SSO-источники всё равно
+проверяются, и валидный JWT даёт роль <code>Sso</code> (или <code>Admin</code>, если совпала
+admin-группа). Это покрывает типичный случай: в <code>localStorage</code> лежит
+просроченный JWT рядом с рабочим Basic-паролем.</p>
+<p>Basic-пароль сравнивается за постоянное время, чтобы по длительности
+сравнения нельзя было угадывать символы. JWT проверяются по публичному
+ключу из <code>[web].sso_public_key_file</code>; разобранный ключ кэшируется на
+время жизни процесса и перечитывается на <code>RELOAD</code>.</p>
+<p><code>fetch</code>-обёртка SPA шлёт <code>Accept: application/json</code>, и сервер на ней
+отдаёт чистый <code>401</code> без <code>WWW-Authenticate: Basic</code>. Без этого браузер
+закешировал бы то, что оператор ввёл в системном диалоге Basic, и
+подставлял этот пароль поверх формы входа React. Инструменты с
+<code>Accept: */*</code> (curl, gh) получают challenge как обычно.</p>
+<p><code>401 Unauthorized</code> отдаётся, когда учётных данных не пришло или ни
+один вариант не прошёл парсинг и валидацию. <code>403 Forbidden</code> — когда
+данные валидны, но роли не хватает для пути; тело —
+<code>{"error":"forbidden","message":"admin role required"}</code>. SPA на <code>401</code>
+повторно открывает форму входа, на <code>403</code> показывает неблокирующий
+баннер «admin role required», не уводя на форму входа.</p>
+<h2 id="Настройка-sso"><a class="header" href="#Настройка-sso">Настройка SSO</a></h2>
+<p>SSO опциональный. По умолчанию (<code>[web].sso_enabled = false</code>) сервер
+обслуживает только роли Anonymous и Admin (Basic). Чтобы подключить
+внешний SSO-proxy:</p>
+<ol>
+<li>
+<p>Получите от SSO-провайдера RSA public key, которым он подписывает JWT,
+и сохраните его в PEM-файле (например, <code>/etc/pg_doorman/sso-public.pem</code>).
+Для oauth2-proxy ключ извлекается из приватного:
+<code>openssl rsa -in private.pem -pubout -out public.pem</code>. Для Keycloak —
+см. <a href="guides/web-ui.html#keycloak">Keycloak</a> ниже.</p>
+</li>
+<li>
+<p>Добавьте SSO-поля в <code>[web]</code>:</p>
+<pre><code class="language-toml">[web]
+enabled = true
+ui = true
+host = "127.0.0.1"
+port = 9127
+ui_anonymous = false
+
+sso_enabled = true
+sso_proxy_url = "https://sso.example.com/oauth2/start"
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_allowed_users = ["*"]
+</code></pre>
+</li>
+<li>
+<p>Перечитайте конфиг: <code>kill -SIGHUP &lt;pid&gt;</code> или
+<code>psql -h &lt;host&gt; -p 6432 -U admin -d pgbouncer -c 'RELOAD'</code>.</p>
+</li>
+<li>
+<p>Проверьте: <code>curl http://&lt;host&gt;:9127/api/auth/config</code> должен вернуть
+<code>"sso_enabled":true</code> и заданный <code>sso_proxy_url</code>.</p>
+</li>
+</ol>
+<div class="table-wrapper"><table><thead><tr><th>Поле</th><th>Назначение</th><th>По умолчанию</th></tr></thead><tbody>
+<tr><td><code>sso_enabled</code></td><td>Включает SSO-ветку. Без неё JWT не валидируются.</td><td><code>false</code></td></tr>
+<tr><td><code>sso_proxy_url</code></td><td>URL, на который SPA уводит браузер по кнопке «Sign in via SSO». Бэкенд этот URL сам не вызывает.</td><td><code>null</code></td></tr>
+<tr><td><code>sso_public_key_file</code></td><td>Путь к PEM-файлу с RSA public key. Читается на старте и при <code>RELOAD</code>.</td><td><code>null</code></td></tr>
+<tr><td><code>sso_audience</code></td><td>Допустимые значения claim <code>aud</code>. Токен принимается, если совпадает хотя бы одно. Обязательное поле при <code>sso_enabled = true</code>.</td><td><code>[]</code></td></tr>
+<tr><td><code>sso_allowed_users</code></td><td>Allowlist по claim <code>preferred_username</code> (или <code>sub</code>). <code>["*"]</code> принимает любого. Иначе пропускаются только перечисленные имена.</td><td><code>["*"]</code></td></tr>
+<tr><td><code>sso_groups_claim</code></td><td>Имя JWT-claim, в котором лежат группы пользователя. Читается вместе с <code>sso_admin_groups</code>.</td><td><code>"groups"</code></td></tr>
+<tr><td><code>sso_admin_groups</code></td><td>Группы, которые поднимают SSO-пользователя до <code>Admin</code>. Пустой список оставляет каждый SSO-логин на read-only роли <code>Sso</code>.</td><td><code>[]</code></td></tr>
+<tr><td><code>trusted_proxies</code></td><td>CIDR доверенных reverse-proxy. Пустой список — доверять только своему peer'у. См. <a href="guides/web-ui.html#%D0%B6%D1%83%D1%80%D0%BD%D0%B0%D0%BB-%D0%B4%D0%BE%D1%81%D1%82%D1%83%D0%BF%D0%B0">Журнал доступа</a>.</td><td><code>[]</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="Поднятие-sso-пользователей-до-admin-через-group-claim"><a class="header" href="#Поднятие-sso-пользователей-до-admin-через-group-claim">Поднятие SSO-пользователей до Admin через group claim</a></h3>
+<p>По умолчанию SSO-логин получает роль <code>Sso</code> — read-only с доступом к логам
+и SQL-текстам, но без <code>POST /api/admin/*</code>. Чтобы операторы могли
+запускать управляющие admin-операции через SSO без раздачи Basic-пароля,
+настройте <code>sso_groups_claim</code> и <code>sso_admin_groups</code>:</p>
+<pre><code class="language-toml">[web]
+sso_enabled = true
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]
+sso_groups_claim = "groups"
+sso_admin_groups = ["pg-doorman-admins"]
+</code></pre>
+<p>Когда в валидном JWT приходит <code>"groups": [..., "pg-doorman-admins"]</code>,
+запрос получает роль <code>Admin</code>. В access-логе это выглядит как
+<code>auth_role=admin auth_source=sso</code>, и SSO-админы по-прежнему отличимы от
+Basic-админов. <code>/api/auth/config</code> отдаёт
+<code>sso_admin_groups_configured = true</code>, и SPA убирает из формы входа
+обещание «SSO grants read-only access».</p>
+<h3 id="keycloak"><a class="header" href="#keycloak">Keycloak</a></h3>
+<p>Keycloak подписывает каждый JWT RSA-ключом realm'а. Публичную часть
+этого ключа нужно один раз выгрузить в PEM-файл, который читает
+pg_doorman.</p>
+<p>Без UI — через JWKS-эндпоинт realm'а:</p>
+<pre><code class="language-bash">REALM=https://kc.example.com/realms/operators
+curl -s "$REALM/protocol/openid-connect/certs" \
+  | jq -r '.keys[] | select(.alg=="RS256") | "-----BEGIN CERTIFICATE-----\n" + .x5c[0] + "\n-----END CERTIFICATE-----"' \
+  | openssl x509 -pubkey -noout \
+  &gt; /etc/pg_doorman/sso-public.pem
+</code></pre>
+<p>Через админ-консоль: <strong>Realm settings</strong> → <strong>Keys</strong> → строка с
+<code>Algorithm = RS256</code> и <code>Use = SIG</code> → <strong>Public key</strong> → скопированное
+base64-тело завернуть в PEM-файл с заголовками
+<code>-----BEGIN PUBLIC KEY-----</code> / <code>-----END PUBLIC KEY-----</code>.</p>
+<p>Секция <code>[web]</code> под Keycloak выглядит так:</p>
+<pre><code class="language-toml">[web]
+sso_enabled = true
+sso_proxy_url = "https://kc.example.com/realms/operators/protocol/openid-connect/auth"
+sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+sso_audience = ["pg_doorman"]    # client_id, заданный в Keycloak
+sso_groups_claim = "groups"      # значение по умолчанию для маппера «groups»
+sso_admin_groups = ["pg-doorman-admins"]
+</code></pre>
+<p>Чтобы Admin через group claim работал, добавьте клиенту маппер
+<strong>Group Membership</strong> (Clients → нужный client → <strong>Mappers</strong>). Без
+этого маппера Keycloak выдаёт токены без <code>groups</code>, и каждый оператор
+остаётся в роли <code>Sso</code>.</p>
+<p>После ротации ключа realm'а заново выгрузите PEM и сделайте
+<code>RELOAD</code> — pg_doorman подхватит новый ключ без рестарта.</p>
+<h3 id="Когда-sso-конфигурация-сломана"><a class="header" href="#Когда-sso-конфигурация-сломана">Когда SSO-конфигурация сломана</a></h3>
+<p>Опечатка в SSO-секции не должна выводить операторскую консоль из строя.
+При <code>sso_enabled = true</code>, но не загружаемом рантайме (нет PEM-файла,
+пустой audience, нечитаемый PEM) сервер пишет причину в лог на уровне
+<code>error</code>, оставляет SSO выключенным на этот запуск и обслуживает только
+Basic и Anonymous. Та же причина видна в двух точках, чтобы оператор
+заметил поломку, а не тихий откат на Basic:</p>
+<ul>
+<li><code>/api/auth/config.sso_config_error</code> содержит человекочитаемое
+сообщение. SPA показывает баннер с этим текстом в форме входа.</li>
+<li>Метрика <code>pg_doorman_web_sso_config_error</code> равна <code>1</code>, пока SSO
+запрошен, но не загружен. В паре с <code>pg_doorman_web_sso_enabled</code>
+даёт условие для алерта.</li>
+</ul>
+<h2 id="Логин-из-браузера"><a class="header" href="#Логин-из-браузера">Логин из браузера</a></h2>
+<p>При первом заходе SPA получает <code>/api/auth/config</code> и показывает форму
+входа. Если в ответе пришёл <code>sso_proxy_url</code>, рядом с Basic-формой
+появляется кнопка <strong>Sign in via SSO</strong>; иначе — только Basic.</p>
+<p>Клик по <strong>Sign in via SSO</strong> уводит браузер на
+<code>${sso_proxy_url}?redirect_to=&lt;текущий URL&gt;</code>. Внешний proxy выполняет
+OAuth/OIDC-обмен и возвращает браузер обратно с <code>?token=&lt;jwt&gt;</code>. SPA
+сохраняет токен в <code>localStorage</code>, чистит URL от параметра и шлёт
+<code>Authorization: Bearer &lt;jwt&gt;</code> на каждом следующем запросе.</p>
+<p>В нижней части sidebar отображается имя текущего пользователя: <code>admin</code>
+для Basic или <code>sso: &lt;preferred_username&gt;</code> для SSO. Кнопка <strong>Sign out</strong>
+очищает в <code>localStorage</code> оба ключа (<code>pgdoorman.admin-auth</code> и
+<code>pgdoorman.sso-token</code>) и заново открывает форму входа.</p>
+<p>Silent-refresh запускается раз в 60 секунд. Когда до <code>exp</code> остаётся
+меньше 90 секунд, SPA открывает скрытый iframe с URL
+<code>${origin}/?sso_silent=1</code>. Внутри iframe App-роутер рендерит
+минимальный <code>SilentCallback</code> (без обычных эффектов опроса), который
+через <code>window.postMessage</code> отдаёт новый токен parent-окну. Если
+silent-refresh не сработал:</p>
+<ul>
+<li>при наличии Basic-данных SPA удаляет SSO-токен без редиректа, и
+дальнейшие запросы идут под Basic;</li>
+<li>иначе SPA уходит на полный редирект через SSO-proxy.</li>
+</ul>
+<p>Срок жизни JWT задавайте не меньше 5 минут — более короткие токены
+успевают истечь до того, как сработает refresh.</p>
+<p>SPA cookie не шлёт (<code>credentials: "omit"</code> на каждом fetch). Путь с
+cookie <code>sso_access_token</code> существует для сайдкаров, curl и oauth2-proxy
+вариантов, которые кладут токен в cookie на общем домене.</p>
+<p>Basic-пароль по умолчанию живёт только в памяти React и пропадает на
+hard reload. Галочка <strong>Remember me on this device</strong> в форме входа
+сохраняет его в <code>localStorage</code>, и консоль переживает перезагрузку.
+Очистка site storage в браузере удаляет и Basic, и SSO-запись.</p>
+<h2 id="Журнал-доступа"><a class="header" href="#Журнал-доступа">Журнал доступа</a></h2>
+<p>После каждого ответа (200/401/403/404/5xx, включая скрейпы <code>/metrics</code>)
+консоль пишет одну logfmt-строку в канал <code>pg_doorman::web::access</code>:</p>
+<pre><code>INFO pg_doorman::web::access method=GET path=/api/admin/reload query=false status=200 bytes=42 latency_ms=12 peer=10.0.1.5:42312 auth_role=admin auth_source=basic auth_user=admin
+</code></pre>
+<p>Поля:</p>
+<ul>
+<li><code>method</code>, <code>path</code> — HTTP-метод и URL-путь. Тела запросов и ответов в
+лог не пишутся.</li>
+<li><code>query=true|false</code> — был ли в запросе query string. Сама строка не
+логируется, чтобы JWT в <code>?token=</code> не попадал в журнал.</li>
+<li><code>status</code>, <code>bytes</code>, <code>latency_ms</code> — статус ответа, размер тела и
+end-to-end latency.</li>
+<li><code>peer</code> — адрес инициатора запроса. По умолчанию это TCP-peer. Если
+TCP-peer попадает в <code>[web].trusted_proxies</code>, сервер разбирает
+<code>X-Forwarded-For</code> (или <code>Forwarded</code>, RFC 7239), идёт по цепочке
+справа налево, пропускает доверенные адреса и берёт первый
+недоверенный. Недоверенный клиент не может подделать поле — если
+TCP-peer не в списке доверенных, заголовки proxy игнорируются.</li>
+<li><code>auth_role</code> — <code>admin</code>, <code>sso</code>, <code>anonymous</code> или <code>rejected</code>.</li>
+<li><code>auth_source</code> — <code>basic</code>, <code>sso</code> или <code>-</code>.</li>
+<li><code>auth_user</code> — имя пользователя из учётных данных или <code>-</code> для
+анонимов и отклонённых запросов.</li>
+</ul>
+<p>Уровни:</p>
+<ul>
+<li><code>info</code> — все admin-действия (<code>POST /api/admin/*</code>), все чтения
+персональных данных (<code>/api/logs</code>, <code>/api/prepared/text/*</code>,
+<code>/api/interner/top</code>, <code>/api/top/queries</code>), все non-2xx ответы и
+любые запросы с авторизованной ролью (Sso или Admin).</li>
+<li><code>debug</code> — анонимные успешные чтения публичных API и скрейпы
+<code>/metrics</code>. Prometheus стучится каждые несколько секунд, SPA
+каждые 1,5 секунды опрашивает overview/pools, поэтому держать эти
+запросы вне <code>info</code> важно: иначе <code>RUST_LOG=info</code> тонет в шуме.</li>
+</ul>
+<p>Отдельный канал <code>pg_doorman::web::access</code> позволяет фильтровать поток
+access-лога независимо от остальных логов. В выпадающем фильтре на
+странице <strong>Logs</strong> этот канал включается или исключается одним кликом.</p>
+<h3 id="Реальный-ip-клиента-за-reverse-proxy"><a class="header" href="#Реальный-ip-клиента-за-reverse-proxy">Реальный IP клиента за reverse proxy</a></h3>
+<p>По умолчанию <code>peer</code> фиксирует TCP-адрес, который соединился с
+сервером. За reverse proxy это адрес самого proxy. Чтобы видеть
+реальный IP клиента, добавьте CIDR proxy в <code>[web].trusted_proxies</code>:</p>
+<pre><code class="language-toml">[web]
+trusted_proxies = ["10.0.0.0/8", "192.168.0.0/16"]
+</code></pre>
+<p>Распознаются и <code>X-Forwarded-For</code>, и <code>Forwarded</code>. Несколько доверенных
+переходов в цепочке пропускаются. <code>X-Forwarded-For</code>, пришедший от
+недоверенного клиента, игнорируется, поэтому через эту настройку
+произвольный вызывающий не может управлять полем access-лога.</p>
+<h2 id="Метрики"><a class="header" href="#Метрики">Метрики</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Тип</th><th>Лейблы</th><th>Назначение</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_web_sso_enabled</code></td><td>gauge</td><td>—</td><td><code>1</code>, когда SSO загружен успешно, иначе <code>0</code>.</td></tr>
+<tr><td><code>pg_doorman_web_sso_config_error</code></td><td>gauge</td><td>—</td><td><code>1</code>, когда <code>sso_enabled = true</code>, но рантайм не поднялся.</td></tr>
+<tr><td><code>pg_doorman_web_auth_attempts_total</code></td><td>counter</td><td><code>role</code>, <code>source</code></td><td>Попытки авторизации в разрезе итоговой роли (<code>admin</code>/<code>sso</code>/<code>anonymous</code>/<code>rejected</code>) и источника (<code>basic</code>/<code>sso</code>/<code>none</code>).</td></tr>
+<tr><td><code>pg_doorman_web_requests_total</code></td><td>counter</td><td><code>status_class</code>, <code>role</code></td><td>Запросы к Web UI в разрезе HTTP-статуса (<code>1xx</code>–<code>5xx</code>) и роли.</td></tr>
+<tr><td><code>pg_doorman_web_sso_validation_errors_total</code></td><td>counter</td><td><code>reason</code></td><td>Отказы валидации JWT по причине: <code>signature</code>, <code>expired</code>, <code>audience</code>, <code>no_username</code>, <code>allowlist</code>.</td></tr>
+</tbody></table>
+</div>
+<p>Устойчивый рост <code>signature</code> означает, что SSO-proxy ротировал ключ, а
+<code>sso_public_key_file</code> остался старый. Рост <code>allowlist</code> — кто-то снаружи
+<code>sso_allowed_users</code> упорно пытается войти. Рост <code>4xx</code> для роли <code>sso</code>
+обычно указывает на сломанный proxy перед pg_doorman.</p>
+<h2 id="Диагностика-2"><a class="header" href="#Диагностика-2">Диагностика</a></h2>
+<p><strong><code>401</code> на JWT, который должен быть валиден.</strong> Проверьте, что <code>aud</code>
+совпадает хотя бы с одним значением из <code>sso_audience</code> и <code>exp</code> ещё не
+истёк. PEM проверяется через <code>openssl rsa -pubin -in &lt;pem&gt; -text -noout</code>.
+Счётчик <code>pg_doorman_web_sso_validation_errors_total{reason}</code> показывает,
+какая именно проверка не прошла.</p>
+<p><strong><code>403</code> на JWT, который должен быть валиден.</strong> Путь требует роли
+<code>Admin</code> (например, <code>POST /api/admin/reload</code>). Войдите по Basic
+admin-паролю или добавьте группу пользователя в
+<code>[web].sso_admin_groups</code> и перечитайте конфиг.</p>
+<p><strong>SPA не показывает Sign in via SSO.</strong> <code>/api/auth/config</code> не возвращает
+<code>sso_proxy_url</code>. Либо <code>[web].sso_enabled = false</code>, либо <code>sso_proxy_url</code>
+не задан, либо рантайм не поднялся (ищите <code>sso_config_error</code> в том же
+ответе).</p>
+<p><strong>Silent-refresh не срабатывает.</strong> SSO-proxy должен возвращать свежий
+токен без полного экрана логина, когда iframe приходит с активной
+сессией. У oauth2-proxy это включается флагом <code>--silent-refresh=true</code>.</p>
+<p><strong>JWT в cookie игнорируется.</strong> Cookie должна попасть на pg_doorman с
+того же домена, и <code>aud</code> обязан входить в <code>sso_audience</code>. SPA сама
+cookie не шлёт; cookie-аутентификация рассчитана на curl, сайдкары и
+oauth2-proxy-варианты, которые проставляют токен в cookie на общем
+домене.</p>
 <h2 id="Страницы"><a class="header" href="#Страницы">Страницы</a></h2>
 <p>В SPA доступны:</p>
 <ul>
-<li><strong>Overview</strong> — индикатор health, четыре sparkline по golden signals (latency p95, traffic, errors/s, saturation), stacked area по соединениям, heatmap заполнения пулов, двойная ось wait + oldest-active-age, топ-5 ошибок по пулам и свёрнутая панель Resource detail.</li>
+<li><strong>Overview</strong> — индикатор health, четыре sparkline по golden signals
+(latency p95, traffic, errors/s, saturation), stacked area по
+соединениям, heatmap заполнения пулов, двойная ось wait +
+oldest-active-age, топ-5 ошибок по пулам и свёрнутая панель Resource
+detail.</li>
 <li><strong>Pools</strong> — таблица с сортировкой и mini-sparkline в строках.</li>
-<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — детальный разбор: разбивка по SQLSTATE, oldest-active-age, кнопки pause / resume / reconnect.</li>
-<li><strong>Clients</strong> — таблица из <code>/api/clients</code> с пагинацией, серверной фильтрацией и сортировкой.</li>
-<li><strong>Apps</strong> — строка на каждый <code>application_name</code> с долей ошибок на 1k запросов.</li>
-<li><strong>Caches</strong> — таблица Prepared Statements с hit rate и карточка query interner (named / anonymous bytes).</li>
-<li><strong>Logs</strong> — live-tail LogTap с фильтром по level / target и кнопками pause / auto-scroll.</li>
-<li><strong>Config &amp; state</strong> — свёрнутые панели: <code>[general]</code>, активный фильтр логов, кэш auth_query, databases, users, sockets, pool scaling, pool coordinator.</li>
-<li><strong>War room</strong> (<code>/wall</code>) — шесть крупных плиток для incident bridge или стенда на стене.</li>
+<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — детальный разбор: разбивка по
+SQLSTATE, oldest-active-age, кнопки pause / resume / reconnect.</li>
+<li><strong>Clients</strong> — таблица из <code>/api/clients</code> с пагинацией, серверной
+фильтрацией и сортировкой.</li>
+<li><strong>Apps</strong> — строка на каждый <code>application_name</code> с долей ошибок на
+1k запросов.</li>
+<li><strong>Caches</strong> — таблица Prepared Statements с hit rate и карточка
+query interner (named / anonymous bytes).</li>
+<li><strong>Logs</strong> — live-tail LogTap с фильтром по level / target и кнопками
+pause / auto-scroll.</li>
+<li><strong>Config &amp; state</strong> — свёрнутые панели: <code>[general]</code>, активный фильтр
+логов, кэш auth_query, databases, users, sockets, pool scaling,
+pool coordinator.</li>
+<li><strong>War room</strong> (<code>/wall</code>) — шесть крупных плиток для incident bridge
+или стенда на стене.</li>
 </ul>
 <h2 id="Сборка-из-исходников"><a class="header" href="#Сборка-из-исходников">Сборка из исходников</a></h2>
-<p>Собранный фронтенд лежит в git по пути <code>frontend/dist/</code>, чтобы пайплайны RPM, DEB и Docker не зависели от node toolchain. Разработчикам, правящим фронтенд, нужно пересобирать его перед коммитом:</p>
+<p>Собранный фронтенд лежит в git по пути <code>frontend/dist/</code>, чтобы
+RPM-, DEB- и Docker-пайплайны не зависели от node toolchain.
+Разработчикам, правящим SPA, нужно пересобирать его перед коммитом:</p>
 <pre><code class="language-bash">cd frontend
 npm ci
 npm run install-hooks   # одноразово: ставит pre-commit hook для синхронизации dist
@@ -5149,10 +5429,20 @@ npm run lint
 npm run typecheck
 npm run build
 </code></pre>
-<p><code>npm run install-hooks</code> опционален. CI его не требует: workflow <code>frontend.yml</code> запускает <code>npm run check-dist</code> и блокирует merge, если исходники меняли без пересборки <code>dist/</code>.</p>
-<p>Отдельный workflow <code>.github/workflows/frontend.yml</code> запускает те же шаги на каждом PR, который трогает <code>frontend/</code>.</p>
+<p><code>npm run install-hooks</code> опционален. CI его не требует: workflow
+<code>.github/workflows/frontend.yml</code> запускает <code>npm run check-dist</code> и
+блокирует merge, если исходники меняли без пересборки <code>dist/</code>. Тот же
+workflow запускает lint и typecheck на каждом PR, который трогает
+<code>frontend/</code>.</p>
 <h2 id="Развёртывание"><a class="header" href="#Развёртывание">Развёртывание</a></h2>
-<p><code>/metrics</code> доступен без авторизации на том же HTTP-сервере, что и консоль. Так задумано: иначе сломались бы существующие scrape-конфиги Prometheus. Если pg_doorman стоит за reverse proxy с авторизацией на <code>/api/*</code>, эта авторизация <strong>не</strong> распространяется на <code>/metrics</code>. Метрики раскрывают имена пулов, пользователей и БД, давление на пул, состояние auth_query и форму нагрузки. Поэтому либо держите секцию <code>[web]</code> на приватном host:port, доступном только системе скрейпа, либо ставьте перед HTTP-сервером proxy, который добавляет авторизацию на <code>/metrics</code> отдельно.</p>
+<p><code>/metrics</code> доступен без авторизации на том же HTTP-сервере, что и
+консоль. Так задумано: иначе сломались бы существующие scrape-конфиги
+Prometheus. Авторизация на <code>/api/*</code> <strong>не</strong> распространяется на
+<code>/metrics</code> — метрики раскрывают имена пулов, пользователей и БД,
+давление на пул, состояние auth_query и форму нагрузки. Либо держите
+секцию <code>[web]</code> на приватном host:port, доступном только системе
+скрейпа, либо ставьте перед HTTP-сервером proxy, который добавляет
+авторизацию на <code>/metrics</code> отдельно.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Структурированное-json-логирование"><a class="header" href="#Структурированное-json-логирование">Структурированное JSON-логирование</a></h1>
 <p>pg_doorman пишет структурированные JSON-логи при запуске с <code>--log-format structured</code>. Каждая строка — самодостаточный JSON-объект с timestamp, уровнем, местом в исходниках и сообщением, готовый к приёму в Loki, Elasticsearch, Datadog или любой пайплайн логов, ожидающий JSON.</p>
 <h2 id="Включение-1"><a class="header" href="#Включение-1">Включение</a></h2>
@@ -6343,6 +6633,105 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="385"><a class="header" href="#385">3.8.5</a></h3>
+<p>The web console now accepts JWTs issued by an external SSO proxy
+alongside the existing Basic auth. The listener resolves every
+request to one of three roles — <code>Anonymous</code>, <code>Sso</code> (read-only,
+including logs and SQL text), and <code>Admin</code> (full access, including
+<code>POST /api/admin/*</code>) — and a JWT can reach the <code>Admin</code> role through a
+configurable group claim, so SSO operators run mutating admin actions
+without sharing the Basic password. A per-request access log on a
+dedicated logger target makes role transitions and 401/403 spikes
+visible from <code>journalctl</code>. Full reference and an oauth2-proxy example
+live in <a href="guides/web-ui.html"><code>guides/web-ui.md</code></a>.</p>
+<h4 id="sso-authentication"><a class="header" href="#sso-authentication">SSO authentication</a></h4>
+<ul>
+<li>New <code>[web]</code> fields wire the SSO branch: <code>sso_enabled</code>,
+<code>sso_proxy_url</code>, <code>sso_public_key_file</code>, <code>sso_audience</code>,
+<code>sso_allowed_users</code>, <code>sso_groups_claim</code>, <code>sso_admin_groups</code>. JWTs
+are validated as RS256 against the PEM-encoded public key; the
+parsed key reloads on <code>RELOAD</code>.</li>
+<li>A JWT whose <code>sso_groups_claim</code> value intersects <code>sso_admin_groups</code>
+resolves to <code>Admin</code> with <code>auth_source = sso</code>. Empty
+<code>sso_admin_groups</code> (the default) keeps every SSO login on the
+read-only <code>Sso</code> role.</li>
+<li>Tokens are accepted from <code>Authorization: Bearer</code>, the
+<code>sso_access_token</code> cookie, or the <code>?token=</code> query parameter, in
+that priority order. Basic still wins over SSO when both are
+presented; a wrong Basic password no longer blocks a valid SSO
+token.</li>
+<li><code>GET /api/auth/config</code> reports <code>sso_enabled</code>, <code>sso_proxy_url</code>,
+<code>sso_admin_groups_configured</code>, <code>sso_config_error</code>, and the resolved
+<code>current_user</code>, so the SPA renders the role-aware sign-in modal
+and sidebar without a second probe.</li>
+</ul>
+<h4 id="role-aware-gating"><a class="header" href="#role-aware-gating">Role-aware gating</a></h4>
+<ul>
+<li><code>[web].ui_anonymous = false</code> now requires the <code>Sso</code> role for the
+public <code>/api/*</code> endpoints; previously every authenticated request
+needed <code>Admin</code>. Read-only privileged endpoints (<code>/api/logs</code>,
+<code>/api/prepared/text/*</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code>)
+are reachable by <code>Sso</code> users. <code>POST /api/admin/*</code> remains
+<code>Admin</code>-only.</li>
+<li>Insufficient-role rejections return <code>403 Forbidden</code> with body
+<code>{"error":"forbidden","message":"admin role required"}</code>. Missing or
+invalid credentials still produce <code>401</code>. The SPA re-opens the
+sign-in modal on <code>401</code> and renders a non-blocking "admin role
+required" banner on <code>403</code>.</li>
+</ul>
+<h4 id="browser-sign-in-flow"><a class="header" href="#browser-sign-in-flow">Browser sign-in flow</a></h4>
+<ul>
+<li>The sign-in modal shows a <strong>Sign in via SSO</strong> button next to the
+Basic form when the backend reports <code>sso_proxy_url</code>. The proxy
+bounces the browser back with <code>?token=&lt;jwt&gt;</code>, which the SPA stores
+in <code>localStorage</code> and rewrites out of the URL.</li>
+<li>A silent-refresh poller (every 60 s, fires when <code>exp</code> is under
+90 s) opens a hidden iframe at <code>${origin}/?sso_silent=1</code>. The
+iframe renders a minimal <code>SilentCallback</code> and posts the new token
+to the parent. If silent refresh fails and a Basic credential is
+available, the SPA falls back to Basic without redirecting;
+otherwise it performs a full redirect through the SSO proxy.</li>
+<li>The SPA never sends cookies (<code>credentials: "omit"</code>); cookie auth
+remains available for curl, sidecars, and oauth2-proxy variants
+that paste the token into a cookie on the shared domain.</li>
+</ul>
+<h4 id="access-log"><a class="header" href="#access-log">Access log</a></h4>
+<ul>
+<li>Every response (200/401/403/404/5xx, <code>/metrics</code> scrapes included)
+emits one logfmt line on the dedicated <code>pg_doorman::web::access</code>
+target with <code>method</code>, <code>path</code>, <code>query</code> (presence flag only —
+raw query strings are never logged), <code>status</code>, <code>bytes</code>,
+<code>latency_ms</code>, <code>peer</code>, <code>auth_role</code>, <code>auth_source</code>, and <code>auth_user</code>.
+Bodies are not logged.</li>
+<li>Levels are picked per request. Admin actions, personal-data reads,
+every non-2xx response, and any authenticated request log at
+<code>info</code>. Anonymous successful reads of public APIs and <code>/metrics</code>
+scrapes log at <code>debug</code>, so <code>RUST_LOG=info</code> no longer drowns in
+scrape noise.</li>
+</ul>
+<h4 id="real-client-ip-behind-a-reverse-proxy"><a class="header" href="#real-client-ip-behind-a-reverse-proxy">Real client IP behind a reverse proxy</a></h4>
+<ul>
+<li>New <code>[web].trusted_proxies</code> CIDR list. When the TCP peer falls in
+this list, the access log parses <code>X-Forwarded-For</code> (or RFC 7239
+<code>Forwarded</code>), walks the chain right-to-left skipping further
+trusted hops, and uses the first untrusted address as <code>peer</code>. An
+untrusted client that sends <code>X-Forwarded-For</code> is ignored, so the
+field cannot be spoofed.</li>
+</ul>
+<h4 id="observability-5"><a class="header" href="#observability-5">Observability</a></h4>
+<ul>
+<li>New gauges <code>pg_doorman_web_sso_enabled</code> and
+<code>pg_doorman_web_sso_config_error</code>. The latter stays at <code>1</code> while
+<code>sso_enabled = true</code> but the runtime failed to load (missing PEM
+file, empty audience, unparsable PEM). The exact reason is
+exported through <code>/api/auth/config.sso_config_error</code> and rendered
+as a banner in the SPA.</li>
+<li>New counters <code>pg_doorman_web_auth_attempts_total{role,source}</code>,
+<code>pg_doorman_web_requests_total{status_class,role}</code>, and
+<code>pg_doorman_web_sso_validation_errors_total{reason}</code> (reasons:
+<code>signature</code>, <code>expired</code>, <code>audience</code>, <code>no_username</code>, <code>allowlist</code>).
+Operators alert on SSO degradation without grepping logs.</li>
+</ul>
 <h3 id="380"><a class="header" href="#380">3.8.0</a></h3>
 <h4 id="added"><a class="header" href="#added">Added</a></h4>
 <p><strong>Built-in operator dashboard.</strong> pg_doorman exposes a single-page
