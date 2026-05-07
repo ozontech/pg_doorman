@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
@@ -9,6 +9,48 @@ import type { ClientsDto } from "../types";
 
 const POLL_MS = 1500;
 const PAGE_SIZE = 50;
+
+type ClientTotals = Record<string, { queries: number; transactions: number }>;
+type ClientRates = Record<string, { qps: number; tps: number }>;
+
+// Computes per-client qps / tps from the delta between the current /api/clients
+// snapshot and the previous one. Mirrors `useAppRates` on the Apps page;
+// /api/clients only ships lifetime counters, so without this hook the operator
+// has no way to see which client session is busy *right now* short of
+// watching the queries column tick.
+function useClientRates(data: ClientsDto | null): ClientRates {
+  const [rates, setRates] = useState<ClientRates>({});
+  const prevRef = useRef<{ ts: number; clients: ClientTotals } | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const cur: ClientTotals = {};
+    for (const c of data.clients) {
+      cur[c.client_id] = {
+        queries: c.queries_total,
+        transactions: c.transactions_total,
+      };
+    }
+    const prev = prevRef.current;
+    if (prev && prev.ts !== data.ts) {
+      const dt = (data.ts - prev.ts) / 1000;
+      if (dt > 0) {
+        const next: ClientRates = {};
+        for (const [id, totals] of Object.entries(cur)) {
+          const p = prev.clients[id];
+          if (p) {
+            next[id] = {
+              qps: Math.max(0, (totals.queries - p.queries) / dt),
+              tps: Math.max(0, (totals.transactions - p.transactions) / dt),
+            };
+          }
+        }
+        setRates(next);
+      }
+    }
+    prevRef.current = { ts: data.ts, clients: cur };
+  }, [data]);
+  return rates;
+}
 
 type SortKey = "queries_total" | "errors_total" | "age_seconds" | "current_query_age_ms";
 type SortDir = "asc" | "desc";
@@ -23,6 +65,42 @@ interface Filters {
 }
 
 const STATE_OPTIONS = ["", "active", "idle", "waiting", "closing"];
+
+// Single labelled text input. Browsers turn the label into a click target for
+// the field, and operators see the placeholder *and* the field name even
+// after they start typing — placeholder-as-label loses the field name the
+// moment you type one character.
+function FilterField({
+  label,
+  value,
+  onChange,
+  width,
+  mono,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  width: string;
+  mono?: boolean;
+}) {
+  const id = `clients-filter-${label.replace(/\W+/g, "-")}`;
+  return (
+    <div className="flex flex-col">
+      <label
+        htmlFor={id}
+        className="mb-0.5 text-[10px] uppercase tracking-wide text-text-dim"
+      >
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${width} rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text${mono ? " font-mono" : ""}`}
+      />
+    </div>
+  );
+}
 
 function buildQuery(filters: Filters, sort: SortKey, dir: SortDir, offset: number): string {
   const params = new URLSearchParams();
@@ -59,6 +137,18 @@ export default function Clients() {
     [authHeader, query],
   );
   const poll = usePoll<ClientsDto>(fetcher, POLL_MS);
+  const rates = useClientRates(poll.data);
+  const filterActive =
+    filters.pool !== "" ||
+    filters.database !== "" ||
+    filters.user !== "" ||
+    filters.state !== "" ||
+    filters.appName !== "" ||
+    filters.addr !== "";
+  const clearFilters = () => {
+    setFilters({ pool: "", database: "", user: "", state: "", appName: "", addr: "" });
+    setOffset(0);
+  };
 
   const onSort = (key: SortKey) => {
     if (key === sort) {
@@ -104,49 +194,41 @@ export default function Clients() {
         how="Each filter change jumps you back to page 1."
         normal="50 rows per page; the count on the right is the filtered total — change a filter to see how it shrinks."
       />
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
-        <input
-          placeholder="pool"
-          value={filters.pool}
-          onChange={(e) => updateFilter("pool", e.target.value)}
-          className="w-32 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        />
-        <input
-          placeholder="database"
-          value={filters.database}
-          onChange={(e) => updateFilter("database", e.target.value)}
-          className="w-32 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        />
-        <input
-          placeholder="user"
-          value={filters.user}
-          onChange={(e) => updateFilter("user", e.target.value)}
-          className="w-32 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        />
-        <input
-          placeholder="application_name"
-          value={filters.appName}
-          onChange={(e) => updateFilter("appName", e.target.value)}
-          className="w-44 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        />
-        <input
-          placeholder="addr (e.g. 10.0.5. or 1.2.3.4:5432)"
-          title="Type any fragment of the client's ip:port. Examples: 10.0.5. for a subnet, :5432 for a port, 1.2.3.4 for a single host."
-          value={filters.addr}
-          onChange={(e) => updateFilter("addr", e.target.value)}
-          className="w-56 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
-        />
-        <select
-          value={filters.state}
-          onChange={(e) => updateFilter("state", e.target.value)}
-          className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        >
-          {STATE_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s === "" ? "any state" : s}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-end gap-3 border-b border-border px-6 py-3">
+        <FilterField label="pool" value={filters.pool} width="w-32"
+          onChange={(v) => updateFilter("pool", v)} />
+        <FilterField label="database" value={filters.database} width="w-32"
+          onChange={(v) => updateFilter("database", v)} />
+        <FilterField label="user" value={filters.user} width="w-32"
+          onChange={(v) => updateFilter("user", v)} />
+        <FilterField label="application_name" value={filters.appName} width="w-44"
+          onChange={(v) => updateFilter("appName", v)} />
+        <FilterField label="addr (ip:port substring)" value={filters.addr} width="w-56"
+          mono onChange={(v) => updateFilter("addr", v)} />
+        <div className="flex flex-col">
+          <label className="mb-0.5 text-[10px] uppercase tracking-wide text-text-dim">state</label>
+          <select
+            value={filters.state}
+            onChange={(e) => updateFilter("state", e.target.value)}
+            className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
+          >
+            {STATE_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s === "" ? "any state" : s}
+              </option>
+            ))}
+          </select>
+        </div>
+        {filterActive && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="border border-border-strong px-2 py-1 text-xs font-mono uppercase tracking-wider text-text-muted hover:text-accent"
+            title="Clear all filters"
+          >
+            clear
+          </button>
+        )}
         <span className="ml-auto text-xs text-text-dim tabular">
           {showingFrom}–{showingTo} of {total}
         </span>
@@ -200,6 +282,16 @@ export default function Clients() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Computed in the browser from the delta between consecutive snapshots — empty (—) on the first tick of a session. Sort happens server-side and only knows the lifetime counter, not the rate.">
+                Q/s
+              </InfoLabel>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <InfoLabel tip="Transactions per second over the last poll interval. Compare with Q/s to spot clients running many statements per transaction.">
+                T/s
+              </InfoLabel>
+            </th>
+            <th className="px-3 py-2 text-right">
               <InfoLabel tip="Total queries this client has run since connection. Resets on reconnect.">
                 <span className="cursor-pointer" onClick={() => onSort("queries_total")}>
                   Queries{sortIndicator("queries_total")}
@@ -241,6 +333,12 @@ export default function Clients() {
               </td>
               <td className="px-3 py-1.5 text-right">{c.current_query_age_ms || "—"}</td>
               <td className="px-3 py-1.5 text-right">{c.age_seconds}</td>
+              <td className="px-3 py-1.5 text-right">
+                {rates[c.client_id] ? rates[c.client_id].qps.toFixed(1) : "—"}
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                {rates[c.client_id] ? rates[c.client_id].tps.toFixed(1) : "—"}
+              </td>
               <td className="px-3 py-1.5 text-right">{c.queries_total}</td>
               <td className={`px-3 py-1.5 text-right ${c.errors_total > 0 ? "text-warning" : ""}`}>
                 {c.errors_total}
