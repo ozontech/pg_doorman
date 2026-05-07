@@ -30,7 +30,7 @@ export function Sidebar() {
     };
   }, [authHeader]);
   return (
-    <nav className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface">
+    <nav className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface">
       <div className="px-6 py-7">
         <div className="text-xs font-medium uppercase tracking-[0.2em] text-text-dim">
           pg_doorman
