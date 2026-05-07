@@ -31,15 +31,17 @@ pub enum AdminEffect {
 }
 
 /// Reload the configuration file. Equivalent to `RELOAD` on the admin
-/// protocol; emits the same RELOAD event.
-pub async fn reload_now() -> Result<(), Error> {
+/// protocol; emits the same RELOAD event. Returns `true` when the config
+/// actually changed and pools were reconciled, `false` when the file
+/// re-parsed identically to the live config (a no-op reload).
+pub async fn reload_now() -> Result<bool, Error> {
     let csm = get_client_server_map()
         .ok_or_else(|| Error::SocketError("client_server_map not initialised".into()))?;
     info!("Reloading config (via /api/admin/reload)");
-    reload_config(csm).await?;
+    let changed = reload_config(csm).await?;
     crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
     crate::config::get_config().show();
-    Ok(())
+    Ok(changed)
 }
 
 /// Pause every pool whose database segment matches `db`, or every pool

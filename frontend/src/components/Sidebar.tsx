@@ -16,7 +16,7 @@ const NAV: { to: string; label: string }[] = [
 ];
 
 export function Sidebar() {
-  const { authHeader } = useAdminAuth();
+  const { authHeader, creds, setCreds } = useAdminAuth();
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -55,8 +55,22 @@ export function Sidebar() {
           </li>
         ))}
       </ul>
-      <div className="border-t border-border px-6 py-4 text-xs text-text-dim">
-        {version ? `v${version}` : "—"}
+      <div className="space-y-2 border-t border-border px-6 py-4 text-xs text-text-dim">
+        {creds && (
+          // Visible sign-out so an operator who ticked "Remember me on
+          // this device" can wipe the localStorage entry without diving
+          // into browser dev-tools. Re-arms the AuthGate modal on the
+          // next request.
+          <button
+            type="button"
+            onClick={() => setCreds(null, false)}
+            className="font-mono uppercase tracking-wider text-text-muted hover:text-accent"
+            title={`Signed in as ${creds.username}. Click to clear stored credentials and re-prompt.`}
+          >
+            sign out ({creds.username})
+          </button>
+        )}
+        <div>{version ? `v${version}` : "—"}</div>
       </div>
     </nav>
   );

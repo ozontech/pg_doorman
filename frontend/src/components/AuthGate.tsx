@@ -89,8 +89,8 @@ function AuthModal({
         <h2 className="mb-4 text-md font-semibold">Sign in</h2>
         <p className="mb-4 text-sm text-text-muted">
           {currentCreds
-            ? "That user/password did not work. Check [web] in the config."
-            : "Sign in with the admin user/password from pg_doorman.toml."}
+            ? "That user/password did not work. Check [general].admin_username and [general].admin_password in pg_doorman.toml."
+            : "Sign in with the admin_username / admin_password from [general] in pg_doorman.toml."}
         </p>
         <label className="mb-2 block text-xs uppercase tracking-wide text-text-muted">
           Username

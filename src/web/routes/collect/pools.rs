@@ -18,17 +18,19 @@ pub(crate) fn collect_pools() -> PoolsDto {
         };
         let address = pool.address();
         let errors_by_sqlstate = address.stats.errors_by_sqlstate_snapshot();
-        let pool_id = format!("{}@{}", identifier.user, identifier.db);
-        // The Prometheus accessors return zero for labels that have not
-        // been touched yet — `with_label_values` will lazily create the
-        // metric. That is acceptable: the pool is real, the counter is just
-        // empty, and downstream consumers see `0` instead of a missing key.
-        let fallback_active = FALLBACK_ACTIVE.with_label_values(&[pool_id.as_str()]).get() > 0.5;
+        // The TLS / fallback metrics are written per database (the
+        // Address::pool_name field, which mirrors the database segment of
+        // `user@db`), so we read them with the same label. Every user@db
+        // pool of the same database therefore reports the same value —
+        // accurate for fallback (Patroni state is per database) and for
+        // backend TLS counters that share one connection set per backend.
+        let db_label = identifier.db.as_str();
+        let fallback_active = FALLBACK_ACTIVE.with_label_values(&[db_label]).get() > 0.5;
         let tls_handshake_errors_total = SHOW_SERVER_TLS_HANDSHAKE_ERRORS
-            .with_label_values(&[pool_id.as_str()])
+            .with_label_values(&[db_label])
             .get();
         let tls_backend_connections = SHOW_SERVER_TLS_CONNECTIONS
-            .with_label_values(&[pool_id.as_str()])
+            .with_label_values(&[db_label])
             .get() as u64;
         let dto = PoolDto {
             id: format!("{}@{}", identifier.user, identifier.db),
@@ -57,8 +59,10 @@ pub(crate) fn collect_pools() -> PoolsDto {
             errors_total: stats.errors,
             errors_by_sqlstate,
             paused: stats.paused,
-            // TODO: epoch wiring in phase 3e (no epoch field on PoolSettings yet).
-            epoch: 0,
+            // RECONNECT bumps the per-pool epoch; surfacing it lets a DBA
+            // verify that a `RECONNECT db=...` rotated cached connections
+            // (e.g. after `ALTER ROLE`, grant change, or TLS rotation).
+            epoch: pool.database.reconnect_epoch() as u64,
             fallback_active,
             tls_handshake_errors_total,
             tls_backend_connections,

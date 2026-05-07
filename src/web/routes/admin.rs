@@ -33,7 +33,7 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
 
     match action {
         "reload" => match reload_now().await {
-            Ok(()) => json_ok("reload", 1),
+            Ok(changed) => json_reload(changed),
             Err(err) => json_err("reload", &err.to_string()),
         },
         "pause" => render_effect("pause", pause_now(db)),
@@ -67,6 +67,18 @@ fn render_effect(action: &str, effect: AdminEffect) -> Response {
 fn json_ok(action: &str, affected: u64) -> Response {
     let body = format!(
         r#"{{"ts":{ts},"action":"{action}","affected_pools":{affected}}}"#,
+        ts = now_unix_ms()
+    );
+    Response::json(200, "OK", &body)
+}
+
+/// `reload` is global, so `affected_pools` is meaningless (codex DBA
+/// P2#5: the route used to hardcode `affected_pools: 1`). Surface
+/// `changed: true|false` instead — DBAs need that signal to tell a
+/// "config actually rotated" reload from a no-op SIGHUP.
+fn json_reload(changed: bool) -> Response {
+    let body = format!(
+        r#"{{"ts":{ts},"action":"reload","changed":{changed}}}"#,
         ts = now_unix_ms()
     );
     Response::json(200, "OK", &body)
