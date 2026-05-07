@@ -3,10 +3,6 @@
 //! headers — it just turns bytes into [`ParsedRequest`] and a
 //! [`Response`] back into bytes.
 
-use std::sync::Arc;
-
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
 
@@ -165,13 +161,17 @@ impl Response {
             ("Content-Type", asset.mime.into()),
             ("Cache-Control", cache.into()),
         ];
-        let body = if accepts_gzip && is_compressible(asset.mime) && asset.bytes.len() > 256 {
-            match gzip_cached(asset) {
-                Some(bytes) => {
-                    headers.push(("Content-Encoding", "gzip".into()));
-                    bytes
-                }
-                None => asset.bytes.to_vec(),
+        // The bundle stores compressible assets pre-gzipped (post-build
+        // step) — that keeps the binary ~270 kB smaller than embedding raw
+        // text and lets the browser get the bytes verbatim. Clients that
+        // don't advertise gzip (rare: curl without `--compressed`, headless
+        // probes) get an on-the-fly flate2 decode.
+        let body = if asset.pre_gzipped {
+            if accepts_gzip {
+                headers.push(("Content-Encoding", "gzip".into()));
+                asset.bytes.to_vec()
+            } else {
+                decompress_gzip(asset.bytes).unwrap_or_else(|_| asset.bytes.to_vec())
             }
         } else {
             asset.bytes.to_vec()
@@ -272,36 +272,17 @@ fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
     h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
-/// Cache of gzipped static asset bodies, keyed by the asset's path. The
-/// SPA bundle is immutable per release, so compressing the JS/CSS once
-/// and serving the cached `Vec<u8>` on subsequent requests turns each
-/// poll's static-asset hit from "allocate + zlib + compress" into a
-/// single Arc clone.
-static GZIP_CACHE: Lazy<DashMap<&'static str, Arc<Vec<u8>>>> = Lazy::new(DashMap::new);
-
-fn gzip_cached(asset: &crate::web::static_assets::Asset) -> Option<Vec<u8>> {
-    if let Some(entry) = GZIP_CACHE.get(asset.path) {
-        return Some(entry.value().as_ref().clone());
-    }
-    use flate2::write::GzEncoder;
-    use flate2::Compression;
-    use std::io::Write;
-    let mut compressed = Vec::with_capacity(asset.bytes.len() / 2);
-    {
-        let mut gz = GzEncoder::new(&mut compressed, Compression::default());
-        gz.write_all(asset.bytes).ok()?;
-        gz.finish().ok()?;
-    }
-    let arc = Arc::new(compressed);
-    GZIP_CACHE.insert(asset.path, arc.clone());
-    Some(arc.as_ref().clone())
-}
-
-/// Compressing a 200-byte favicon PNG buys nothing and risks negative
-/// ratios; only compress text-like payloads where gzip pays off.
-fn is_compressible(mime: &str) -> bool {
-    mime.starts_with("text/")
-        || mime.starts_with("application/javascript")
-        || mime.starts_with("application/json")
-        || mime.starts_with("image/svg+xml")
+/// Decompress a pre-gzipped asset for the rare client that does not
+/// advertise gzip. Compressible assets are pre-gzipped at build time so
+/// the binary ships only the compressed form; clients that omit
+/// `Accept-Encoding: gzip` (curl without `--compressed`, plain probes)
+/// pay this decode once per request, which is acceptable because the
+/// console is a low-traffic operator surface.
+fn decompress_gzip(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut decoder = GzDecoder::new(bytes);
+    let mut out = Vec::with_capacity(bytes.len() * 4);
+    decoder.read_to_end(&mut out)?;
+    Ok(out)
 }

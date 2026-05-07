@@ -15,55 +15,72 @@ use include_dir::{include_dir, Dir};
 
 static SPA: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/frontend/dist");
 
-/// Asset payload returned to the mux: bytes, mime type, and whether the asset
-/// is content-hashed (immutable forever) so the mux can pick the right
-/// Cache-Control header. `path` is the bundle-relative file name; the gzip
-/// cache uses it as a stable key so the per-asset compressed body is
-/// computed once and reused across requests.
+/// Asset payload returned to the mux. `bytes` is whatever the bundle holds
+/// for the matched URL — gzipped when `pre_gzipped == true` (the build step
+/// pre-compresses every text-like file), raw otherwise. `mime` and
+/// `immutable` describe the *decompressed* identity, so a `.js.gz` blob
+/// still reports `application/javascript` and lives under `assets/`.
 pub(crate) struct Asset {
-    pub path: &'static str,
     pub bytes: &'static [u8],
     pub mime: &'static str,
     pub immutable: bool,
+    /// `true` when `bytes` is the gzip-compressed form of the asset. The
+    /// caller either serves it directly with `Content-Encoding: gzip` or
+    /// decompresses on the fly for clients that do not advertise gzip.
+    pub pre_gzipped: bool,
 }
 
 /// Looks up the request path inside the embedded bundle.
 ///
-/// Returns `None` when the bundle is empty (no `index.html`); this lets the
-/// caller emit a 404 instead of an empty success.
+/// Tries the exact path first, then `{path}.gz` for the pre-compressed form
+/// the build pipeline writes. Falls back to `index.html(.gz)` so the SPA
+/// owns deep-link routing — only `/api/*` and `/metrics` ever return a real
+/// 404. Returns `None` when the bundle is empty (no `index.html` at all).
 pub(crate) fn lookup(path: &str) -> Option<Asset> {
     if !has_index() {
         return None;
     }
 
     let stripped = path.trim_start_matches('/');
-    let target = if let Some(file) = SPA.get_file(stripped) {
-        file
-    } else {
-        // SPA fallback: any URL that does not match a real asset returns the
-        // shell so client-side routing can take over. Real 404s are reserved
-        // for `/api/*` and `/metrics`.
-        SPA.get_file("index.html")?
-    };
+    if let Some(asset) = lookup_exact(stripped) {
+        return Some(asset);
+    }
+    // SPA fallback for client-side routes (`/pools`, `/clients/...`).
+    lookup_exact("index.html")
+}
 
-    // `target.path()` returns `&'a Path` with `'a` tied to the embedded
-    // `Dir<'static>`, so `to_str()` likewise yields `&'static str`.
-    // Spelling the lifetimes out explicitly lets us hand the path to
-    // the gzip cache as a `&'static str` key without `unsafe`.
-    let target_path: &'static std::path::Path = target.path();
-    let path_str: &'static str = target_path.to_str().unwrap_or("");
-    let mime = mime_for(path_str);
-    let immutable = path_str.starts_with("assets/");
-    Some(Asset {
-        path: path_str,
-        bytes: target.contents(),
-        mime,
-        immutable,
-    })
+/// Try the literal path first, then the `.gz` neighbour. Helpers below
+/// keep the static lifetimes explicit so a refactor cannot accidentally
+/// borrow from the request String.
+fn lookup_exact(stripped: &str) -> Option<Asset> {
+    if let Some(file) = SPA.get_file(stripped) {
+        return Some(asset_for(file, false));
+    }
+    let gz_path = format!("{stripped}.gz");
+    SPA.get_file(&gz_path).map(|f| asset_for(f, true))
+}
+
+fn asset_for(file: &'static include_dir::File<'static>, pre_gzipped: bool) -> Asset {
+    let target_path: &'static std::path::Path = file.path();
+    let raw_path: &'static str = target_path.to_str().unwrap_or("");
+    // For the gzipped variant the SPA path ends in ".gz"; the wire-level
+    // identity (mime, immutability marker) reflects the original extension,
+    // so strip the suffix when classifying.
+    let identity_path: &'static str = if pre_gzipped {
+        raw_path.strip_suffix(".gz").unwrap_or(raw_path)
+    } else {
+        raw_path
+    };
+    Asset {
+        bytes: file.contents(),
+        mime: mime_for(identity_path),
+        immutable: identity_path.starts_with("assets/"),
+        pre_gzipped,
+    }
 }
 
 fn has_index() -> bool {
-    SPA.get_file("index.html").is_some()
+    SPA.get_file("index.html").is_some() || SPA.get_file("index.html.gz").is_some()
 }
 
 fn mime_for(path: &str) -> &'static str {
