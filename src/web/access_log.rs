@@ -64,22 +64,34 @@ pub fn write(
 }
 
 /// Format a value safe for logfmt: bare token when it has none of the
-/// reserved characters (whitespace, `"`, `\`, `=`), otherwise a
-/// double-quoted string with `"` and `\` escaped.
+/// reserved characters, otherwise a double-quoted string with control
+/// characters and `"` / `\` escaped. Control characters (newline,
+/// CR, tab, null, etc.) are written as backslash sequences inside the
+/// quoted form so a JWT-issued username carrying `\n` cannot break the
+/// "one line per response" promise of the access log.
 fn logfmt_value(s: &str) -> String {
     let needs_quote = s
         .chars()
-        .any(|c| c.is_whitespace() || c == '"' || c == '\\' || c == '=');
+        .any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\' || c == '=');
     if !needs_quote {
         return s.to_string();
     }
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
-        if c == '"' || c == '\\' {
-            out.push('\\');
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                // Other control codepoints (DEL, separators, etc.).
+                // Escape as \uXXXX so the logfmt line stays printable.
+                out.push_str(&format!("\\u{:04X}", c as u32));
+            }
+            c => out.push(c),
         }
-        out.push(c);
     }
     out.push('"');
     out
@@ -248,6 +260,21 @@ mod tests {
     fn logfmt_value_quotes_equals_sign() {
         // `key=value` with `=` in the value would split parsers.
         assert_eq!(logfmt_value("foo=bar"), "\"foo=bar\"");
+    }
+
+    #[test]
+    fn logfmt_value_escapes_newline_and_cr() {
+        // A JWT username carrying `\n` would otherwise split the
+        // single access-log line into two — log forging.
+        assert_eq!(logfmt_value("alice\nbob"), "\"alice\\nbob\"");
+        assert_eq!(logfmt_value("alice\r\nbob"), "\"alice\\r\\nbob\"");
+        assert_eq!(logfmt_value("col\ta"), "\"col\\ta\"");
+    }
+
+    #[test]
+    fn logfmt_value_escapes_other_control_chars() {
+        assert_eq!(logfmt_value("a\x07b"), "\"a\\u0007b\"");
+        assert_eq!(logfmt_value("\x00"), "\"\\u0000\"");
     }
 
     #[test]

@@ -23,6 +23,11 @@ struct AuthConfigResponse<'a> {
     /// silently falling back to Basic-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     sso_config_error: Option<&'a str>,
+    /// `true` when `[web].sso_admin_groups` is non-empty. The SPA uses
+    /// this to drop the "SSO grants read-only access" copy from the
+    /// sign-in modal — the real role still resolves on the backend
+    /// when the JWT lands.
+    sso_admin_groups_configured: bool,
     current_user: Option<CurrentUser<'a>>,
 }
 
@@ -53,6 +58,7 @@ pub(crate) fn handle_auth_config(opts: &WebServerOptions, auth: &AuthOutcome) ->
         sso_enabled: sso.is_some(),
         sso_proxy_url: proxy_url,
         sso_config_error: opts.sso_config_error.as_deref(),
+        sso_admin_groups_configured: opts.sso_admin_groups_configured,
         current_user,
     })
 }

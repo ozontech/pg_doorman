@@ -166,15 +166,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
   );
 }
 
-/// Heuristic: the backend does not surface admin-groups config in
-/// /api/auth/config (yet), so we treat the absence of a config error
-/// plus an enabled SSO proxy as "SSO might be admin-capable" only for
-/// modal copy. The role itself is still resolved by the backend.
-function hasAdminGroupsConfig(_cfg: AuthConfig | null): boolean {
-  // We deliberately do not over-promise: the modal text just stops
-  // claiming "read-only" when SSO is enabled. The backend remains the
-  // source of truth for the actual role.
-  return false;
+/// Whether the backend has `[web].sso_admin_groups` configured. The
+/// SPA uses this to soften the sign-in modal copy when SSO can
+/// resolve to Admin via group membership. The actual role is still
+/// decided server-side when the JWT lands.
+function hasAdminGroupsConfig(cfg: AuthConfig | null): boolean {
+  return cfg?.sso_admin_groups_configured === true;
 }
 
 function SsoConfigErrorBanner({ reason }: { reason: string }) {

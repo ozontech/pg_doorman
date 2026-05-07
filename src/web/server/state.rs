@@ -36,6 +36,11 @@ pub struct WebServerOptions {
     /// the request peer falls in this list, the access log resolves
     /// the real client IP from the proxy header.
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// `true` when `[web].sso_admin_groups` is non-empty. Surfaced on
+    /// `/api/auth/config` so the SPA's sign-in modal stops promising
+    /// "SSO grants read-only access" when the operator may actually
+    /// land in Admin via group membership.
+    pub sso_admin_groups_configured: bool,
 }
 
 impl WebServerOptions {
@@ -63,6 +68,7 @@ impl WebServerOptions {
             sso,
             sso_config_error,
             trusted_proxies: cfg.web.trusted_proxies.clone(),
+            sso_admin_groups_configured: !cfg.web.sso_admin_groups.is_empty(),
         }
     }
 }

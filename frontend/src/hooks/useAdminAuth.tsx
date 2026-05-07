@@ -10,6 +10,9 @@ import { setOnForbidden, setOnUnauthorized } from "../api";
 import {
   clearSsoToken,
   getValidSsoToken,
+  safeLocalGet,
+  safeLocalRemove,
+  safeLocalSet,
   SSO_TOKEN_KEY,
 } from "../lib/jwt";
 import type { Role } from "../types";
@@ -52,9 +55,9 @@ const AdminAuthContext = createContext<AdminAuthValue | null>(null);
 const STORAGE_KEY = "pgdoorman.admin-auth";
 
 function loadStored(): BasicCreds | null {
+  const raw = safeLocalGet(STORAGE_KEY);
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     return isBasicCreds(parsed) ? parsed : null;
   } catch {
@@ -91,26 +94,18 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       // for the AuthGate probe to come back with current_user=null.
       setRole("anonymous");
     }
-    try {
-      if (next && remember) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } else {
-        // Either user cleared creds, or chose "do not remember" — wipe any
-        // earlier persisted copy so a shared workstation does not leak.
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    } catch {
-      /* private mode / quota / disabled — non-fatal */
+    if (next && remember) {
+      safeLocalSet(STORAGE_KEY, JSON.stringify(next));
+    } else {
+      // Either user cleared creds, or chose "do not remember" — wipe any
+      // earlier persisted copy so a shared workstation does not leak.
+      safeLocalRemove(STORAGE_KEY);
     }
   }, []);
 
   const setSsoToken = useCallback((next: string | null) => {
     if (next) {
-      try {
-        localStorage.setItem(SSO_TOKEN_KEY, next);
-      } catch {
-        /* non-fatal */
-      }
+      safeLocalSet(SSO_TOKEN_KEY, next);
     } else {
       clearSsoToken();
       setRole("anonymous");

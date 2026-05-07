@@ -13,7 +13,13 @@
 //      <SilentCallback> component (no normal UI). That component
 //      captures the new token and posts it back via window.postMessage.
 
-import { parseJwt, SSO_TOKEN_KEY, getValidSsoToken } from "./jwt";
+import {
+  getValidSsoToken,
+  parseJwt,
+  safeLocalRemove,
+  safeLocalSet,
+  SSO_TOKEN_KEY,
+} from "./jwt";
 
 const REFRESH_MARGIN_SEC = 90;
 const SILENT_REFRESH_TIMEOUT_MS = 10_000;
@@ -44,14 +50,10 @@ export function captureTokenFromUrl(): string | null {
     // we refuse to feed obvious junk into localStorage / Authorization.
     return null;
   }
-  try {
-    localStorage.setItem(SSO_TOKEN_KEY, token);
-  } catch {
-    /* private mode / quota — non-fatal. The caller still gets the
-     * token returned from this function and can drive React state;
-     * the session will not survive a reload, but the SPA works for
-     * the current load. */
-  }
+  safeLocalSet(SSO_TOKEN_KEY, token);
+  // safeLocalSet swallows quota/SecurityError errors — the caller
+  // still gets the captured token returned and can drive React state
+  // for this load even when the browser blocks localStorage writes.
   return token;
 }
 
@@ -160,11 +162,7 @@ export function silentRefresh(
       if (ev.origin !== window.location.origin) return;
       if (settled) return;
       if (!isSsoTokenMessage(ev.data)) return;
-      try {
-        localStorage.setItem(SSO_TOKEN_KEY, ev.data.token);
-      } catch {
-        /* non-fatal */
-      }
+      safeLocalSet(SSO_TOKEN_KEY, ev.data.token);
       const token = ev.data.token;
       cleanup();
       resolve(token);
@@ -253,11 +251,7 @@ export function startTokenRefresh(
         return;
       }
       if (onFallbackBlocked && onFallbackBlocked()) {
-        try {
-          localStorage.removeItem(SSO_TOKEN_KEY);
-        } catch {
-          /* non-fatal */
-        }
+        safeLocalRemove(SSO_TOKEN_KEY);
         return;
       }
       redirectToSso(proxyUrl);

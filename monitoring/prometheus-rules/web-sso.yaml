@@ -31,15 +31,17 @@ groups:
           )
 
   - name: web_sso_alerts
+    interval: 30s
     rules:
       - alert: PgDoormanWebSsoConfigError
         expr: pg_doorman_web_sso_config_error > 0
         for: 2m
         labels:
           severity: critical
+          service: pg_doorman
         annotations:
           summary: "pg_doorman SSO is configured but did not load on {{ $labels.instance }}"
-          description: |
+          runbook: |
             [web].sso_enabled = true on this instance, but the SSO runtime
             failed to load (missing key file, empty audience, unparsable
             PEM, etc.). The exact reason is in /api/auth/config.sso_config_error
@@ -57,9 +59,10 @@ groups:
         for: 5m
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "pg_doorman: sustained SSO signature failures on {{ $labels.instance }}"
-          description: |
+          runbook: |
             More than 0.5 JWT signature failures per second over 5 minutes.
             Most common cause: the SSO proxy rotated its signing key without
             updating sso_public_key_file. Check SSO provider key rotation
@@ -76,9 +79,10 @@ groups:
         for: 10m
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "pg_doorman: SSO allowlist rejecting users on {{ $labels.instance }}"
-          description: |
+          runbook: |
             JWTs validated but the resolved username is not in
             sso_allowed_users. Either the operator forgot to add a new user
             to the allowlist, or someone outside the configured set is
@@ -95,9 +99,10 @@ groups:
         for: 5m
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "pg_doorman: high rate of rejected auth attempts on {{ $labels.instance }}"
-          description: |
+          runbook: |
             More than 1 rejected auth attempt per second over 5 minutes.
             Indicates either a misconfigured client (stale Basic creds, expired
             JWT) or an active brute-force attempt. Cross-reference the access
@@ -109,9 +114,10 @@ groups:
         for: 10m
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "pg_doorman: more than 20% of SSO requests fail with 4xx on {{ $labels.instance }}"
-          description: |
+          runbook: |
             SSO-authenticated requests have a 4xx ratio above 20% for 10
             minutes. Common causes: SSO operators trying admin paths
             (403), expired tokens reaching API after silent refresh failed,

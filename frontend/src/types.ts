@@ -429,5 +429,11 @@ export interface AuthConfig {
    * instead of silently degrading to Basic-only.
    */
   sso_config_error?: string | null;
+  /**
+   * `true` when [web].sso_admin_groups is non-empty — that is, when
+   * SSO can resolve to Admin via group membership. The sign-in modal
+   * uses this to drop the "SSO grants read-only access" copy.
+   */
+  sso_admin_groups_configured?: boolean;
   current_user: CurrentUser | null;
 }

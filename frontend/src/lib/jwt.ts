@@ -4,6 +4,37 @@
 
 export const SSO_TOKEN_KEY = "pgdoorman.sso-token";
 
+/**
+ * Safe localStorage helpers. Some browsers (locked-down corporate
+ * profiles, tracking-prevention modes, embedded webviews) throw
+ * `SecurityError` from `getItem`/`setItem`/`removeItem`. The SSO flow
+ * already tolerates a fall-through to in-memory state, so swallowing
+ * the exception here is the right answer.
+ */
+export function safeLocalGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function safeLocalSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode / quota / blocked — non-fatal */
+  }
+}
+
+export function safeLocalRemove(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* private mode / quota / blocked — non-fatal */
+  }
+}
+
 /** Parse a JWT payload without signature verification (client-side only). */
 export function parseJwt(token: string): Record<string, unknown> | null {
   try {
@@ -26,15 +57,15 @@ export function parseJwt(token: string): Record<string, unknown> | null {
  * is consistently null.
  */
 export function getValidSsoToken(): string | null {
-  const token = localStorage.getItem(SSO_TOKEN_KEY);
+  const token = safeLocalGet(SSO_TOKEN_KEY);
   if (!token) return null;
   const parsed = parseJwt(token);
   if (!parsed || typeof parsed.exp !== "number") {
-    localStorage.removeItem(SSO_TOKEN_KEY);
+    safeLocalRemove(SSO_TOKEN_KEY);
     return null;
   }
   if (parsed.exp <= Math.floor(Date.now() / 1000)) {
-    localStorage.removeItem(SSO_TOKEN_KEY);
+    safeLocalRemove(SSO_TOKEN_KEY);
     return null;
   }
   return token;
@@ -54,6 +85,5 @@ export function getSsoTokenUsername(): string | null {
 }
 
 export function clearSsoToken(): void {
-  localStorage.removeItem(SSO_TOKEN_KEY);
+  safeLocalRemove(SSO_TOKEN_KEY);
 }
-
