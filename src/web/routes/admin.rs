@@ -14,7 +14,7 @@
 //! the frontend's chart-annotation overlay paints a vertical line at the
 //! moment of the action regardless of which transport triggered it.
 
-use crate::admin::operations::{pause_now, reconnect_now, reload_now, resume_now};
+use crate::admin::operations::{pause_now, reconnect_now, reload_now, resume_now, AdminEffect};
 use crate::web::routes::collect::now_unix_ms;
 use crate::web::routes::query::{first, parse_query};
 use crate::web::server::Response;
@@ -36,14 +36,31 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
             Ok(()) => json_ok("reload", 1),
             Err(err) => json_err("reload", &err.to_string()),
         },
-        "pause" => json_ok("pause", pause_now(db) as u64),
-        "resume" => json_ok("resume", resume_now(db) as u64),
-        "reconnect" => json_ok("reconnect", reconnect_now(db) as u64),
+        "pause" => render_effect("pause", pause_now(db)),
+        "resume" => render_effect("resume", resume_now(db)),
+        "reconnect" => render_effect("reconnect", reconnect_now(db)),
         _ => Response::json(
             404,
             "Not Found",
             &format!(r#"{{"error":"unknown_action","message":"unknown admin action: {action}"}}"#),
         ),
+    }
+}
+
+/// Same outcome envelope shape across the two transports: 404 with a
+/// `no_matching_db` JSON error when the db filter excluded every pool,
+/// 200 with the count of pools touched otherwise.
+fn render_effect(action: &str, effect: AdminEffect) -> Response {
+    match effect {
+        AdminEffect::NoMatchingDb { db } => {
+            let escaped = db.replace('"', "\\\"");
+            let body = format!(
+                r#"{{"ts":{ts},"action":"{action}","error":"no_matching_db","db":"{escaped}"}}"#,
+                ts = now_unix_ms()
+            );
+            Response::json(404, "Not Found", &body)
+        }
+        AdminEffect::Applied { affected } => json_ok(action, affected as u64),
     }
 }
 
@@ -84,5 +101,26 @@ mod tests {
         let body = std::str::from_utf8(&r.body).unwrap();
         assert!(body.contains(r#""action":"pause""#), "{body}");
         assert!(body.contains(r#""affected_pools":0"#), "{body}");
+    }
+
+    #[tokio::test]
+    async fn pause_with_missing_db_filter_returns_404_with_typed_error() {
+        // Mirrors the PG admin protocol: `db` filter that matches no pool
+        // is a typo signal, not a silent zero. REST returns 404 + JSON body
+        // identifying the unknown db so the SPA can surface it.
+        let r = handle_admin_action("/api/admin/pause?db=nonexistent_db").await;
+        assert_eq!(r.status, 404);
+        let body = std::str::from_utf8(&r.body).unwrap();
+        assert!(body.contains(r#""error":"no_matching_db""#), "{body}");
+        assert!(body.contains(r#""db":"nonexistent_db""#), "{body}");
+    }
+
+    #[tokio::test]
+    async fn reconnect_with_missing_db_filter_also_404() {
+        let r = handle_admin_action("/api/admin/reconnect?db=ghost").await;
+        assert_eq!(r.status, 404);
+        let body = std::str::from_utf8(&r.body).unwrap();
+        assert!(body.contains(r#""error":"no_matching_db""#), "{body}");
+        assert!(body.contains(r#""db":"ghost""#), "{body}");
     }
 }
