@@ -126,9 +126,13 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Returns the current LogTap if active, otherwise None.
+/// Returns the current LogTap if active, otherwise None. Uses
+/// `ArcSwap::load` rather than `load_full`: the outer `Arc<Option<…>>`
+/// stays inside the hazard-pointer guard for the lifetime of the call,
+/// so we pay one inner-Arc clone per producer push instead of two
+/// when the tap is active.
 pub fn log_tap() -> Option<Arc<LogTap>> {
-    LOG_TAP.load_full().as_ref().clone()
+    LOG_TAP.load().as_ref().clone()
 }
 
 struct BoundedWriter {

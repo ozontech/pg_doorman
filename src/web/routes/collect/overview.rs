@@ -23,7 +23,7 @@ pub(crate) fn collect_overview() -> OverviewDto {
     let mut idle_clients = 0u64;
     let mut waiting_clients = 0u64;
     for stats in client_states.values() {
-        match stats.state_to_string().as_str() {
+        match stats.state_str() {
             "active" => active_clients += 1,
             "idle" => idle_clients += 1,
             "waiting" => waiting_clients += 1,
@@ -34,7 +34,7 @@ pub(crate) fn collect_overview() -> OverviewDto {
     let mut active_servers = 0u64;
     let mut idle_servers = 0u64;
     for stats in server_states.values() {
-        match stats.state_to_string().as_str() {
+        match stats.state_str() {
             "active" => active_servers += 1,
             "idle" => idle_servers += 1,
             _ => {}

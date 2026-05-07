@@ -623,8 +623,8 @@ impl PoolStats {
         for client in client_map.values() {
             // Try to find the pool for this client
             match pool_map.get_mut(&PoolIdentifier {
-                db: client.pool_name(),
-                user: client.username(),
+                db: client.pool_name().to_string(),
+                user: client.username().to_string(),
             }) {
                 Some(pool_stats) => {
                     // Update client state counter based on client state
@@ -666,8 +666,8 @@ impl PoolStats {
         for server in server_map.values() {
             // Try to find the pool for this server
             match pool_map.get_mut(&PoolIdentifier {
-                db: server.pool_name(),
-                user: server.username(),
+                db: server.pool_name().to_string(),
+                user: server.username().to_string(),
             }) {
                 Some(pool_stats) => {
                     // Update server state counter based on server state

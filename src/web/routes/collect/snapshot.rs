@@ -20,7 +20,7 @@
 //! everywhere else in this codebase.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -47,8 +47,27 @@ const TTL: Duration = Duration::from_millis(250);
 
 static CACHE: Lazy<ArcSwap<Option<Arc<Snapshot>>>> = Lazy::new(|| ArcSwap::from_pointee(None));
 
+/// Singleflight gate. A `/api/*` poll burst from one SPA tab brings six
+/// adjacent endpoints into [`snapshot()`] within a few microseconds. The
+/// first one to find an expired cache enters the critical section and
+/// rebuilds; the rest queue on this mutex, then re-check the cache and
+/// see fresh data without rebuilding. The mutex is held only across the
+/// build itself; readers that find a fresh cache on the fast path never
+/// touch it.
+static REBUILD_LOCK: Mutex<()> = Mutex::new(());
+
 /// Return the current snapshot, rebuilding it if older than [`TTL`].
 pub fn snapshot() -> Arc<Snapshot> {
+    if let Some(existing) = CACHE.load().as_ref() {
+        if existing.built_at.elapsed() < TTL {
+            return existing.clone();
+        }
+    }
+    // Slow path: cache is stale. Serialize rebuilds across concurrent
+    // callers — a poll burst should pay for one build, not N. After
+    // taking the lock, re-check: another caller may have rebuilt while
+    // we were waiting.
+    let _guard = REBUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = CACHE.load().as_ref() {
         if existing.built_at.elapsed() < TTL {
             return existing.clone();

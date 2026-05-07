@@ -94,10 +94,10 @@ fn top_clients_from(
             let qps = queries_total as f64 / age_seconds.max(1) as f64;
             TopClientRowDto {
                 client_id: format!("#c{}", s.connection_id()),
-                application_name: s.application_name(),
-                user: s.username(),
-                database: s.pool_name(),
-                addr: s.ipaddr(),
+                application_name: s.application_name().to_string(),
+                user: s.username().to_string(),
+                database: s.pool_name().to_string(),
+                addr: s.ipaddr().to_string(),
                 age_seconds,
                 queries_total,
                 errors_total,

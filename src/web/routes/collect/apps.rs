@@ -19,8 +19,8 @@ fn apps_from(
     let mut acc: HashMap<String, AppRowDto> = HashMap::new();
     for s in &snapshot {
         let app = s.application_name();
-        let entry = acc.entry(app.clone()).or_insert_with(|| AppRowDto {
-            application_name: app,
+        let entry = acc.entry(app.to_string()).or_insert_with(|| AppRowDto {
+            application_name: app.to_string(),
             clients: 0,
             queries_total: 0,
             transactions_total: 0,

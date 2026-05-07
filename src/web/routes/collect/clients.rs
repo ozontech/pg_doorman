@@ -58,7 +58,7 @@ fn client_matches(s: &crate::stats::ClientStats, f: &ClientFilters) -> bool {
     let pool_name = s.pool_name();
     let user = s.username();
     let app = s.application_name();
-    let state = s.state_to_string();
+    let state = s.state_str();
 
     if let Some(p) = &f.pool {
         let id = format!("{}@{}", user, pool_name);
@@ -67,12 +67,12 @@ fn client_matches(s: &crate::stats::ClientStats, f: &ClientFilters) -> bool {
         }
     }
     if let Some(db) = &f.database {
-        if pool_name != *db {
+        if pool_name != db {
             return false;
         }
     }
     if let Some(u) = &f.user {
-        if user != *u {
+        if user != u {
             return false;
         }
     }
@@ -83,10 +83,10 @@ fn client_matches(s: &crate::stats::ClientStats, f: &ClientFilters) -> bool {
             return false;
         }
     }
-    if !f.application_name.is_empty() && !f.application_name.contains(&app) {
+    if !f.application_name.is_empty() && !f.application_name.iter().any(|x| x == app) {
         return false;
     }
-    if !f.state.is_empty() && !f.state.contains(&state) {
+    if !f.state.is_empty() && !f.state.iter().any(|x| x == state) {
         return false;
     }
     true
@@ -96,13 +96,13 @@ fn client_to_dto(s: &std::sync::Arc<crate::stats::ClientStats>) -> ClientDto {
     let age_seconds = s.connect_time().elapsed().as_secs();
     ClientDto {
         client_id: format!("#c{}", s.connection_id()),
-        database: s.pool_name(),
-        user: s.username(),
-        application_name: s.application_name(),
-        addr: s.ipaddr(),
+        database: s.pool_name().to_string(),
+        user: s.username().to_string(),
+        application_name: s.application_name().to_string(),
+        addr: s.ipaddr().to_string(),
         tls: s.tls(),
-        state: s.state_to_string(),
-        wait: s.wait_to_string(),
+        state: s.state_str().to_string(),
+        wait: s.wait_str().to_string(),
         wait_ms: s.wait_ms().unwrap_or(0),
         transactions_total: s.transaction_count.load(Ordering::Relaxed),
         queries_total: s.query_count.load(Ordering::Relaxed),

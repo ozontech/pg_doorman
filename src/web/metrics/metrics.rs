@@ -169,7 +169,9 @@ fn update_server_metrics() {
     // first scrape racing with TTL expiry).
     let snap = crate::web::routes::collect::snapshot();
     for server in snap.server_states.values() {
-        // Create owned strings to avoid borrowing issues
+        // Borrow username/pool_name from the Arc<ServerStats>; the snapshot
+        // owns the Arc for the duration of this loop body, so the slices
+        // remain valid for the metric label calls below.
         let username = server.username();
         let pool_name = server.pool_name();
         let process_id = server.process_id().to_string();
@@ -187,14 +189,14 @@ fn update_server_metrics() {
 
         for (metric, value) in &server_metrics {
             metric
-                .with_label_values(&[&username, &pool_name, &process_id])
+                .with_label_values(&[username, pool_name, &process_id])
                 .set(*value);
         }
 
         // Count TLS-encrypted backend connections per pool.
         if server.tls() {
             SHOW_SERVER_TLS_CONNECTIONS
-                .with_label_values(&[&pool_name])
+                .with_label_values(&[pool_name])
                 .inc();
         }
     }

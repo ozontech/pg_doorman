@@ -782,11 +782,13 @@ where
                     };
                 };
                 let server = conn.deref_mut();
-                server.stats.active(self.stats.application_name());
+                server
+                    .stats
+                    .active(self.stats.application_name().to_string());
                 let checkout_us = connecting_at.elapsed().as_micros() as u64;
                 server
                     .stats
-                    .checkout_time(checkout_us, self.stats.application_name());
+                    .checkout_time(checkout_us, self.stats.application_name().to_string());
                 // Update client-side wait tracking so SHOW POOLS maxwait
                 // reflects real checkout peaks, not the zero from init.
                 self.stats

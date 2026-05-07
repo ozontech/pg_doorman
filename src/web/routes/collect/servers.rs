@@ -65,12 +65,12 @@ fn server_matches(s: &crate::stats::ServerStats, f: &ServerFilters) -> bool {
         }
     }
     if let Some(db) = &f.database {
-        if pool_name != *db {
+        if pool_name != db {
             return false;
         }
     }
     if let Some(u) = &f.user {
-        if user != *u {
+        if user != u {
             return false;
         }
     }
@@ -83,12 +83,12 @@ fn server_to_dto(s: &std::sync::Arc<crate::stats::ServerStats>) -> ServerDto {
     ServerDto {
         server_id: s.server_id(),
         process_id: s.process_id(),
-        database: s.pool_name(),
-        user: s.username(),
+        database: s.pool_name().to_string(),
+        user: s.username().to_string(),
         application_name,
         tls: s.tls(),
-        state: s.state_to_string(),
-        wait: s.wait_to_string(),
+        state: s.state_str().to_string(),
+        wait: s.wait_str().to_string(),
         age_seconds,
         active_age_ms: s.active_age_ms().unwrap_or(0),
         transactions_total: s.transaction_count.load(Ordering::Relaxed),
