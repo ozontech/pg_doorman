@@ -4,10 +4,17 @@
 //! `portpicker`, already in dev-dependencies), opens a TcpStream and sends a
 //! hand-rolled HTTP/1.1 request line + headers. We avoid pulling reqwest into
 //! dev-deps for these few cases.
+//!
+//! Tests run with `#[serial]` because the listener stores its `WebServerOptions`
+//! in a process-wide `ArcSwap` (see `start_web_server`) so that admin
+//! `RELOAD` can update auth/gating without a restart. Two parallel listeners
+//! in the same test binary would clobber each other's slot — a non-issue in
+//! production where exactly one listener exists per process.
 
 use std::time::Duration;
 
 use base64::Engine;
+use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -48,6 +55,7 @@ async fn send(port: u16, request: &str) -> String {
 }
 
 #[tokio::test]
+#[serial]
 async fn metrics_endpoint_serves_prometheus_body_when_ui_inactive() {
     let port = spawn_server(opts(false, true)).await;
     let raw = send(port, "GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -56,6 +64,7 @@ async fn metrics_endpoint_serves_prometheus_body_when_ui_inactive() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_returns_404_when_ui_inactive() {
     let port = spawn_server(opts(false, true)).await;
     let raw = send(
@@ -67,6 +76,7 @@ async fn api_returns_404_when_ui_inactive() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_unknown_route_returns_501_when_ui_active_anonymous() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -78,6 +88,7 @@ async fn api_unknown_route_returns_501_when_ui_active_anonymous() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_admin_route_returns_401_without_auth() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/logs HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -86,6 +97,7 @@ async fn api_admin_route_returns_401_without_auth() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_logs_admin_returns_envelope_or_disabled() {
     let port = spawn_server(opts(true, true)).await;
     let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
@@ -115,6 +127,7 @@ async fn api_logs_admin_returns_envelope_or_disabled() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_public_route_returns_401_when_ui_anonymous_false() {
     let port = spawn_server(opts(true, false)).await;
     let raw = send(
@@ -126,6 +139,7 @@ async fn api_public_route_returns_401_when_ui_anonymous_false() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_version_returns_json() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/version HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -136,6 +150,7 @@ async fn api_version_returns_json() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_overview_returns_json_when_ui_active() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -149,6 +164,7 @@ async fn api_overview_returns_json_when_ui_active() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_pools_returns_json_when_ui_active() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/pools HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -157,6 +173,7 @@ async fn api_pools_returns_json_when_ui_active() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_overview_still_404_when_ui_inactive() {
     let port = spawn_server(opts(false, true)).await;
     let raw = send(
@@ -168,6 +185,7 @@ async fn api_overview_still_404_when_ui_inactive() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_clients_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/clients HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -179,6 +197,7 @@ async fn api_clients_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_clients_with_query_params() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -192,6 +211,7 @@ async fn api_clients_with_query_params() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_servers_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/servers HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -200,6 +220,7 @@ async fn api_servers_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_connections_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -221,6 +242,7 @@ async fn api_connections_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_stats_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/stats HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -230,6 +252,7 @@ async fn api_stats_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_databases_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -243,6 +266,7 @@ async fn api_databases_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_users_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/users HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -252,6 +276,7 @@ async fn api_users_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_config_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/config HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -261,6 +286,7 @@ async fn api_config_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_log_level_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -273,6 +299,7 @@ async fn api_log_level_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_auth_query_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -285,6 +312,7 @@ async fn api_auth_query_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_pool_scaling_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -297,6 +325,7 @@ async fn api_pool_scaling_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_pool_coordinator_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -310,6 +339,7 @@ async fn api_pool_coordinator_returns_envelope() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
+#[serial]
 async fn api_sockets_returns_200_or_500_on_linux() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/sockets HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -321,6 +351,7 @@ async fn api_sockets_returns_200_or_500_on_linux() {
 
 #[cfg(not(target_os = "linux"))]
 #[tokio::test]
+#[serial]
 async fn api_sockets_returns_503_on_non_linux() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/sockets HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -328,6 +359,7 @@ async fn api_sockets_returns_503_on_non_linux() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_prepared_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -340,6 +372,7 @@ async fn api_prepared_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_interner_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -353,6 +386,7 @@ async fn api_interner_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_interner_top_anonymous_returns_401() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -364,6 +398,7 @@ async fn api_interner_top_anonymous_returns_401() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_interner_top_admin_returns_200() {
     let port = spawn_server(opts(true, true)).await;
     let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
@@ -376,6 +411,7 @@ async fn api_interner_top_admin_returns_200() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_prepared_text_anonymous_returns_401() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -387,6 +423,7 @@ async fn api_prepared_text_anonymous_returns_401() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_top_clients_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -401,6 +438,7 @@ async fn api_top_clients_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_apps_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/apps HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
@@ -409,6 +447,7 @@ async fn api_apps_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_top_queries_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -422,6 +461,7 @@ async fn api_top_queries_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_prepared_text_admin_unknown_hash_returns_404() {
     let port = spawn_server(opts(true, true)).await;
     let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");
@@ -433,6 +473,7 @@ async fn api_prepared_text_admin_unknown_hash_returns_404() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_top_prepared_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
@@ -446,6 +487,7 @@ async fn api_top_prepared_returns_envelope() {
 }
 
 #[tokio::test]
+#[serial]
 async fn api_events_returns_envelope() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(port, "GET /api/events HTTP/1.1\r\nHost: localhost\r\n\r\n").await;

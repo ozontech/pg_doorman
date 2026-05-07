@@ -10,11 +10,14 @@
 //! - everything else → 404.
 
 use std::net::SocketAddr;
+use std::sync::{Arc, OnceLock};
 
+use arc_swap::ArcSwap;
 use log::{error, info};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 
+use crate::config::Config;
 use crate::web::auth::{classify, AuthOutcome};
 use crate::web::metrics::write_metrics_response;
 
@@ -33,6 +36,60 @@ pub struct WebServerOptions {
     pub admin_password: String,
 }
 
+impl WebServerOptions {
+    /// Build the request-time options from a config snapshot. `ui_active`
+    /// is gated on a non-default admin password — `web.ui = true` paired
+    /// with an empty/`"admin"` password is silently demoted to "metrics
+    /// only", matching the explicit warning the startup path logs in
+    /// `app::server::run_server`.
+    pub fn from_config(cfg: &Config) -> Self {
+        let admin_default =
+            cfg.general.admin_password.is_empty() || cfg.general.admin_password == "admin";
+        WebServerOptions {
+            ui_active: cfg.web.ui && !admin_default,
+            ui_anonymous: cfg.web.ui_anonymous,
+            admin_username: cfg.general.admin_username.clone(),
+            admin_password: cfg.general.admin_password.clone(),
+        }
+    }
+}
+
+/// Reload-aware options snapshot used by every request. Installed once on
+/// `start_web_server`, swapped atomically when the admin protocol or the
+/// REST `/api/admin/reload` endpoint replaces the global config. Without
+/// this, `RELOAD` would update `/api/config` but the listener would keep
+/// authenticating against the old password and ignoring `[web].ui_anonymous`
+/// changes until the next process restart.
+static WEB_OPTIONS: OnceLock<ArcSwap<WebServerOptions>> = OnceLock::new();
+
+fn install_options(opts: Arc<WebServerOptions>) {
+    if let Some(swap) = WEB_OPTIONS.get() {
+        swap.store(opts);
+    } else {
+        let _ = WEB_OPTIONS.set(ArcSwap::from(opts));
+    }
+}
+
+fn current_options() -> Arc<WebServerOptions> {
+    WEB_OPTIONS
+        .get()
+        .map(|swap| swap.load_full())
+        .unwrap_or_else(|| {
+            // Fallback for code paths that read options before the listener
+            // started. Recomputes from the live config so behavior is at
+            // least defined; `start_web_server` will replace it on bind.
+            Arc::new(WebServerOptions::from_config(&crate::config::get_config()))
+        })
+}
+
+/// Re-derive the listener's runtime options from the current global config.
+/// Called by every code path that updates the global `Config` (admin
+/// protocol `RELOAD`, REST `/api/admin/reload`). Idempotent.
+pub fn refresh_options_from_config() {
+    let cfg = crate::config::get_config();
+    install_options(Arc::new(WebServerOptions::from_config(&cfg)));
+}
+
 /// Admin-only path prefixes (require `Admin` auth regardless of `ui_anonymous`).
 /// Spec section 6.1.
 const ADMIN_ONLY_PREFIXES: &[&str] = &[
@@ -42,8 +99,13 @@ const ADMIN_ONLY_PREFIXES: &[&str] = &[
     "/api/admin/",
 ];
 
-/// Spawns the HTTP listener for the given address.
+/// Spawns the HTTP listener for the given address. The provided `opts`
+/// seeds the reload-aware [`WEB_OPTIONS`] slot — subsequent
+/// [`refresh_options_from_config`] calls (from `RELOAD`) atomically replace
+/// it, and every request reads the current value via [`current_options`].
 pub async fn start_web_server(host: &str, opts: WebServerOptions) {
+    install_options(Arc::new(opts));
+
     info!("starting web listener on {host}");
     let addr: SocketAddr = match host.parse() {
         Ok(addr) => addr,
@@ -75,7 +137,7 @@ pub async fn start_web_server(host: &str, opts: WebServerOptions) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let opts = opts.clone();
+                let opts = current_options();
                 tokio::spawn(async move {
                     handle_connection(stream, opts).await;
                 });
@@ -87,7 +149,7 @@ pub async fn start_web_server(host: &str, opts: WebServerOptions) {
     }
 }
 
-async fn handle_connection(stream: TcpStream, opts: WebServerOptions) {
+async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOptions>) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut writer = BufWriter::new(write_half);
@@ -514,6 +576,49 @@ mod tests {
             accepts_gzip: false,
             accepts_json: true,
         }
+    }
+
+    fn config_with(ui: bool, ui_anonymous: bool, admin_password: &str) -> Config {
+        let mut cfg = Config::default();
+        cfg.web.ui = ui;
+        cfg.web.ui_anonymous = ui_anonymous;
+        cfg.general.admin_username = "admin".into();
+        cfg.general.admin_password = admin_password.into();
+        cfg
+    }
+
+    #[test]
+    fn from_config_demotes_ui_when_admin_password_empty() {
+        let opts = WebServerOptions::from_config(&config_with(true, false, ""));
+        assert!(!opts.ui_active, "empty password must disable UI");
+    }
+
+    #[test]
+    fn from_config_demotes_ui_when_admin_password_is_default_admin() {
+        let opts = WebServerOptions::from_config(&config_with(true, false, "admin"));
+        assert!(!opts.ui_active, "literal 'admin' must disable UI");
+    }
+
+    #[test]
+    fn from_config_keeps_ui_off_when_web_ui_false_even_with_strong_password() {
+        let opts = WebServerOptions::from_config(&config_with(false, false, "secret"));
+        assert!(!opts.ui_active);
+    }
+
+    #[test]
+    fn from_config_enables_ui_when_password_strong_and_web_ui_true() {
+        let opts = WebServerOptions::from_config(&config_with(true, true, "secret"));
+        assert!(opts.ui_active);
+        assert!(opts.ui_anonymous);
+    }
+
+    #[test]
+    fn from_config_copies_credentials_through() {
+        let mut cfg = config_with(false, false, "p4ssw0rd");
+        cfg.general.admin_username = "ops".into();
+        let opts = WebServerOptions::from_config(&cfg);
+        assert_eq!(opts.admin_username, "ops");
+        assert_eq!(opts.admin_password, "p4ssw0rd");
     }
 
     #[test]

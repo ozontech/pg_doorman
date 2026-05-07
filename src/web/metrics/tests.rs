@@ -5,6 +5,7 @@ use crate::stats::{
     TOTAL_CONNECTION_COUNTER,
 };
 use crate::web::{start_web_server, WebServerOptions};
+use serial_test::serial;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -12,7 +13,11 @@ use tokio::net::TcpStream;
 
 // Test for the HTTP server functionality
 // This test is focused on the public interface of the prometheus module
+//
+// `#[serial]` because `start_web_server` writes the process-wide
+// `WebServerOptions` slot used by every other web::tests test.
 #[tokio::test]
+#[serial]
 async fn test_prometheus_server_basic() {
     // Set up some test metrics
     PLAIN_CONNECTION_COUNTER.store(10, Ordering::SeqCst);

@@ -791,6 +791,13 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     };
 
     let new_config = get_config();
+    // Refresh the web listener's reload-aware options whether or not
+    // pools changed: `[web]` and `[general].admin_*` updates can land
+    // independently of pool config and still need the listener to pick
+    // them up without a process restart. Done here (vs each caller) so
+    // every reload path — admin protocol RELOAD, REST POST /api/admin/
+    // reload, SIGHUP — gets the same behaviour.
+    crate::web::refresh_options_from_config();
 
     if old_config != new_config {
         info!("Config changed, reloading");
