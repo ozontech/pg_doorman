@@ -2,62 +2,104 @@
 
 ### 3.8.5
 
-**SSO for the web UI.** pg_doorman now accepts JWTs issued by an
-external SSO proxy (RS256, public key from PEM) alongside the existing
-Basic auth. Three roles: `Anonymous` (public read), `Sso` (read-only
-access plus logs and SQL text), `Admin` (full access, including
-`POST /api/admin/*`). Configurable in `[web]` via the new `sso_*`
-fields; full reference and an oauth2-proxy example live in
-`guides/web-ui.md`. `GET /api/auth/config` returns `sso_enabled`,
-`sso_proxy_url`, and `current_user` so the SPA can render role-aware
-UI without a second probe.
+The web console now accepts JWTs issued by an external SSO proxy
+alongside the existing Basic auth. The listener resolves every
+request to one of three roles — `Anonymous`, `Sso` (read-only,
+including logs and SQL text), and `Admin` (full access, including
+`POST /api/admin/*`) — and a JWT can reach the `Admin` role through a
+configurable group claim, so SSO operators run mutating admin actions
+without sharing the Basic password. A per-request access log on a
+dedicated logger target makes role transitions and 401/403 spikes
+visible from `journalctl`. Full reference and an oauth2-proxy example
+live in [`guides/web-ui.md`](guides/web-ui.md).
 
-**Per-request access log.** Every successful or auth-rejected response
-emits one logfmt line at info level on the `pg_doorman::web::access`
-target with `method`, `path`, `query`, `status`, `bytes`,
-`latency_ms`, `peer`, `auth_role`, `auth_source`, and `auth_user`.
-Request and response bodies are not logged.
+#### SSO authentication
 
-**Role-aware gating.** `[web].ui_anonymous = false` now requires at
-least the `Sso` role for public `/api/*` endpoints; previously every
-authenticated request needed `Admin`. Read-only privileged endpoints
-(`/api/logs`, `/api/prepared/text/*`, `/api/interner/top`,
-`/api/top/queries`) are now reachable by `Sso` users in addition to
-`Admin`. `POST /api/admin/*` remains `Admin`-only. Insufficient-role
-rejections return `403 Forbidden` with a JSON body; missing or
-rejected credentials still produce `401`.
+- New `[web]` fields wire the SSO branch: `sso_enabled`,
+  `sso_proxy_url`, `sso_public_key_file`, `sso_audience`,
+  `sso_allowed_users`, `sso_groups_claim`, `sso_admin_groups`. JWTs
+  are validated as RS256 against the PEM-encoded public key; the
+  parsed key reloads on `RELOAD`.
+- A JWT whose `sso_groups_claim` value intersects `sso_admin_groups`
+  resolves to `Admin` with `auth_source = sso`. Empty
+  `sso_admin_groups` (the default) keeps every SSO login on the
+  read-only `Sso` role.
+- Tokens are accepted from `Authorization: Bearer`, the
+  `sso_access_token` cookie, or the `?token=` query parameter, in
+  that priority order. Basic still wins over SSO when both are
+  presented; a wrong Basic password no longer blocks a valid SSO
+  token.
+- `GET /api/auth/config` reports `sso_enabled`, `sso_proxy_url`,
+  `sso_admin_groups_configured`, `sso_config_error`, and the resolved
+  `current_user`, so the SPA renders the role-aware sign-in modal
+  and sidebar without a second probe.
 
-**Browser flow.** The SPA's sign-in modal renders a "Sign in via SSO"
-button when the backend reports `sso_proxy_url`. A hidden iframe
-refreshes the JWT before expiry so the user is not redirected to the
-proxy mid-session.
+#### Role-aware gating
 
-**SSO health surface.** `/api/auth/config` now carries
-`sso_config_error` when `[web].sso_enabled = true` but the runtime
-failed to load. New Prometheus gauges
-`pg_doorman_web_sso_enabled` and `pg_doorman_web_sso_config_error`
-plus counters `pg_doorman_web_auth_attempts_total{role,source}`,
-`pg_doorman_web_requests_total{status_class,role}`, and
-`pg_doorman_web_sso_validation_errors_total{reason}` let an operator
-alert on SSO degradation without grepping logs.
+- `[web].ui_anonymous = false` now requires the `Sso` role for the
+  public `/api/*` endpoints; previously every authenticated request
+  needed `Admin`. Read-only privileged endpoints (`/api/logs`,
+  `/api/prepared/text/*`, `/api/interner/top`, `/api/top/queries`)
+  are reachable by `Sso` users. `POST /api/admin/*` remains
+  `Admin`-only.
+- Insufficient-role rejections return `403 Forbidden` with body
+  `{"error":"forbidden","message":"admin role required"}`. Missing or
+  invalid credentials still produce `401`. The SPA re-opens the
+  sign-in modal on `401` and renders a non-blocking "admin role
+  required" banner on `403`.
 
-**SSO Admin via group claim.** New `[web].sso_groups_claim` and
-`[web].sso_admin_groups` map a JWT group claim to the Admin role.
-When the validated JWT carries one of the configured admin groups,
-the request resolves to `Admin` (with `source = sso`). Default empty
-list keeps the existing read-only-only contract.
+#### Browser sign-in flow
 
-**Real client IP behind reverse proxy.** New `[web].trusted_proxies`
-CIDR list. When the TCP peer falls in this list, the access log
-walks `X-Forwarded-For` / `Forwarded` to surface the real client IP
-instead of the proxy's address. Untrusted peers cannot spoof the
-field — headers are ignored when the request peer is not trusted.
+- The sign-in modal shows a **Sign in via SSO** button next to the
+  Basic form when the backend reports `sso_proxy_url`. The proxy
+  bounces the browser back with `?token=<jwt>`, which the SPA stores
+  in `localStorage` and rewrites out of the URL.
+- A silent-refresh poller (every 60 s, fires when `exp` is under
+  90 s) opens a hidden iframe at `${origin}/?sso_silent=1`. The
+  iframe renders a minimal `SilentCallback` and posts the new token
+  to the parent. If silent refresh fails and a Basic credential is
+  available, the SPA falls back to Basic without redirecting;
+  otherwise it performs a full redirect through the SSO proxy.
+- The SPA never sends cookies (`credentials: "omit"`); cookie auth
+  remains available for curl, sidecars, and oauth2-proxy variants
+  that paste the token into a cookie on the shared domain.
 
-**Access log levels.** Anonymous successful reads of public APIs and
-`/metrics` scrapes now log at `debug` instead of `info`. Admin
-actions, personal-data reads, every non-2xx response, and any
-authenticated request still log at `info`. `RUST_LOG=info` no longer
-drowns in scrape noise.
+#### Access log
+
+- Every response (200/401/403/404/5xx, `/metrics` scrapes included)
+  emits one logfmt line on the dedicated `pg_doorman::web::access`
+  target with `method`, `path`, `query` (presence flag only —
+  raw query strings are never logged), `status`, `bytes`,
+  `latency_ms`, `peer`, `auth_role`, `auth_source`, and `auth_user`.
+  Bodies are not logged.
+- Levels are picked per request. Admin actions, personal-data reads,
+  every non-2xx response, and any authenticated request log at
+  `info`. Anonymous successful reads of public APIs and `/metrics`
+  scrapes log at `debug`, so `RUST_LOG=info` no longer drowns in
+  scrape noise.
+
+#### Real client IP behind a reverse proxy
+
+- New `[web].trusted_proxies` CIDR list. When the TCP peer falls in
+  this list, the access log parses `X-Forwarded-For` (or RFC 7239
+  `Forwarded`), walks the chain right-to-left skipping further
+  trusted hops, and uses the first untrusted address as `peer`. An
+  untrusted client that sends `X-Forwarded-For` is ignored, so the
+  field cannot be spoofed.
+
+#### Observability
+
+- New gauges `pg_doorman_web_sso_enabled` and
+  `pg_doorman_web_sso_config_error`. The latter stays at `1` while
+  `sso_enabled = true` but the runtime failed to load (missing PEM
+  file, empty audience, unparsable PEM). The exact reason is
+  exported through `/api/auth/config.sso_config_error` and rendered
+  as a banner in the SPA.
+- New counters `pg_doorman_web_auth_attempts_total{role,source}`,
+  `pg_doorman_web_requests_total{status_class,role}`, and
+  `pg_doorman_web_sso_validation_errors_total{reason}` (reasons:
+  `signature`, `expired`, `audience`, `no_username`, `allowlist`).
+  Operators alert on SSO degradation without grepping logs.
 
 ### 3.8.0
 
