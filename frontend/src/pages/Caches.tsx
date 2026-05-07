@@ -250,7 +250,6 @@ function PreparedTab() {
           {sorted.length} of {poll.data.prepared.length} statements
         </span>
       </div>
-      <div className="overflow-x-auto">
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
@@ -378,7 +377,6 @@ function PreparedTab() {
       {poll.data.prepared.length > 0 && sorted.length === 0 && (
         <p className="p-4 text-sm text-text-dim">No statements match these filters. Click clear to see them all again.</p>
       )}
-      </div>
     </>
   );
 }
@@ -427,7 +425,7 @@ function InternerTab() {
         <p className="px-6 pb-4 text-sm text-danger">{topPoll.error.message}</p>
       )}
       {topPoll.data && (
-        <div className="overflow-x-auto px-6 pb-6">
+        <div className="px-6 pb-6">
           <table className="w-full text-sm tabular">
             <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
               <tr>
