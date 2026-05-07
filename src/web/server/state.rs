@@ -28,7 +28,7 @@ pub struct WebServerOptions {
     /// can validate Bearer/cookie/query tokens.
     pub sso: Option<std::sync::Arc<crate::web::sso::SsoRuntime>>,
     /// Human-readable reason `sso` is `None` despite
-    /// `[web].sso_enabled = true`. Surfaced through `/api/auth/config`
+    /// `[web].sso_enabled = true`. Returned through `/api/auth/config`
     /// so the SPA can show "SSO is configured but not loaded:
     /// <reason>" instead of silently falling back to Basic-only.
     pub sso_config_error: Option<String>,
@@ -70,7 +70,7 @@ impl WebServerOptions {
 /// Build the SSO runtime from `[web].sso_*`. Missing or invalid config
 /// returns an error string instead of aborting the listener, so a typo
 /// in the SSO section never knocks the operator console offline. The
-/// caller logs the error and surfaces it through `/api/auth/config`.
+/// caller logs the error and forwards it through `/api/auth/config`.
 fn build_sso_runtime(
     web: &crate::config::web::Web,
 ) -> Result<Arc<crate::web::sso::SsoRuntime>, String> {

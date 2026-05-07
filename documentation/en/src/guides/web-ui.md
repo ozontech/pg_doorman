@@ -73,7 +73,7 @@ regardless of UI:
 | Role | Activation | Access |
 |---|---|---|
 | `Anonymous` | no credentials and `ui_anonymous = true` | Public `/api/*` without personal data. Personal-data paths (`/api/logs`, `/api/prepared/text/...`, `/api/interner/top`, `/api/top/queries`) and `/api/admin/*` are denied. |
-| `Sso` | a valid JWT in `Authorization: Bearer`, `Cookie: sso_access_token=...`, or query `?token=...` | Full read-only access including logs and SQL text. Mutating operations (`POST /api/admin/*`) are denied with `403 Forbidden` and body `{"error":"forbidden","message":"admin role required"}`. |
+| `Sso` | a valid JWT in `Authorization: Bearer` (browser) or `Cookie: sso_access_token=...` / query `?token=...` (server-to-server / curl) | Full read-only access including logs and SQL text. Mutating operations (`POST /api/admin/*`) are denied with `403 Forbidden` and body `{"error":"forbidden","message":"admin role required"}`. |
 | `Admin` | the matching Basic credentials from `[general].admin_username` / `admin_password` | Everything, including `POST /api/admin/{reload,pause,resume,reconnect}`. |
 
 When a request carries both Basic and an SSO token, Basic wins. A
@@ -237,6 +237,10 @@ access stream from `/api/logs`, or include only it.
   session. With oauth2-proxy, set `--silent-refresh=true`.
 - **Cookie-based JWT is ignored.** The cookie must reach pg_doorman
   on the same domain, and the `aud` claim must be in `sso_audience`.
+  The browser SPA does not send cookies (`credentials: "omit"` on
+  every fetch); cookie auth is API-only and aimed at curl, sidecars,
+  or oauth2-proxy variants that explicitly forward the token via
+  query parameter on redirect.
 
 ## Pages
 

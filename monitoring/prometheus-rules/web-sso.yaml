@@ -1,0 +1,118 @@
+groups:
+  - name: web_sso_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:web_sso_validation_failure:rate5m
+        expr: |
+          sum by (job, instance, reason) (
+            clamp_min(
+              rate(pg_doorman_web_sso_validation_errors_total[5m]),
+              0
+            )
+          )
+
+      - record: pg_doorman:web_request_4xx:ratio_by_role
+        expr: |
+          sum by (job, instance, role) (
+            clamp_min(
+              rate(pg_doorman_web_requests_total{status_class="4xx"}[5m]),
+              0
+            )
+          )
+          /
+          clamp_min(
+            sum by (job, instance, role) (
+              clamp_min(
+                rate(pg_doorman_web_requests_total[5m]),
+                0
+              )
+            ),
+            0.001
+          )
+
+  - name: web_sso_alerts
+    rules:
+      - alert: PgDoormanWebSsoConfigError
+        expr: pg_doorman_web_sso_config_error > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "pg_doorman SSO is configured but did not load on {{ $labels.instance }}"
+          description: |
+            [web].sso_enabled = true on this instance, but the SSO runtime
+            failed to load (missing key file, empty audience, unparsable
+            PEM, etc.). The exact reason is in /api/auth/config.sso_config_error
+            and the listener logs at error level. Web UI is serving
+            Basic-only auth until this is fixed.
+
+      - alert: PgDoormanWebSsoSignatureFailures
+        expr: |
+          sum by (job, instance) (
+            clamp_min(
+              rate(pg_doorman_web_sso_validation_errors_total{reason="signature"}[5m]),
+              0
+            )
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pg_doorman: sustained SSO signature failures on {{ $labels.instance }}"
+          description: |
+            More than 0.5 JWT signature failures per second over 5 minutes.
+            Most common cause: the SSO proxy rotated its signing key without
+            updating sso_public_key_file. Check SSO provider key rotation
+            schedule and reload pg_doorman after replacing the PEM.
+
+      - alert: PgDoormanWebSsoAllowlistRejections
+        expr: |
+          sum by (job, instance) (
+            clamp_min(
+              rate(pg_doorman_web_sso_validation_errors_total{reason="allowlist"}[10m]),
+              0
+            )
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pg_doorman: SSO allowlist rejecting users on {{ $labels.instance }}"
+          description: |
+            JWTs validated but the resolved username is not in
+            sso_allowed_users. Either the operator forgot to add a new user
+            to the allowlist, or someone outside the configured set is
+            attempting to sign in.
+
+      - alert: PgDoormanWebRejectedAuthSpike
+        expr: |
+          sum by (job, instance) (
+            clamp_min(
+              rate(pg_doorman_web_auth_attempts_total{role="rejected"}[5m]),
+              0
+            )
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pg_doorman: high rate of rejected auth attempts on {{ $labels.instance }}"
+          description: |
+            More than 1 rejected auth attempt per second over 5 minutes.
+            Indicates either a misconfigured client (stale Basic creds, expired
+            JWT) or an active brute-force attempt. Cross-reference the access
+            log on target pg_doorman::web::access for source IPs.
+
+      - alert: PgDoormanWebSso4xxSpike
+        expr: |
+          pg_doorman:web_request_4xx:ratio_by_role{role="sso"} > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pg_doorman: more than 20% of SSO requests fail with 4xx on {{ $labels.instance }}"
+          description: |
+            SSO-authenticated requests have a 4xx ratio above 20% for 10
+            minutes. Common causes: SSO operators trying admin paths
+            (403), expired tokens reaching API after silent refresh failed,
+            broken proxy adding malformed Authorization headers.

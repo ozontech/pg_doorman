@@ -52,7 +52,7 @@ log_tap_max_entries = 8192
 | Роль | Активация | Что доступно |
 |---|---|---|
 | `Anonymous` | нет реквизитов и `ui_anonymous = true` | Публичные `/api/*` без персональных данных. Личные пути (`/api/logs`, `/api/prepared/text/...`, `/api/interner/top`, `/api/top/queries`) и `/api/admin/*` запрещены. |
-| `Sso` | валидный JWT в `Authorization: Bearer`, в cookie `sso_access_token=...` или в query `?token=...` | Полный read-only доступ, включая логи и SQL-тексты. Управляющие операции (`POST /api/admin/*`) запрещены — отдаётся `403 Forbidden` с телом `{"error":"forbidden","message":"admin role required"}`. |
+| `Sso` | валидный JWT в `Authorization: Bearer` (браузер) либо в cookie `sso_access_token=...` / query `?token=...` (server-to-server, curl) | Полный read-only доступ, включая логи и SQL-тексты. Управляющие операции (`POST /api/admin/*`) запрещены — отдаётся `403 Forbidden` с телом `{"error":"forbidden","message":"admin role required"}`. |
 | `Admin` | корректный Basic из `[general].admin_username` / `admin_password` | Полный доступ, включая `POST /api/admin/{reload,pause,resume,reconnect}`. |
 
 Когда в одном запросе присутствуют и Basic, и SSO-токен, побеждает Basic: правильный admin-пароль перекрывает любой SSO-токен. Если Basic пришёл, но не сошёлся, валидный SSO-токен всё равно даёт роль `Sso`. Это покрывает случай, когда в `localStorage` лежит просроченный токен рядом с правильным Basic-паролем.
@@ -93,10 +93,10 @@ log_tap_max_entries = 8192
 | `sso_admin_groups` | Группы, которые получают роль Admin (включая `POST /api/admin/*`). Пустой список оставляет SSO read-only. | `[]` |
 | `trusted_proxies` | CIDR доверенных reverse-proxy. Когда TCP-peer попадает в этот список, access-лог берёт real client IP из `X-Forwarded-For` / `Forwarded`. Пустой список — доверять только своему peer'у. | `[]` |
 
-Если `sso_enabled = true`, но `sso_public_key_file` не задан или PEM не читается, в лог пишется `error` и SSO молча отключается на этот запуск — листенер продолжает работать только на Basic. Это поведение защищает консоль от падения из-за опечатки в SSO-секции. Причина видна в двух местах:
+Если `sso_enabled = true`, но `sso_public_key_file` не задан или PEM не читается, в лог пишется `error` и SSO молча отключается на этот запуск — листенер продолжает работать только на Basic. Это поведение защищает консоль от падения из-за опечатки в SSO-секции. Узнать причину можно в двух точках:
 
-- `/api/auth/config.sso_config_error` содержит человекочитаемое сообщение; SPA рисует баннер «SSO сконфигурирован, но не работает: <reason>», чтобы оператор не упустил битый rollout.
-- Метрика `pg_doorman_web_sso_config_error` стоит в 1, пока SSO не загружено при `sso_enabled = true`. Вместе с `pg_doorman_web_sso_enabled` подходит для алертов.
+- `/api/auth/config.sso_config_error` содержит текст ошибки; SPA показывает баннер с этим текстом, чтобы оператор сразу увидел проблему с SSO вместо тихого фоллбэка на Basic.
+- Метрика `pg_doorman_web_sso_config_error` равна 1, пока SSO не загружено при `sso_enabled = true`. Используйте пару с `pg_doorman_web_sso_enabled` для алертов.
 
 ### Admin через SSO-группу
 
@@ -113,16 +113,16 @@ sso_admin_groups = ["pg-doorman-admins"]
 
 Если в JWT приходит `"groups": [..., "pg-doorman-admins"]`, pg_doorman возвращает роль `Admin` (с `source=sso`). SPA показывает тот же admin-интерфейс, что и при Basic-логине; в access-логе будет `auth_role=admin auth_source=sso`. Пустой `sso_admin_groups` (по умолчанию) оставляет SSO read-only.
 
-### Real client IP за reverse proxy
+### Реальный IP клиента за reverse proxy
 
-Когда pg_doorman стоит за reverse proxy, поле `peer` в access-логе по умолчанию пишет TCP-адрес proxy. Чтобы видеть real IP клиента, добавьте CIDR proxy в `[web].trusted_proxies`:
+Когда pg_doorman стоит за reverse proxy, в поле `peer` access-лога по умолчанию записывается TCP-адрес proxy. Чтобы видеть реальный IP клиента, добавьте CIDR proxy в `[web].trusted_proxies`:
 
 ```toml
 [web]
 trusted_proxies = ["10.0.0.0/8", "192.168.0.0/16"]
 ```
 
-Листенер парсит `X-Forwarded-For` (или `Forwarded` по RFC 7239) только когда TCP-peer попадает в trusted-список. Идёт по цепочке справа налево, пропускает trusted-хопы и берёт первый untrusted адрес как `peer`. Untrusted-клиент не может подделать поле — заголовки proxy игнорируются если peer не доверенный.
+Листенер парсит `X-Forwarded-For` (или `Forwarded` по RFC 7239) только когда TCP-peer попадает в trusted-список. Идёт по цепочке справа налево, пропускает доверенные адреса и берёт первый недоверенный как `peer`. Недоверенный клиент не может подделать поле — если peer не в списке доверенных, заголовки proxy игнорируются.
 
 ### Логин из браузера
 
@@ -147,7 +147,7 @@ INFO pg_doorman::web::access method=GET path=/api/admin/reload query=false statu
 - **401 на валидном JWT**. Проверьте, что `aud` в токене попадает в `sso_audience` и `exp` ещё не истёк. PEM можно проверить через `openssl rsa -pubin -in <pem> -text -noout`.
 - **403 на запросе с валидным JWT**. Это путь, требующий `Admin` (например, `POST /api/admin/reload`). SSO даёт только read-only доступ.
 - **Silent refresh не срабатывает**. Настройте SSO proxy так, чтобы он возвращал токен без полного экрана логина, когда iframe приходит с активной сессией. У oauth2-proxy это включается флагом `--silent-refresh=true`.
-- **JWT приходит в cookie, но не валидируется**. Cookie должна попасть на pg_doorman с того же домена. Значение `aud` в токене должно входить в `sso_audience`.
+- **JWT приходит в cookie, но не валидируется**. Cookie должна попасть на pg_doorman с того же домена. Значение `aud` в токене должно входить в `sso_audience`. Учтите: браузерный SPA cookie не шлёт (`credentials: "omit"` на каждом fetch). Cookie-аутентификация работает для curl, сайдкаров и oauth2-proxy-like прокси, которые явно прокладывают токен через query на редиректе.
 
 ## Страницы
 

@@ -422,5 +422,12 @@ export interface CurrentUser {
 export interface AuthConfig {
   sso_enabled: boolean;
   sso_proxy_url: string | null;
+  /**
+   * Set when [web].sso_enabled = true but the runtime did not load
+   * (missing key file, empty audience, unparsable PEM, etc.). The SPA
+   * renders a banner so the operator sees a misconfigured rollout
+   * instead of silently degrading to Basic-only.
+   */
+  sso_config_error?: string | null;
   current_user: CurrentUser | null;
 }

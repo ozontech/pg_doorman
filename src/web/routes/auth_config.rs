@@ -16,10 +16,10 @@ use crate::web::server::wire::Response;
 struct AuthConfigResponse<'a> {
     sso_enabled: bool,
     sso_proxy_url: Option<&'a str>,
-    /// Surfaced when `sso_enabled = true` but the runtime did not load
+    /// Returned when `sso_enabled = true` but the runtime did not load
     /// (missing key file, empty audience, unparsable PEM, etc.). The
-    /// SPA can render a "SSO is configured but not loaded: <reason>"
-    /// banner so the operator sees a misconfigured rollout instead of
+    /// SPA renders a "SSO is configured but not loaded: <reason>"
+    /// banner so the operator sees the broken SSO setup instead of
     /// silently falling back to Basic-only.
     #[serde(skip_serializing_if = "Option::is_none")]
     sso_config_error: Option<&'a str>,

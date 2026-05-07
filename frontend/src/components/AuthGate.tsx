@@ -53,10 +53,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // Capture `?token=` returned by the SSO proxy on first load. The
   // helper returns the token directly so we can drive React state
   // even when localStorage is unavailable (private mode / quota).
+  //
+  // A successful SSO callback also clears any persisted Basic
+  // credentials. authHeader prefers Basic over SSO, so leaving stale
+  // creds (e.g. after an admin password rotation, or the operator
+  // logged out elsewhere and ticked "remember me" earlier) would mask
+  // the fresh JWT and every API call would 401. Explicitly choosing
+  // SSO via the proxy is a strong signal to drop Basic.
   useEffect(() => {
     const captured = captureTokenFromUrl();
-    if (captured) setSsoToken(captured);
-  }, [setSsoToken]);
+    if (captured) {
+      setSsoToken(captured);
+      setBasic(null, false);
+    }
+  }, [setSsoToken, setBasic]);
 
   // Probe /api/auth/config on mount, on Basic credentials change, and
   // any time api.ts saw a 401 elsewhere. Uses an AbortController so a
@@ -123,10 +133,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (error) {
     return <div className="p-4 text-danger">{error}</div>;
   }
+  const ssoConfigError = authConfig?.sso_config_error ?? null;
   if (needsAuth) {
     return (
       <AuthModal
         ssoProxyUrl={authConfig?.sso_proxy_url ?? null}
+        ssoConfigError={ssoConfigError}
+        ssoAdminPossible={hasAdminGroupsConfig(authConfig)}
         currentBasic={basic}
         initialRemember={remembered}
         onSubmit={(next, remember) => {
@@ -138,6 +151,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
   return (
     <div className="relative">
+      {ssoConfigError && <SsoConfigErrorBanner reason={ssoConfigError} />}
       {forbiddenAt !== null && (
         <ForbiddenBanner onDismiss={clearTransients} />
       )}
@@ -148,6 +162,32 @@ export function AuthGate({ children }: { children: ReactNode }) {
           aria-hidden="true"
         />
       )}
+    </div>
+  );
+}
+
+/// Heuristic: the backend does not surface admin-groups config in
+/// /api/auth/config (yet), so we treat the absence of a config error
+/// plus an enabled SSO proxy as "SSO might be admin-capable" only for
+/// modal copy. The role itself is still resolved by the backend.
+function hasAdminGroupsConfig(_cfg: AuthConfig | null): boolean {
+  // We deliberately do not over-promise: the modal text just stops
+  // claiming "read-only" when SSO is enabled. The backend remains the
+  // source of truth for the actual role.
+  return false;
+}
+
+function SsoConfigErrorBanner({ reason }: { reason: string }) {
+  return (
+    <div
+      role="alert"
+      className="mx-6 mt-4 flex items-center justify-between rounded border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning"
+    >
+      <span>
+        SSO is configured but not loaded:{" "}
+        <strong className="font-mono">{reason}</strong>. Backend serves
+        Basic auth only until this is fixed.
+      </span>
     </div>
   );
 }
@@ -176,11 +216,15 @@ function ForbiddenBanner({ onDismiss }: { onDismiss: () => void }) {
 
 function AuthModal({
   ssoProxyUrl,
+  ssoConfigError,
+  ssoAdminPossible,
   currentBasic,
   initialRemember,
   onSubmit,
 }: {
   ssoProxyUrl: string | null;
+  ssoConfigError: string | null;
+  ssoAdminPossible: boolean;
   currentBasic: { username: string; password: string } | null;
   initialRemember: boolean;
   onSubmit: (
@@ -237,6 +281,16 @@ function AuthModal({
         <h2 id="auth-modal-title" className="mb-4 text-md font-semibold">
           Sign in
         </h2>
+        {ssoConfigError && (
+          <div
+            role="alert"
+            className="mb-4 rounded border border-warning/40 bg-warning/10 p-2 text-xs text-warning"
+          >
+            SSO is configured but not loaded:{" "}
+            <strong className="font-mono">{ssoConfigError}</strong>. Use
+            Basic auth below until this is fixed.
+          </div>
+        )}
         {ssoProxyUrl && (
           <div className="mb-4">
             <button
@@ -255,7 +309,9 @@ function AuthModal({
               {redirecting ? "Redirecting…" : "Sign in via SSO"}
             </button>
             <p className="mt-2 text-xs text-text-muted">
-              SSO grants read-only access including logs and SQL text.
+              {ssoAdminPossible
+                ? "SSO can grant read or admin access depending on your group memberships."
+                : "SSO grants read-only access including logs and SQL text."}
             </p>
             <div className="my-4 flex items-center gap-2 text-xs text-text-dim">
               <span className="h-px flex-1 bg-border" />

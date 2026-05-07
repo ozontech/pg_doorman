@@ -38,13 +38,21 @@ pub fn write(
         AuthOutcome::Rejected => ("rejected", "-", "-"),
     };
     let level = pick_level(path, status, auth);
+    // Quote path / peer / auth_user when they contain whitespace,
+    // double-quote, or backslash. JWT-issued usernames can carry any
+    // unicode, and a malformed peer (TCP timeout edge cases) can
+    // contain unexpected characters — without escaping a parser
+    // would split fields incorrectly.
+    let path_v = logfmt_value(path);
+    let peer_v = logfmt_value(peer);
+    let user_v = logfmt_value(auth_user);
     log::log!(
         target: "pg_doorman::web::access",
         level,
-        "method={method} path={path} query={query_present} \
+        "method={method} path={path_v} query={query_present} \
          status={status} bytes={bytes} latency_ms={latency_ms} \
-         peer={peer} auth_role={auth_role} auth_source={auth_source} \
-         auth_user={auth_user}"
+         peer={peer_v} auth_role={auth_role} auth_source={auth_source} \
+         auth_user={user_v}"
     );
 
     WEB_AUTH_ATTEMPTS
@@ -53,6 +61,28 @@ pub fn write(
     WEB_REQUESTS_TOTAL
         .with_label_values(&[status_class(status), auth_role])
         .inc();
+}
+
+/// Format a value safe for logfmt: bare token when it has none of the
+/// reserved characters (whitespace, `"`, `\`, `=`), otherwise a
+/// double-quoted string with `"` and `\` escaped.
+fn logfmt_value(s: &str) -> String {
+    let needs_quote = s
+        .chars()
+        .any(|c| c.is_whitespace() || c == '"' || c == '\\' || c == '=');
+    if !needs_quote {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if c == '"' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
 }
 
 fn auth_source_for_metric(auth: &AuthOutcome) -> &'static str {
@@ -193,6 +223,31 @@ mod tests {
     fn authenticated_read_is_info() {
         assert_eq!(pick_level("/api/version", 200, &sso()), log::Level::Info);
         assert_eq!(pick_level("/api/overview", 200, &admin()), log::Level::Info);
+    }
+
+    #[test]
+    fn logfmt_value_passes_simple_token() {
+        assert_eq!(logfmt_value("alice"), "alice");
+        assert_eq!(logfmt_value("/api/version"), "/api/version");
+        assert_eq!(logfmt_value("10.0.1.5:42312"), "10.0.1.5:42312");
+        assert_eq!(logfmt_value("-"), "-");
+    }
+
+    #[test]
+    fn logfmt_value_quotes_whitespace() {
+        assert_eq!(logfmt_value("alice smith"), "\"alice smith\"");
+    }
+
+    #[test]
+    fn logfmt_value_escapes_quotes_and_backslash() {
+        assert_eq!(logfmt_value("a\"b"), "\"a\\\"b\"");
+        assert_eq!(logfmt_value("a\\b"), "\"a\\\\b\"");
+    }
+
+    #[test]
+    fn logfmt_value_quotes_equals_sign() {
+        // `key=value` with `=` in the value would split parsers.
+        assert_eq!(logfmt_value("foo=bar"), "\"foo=bar\"");
     }
 
     #[test]

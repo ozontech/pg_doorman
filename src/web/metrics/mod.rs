@@ -705,7 +705,7 @@ pub(crate) static PATRONI_API_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
 pub(crate) static WEB_SSO_ENABLED: Lazy<prometheus::IntGauge> = Lazy::new(|| {
     let gauge = prometheus::IntGauge::new(
         "pg_doorman_web_sso_enabled",
-        "1 when the web UI has SSO configured and the public key loaded successfully, 0 otherwise. Pairs with `pg_doorman_web_sso_config_error_total` to detect a misconfigured rollout.",
+        "1 when the web UI has SSO configured and the public key loaded successfully, 0 otherwise. Pairs with `pg_doorman_web_sso_config_error` to detect a misconfigured SSO setup.",
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
@@ -715,7 +715,7 @@ pub(crate) static WEB_SSO_ENABLED: Lazy<prometheus::IntGauge> = Lazy::new(|| {
 pub(crate) static WEB_SSO_CONFIG_ERROR: Lazy<prometheus::IntGauge> = Lazy::new(|| {
     let gauge = prometheus::IntGauge::new(
         "pg_doorman_web_sso_config_error",
-        "1 when [web].sso_enabled = true but the runtime failed to load (missing key file, empty audience, unparsable PEM, etc.), 0 otherwise. The exact reason is surfaced through /api/auth/config.sso_config_error.",
+        "1 when [web].sso_enabled = true but the runtime failed to load (missing key file, empty audience, unparsable PEM, etc.), 0 otherwise. The exact reason is returned through /api/auth/config.sso_config_error.",
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
@@ -739,7 +739,7 @@ pub(crate) static WEB_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_web_requests_total",
-            "Web UI requests by status class and resolved role. `status_class` is 2xx/3xx/4xx/5xx. Pair with auth attempts to spot e.g. spikes in 4xx for the sso role (broken proxy) without wading through logs.",
+            "Web UI requests by status class and resolved role. `status_class` is 1xx/2xx/3xx/4xx/5xx (or `other` for non-standard codes). Pair with auth attempts to spot e.g. spikes in 4xx for the sso role (broken proxy) without wading through logs.",
         ),
         &["status_class", "role"],
     )
