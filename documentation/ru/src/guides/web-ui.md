@@ -94,10 +94,26 @@ SPA, надо пересобрать перед коммитом:
 ```bash
 cd frontend
 npm ci
+npm run install-hooks   # одноразово: ставит dist-sync pre-commit hook
 npm run lint
 npm run typecheck
 npm run build
 ```
 
+`npm run install-hooks` опциональна. CI её не требует: workflow
+`frontend.yml` запускает `npm run check-dist` и блокирует merge, если
+исходники меняли без пересборки `dist/`.
+
 Отдельный workflow `.github/workflows/frontend.yml` запускает те же
 шаги на каждом PR, который трогает `frontend/`.
+
+## Деплой
+
+`/metrics` доступен без авторизации на том же listener'е, что и UI.
+Так было всегда — иначе сломались бы существующие scrape-конфиги. Но
+если pg_doorman стоит за reverse proxy с авторизацией на `/api/*`, она
+**не** распространяется на `/metrics`: метрики раскрывают имена пулов,
+пользователей, БД, давление на коннекты, состояние auth-query и форму
+нагрузки. Либо держите `[web]` на приватном host:port, доступном только
+системе скрейпа, либо ставьте перед listener'ом proxy, который
+добавляет авторизацию на `/metrics` отдельно.

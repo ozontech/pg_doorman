@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check-dist": "node scripts/check-source-hash.mjs",
-    "prepare": "node scripts/install-git-hooks.mjs"
+    "install-hooks": "node scripts/install-git-hooks.mjs"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",

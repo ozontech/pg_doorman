@@ -98,10 +98,26 @@ the SPA must rebuild before committing:
 ```bash
 cd frontend
 npm ci
+npm run install-hooks   # one-time: wires the dist-sync pre-commit hook
 npm run lint
 npm run typecheck
 npm run build
 ```
 
+`npm run install-hooks` is opt-in. CI does not need it: the
+`frontend.yml` workflow runs `npm run check-dist` and refuses to merge
+when a commit changed source files without rebuilding `dist/`.
+
 A separate `.github/workflows/frontend.yml` runs the same gates on every
 PR that touches `frontend/`.
+
+## Deployment
+
+`/metrics` is unauthenticated on the same listener that can serve the
+UI. That mirrors the historical Prometheus exporter and keeps existing
+scrape configs working. If you put pg_doorman behind a reverse proxy,
+remember that auth on `/api/*` does **not** propagate to `/metrics` —
+metrics expose pool names, users, databases, connection pressure,
+auth-query state, and workload shape. Either keep `[web]` on a private
+host/port that only your scrape system reaches, or front the listener
+with a proxy that adds auth on `/metrics` separately.
