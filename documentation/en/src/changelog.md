@@ -2,38 +2,35 @@
 
 ### 3.8.5
 
-#### Added
-- Web UI: SSO authentication via JWT (RS256, public key from PEM file)
-  alongside the existing Basic auth. Three roles: `Anonymous` (public
-  read), `Sso` (full read-only including logs and SQL text), `Admin`
-  (everything, including `POST /api/admin/*`). Configurable through
-  the new `[web].sso_enabled`, `sso_proxy_url`, `sso_public_key_file`,
-  `sso_audience`, and `sso_allowed_users` fields. See
-  `guides/web-ui.md` for the full setup walkthrough including an
-  oauth2-proxy example.
-- Web UI: `GET /api/auth/config` exposes `sso_enabled`,
-  `sso_proxy_url`, and the current `current_user` (when authenticated)
-  so the SPA can render role-aware UI without a second probe.
-- Web UI: structured per-request access log on the
-  `pg_doorman::web::access` target, logfmt-encoded with `method`,
-  `path`, `query`, `status`, `bytes`, `latency_ms`, `peer`,
-  `auth_role`, `auth_source`, and `auth_user`.
+**SSO for the web UI.** pg_doorman now accepts JWTs issued by an
+external SSO proxy (RS256, public key from PEM) alongside the existing
+Basic auth. Three roles: `Anonymous` (public read), `Sso` (read-only
+access plus logs and SQL text), `Admin` (full access, including
+`POST /api/admin/*`). Configurable in `[web]` via the new `sso_*`
+fields; full reference and an oauth2-proxy example live in
+`guides/web-ui.md`. `GET /api/auth/config` returns `sso_enabled`,
+`sso_proxy_url`, and `current_user` so the SPA can render role-aware
+UI without a second probe.
 
-#### Changed
-- Web UI: `[web].ui_anonymous = false` now requires at least the `Sso`
-  role for public `/api/*` endpoints. Previously every authenticated
-  request needed `Admin`.
-- Web UI: read-only privileged endpoints (`/api/logs`,
-  `/api/prepared/text/*`, `/api/interner/top`, `/api/top/queries`) are
-  now reachable by `Sso` users in addition to `Admin`. `POST
-  /api/admin/*` remains `Admin`-only.
-- Web UI: insufficient-role rejections now return `403 Forbidden` with
-  a JSON body, instead of `401 Unauthorized`. Missing or rejected
-  credentials still produce `401`.
-- Web UI: the SPA's sign-in modal renders a "Sign in via SSO" button
-  when the backend reports `sso_proxy_url`. A hidden iframe refreshes
-  the JWT silently before expiry so operators stay signed in across
-  long sessions.
+**Per-request access log.** Every successful or auth-rejected response
+emits one logfmt line at info level on the `pg_doorman::web::access`
+target with `method`, `path`, `query`, `status`, `bytes`,
+`latency_ms`, `peer`, `auth_role`, `auth_source`, and `auth_user`.
+Request and response bodies are not logged.
+
+**Role-aware gating.** `[web].ui_anonymous = false` now requires at
+least the `Sso` role for public `/api/*` endpoints; previously every
+authenticated request needed `Admin`. Read-only privileged endpoints
+(`/api/logs`, `/api/prepared/text/*`, `/api/interner/top`,
+`/api/top/queries`) are now reachable by `Sso` users in addition to
+`Admin`. `POST /api/admin/*` remains `Admin`-only. Insufficient-role
+rejections return `403 Forbidden` with a JSON body; missing or
+rejected credentials still produce `401`.
+
+**Browser flow.** The SPA's sign-in modal renders a "Sign in via SSO"
+button when the backend reports `sso_proxy_url`. A hidden iframe
+refreshes the JWT before expiry so the user is not redirected to the
+proxy mid-session.
 
 ### 3.8.0
 

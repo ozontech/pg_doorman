@@ -76,17 +76,17 @@ regardless of UI:
 | `Sso` | a valid JWT in `Authorization: Bearer`, `Cookie: sso_access_token=...`, or query `?token=...` | Full read-only access including logs and SQL text. Mutating operations (`POST /api/admin/*`) are denied with `403 Forbidden` and body `{"error":"forbidden","message":"admin role required"}`. |
 | `Admin` | the matching Basic credentials from `[general].admin_username` / `admin_password` | Everything, including `POST /api/admin/{reload,pause,resume,reconnect}`. |
 
-When a request carries both Basic and an SSO token, Basic wins outright
-— a known admin password is the strongest credential and an SSO token
-cannot demote it. Broken Basic does not block a valid SSO token: the
-fallback covers an expired token in `localStorage` next to a working
-Basic password.
+When a request carries both Basic and an SSO token, Basic wins. A
+correct admin password trumps any SSO token: the request resolves to
+Admin. Broken Basic does not block a valid SSO token; the fallback
+covers an expired token in `localStorage` next to a working Basic
+password.
 
 `401 Unauthorized` is returned when no credentials were sent or they
-failed to parse. `403 Forbidden` is returned when credentials are valid
-but the role is too low. The frontend re-opens the sign-in modal on 401
-and shows an "admin role required" banner on 403 instead of looping
-back through the login flow.
+failed to parse. `403 Forbidden` is returned when credentials are
+valid but the role is too low. The frontend re-opens the sign-in
+modal on 401 and shows an "admin role required" banner on 403 instead
+of opening the login screen.
 
 ### Enabling SSO
 
@@ -127,33 +127,33 @@ back through the login flow.
 
 If `sso_enabled = true` but `sso_public_key_file` is missing or the PEM
 fails to load, the listener logs an error and silently keeps SSO off
-for that run — the operator console never disappears because of an SSO
-typo.
+for that run, so a misconfigured SSO section cannot take the operator
+console down.
 
 ### Signing in from the browser
 
-On first load the operator sees the sign-in modal. When
-`/api/auth/config` reports an `sso_proxy_url`, the modal exposes a
-**Sign in via SSO** button alongside the Basic form. Clicking it sends
-the browser to `${sso_proxy_url}?redirect_to=<current href>`. The proxy
-runs OAuth/OIDC and redirects back with `?token=<jwt>`. The SPA stores
-the token in `localStorage`, rewrites the URL clean of the parameter,
-and uses the token for every subsequent request.
+On first load you see the sign-in modal. When `/api/auth/config`
+returns an `sso_proxy_url`, the modal shows a **Sign in via SSO**
+button alongside the Basic form. Clicking it sends the browser to
+`${sso_proxy_url}?redirect_to=<current href>`. The proxy runs
+OAuth/OIDC and redirects back with `?token=<jwt>`. The SPA stores the
+token in `localStorage`, rewrites the URL clean of the parameter, and
+sends the token on every later request.
 
-The sidebar footer shows the resolved username — `admin` for Basic, or
+The sidebar footer shows the resolved username: `admin` for Basic, or
 `sso: <preferred_username>` for SSO. The sign-out button clears both
 `pgdoorman.admin-auth` and `pgdoorman.sso-token` and re-opens the
 sign-in modal.
 
 Silent token refresh runs every 60 seconds. When the JWT is less than
-90 seconds from `exp`, the SPA opens a hidden iframe pointing at
+90 seconds from `exp`, the SPA opens a hidden iframe at
 `${origin}/?sso_silent=1`. The App router renders a minimal callback
 component there (no normal polling effects) which posts the new token
 back to the parent via `window.postMessage`. If silent refresh fails
-and Basic is available, the dead SSO token is dropped silently;
-otherwise the SPA falls back to a full redirect through the proxy. We
-recommend at least a 5-minute JWT lifetime so the refresh window has
-time to do its work.
+and Basic is available, the SPA discards the SSO token without
+redirecting; otherwise the SPA falls back to a full redirect through
+the proxy. Configure JWT lifetime to at least 5 minutes; shorter
+tokens may expire before the refresh fires.
 
 ### Access log
 
@@ -166,14 +166,14 @@ INFO pg_doorman::web::access method=GET path=/api/admin/reload query=false statu
 ```
 
 Fields: `method`, `path`, `query=true|false`, `status`, `bytes`,
-`latency_ms`, `peer` (the TCP peer — when pg_doorman sits behind a
-reverse proxy this is the proxy's address), `auth_role`
+`latency_ms`, `peer` (the TCP peer; when pg_doorman sits behind a
+reverse proxy, this is the proxy's address), `auth_role`
 (`admin`/`sso`/`anonymous`/`rejected`), `auth_source`
 (`basic`/`sso`/`-`), and `auth_user`. Request and response bodies are
 not logged; the query string is reduced to a presence flag so JWTs in
 `?token=` never reach the log. The dedicated target
-`pg_doorman::web::access` lets operators filter the access stream out
-of `/api/logs` via the LogTap target filter.
+`pg_doorman::web::access` lets the LogTap target filter exclude the
+access stream from `/api/logs`, or include only it.
 
 ### Troubleshooting
 
@@ -182,10 +182,9 @@ of `/api/logs` via the LogTap target filter.
   passed. Validate the PEM with `openssl rsa -pubin -in <pem> -text -noout`.
 - **403 on a JWT that should be valid.** The path requires `Admin`
   (e.g. `POST /api/admin/reload`). SSO grants only read-only access.
-- **Silent refresh does not fire.** Check that the SSO proxy returns
-  the token without forcing a full login screen when an iframe arrives
-  with an active session. For oauth2-proxy that means
-  `--silent-refresh = true`.
+- **Silent refresh does not fire.** Configure the SSO proxy to return
+  the token without a login screen when the iframe carries an active
+  session. With oauth2-proxy, set `--silent-refresh=true`.
 - **Cookie-based JWT is ignored.** The cookie must reach pg_doorman
   on the same domain, and the `aud` claim must be in `sso_audience`.
 

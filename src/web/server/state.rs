@@ -103,8 +103,9 @@ pub(super) fn current_options() -> Arc<WebServerOptions> {
         .map(|swap| swap.load_full())
         .unwrap_or_else(|| {
             // Fallback for code paths that read options before the listener
-            // started. Recomputes from the live config so behavior is at
-            // least defined; `start_web_server` will replace it on bind.
+            // started. Recomputes from the live config so the call has a
+            // deterministic answer; `start_web_server` overwrites the slot
+            // when it binds.
             Arc::new(WebServerOptions::from_config(&crate::config::get_config()))
         })
 }

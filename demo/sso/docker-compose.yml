@@ -7,19 +7,21 @@
 #                  signed JWT to stdout (`docker compose run --rm mint-jwt`).
 #
 # In a real deployment the JWT would come from an external SSO proxy
-# (oauth2-proxy / Keycloak / …) — that machinery is out of scope for
-# this demo, which only proves out the pg_doorman side of the contract.
+# (oauth2-proxy / Keycloak / etc). That machinery is out of scope for
+# this demo, which exercises only the pg_doorman side.
 #
 # Quick start:
 #   docker compose up -d
 #   docker compose run --rm mint-jwt > /tmp/jwt
 #   curl -H "Authorization: Bearer $(cat /tmp/jwt)" http://localhost:9127/api/auth/config
 #   # → {"sso_enabled":true,"sso_proxy_url":"...","current_user":{"role":"sso",...}}
-#   open http://localhost:9127/                  # Sign in via SSO -> redirects elsewhere
-#                                                 # in this demo there is no real proxy, so
-#                                                 # the operator pastes the JWT directly:
-#   # localStorage.setItem("pgdoorman.sso-token", "$(cat /tmp/jwt)")
-#   # then refresh the page.
+#
+# Browser:
+#   open http://localhost:9127/
+#   # The "Sign in via SSO" button redirects to a stub URL; this demo
+#   # has no real proxy, so paste the JWT into localStorage instead:
+#   #   localStorage.setItem("pgdoorman.sso-token", "$(cat /tmp/jwt)")
+#   # then refresh.
 #
 # Tear down:  docker compose down
 

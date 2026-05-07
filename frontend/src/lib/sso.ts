@@ -50,9 +50,9 @@ export function captureTokenFromUrl(): boolean {
 /**
  * Send the user agent to the SSO proxy with the current href as
  * redirect target. Validates the proxy URL: must parse, must use https
- * (or be localhost for development). A bad URL logs to the console and
- * does NOT navigate, so a typo in `pg_doorman.toml` becomes a visible
- * error instead of a confusing in-app crash.
+ * (or be localhost for development). A bad URL logs to the console
+ * and aborts the redirect, so a typo in `pg_doorman.toml` shows in
+ * devtools instead of leaving the SPA stuck on a half-redirect.
  */
 export function redirectToSso(proxyUrl: string): void {
   const url = safeProxyUrl(proxyUrl);

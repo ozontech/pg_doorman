@@ -27,10 +27,10 @@ import type { AuthConfig } from "../types";
  * Anonymous (the role check happens per-request on the backend; the
  * gate is just a UX shortcut to not show stale 401 toasts).
  *
- * 401 from a downstream API call re-arms the sign-in modal. 403 does
- * not — credentials are valid, the role is too low. The UI shows a
- * forbidden banner instead so the operator understands they need
- * Admin/Basic to perform that specific action.
+ * On 401 the modal re-opens. On 403 it does not: credentials are
+ * valid, the role is just too low. The UI raises a forbidden banner
+ * instead so the operator can see why the action was blocked without
+ * losing their session.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const {

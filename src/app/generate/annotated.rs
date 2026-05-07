@@ -1139,13 +1139,21 @@ fn write_web_section(w: &mut ConfigWriter, web: &Web) {
     if let Some(ref url) = web.sso_proxy_url {
         w.kv(fi, "sso_proxy_url", &w.str_val(url));
     } else {
-        w.commented_kv(fi, "sso_proxy_url", "\"https://sso.example.com/oauth2/start\"");
+        w.commented_kv(
+            fi,
+            "sso_proxy_url",
+            "\"https://sso.example.com/oauth2/start\"",
+        );
     }
     w.blank();
 
     write_field_comment(w, fi, "web", "sso_public_key_file");
     if let Some(ref p) = web.sso_public_key_file {
-        w.kv(fi, "sso_public_key_file", &w.str_val(&p.display().to_string()));
+        w.kv(
+            fi,
+            "sso_public_key_file",
+            &w.str_val(&p.display().to_string()),
+        );
     } else {
         w.commented_kv(
             fi,

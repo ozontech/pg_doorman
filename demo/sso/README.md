@@ -2,11 +2,10 @@
 
 A self-contained docker-compose stack that boots pg_doorman with SSO
 enabled, a throwaway RSA keypair, and a helper container that mints
-short-lived JWTs. There is no real OIDC provider here — that would
-mean wiring up oauth2-proxy or Keycloak and is out of scope for a
-demo. Everything below proves out the pg_doorman side of the
-contract: the server validates the JWT, the SPA respects the role,
-the access log records the user.
+short-lived JWTs. There is no real OIDC provider here. Standing up
+oauth2-proxy or Keycloak is out of scope for a demo. The following
+commands exercise the pg_doorman side: the server validates the JWT,
+the SPA respects the role, and the access log records the user.
 
 ## Layout
 
@@ -21,7 +20,7 @@ demo/sso/
 ```
 
 The keypair in `keys/` is checked into version control on purpose
-so the demo runs without out-of-band setup. It is throwaway — never
+so the demo runs without out-of-band setup. It is throwaway. Do not
 copy it into a real deployment.
 
 ## Boot
@@ -32,8 +31,8 @@ docker compose up -d
 docker compose logs -f pg_doorman   # optional: watch the access log
 ```
 
-You should see one line per request on the
-`pg_doorman::web::access` target.
+Each request emits one line on the `pg_doorman::web::access` target.
+Tail the log to confirm the demo is live.
 
 ## Prove the SSO path
 
@@ -82,21 +81,20 @@ curl -i -X POST -u admin:admin-demo \
 
 ## Browser flow
 
-The demo does not run a real SSO proxy, so the *redirect* half of the
-SPA flow has no real backend. To impersonate the redirect:
+The demo lacks a real SSO proxy, so the redirect step is simulated:
 
-1. Open `http://localhost:9127/`.
-2. Mint a JWT: `docker compose run --rm mint-jwt > /tmp/jwt`.
-3. Open the browser devtools console and paste:
+1. Mint a JWT: `docker compose run --rm mint-jwt > /tmp/jwt`.
+2. Open `http://localhost:9127/`.
+3. In the browser devtools console, run:
 
    ```js
-   localStorage.setItem("pgdoorman.sso-token", "<jwt>");
+   localStorage.setItem("pgdoorman.sso-token", "<paste contents of /tmp/jwt>");
    ```
 
-4. Reload the page. The sidebar shows `sso: alice`. `Logs` and `Caches`
-   are visible. Pool action buttons are hidden — the SSO role does not
-   have admin privileges. Trying any of them through devtools returns
-   the `403 admin role required` banner.
+4. Reload the page. The sidebar shows `sso: alice`. Logs and Caches
+   are visible. Pool action buttons are hidden because the SSO role
+   does not have admin privileges. Forcing a request to one (devtools
+   or curl) returns the `403 admin role required` banner.
 
 5. To get full access, sign out (sidebar footer) and sign in with
    `admin` / `admin-demo` via the Basic form.
@@ -113,16 +111,16 @@ In production:
 
 1. Replace `keys/sso-public.pem` with the public key your SSO proxy
    uses to sign tokens. `oauth2-proxy --signing-key`, Keycloak realm
-   keys, and Authelia all expose this.
+   keys, and Authelia all provide this.
 2. Set `[web].sso_proxy_url` to the actual sign-in URL the proxy
-   exposes (`https://sso.example.com/oauth2/start` for oauth2-proxy).
+   serves (`https://sso.example.com/oauth2/start` for oauth2-proxy).
 3. Set `[web].sso_audience` to the audience the proxy puts into the
    `aud` claim. The demo uses `["pg_doorman"]`.
 4. Optionally restrict `[web].sso_allowed_users` from `["*"]` to the
    list of operators allowed to read.
-5. The redirect contract: the proxy must redirect back to pg_doorman
-   with the JWT in `?token=<jwt>` (or set `sso_access_token` cookie
-   on the same domain). The SPA captures the param into localStorage
-   and drops the rest of the way through the existing flow.
+5. The proxy must redirect back to pg_doorman with the JWT in
+   `?token=<jwt>` (or set the `sso_access_token` cookie on the same
+   domain). The SPA captures the parameter into localStorage and
+   continues with the existing flow.
 
 The complete reference is in `documentation/en/src/guides/web-ui.md`.

@@ -68,9 +68,9 @@ impl AuthOutcome {
 ///   `Sso`).
 ///
 /// Order of preference: Basic > Bearer header > query > cookie. Basic
-/// always wins outright — a known admin password is the strongest
-/// credential the caller can present. A *broken* Basic does not block a
-/// valid SSO token: the function then tries the SSO sources in order.
+/// wins regardless of the SSO state: a correct admin password trumps
+/// every SSO token. A broken Basic does not block a valid SSO token;
+/// the function falls through to the SSO sources in order.
 ///
 /// The Basic comparison runs in constant time relative to the configured
 /// credentials to deny timing oracles. Both username and password legs

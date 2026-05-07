@@ -1,4 +1,4 @@
-// Client-side JWT helpers. The browser never validates the signature —
+// Client-side JWT helpers. The browser never validates the signature;
 // that is the backend's job. We only parse the payload to read `exp`
 // and pick the username for the role-aware UI.
 

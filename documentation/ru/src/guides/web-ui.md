@@ -47,7 +47,7 @@ log_tap_max_entries = 8192
 
 ## SSO и роли
 
-Консоль поддерживает три уровня доступа. Они срабатывают на стороне сервера и независят от UI:
+Консоль поддерживает три уровня доступа. Они проверяются на стороне сервера, UI на это не влияет:
 
 | Роль | Активация | Что доступно |
 |---|---|---|
@@ -55,13 +55,13 @@ log_tap_max_entries = 8192
 | `Sso` | валидный JWT в `Authorization: Bearer`, в cookie `sso_access_token=...` или в query `?token=...` | Полный read-only доступ, включая логи и SQL-тексты. Управляющие операции (`POST /api/admin/*`) запрещены — отдаётся `403 Forbidden` с телом `{"error":"forbidden","message":"admin role required"}`. |
 | `Admin` | корректный Basic из `[general].admin_username` / `admin_password` | Полный доступ, включая `POST /api/admin/{reload,pause,resume,reconnect}`. |
 
-Когда в одном запросе присутствуют и Basic, и SSO-токен, побеждает Basic — это явный admin-пароль и его нельзя «понизить» SSO-токеном. Если Basic пришёл, но не сошёлся, валидный SSO-токен всё равно даёт `Sso`-роль; логика fallback'а покрывает случай истёкшего токена в `localStorage` рядом с правильным Basic-паролем.
+Когда в одном запросе присутствуют и Basic, и SSO-токен, побеждает Basic: правильный admin-пароль перекрывает любой SSO-токен. Если Basic пришёл, но не сошёлся, валидный SSO-токен всё равно даёт роль `Sso`. Это покрывает случай, когда в `localStorage` лежит просроченный токен рядом с правильным Basic-паролем.
 
-`401 Unauthorized` возвращается, когда реквизитов не было или они были некорректны (классический «надо залогиниться»). `403 Forbidden` — когда реквизиты валидны, но роли не хватает. Фронтенд на 401 поднимает форму входа, на 403 — баннер «admin role required», но не повторно требует логин.
+`401 Unauthorized` возвращается, когда реквизитов не было или они были некорректны (классический «надо залогиниться»). `403 Forbidden` — когда реквизиты валидны, но роли не хватает. Фронтенд на 401 повторно открывает форму входа; на 403 показывает баннер «admin role required» без повторного входа.
 
 ### Включение SSO
 
-1. Возьмите RSA public key, которым SSO proxy подписывает JWT, и положите его в файл (например, `/etc/pg_doorman/sso-public.pem`). Для `oauth2-proxy` ключ извлекается из приватного через `openssl rsa -in private.pem -pubout -out public.pem`. Для Keycloak — из админки realm: Realm Settings → Keys.
+1. Получите от SSO-провайдера RSA-ключ (public key), которым он подписывает JWT, и сохраните его в файл (например, `/etc/pg_doorman/sso-public.pem`). Для `oauth2-proxy` ключ извлекается из приватного: `openssl rsa -in private.pem -pubout -out public.pem`. Для Keycloak ключ берётся в админ-консоли: Realm Settings → Keys.
 2. Добавьте в `pg_doorman.toml` секцию `[web]` с SSO-полями:
 
    ```toml
@@ -94,13 +94,13 @@ log_tap_max_entries = 8192
 
 ### Логин из браузера
 
-При первом заходе пользователь попадает на форму входа. Если в `/api/auth/config` указан `sso_proxy_url`, в форме появляется кнопка **Sign in via SSO**. Клик отправляет браузер на `sso_proxy_url?redirect_to=<текущий URL>`. Внешний proxy выполняет OAuth/OIDC-флоу и возвращает пользователя обратно с `?token=<jwt>`. SPA захватывает этот токен в `localStorage`, чистит URL и работает дальше.
+При первом заходе пользователь попадает на форму входа. Если в `/api/auth/config` указан `sso_proxy_url`, в форме появляется кнопка **Sign in via SSO**. Клик отправляет браузер на `sso_proxy_url?redirect_to=<текущий URL>`. Внешний proxy выполняет OAuth/OIDC-флоу и возвращает пользователя обратно с `?token=<jwt>`. SPA сохраняет этот токен в `localStorage`, чистит URL и продолжает работу.
 
-В правом нижнем углу sidebar отображается имя текущего пользователя: `admin` для Basic или `sso: <preferred_username>` для SSO. Кнопка sign out очищает оба ключа `localStorage` (`pgdoorman.admin-auth` и `pgdoorman.sso-token`) и снова открывает форму входа.
+В нижней части sidebar отображается имя текущего пользователя: `admin` для Basic или `sso: <preferred_username>` для SSO. Кнопка **Sign out** очищает оба ключа `localStorage` (`pgdoorman.admin-auth` и `pgdoorman.sso-token`) и снова открывает форму входа.
 
-Тихое обновление токена — раз в 60 секунд, за 90 секунд до истечения срока. Срабатывает скрытым iframe, который приземляется на `?sso_silent=1`. На этой страничке App рендерит минимальный SilentCallback вместо обычного UI и через `postMessage` возвращает новый токен в parent-окно. На случай отказа silent refresh: если у пользователя есть Basic, токен молча сбрасывается; иначе — полный редирект на SSO proxy. Минимальная рекомендованная длительность жизни JWT — 5 минут.
+Фоновое обновление токена работает так: поллер тикает раз в 60 секунд. Когда до истечения JWT остаётся меньше 90 секунд, SPA открывает скрытый iframe с URL вида `${origin}/?sso_silent=1`. В iframe App рендерит минимальный `SilentCallback` вместо обычного UI и через `postMessage` отдаёт новый токен parent-окну. Если silent refresh не удался: при наличии валидного Basic токен удаляется без редиректа; иначе SPA уходит на полный редирект через SSO proxy. Рекомендованный срок жизни JWT — не меньше 5 минут, иначе токен может истечь до того, как сработает refresh.
 
-### Access-лог
+### Журнал доступа (access log)
 
 После каждого HTTP-ответа консоль пишет одну строку logfmt в стандартный логгер pg_doorman:
 
@@ -108,14 +108,14 @@ log_tap_max_entries = 8192
 INFO pg_doorman::web::access method=GET path=/api/admin/reload query=false status=200 bytes=42 latency_ms=12 peer=10.0.1.5:42312 auth_role=admin auth_source=basic auth_user=admin
 ```
 
-Поля: `method`, `path`, `query=true|false`, `status`, `bytes`, `latency_ms`, `peer` (адрес клиента, если pg_doorman стоит за reverse proxy — это адрес proxy), `auth_role` (`admin`/`sso`/`anonymous`/`rejected`), `auth_source` (`basic`/`sso`/`-`), `auth_user`. Тело запроса/ответа и query string в лог не пишутся. Цель `pg_doorman::web::access` — отдельная, чтобы фильтровать в `/api/logs` через target-фильтр LogTap.
+Поля: `method`, `path`, `query=true|false`, `status`, `bytes`, `latency_ms`, `peer` (TCP-адрес клиента; если pg_doorman стоит за reverse proxy, здесь будет адрес proxy), `auth_role` (`admin`/`sso`/`anonymous`/`rejected`), `auth_source` (`basic`/`sso`/`-`), `auth_user`. Тело запроса/ответа и query string в лог не пишутся. Логи пишутся под отдельным target `pg_doorman::web::access`: это позволяет отфильтровать поток access-лога в `/api/logs` через target-фильтр LogTap.
 
 ### Troubleshooting
 
 - **401 на валидном JWT**. Проверьте, что `aud` в токене попадает в `sso_audience` и `exp` ещё не истёк. PEM можно проверить через `openssl rsa -pubin -in <pem> -text -noout`.
 - **403 на запросе с валидным JWT**. Это путь, требующий `Admin` (например, `POST /api/admin/reload`). SSO даёт только read-only доступ.
-- **Silent refresh не срабатывает**. Проверьте, что oauth2-proxy не редиректит на полный экран логина, когда iframe приходит без активной сессии. У oauth2-proxy за это отвечает `--silent-refresh = true`.
-- **JWT приходит в cookie, но не валидируется**. Cookie ставится на тот же домен, что и pg_doorman? `aud` совпадает с `sso_audience`?
+- **Silent refresh не срабатывает**. Настройте SSO proxy так, чтобы он возвращал токен без полного экрана логина, когда iframe приходит с активной сессией. У oauth2-proxy это включается флагом `--silent-refresh=true`.
+- **JWT приходит в cookie, но не валидируется**. Cookie должна попасть на pg_doorman с того же домена. Значение `aud` в токене должно входить в `sso_audience`.
 
 ## Страницы
 
