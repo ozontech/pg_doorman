@@ -18,7 +18,7 @@ port = 9127
 
 # Операторская консоль (по умолчанию выключена)
 ui = true
-ui_anonymous = true
+ui_anonymous = false
 log_tap_max_entries = 8192
 ```
 
