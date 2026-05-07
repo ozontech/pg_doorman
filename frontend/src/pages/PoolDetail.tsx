@@ -16,7 +16,14 @@ import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
 import { describeSqlstate } from "../lib/sqlstate";
 import { evaluatePool } from "../lib/thresholds";
-import type { PoolDto, PoolsDto } from "../types";
+import type {
+  PoolCoordinatorDto,
+  PoolCoordinatorRowDto,
+  PoolDto,
+  PoolScalingDto,
+  PoolScalingRowDto,
+  PoolsDto,
+} from "../types";
 
 interface AdminActionResponse {
   ts: number;
@@ -53,6 +60,18 @@ export default function PoolDetail() {
   const poll = usePoll<PoolsDto>(
     (signal) => apiGet<PoolsDto>("/api/pools", authHeader, signal),
     POLL_MS,
+  );
+  // Coordinator + scaling are admin-only globals; operators following a
+  // saturation alert from the Pool detail page need to see "is the
+  // database-level cap also pinned" and "is the scaler stuck on
+  // anticipation timeouts" without flipping over to the Config tab.
+  const coordPoll = usePoll<PoolCoordinatorDto>(
+    (signal) => apiGet<PoolCoordinatorDto>("/api/pool_coordinator", authHeader, signal),
+    POLL_MS * 2,
+  );
+  const scalingPoll = usePoll<PoolScalingDto>(
+    (signal) => apiGet<PoolScalingDto>("/api/pool_scaling", authHeader, signal),
+    POLL_MS * 2,
   );
   const history = useHistory<RowSnap>(`${HISTORY_KEY_PREFIX}.${poolId}`, 240);
 
@@ -223,6 +242,22 @@ export default function PoolDetail() {
             value={pool.tls_handshake_errors_total.toLocaleString()}
           />
           <KV label="TLS backend connections" value={String(pool.tls_backend_connections)} />
+        </Section>
+
+        <Section title="Coordinator">
+          <CoordinatorBlock
+            row={coordPoll.data?.databases.find((d) => d.database === pool.database) ?? null}
+          />
+        </Section>
+
+        <Section title="Pool scaling">
+          <ScalingBlock
+            row={
+              scalingPoll.data?.pools.find(
+                (p) => p.user === pool.user && p.database === pool.database,
+              ) ?? null
+            }
+          />
         </Section>
 
         <Section title="Errors by SQLSTATE">
@@ -484,6 +519,55 @@ function KV({ label, value }: { label: string; value: string }) {
       <span className="text-text-muted">{label}</span>
       <span className="font-mono text-text tabular">{value}</span>
     </div>
+  );
+}
+
+function CoordinatorBlock({ row }: { row: PoolCoordinatorRowDto | null }) {
+  if (!row) {
+    return (
+      <p className="text-sm text-text-dim">
+        No coordinator row for this database. The coordinator only tracks
+        databases with an active backend connection cap; if you do not see a
+        row, max_db_conn is unlimited.
+      </p>
+    );
+  }
+  const free = row.max_db_conn > row.current ? row.max_db_conn - row.current : 0;
+  const reserve_free = row.reserve_size > row.reserve_used ? row.reserve_size - row.reserve_used : 0;
+  return (
+    <>
+      <KV label="max_db_conn" value={String(row.max_db_conn)} />
+      <KV label="current" value={`${row.current} (${free} free)`} />
+      <KV label="reserve" value={`${row.reserve_used} / ${row.reserve_size} used (${reserve_free} free)`} />
+      <KV label="evictions" value={row.evictions.toLocaleString()} />
+      <KV label="reserve acquisitions" value={row.reserve_acq.toLocaleString()} />
+      <KV label="exhaustions" value={row.exhaustions.toLocaleString()} />
+    </>
+  );
+}
+
+function ScalingBlock({ row }: { row: PoolScalingRowDto | null }) {
+  if (!row) {
+    return (
+      <p className="text-sm text-text-dim">
+        No scaling counters for this pool yet. The first checkout will create
+        the row.
+      </p>
+    );
+  }
+  return (
+    <>
+      <KV label="in-flight creates" value={String(row.inflight)} />
+      <KV label="creates total" value={row.creates.toLocaleString()} />
+      <KV
+        label="gate waits"
+        value={`${row.gate_waits.toLocaleString()} (${row.gate_budget_ex.toLocaleString()} budget exceeded)`}
+      />
+      <KV label="anticipation: notified" value={row.antic_notify.toLocaleString()} />
+      <KV label="anticipation: timed out" value={row.antic_timeout.toLocaleString()} />
+      <KV label="create fallback" value={row.create_fallback.toLocaleString()} />
+      <KV label="replenish deferred" value={row.replenish_def.toLocaleString()} />
+    </>
   );
 }
 
