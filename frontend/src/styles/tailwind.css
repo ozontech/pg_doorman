@@ -85,6 +85,15 @@
   color: var(--color-accent-fg);
 }
 
+/* Reserve space for the vertical scrollbar at all times so a sub-pixel
+   layout shift inside any tile cannot make the document briefly tall
+   enough to summon the scrollbar — that summon/dismiss cycle was the
+   page-wide horizontal jitter operators saw when sweeping the mouse
+   across the Overview sparklines. */
+html {
+  scrollbar-gutter: stable;
+}
+
 /* Scrollbar — narrow, monochrome, no rounded thumb. */
 ::-webkit-scrollbar {
   width: 8px;

@@ -156,9 +156,14 @@ export function Sparkline({
   }, [series]);
 
   return (
+    // `min-w-0` keeps the flex container from auto-expanding to fit its
+    // longest child's intrinsic width — without it the footer's idle vs
+    // hover text could push the wrap wider, ResizeObserver would refire,
+    // options/chart would rebuild, and the operator would see the page
+    // jitter on every mouse move.
     <div
       ref={wrapRef}
-      className="flex flex-col gap-1 rounded-md border border-border bg-surface p-3"
+      className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-surface p-3"
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[10px] uppercase tracking-[0.18em] text-text-dim">{label}</span>
@@ -170,15 +175,21 @@ export function Sparkline({
         </span>
       </div>
       <div ref={containerRef} className="w-full" />
-      <div className="flex items-center justify-between text-[10px] text-text-dim tabular">
+      {/*
+        Fixed-height single-line footer. Idle and hover states use the
+        same h/leading so swapping content cannot bump the card by a
+        pixel — the trigger of the page-wide jitter the operator hits
+        when sweeping the mouse across multiple sparklines on Overview.
+      */}
+      <div className="flex h-4 items-center justify-between gap-3 overflow-hidden whitespace-nowrap text-[10px] leading-4 text-text-dim tabular">
         {hover ? (
           <>
-            <span>{new Date(hover.ts * 1000).toLocaleTimeString()}</span>
+            <span className="truncate">{new Date(hover.ts * 1000).toLocaleTimeString()}</span>
             <span className="font-mono text-text-muted">{formatHoverValue(hover.value)}</span>
           </>
         ) : (
           <>
-            <span>{label.toLowerCase()} · last {valueText}</span>
+            <span className="truncate">{label.toLowerCase()} · last {valueText}</span>
             <span className="text-text-dim">hover for point</span>
           </>
         )}
