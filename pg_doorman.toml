@@ -434,6 +434,26 @@ ui_anonymous = false
 # Default: 8192
 log_tap_max_entries = 8192
 
+# Enable JWT-based SSO authentication on the web UI.
+# Default: false
+sso_enabled = false
+
+# URL of the external SSO proxy used by the SPA for the Sign in via SSO redirect.
+# Default: null
+# sso_proxy_url = "https://sso.example.com/oauth2/start"
+
+# Path to a PEM file with the RSA public key paired with the SSO proxy signing key.
+# Default: null
+# sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+
+# Allowed values of the JWT aud claim.
+# Default: []
+# sso_audience = ["pg_doorman"]
+
+# Allowlist of preferred_username or sub claims.
+# Default: ["*"]
+sso_allowed_users = ["*"]
+
 # ############################################################################
 # TALOS AUTHENTICATION (Optional)
 # ############################################################################

@@ -45,6 +45,78 @@ log_tap_max_entries = 8192
 
 По умолчанию реквизиты живут только в памяти React и пропадают при перезагрузке страницы. Если в форме входа отметить «Remember me on this device», реквизиты сохранятся в `localStorage` браузера и переживут перезагрузку. Очистка site storage в браузере удаляет эту запись.
 
+## SSO и роли
+
+Консоль поддерживает три уровня доступа. Они срабатывают на стороне сервера и независят от UI:
+
+| Роль | Активация | Что доступно |
+|---|---|---|
+| `Anonymous` | нет реквизитов и `ui_anonymous = true` | Публичные `/api/*` без персональных данных. Личные пути (`/api/logs`, `/api/prepared/text/...`, `/api/interner/top`, `/api/top/queries`) и `/api/admin/*` запрещены. |
+| `Sso` | валидный JWT в `Authorization: Bearer`, в cookie `sso_access_token=...` или в query `?token=...` | Полный read-only доступ, включая логи и SQL-тексты. Управляющие операции (`POST /api/admin/*`) запрещены — отдаётся `403 Forbidden` с телом `{"error":"forbidden","message":"admin role required"}`. |
+| `Admin` | корректный Basic из `[general].admin_username` / `admin_password` | Полный доступ, включая `POST /api/admin/{reload,pause,resume,reconnect}`. |
+
+Когда в одном запросе присутствуют и Basic, и SSO-токен, побеждает Basic — это явный admin-пароль и его нельзя «понизить» SSO-токеном. Если Basic пришёл, но не сошёлся, валидный SSO-токен всё равно даёт `Sso`-роль; логика fallback'а покрывает случай истёкшего токена в `localStorage` рядом с правильным Basic-паролем.
+
+`401 Unauthorized` возвращается, когда реквизитов не было или они были некорректны (классический «надо залогиниться»). `403 Forbidden` — когда реквизиты валидны, но роли не хватает. Фронтенд на 401 поднимает форму входа, на 403 — баннер «admin role required», но не повторно требует логин.
+
+### Включение SSO
+
+1. Возьмите RSA public key, которым SSO proxy подписывает JWT, и положите его в файл (например, `/etc/pg_doorman/sso-public.pem`). Для `oauth2-proxy` ключ извлекается из приватного через `openssl rsa -in private.pem -pubout -out public.pem`. Для Keycloak — из админки realm: Realm Settings → Keys.
+2. Добавьте в `pg_doorman.toml` секцию `[web]` с SSO-полями:
+
+   ```toml
+   [web]
+   enabled = true
+   ui = true
+   host = "127.0.0.1"
+   port = 9127
+   ui_anonymous = false
+
+   sso_enabled = true
+   sso_proxy_url = "https://sso.example.com/oauth2/start"
+   sso_public_key_file = "/etc/pg_doorman/sso-public.pem"
+   sso_audience = ["pg_doorman"]
+   sso_allowed_users = ["*"]
+   ```
+
+3. Перезагрузите конфиг: `kill -SIGHUP <pid>` или `psql -h <host> -p 6432 -U admin -d pgbouncer -c 'RELOAD'`.
+4. Проверьте: `curl http://<host>:9127/api/auth/config` должен вернуть `"sso_enabled":true` и `"sso_proxy_url":"..."`.
+
+| Поле | Назначение | По умолчанию |
+|---|---|---|
+| `sso_enabled` | Включает SSO-ветку. Без неё JWT не валидируются. | `false` |
+| `sso_proxy_url` | URL внешнего SSO proxy. Используется только фронтендом для редиректа на «Sign in via SSO». Серверная валидация на это поле не смотрит. | `null` |
+| `sso_public_key_file` | Путь к PEM-файлу с RSA public key. Читается на старте и при `RELOAD`. | `null` |
+| `sso_audience` | Список допустимых значений claim `aud`. Токен валиден, если хотя бы одно совпадает. Обязательное поле при `sso_enabled = true`. | `[]` |
+| `sso_allowed_users` | Allowlist по `preferred_username` или `sub`. `["*"]` принимает любого. Иначе только перечисленные. | `["*"]` |
+
+Если `sso_enabled = true`, но `sso_public_key_file` не задан или PEM не читается, в лог пишется `error` и SSO молча отключается на этот запуск — листенер продолжает работать только на Basic. Это поведение защищает консоль от падения из-за опечатки в SSO-секции.
+
+### Логин из браузера
+
+При первом заходе пользователь попадает на форму входа. Если в `/api/auth/config` указан `sso_proxy_url`, в форме появляется кнопка **Sign in via SSO**. Клик отправляет браузер на `sso_proxy_url?redirect_to=<текущий URL>`. Внешний proxy выполняет OAuth/OIDC-флоу и возвращает пользователя обратно с `?token=<jwt>`. SPA захватывает этот токен в `localStorage`, чистит URL и работает дальше.
+
+В правом нижнем углу sidebar отображается имя текущего пользователя: `admin` для Basic или `sso: <preferred_username>` для SSO. Кнопка sign out очищает оба ключа `localStorage` (`pgdoorman.admin-auth` и `pgdoorman.sso-token`) и снова открывает форму входа.
+
+Тихое обновление токена — раз в 60 секунд, за 90 секунд до истечения срока. Срабатывает скрытым iframe, который приземляется на `?sso_silent=1`. На этой страничке App рендерит минимальный SilentCallback вместо обычного UI и через `postMessage` возвращает новый токен в parent-окно. На случай отказа silent refresh: если у пользователя есть Basic, токен молча сбрасывается; иначе — полный редирект на SSO proxy. Минимальная рекомендованная длительность жизни JWT — 5 минут.
+
+### Access-лог
+
+После каждого HTTP-ответа консоль пишет одну строку logfmt в стандартный логгер pg_doorman:
+
+```
+INFO pg_doorman::web::access method=GET path=/api/admin/reload query=false status=200 bytes=42 latency_ms=12 peer=10.0.1.5:42312 auth_role=admin auth_source=basic auth_user=admin
+```
+
+Поля: `method`, `path`, `query=true|false`, `status`, `bytes`, `latency_ms`, `peer` (адрес клиента, если pg_doorman стоит за reverse proxy — это адрес proxy), `auth_role` (`admin`/`sso`/`anonymous`/`rejected`), `auth_source` (`basic`/`sso`/`-`), `auth_user`. Тело запроса/ответа и query string в лог не пишутся. Цель `pg_doorman::web::access` — отдельная, чтобы фильтровать в `/api/logs` через target-фильтр LogTap.
+
+### Troubleshooting
+
+- **401 на валидном JWT**. Проверьте, что `aud` в токене попадает в `sso_audience` и `exp` ещё не истёк. PEM можно проверить через `openssl rsa -pubin -in <pem> -text -noout`.
+- **403 на запросе с валидным JWT**. Это путь, требующий `Admin` (например, `POST /api/admin/reload`). SSO даёт только read-only доступ.
+- **Silent refresh не срабатывает**. Проверьте, что oauth2-proxy не редиректит на полный экран логина, когда iframe приходит без активной сессии. У oauth2-proxy за это отвечает `--silent-refresh = true`.
+- **JWT приходит в cookie, но не валидируется**. Cookie ставится на тот же домен, что и pg_doorman? `aud` совпадает с `sso_audience`?
+
 ## Страницы
 
 В SPA доступны:

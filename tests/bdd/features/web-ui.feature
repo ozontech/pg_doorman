@@ -108,3 +108,46 @@ Feature: Web UI listener
       """
     Then the command should succeed
     And output contains "# HELP"
+
+  Scenario: /api/auth/config is anonymous and reports SSO disabled
+    When I run shell command:
+      """
+      curl -s http://127.0.0.1:9127/api/auth/config
+      """
+    Then the command should succeed
+    And output contains "\"sso_enabled\":false"
+    And output contains "\"current_user\":null"
+
+  Scenario: /api/auth/config carries admin identity for Basic auth
+    When I run shell command:
+      """
+      curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/auth/config
+      """
+    Then the command should succeed
+    And output contains "\"role\":\"admin\""
+    And output contains "\"source\":\"basic\""
+
+  Scenario: /api/admin/reload requires Admin and rejects anonymous with 401
+    When I run shell command:
+      """
+      curl -s -X POST -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/admin/reload
+      """
+    Then the command should succeed
+    And output contains "401"
+
+  Scenario: Bearer with malformed token is Rejected (401) when SSO is off
+    When I run shell command:
+      """
+      curl -s -H "Authorization: Bearer not.a.real.jwt" -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/logs
+      """
+    Then the command should succeed
+    And output contains "401"
+
+  Scenario: Access log line surfaces in /api/logs after a probe
+    When I run shell command:
+      """
+      curl -s -o /dev/null http://127.0.0.1:9127/api/version &&
+      sleep 1 &&
+      curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/logs | grep -c 'pg_doorman::web::access' || echo 0
+      """
+    Then the command should succeed

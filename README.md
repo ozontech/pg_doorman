@@ -45,6 +45,7 @@ For installation from source, distribution packages (Ubuntu PPA, Fedora COPR), a
 - **Patroni-assisted fallback** — automatic backend rerouting via the Patroni REST API when the local node fails. [Learn more](https://ozontech.github.io/pg_doorman/tutorials/patroni-assisted-fallback.html).
 - **Graceful binary upgrade** — replace the binary without dropping clients; TLS connections migrate cleanly with the `tls-migration` cargo feature. [Learn more](https://ozontech.github.io/pg_doorman/tutorials/binary-upgrade.html).
 - **Built-in observability** — Prometheus `/metrics` with HDR-histogram percentiles, structured JSON logs, admin `SHOW` commands.
+- **Operator console with SSO** — single-page diagnostic UI on the same listener as `/metrics`, gated by Basic auth or by JWT issued by an external SSO proxy (oauth2-proxy / Keycloak). Three roles: anonymous read, SSO read-only including SQL text and logs, Admin (Basic) for management. [Learn more](https://ozontech.github.io/pg_doorman/guides/web-ui.html).
 
 [Full feature comparison →](https://ozontech.github.io/pg_doorman/comparison.html)
 
