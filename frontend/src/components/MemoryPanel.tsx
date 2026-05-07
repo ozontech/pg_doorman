@@ -7,7 +7,9 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
+import { tip } from "../lib/tooltips";
 import type { MemoryBreakdownDto } from "../types";
+import { InfoLabel } from "./InfoLabel";
 
 const POLL_MS = 5000;
 
@@ -135,18 +137,41 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
         <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-text-dim">
           breakdown
         </div>
-        <div className="flex h-8 w-full overflow-hidden border border-border bg-bg">
+        {/*
+          Each segment carries its own styled tooltip. Drop overflow-hidden
+          from the bar so the popover can escape upward; the segments sum to
+          100% width and the bar's border still frames them cleanly.
+        */}
+        <div className="flex h-8 w-full border border-border bg-bg">
           {data.categories.map((c) => {
             const pct = total > 0 ? (c.bytes / total) * 100 : 0;
             return (
               <div
                 key={c.key}
-                title={`${c.label}: ${fmt(c.bytes)} · ${pct.toFixed(1)}% of attributed RSS\n${c.explain}`}
-                style={{
-                  width: `${pct}%`,
-                  background: palette[c.key] ?? "rgb(154 148 133)",
-                }}
-              />
+                className="group/seg relative h-full cursor-help"
+                style={{ width: `${pct}%` }}
+              >
+                <div
+                  className="h-full"
+                  style={{ background: palette[c.key] ?? "rgb(154 148 133)" }}
+                />
+                <div
+                  role="tooltip"
+                  className="
+                    pointer-events-none invisible absolute bottom-full left-1/2 z-30 mb-2
+                    w-72 max-w-[20rem] -translate-x-1/2 border border-border-strong bg-surface px-3 py-2
+                    text-left text-xs leading-snug text-text shadow-xl break-words
+                    opacity-0 transition-opacity duration-100
+                    group-hover/seg:visible group-hover/seg:opacity-100
+                  "
+                >
+                  <div className="font-mono font-semibold">{c.label}</div>
+                  <div className="mt-1 tabular">
+                    {fmt(c.bytes)} · {pct.toFixed(1)}% of attributed RSS
+                  </div>
+                  <div className="mt-1 text-text-muted">{c.explain}</div>
+                </div>
+              </div>
             );
           })}
         </div>
@@ -178,15 +203,32 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
           </div>
           <table className="w-full text-xs tabular">
             <tbody>
-              <Row k="allocated" v={fmt(data.jemalloc.allocated_bytes)} />
-              <Row k="active" v={fmt(data.jemalloc.active_bytes)} />
-              <Row k="resident" v={fmt(data.jemalloc.resident_bytes)} />
-              <Row k="mapped" v={fmt(data.jemalloc.mapped_bytes)} />
-              <Row k="retained" v={fmt(data.jemalloc.retained_bytes)} />
-              <Row k="metadata" v={fmt(data.jemalloc.metadata_bytes)} />
+              <Row
+                k="allocated"
+                v={fmt(data.jemalloc.allocated_bytes)}
+                tip={tip.jemallocAllocated}
+              />
+              <Row k="active" v={fmt(data.jemalloc.active_bytes)} tip={tip.jemallocActive} />
+              <Row
+                k="resident"
+                v={fmt(data.jemalloc.resident_bytes)}
+                tip={tip.jemallocResident}
+              />
+              <Row k="mapped" v={fmt(data.jemalloc.mapped_bytes)} tip={tip.jemallocMapped} />
+              <Row
+                k="retained"
+                v={fmt(data.jemalloc.retained_bytes)}
+                tip={tip.jemallocRetained}
+              />
+              <Row
+                k="metadata"
+                v={fmt(data.jemalloc.metadata_bytes)}
+                tip={tip.jemallocMetadata}
+              />
               <Row
                 k="fragmentation (resident − allocated)"
                 v={fmt(data.jemalloc.fragmentation_bytes)}
+                tip={tip.jemallocFragmentation}
               />
             </tbody>
           </table>
@@ -199,17 +241,61 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
         </div>
         <table className="w-full text-xs tabular">
           <tbody>
-            <Row k="VmPeak (lifetime)" v={fmtOpt(data.vm_peak_bytes)} />
-            <Row k="VmHWM (resident peak)" v={fmtOpt(data.vm_hwm_bytes)} />
-            <Row k="VmData" v={fmtOpt(data.vm_data_bytes)} />
-            <Row k="VmStk" v={fmtOpt(data.vm_stack_bytes)} />
-            <Row k="VmExe" v={fmtOpt(data.vm_exe_bytes)} />
-            <Row k="VmLib" v={fmtOpt(data.vm_lib_bytes)} />
-            <Row k="VmPTE (page tables)" v={fmtOpt(data.vm_pte_bytes)} />
-            <Row k="VmSwap" v={fmtOpt(data.vm_swap_bytes)} />
-            <Row k="RssAnon" v={fmtOpt(data.rss_anon_bytes)} />
-            <Row k="RssFile" v={fmtOpt(data.rss_file_bytes)} />
-            <Row k="RssShmem" v={fmtOpt(data.rss_shmem_bytes)} />
+            <Row
+              k="VmPeak (lifetime)"
+              v={fmtOpt(data.vm_peak_bytes)}
+              tip="High-water mark of the process virtual address space since startup. Includes all mmaps and arenas ever held; can stay high after RSS shrinks."
+            />
+            <Row
+              k="VmHWM (resident peak)"
+              v={fmtOpt(data.vm_hwm_bytes)}
+              tip="Peak RSS observed since startup. Reset only on process restart — useful for capacity planning even after a load drop."
+            />
+            <Row
+              k="VmData"
+              v={fmtOpt(data.vm_data_bytes)}
+              tip="Anonymous data segment: heap, BSS, malloc arenas. Most of the action lives here for a long-running pooler."
+            />
+            <Row
+              k="VmStk"
+              v={fmtOpt(data.vm_stack_bytes)}
+              tip="Stack pages for every thread. Grows linearly with worker_threads × per-thread stack budget."
+            />
+            <Row
+              k="VmExe"
+              v={fmtOpt(data.vm_exe_bytes)}
+              tip="Resident text (code) of the pg_doorman binary. Static for a given build — changes mean a binary upgrade landed."
+            />
+            <Row
+              k="VmLib"
+              v={fmtOpt(data.vm_lib_bytes)}
+              tip="Resident text and data of dynamically-linked shared objects (libc, OpenSSL, etc.)."
+            />
+            <Row
+              k="VmPTE (page tables)"
+              v={fmtOpt(data.vm_pte_bytes)}
+              tip="Kernel page-table pages backing this process's address space. Climbs with mapped memory; large here = lots of small mmaps or fragmented arenas."
+            />
+            <Row
+              k="VmSwap"
+              v={fmtOpt(data.vm_swap_bytes)}
+              tip="Bytes paged out to swap. Non-zero on a database-class machine = the kernel is reclaiming under pressure; expect latency spikes."
+            />
+            <Row
+              k="RssAnon"
+              v={fmtOpt(data.rss_anon_bytes)}
+              tip="RSS attributable to anonymous mappings (heap, stacks). Subset of RSS — combine with RssFile + RssShmem to recover the total."
+            />
+            <Row
+              k="RssFile"
+              v={fmtOpt(data.rss_file_bytes)}
+              tip="RSS pages backing file mappings (binary text + libs). Counted toward the cgroup limit on cgroup v1; on v2 it depends on memory.swap.max."
+            />
+            <Row
+              k="RssShmem"
+              v={fmtOpt(data.rss_shmem_bytes)}
+              tip="RSS in shared memory segments. Should be near zero — pg_doorman does not use sysvshm; non-zero usually means a noisy neighbour mapped into the cgroup."
+            />
           </tbody>
         </table>
       </section>
@@ -220,8 +306,16 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
         </div>
         <table className="w-full text-xs tabular">
           <tbody>
-            <Row k="interner named" v={fmt(data.interner_named_bytes)} />
-            <Row k="interner anonymous" v={fmt(data.interner_anonymous_bytes)} />
+            <Row
+              k="interner named"
+              v={fmt(data.interner_named_bytes)}
+              tip="Bytes held by the named-statement query interner (one entry per unique SQL text used as a prepared statement). Bounded by passive GC over Arc::strong_count."
+            />
+            <Row
+              k="interner anonymous"
+              v={fmt(data.interner_anonymous_bytes)}
+              tip="Bytes held by the anonymous-statement interner (ad-hoc SQL). Bounded by per-entry TTL; growing without bound = an app sends one-off SQL on every call. Either fix the app or shrink client_anonymous_prepared_cache_size."
+            />
           </tbody>
         </table>
       </section>
@@ -229,10 +323,12 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function Row({ k, v, tip }: { k: string; v: string; tip?: string }) {
   return (
     <tr className="border-b border-border/40">
-      <td className="py-1 text-text-muted">{k}</td>
+      <td className="py-1 text-text-muted">
+        {tip ? <InfoLabel tip={tip}>{k}</InfoLabel> : k}
+      </td>
       <td className="py-1 text-right font-mono">{v}</td>
     </tr>
   );
