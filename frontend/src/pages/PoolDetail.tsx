@@ -208,7 +208,14 @@ export default function PoolDetail() {
         <Tile label="qps" value={latestQps.toFixed(1)} tone="ok" spark={series((s) => s.qps)} />
       </div>
 
-      <div className="flex-1 px-6 py-6">
+      {/*
+        Two-column grid keeps short KV stacks (Latency, Throughput, Connections,
+        TLS) side-by-side so the eye does not have to jump across half the
+        viewport between label and value. Wider blocks (Coordinator, Pool
+        scaling, Errors-by-SQLSTATE, Threshold reasons) span both columns
+        because their contents already render as multi-column tables or lists.
+      */}
+      <div className="grid flex-1 gap-4 px-6 py-6 md:grid-cols-2">
         <Section title="Latency">
           <KV
             label="query p95 / p99"
@@ -285,13 +292,13 @@ export default function PoolDetail() {
           />
         </Section>
 
-        <Section title="Coordinator">
+        <Section title="Coordinator" wide>
           <CoordinatorBlock
             row={coordPoll.data?.databases.find((d) => d.database === pool.database) ?? null}
           />
         </Section>
 
-        <Section title="Pool scaling">
+        <Section title="Pool scaling" wide>
           <ScalingBlock
             row={
               scalingPoll.data?.pools.find(
@@ -301,12 +308,12 @@ export default function PoolDetail() {
           />
         </Section>
 
-        <Section title="Errors by SQLSTATE">
+        <Section title="Errors by SQLSTATE" wide>
           <SqlstateBreakdown errors={pool.errors_by_sqlstate} />
         </Section>
 
         {evalResult && evalResult.reasons.length > 0 && (
-          <Section title="Threshold reasons">
+          <Section title="Threshold reasons" wide>
             <ul className="space-y-1 text-text-muted">
               {evalResult.reasons.map((r) => (
                 <li key={r}>· {r}</li>
@@ -545,9 +552,21 @@ function Tile({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title,
+  wide,
+  children,
+}: {
+  title: string;
+  // Span both grid columns. Used for blocks whose internal layout is
+  // already multi-column (Coordinator, Pool scaling) or whose content is
+  // a list (Threshold reasons, SQLSTATE breakdown) where two side-by-side
+  // copies would be visually noisy.
+  wide?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <section className="mb-8">
+    <section className={wide ? "md:col-span-2" : undefined}>
       <h2 className="mb-2 text-xs uppercase tracking-[0.2em] text-text-dim">{title}</h2>
       <div className="border border-border bg-surface p-4">{children}</div>
     </section>
