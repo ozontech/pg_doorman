@@ -11,12 +11,12 @@ use tokio::io::{AsyncReadExt, BufReader, BufWriter};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::TcpStream;
 
-use crate::web::auth::{classify, AuthOutcome};
+use crate::web::auth::{classify, AuthOutcome, Role};
 use crate::web::metrics::write_metrics_response;
 
 use super::router::{dispatch, unauthorized_for};
 use super::state::WebServerOptions;
-use super::wire::{find_double_crlf, write_simple, ParsedRequest, ReadError};
+use super::wire::{find_double_crlf, write_simple, ParsedRequest, ReadError, Response};
 
 /// Soft cap on requests per keep-alive connection. After this many
 /// requests we close so a misbehaving client cannot pin a worker
@@ -29,6 +29,7 @@ const KEEPALIVE_MAX_REQUESTS: u32 = 1000;
 const KEEPALIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOptions>) {
+    let peer_addr = stream.peer_addr().ok();
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut writer = BufWriter::new(write_half);
@@ -50,66 +51,101 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
                 return;
             }
         };
-        let close_after = {
-            let head_bytes = &req_buf[..head_end];
-            let raw = match std::str::from_utf8(head_bytes) {
-                Ok(s) => s,
-                Err(_) => {
-                    let _ = write_simple(&mut writer, 400, "Bad Request").await;
-                    return;
-                }
-            };
-            let Some(parsed) = ParsedRequest::parse(raw) else {
+        let started = std::time::Instant::now();
+        let head_bytes = &req_buf[..head_end];
+        let raw = match std::str::from_utf8(head_bytes) {
+            Ok(s) => s,
+            Err(_) => {
                 let _ = write_simple(&mut writer, 400, "Bad Request").await;
                 return;
-            };
-            let close_after = parsed.connection_close;
-
-            // /metrics is always served, regardless of ui_active or auth.
-            if parsed.method == "GET" && parsed.path == "/metrics" {
-                write_metrics_response(&mut writer, parsed.accepts_gzip).await;
-            } else {
-                let auth = classify(
-                    parsed.authorization,
-                    parsed.cookie,
-                    extract_query_token(parsed.query),
-                    &opts.admin_username,
-                    &opts.admin_password,
-                    opts.sso.as_deref(),
-                );
-
-                // /api/logs needs an async handler because it talks to the LogTap consumer
-                // task via mpsc + oneshot; the rest of the API stays sync. Pre-screen
-                // ui_active and admin auth here so dispatch() never sees the path on the
-                // success branch — on auth failure or inactive UI we fall through to
-                // dispatch() which already returns the right 401/404.
-                if opts.ui_active && parsed.method == "GET" && parsed.path == "/api/logs" {
-                    if !matches!(auth, AuthOutcome::Admin(_)) {
-                        let _ = unauthorized_for(&parsed).write(&mut writer).await;
-                    } else {
-                        let query =
-                            crate::web::routes::query::parse_query(parsed.query.unwrap_or(""));
-                        let response = crate::web::routes::logs::handle_logs(&query).await;
-                        let _ = response.write(&mut writer).await;
-                    }
-                } else if opts.ui_active
-                    && parsed.method == "POST"
-                    && parsed.path.starts_with("/api/admin/")
-                {
-                    if !matches!(auth, AuthOutcome::Admin(_)) {
-                        let _ = unauthorized_for(&parsed).write(&mut writer).await;
-                    } else {
-                        let response =
-                            crate::web::routes::admin::handle_admin_action(parsed.path).await;
-                        let _ = response.write(&mut writer).await;
-                    }
-                } else {
-                    let response = dispatch(&parsed, &opts, auth);
-                    let _ = response.write(&mut writer).await;
-                }
             }
-            close_after
         };
+        let Some(parsed) = ParsedRequest::parse(raw) else {
+            let _ = write_simple(&mut writer, 400, "Bad Request").await;
+            return;
+        };
+        let close_after = parsed.connection_close;
+
+        // Pre-compute the access-log fields we need from `parsed` before
+        // it goes out of scope.
+        let log_method = parsed.method.to_string();
+        let log_path = parsed.path.to_string();
+        let log_query_present = parsed.query.is_some();
+
+        // /metrics is always served, regardless of ui_active or auth.
+        // It writes its body directly through the gzip-aware response
+        // writer, so we don't build a Response struct here.
+        if parsed.method == "GET" && parsed.path == "/metrics" {
+            write_metrics_response(&mut writer, parsed.accepts_gzip).await;
+            crate::web::access_log::write(
+                &log_method,
+                &log_path,
+                log_query_present,
+                200,
+                0,
+                started.elapsed().as_millis() as u64,
+                peer_addr,
+                &AuthOutcome::Anonymous,
+            );
+            req_buf.drain(..head_end);
+            handled += 1;
+            if close_after {
+                return;
+            }
+            continue;
+        }
+
+        let auth = classify(
+            parsed.authorization,
+            parsed.cookie,
+            extract_query_token(parsed.query),
+            &opts.admin_username,
+            &opts.admin_password,
+            opts.sso.as_deref(),
+        );
+
+        // /api/logs needs an async handler because it talks to the LogTap
+        // consumer task via mpsc + oneshot; the rest of the API stays sync.
+        // Pre-screen ui_active and the role here so dispatch() never sees
+        // the path on the success branch — on failure we fall through to
+        // dispatch() which already returns the right 401/404.
+        let response = if opts.ui_active && parsed.method == "GET" && parsed.path == "/api/logs" {
+            if matches!(auth, AuthOutcome::Rejected) || auth.role() < Role::Sso {
+                unauthorized_for(&parsed)
+            } else {
+                let query = crate::web::routes::query::parse_query(parsed.query.unwrap_or(""));
+                crate::web::routes::logs::handle_logs(&query).await
+            }
+        } else if opts.ui_active
+            && parsed.method == "POST"
+            && parsed.path.starts_with("/api/admin/")
+        {
+            if !matches!(auth, AuthOutcome::Admin(_)) {
+                if matches!(auth, AuthOutcome::Sso(_)) {
+                    Response::forbidden("admin role required")
+                } else {
+                    unauthorized_for(&parsed)
+                }
+            } else {
+                crate::web::routes::admin::handle_admin_action(parsed.path).await
+            }
+        } else {
+            dispatch(&parsed, &opts, &auth)
+        };
+
+        let status = response.status;
+        let bytes = response.body.len();
+        let _ = response.write(&mut writer).await;
+        crate::web::access_log::write(
+            &log_method,
+            &log_path,
+            log_query_present,
+            status,
+            bytes,
+            started.elapsed().as_millis() as u64,
+            peer_addr,
+            &auth,
+        );
 
         // Discard the request we just answered; pipelined bytes (a
         // second request that came in the same TCP read) stay at the
@@ -132,6 +168,55 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
 fn extract_query_token(query: Option<&str>) -> Option<&str> {
     let q = query?;
     q.split('&').find_map(|pair| pair.strip_prefix("token="))
+}
+
+/// Extend `buf` with bytes from the wire until the request-header
+/// terminator `\r\n\r\n` is in view. Returns the offset *just past* the
+/// terminator (so the caller knows where the headers end and any
+/// pipelined body / next request begin), or `Ok(0)` if the peer closed
+/// cleanly between requests. Caps the buffer at 32 KiB so a malicious
+/// client cannot push us into OOM.
+async fn read_request_head(
+    reader: &mut BufReader<OwnedReadHalf>,
+    buf: &mut Vec<u8>,
+) -> Result<usize, ReadError> {
+    const MAX_HEADER_BYTES: usize = 32 * 1024;
+    if buf.is_empty() {
+        // Wait up to KEEPALIVE_IDLE_TIMEOUT for the first byte; once
+        // bytes arrive, the read loop below drives without an outer
+        // timeout because the headers are bounded by MAX_HEADER_BYTES.
+        let mut chunk = [0u8; 1024];
+        let read_fut = reader.read(&mut chunk);
+        let n = match tokio::time::timeout(KEEPALIVE_IDLE_TIMEOUT, read_fut).await {
+            Ok(r) => r?,
+            Err(_elapsed) => return Err(ReadError::Idle),
+        };
+        if n == 0 {
+            return Ok(0);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    if let Some(end) = find_double_crlf(buf) {
+        return Ok(end);
+    }
+    let mut chunk = [0u8; 1024];
+    loop {
+        let n = reader.read(&mut chunk).await?;
+        if n == 0 {
+            // Peer closed mid-request — treat as malformed.
+            return Err(ReadError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "EOF mid request headers",
+            )));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(end) = find_double_crlf(buf) {
+            return Ok(end);
+        }
+        if buf.len() >= MAX_HEADER_BYTES {
+            return Err(ReadError::TooLarge);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -194,54 +279,5 @@ mod tests {
     #[test]
     fn extract_query_token_returns_none_for_none_input() {
         assert_eq!(extract_query_token(None), None);
-    }
-}
-
-/// Extend `buf` with bytes from the wire until the request-header
-/// terminator `\r\n\r\n` is in view. Returns the offset *just past* the
-/// terminator (so the caller knows where the headers end and any
-/// pipelined body / next request begin), or `Ok(0)` if the peer closed
-/// cleanly between requests. Caps the buffer at 32 KiB so a malicious
-/// client cannot push us into OOM.
-async fn read_request_head(
-    reader: &mut BufReader<OwnedReadHalf>,
-    buf: &mut Vec<u8>,
-) -> Result<usize, ReadError> {
-    const MAX_HEADER_BYTES: usize = 32 * 1024;
-    if buf.is_empty() {
-        // Wait up to KEEPALIVE_IDLE_TIMEOUT for the first byte; once
-        // bytes arrive, the read loop below drives without an outer
-        // timeout because the headers are bounded by MAX_HEADER_BYTES.
-        let mut chunk = [0u8; 1024];
-        let read_fut = reader.read(&mut chunk);
-        let n = match tokio::time::timeout(KEEPALIVE_IDLE_TIMEOUT, read_fut).await {
-            Ok(r) => r?,
-            Err(_elapsed) => return Err(ReadError::Idle),
-        };
-        if n == 0 {
-            return Ok(0);
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    if let Some(end) = find_double_crlf(buf) {
-        return Ok(end);
-    }
-    let mut chunk = [0u8; 1024];
-    loop {
-        let n = reader.read(&mut chunk).await?;
-        if n == 0 {
-            // Peer closed mid-request — treat as malformed.
-            return Err(ReadError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "EOF mid request headers",
-            )));
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if let Some(end) = find_double_crlf(buf) {
-            return Ok(end);
-        }
-        if buf.len() >= MAX_HEADER_BYTES {
-            return Err(ReadError::TooLarge);
-        }
     }
 }

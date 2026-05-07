@@ -8,6 +8,7 @@ pub mod dto;
 
 pub(crate) mod admin;
 pub(crate) mod apps;
+pub(crate) mod auth_config;
 pub(crate) mod auth_query;
 pub(crate) mod clients;
 pub(crate) mod config;

@@ -38,14 +38,45 @@ impl WebServerOptions {
     pub fn from_config(cfg: &Config) -> Self {
         let admin_default =
             cfg.general.admin_password.is_empty() || cfg.general.admin_password == "admin";
+        let sso = if cfg.web.sso_enabled {
+            build_sso_runtime(&cfg.web)
+        } else {
+            None
+        };
         WebServerOptions {
             ui_active: cfg.web.ui && !admin_default,
             ui_anonymous: cfg.web.ui_anonymous,
             admin_username: cfg.general.admin_username.clone(),
             admin_password: cfg.general.admin_password.clone(),
-            // Populated in a later commit. Leaving `None` here keeps the
-            // listener Basic-only until SSO loading lands.
-            sso: None,
+            sso,
+        }
+    }
+}
+
+/// Build the SSO runtime from `[web].sso_*`. Missing or invalid config
+/// is logged at error level; the listener stays up Basic-only rather
+/// than refusing to start, so a typo in the SSO section never knocks
+/// the operator console offline.
+fn build_sso_runtime(web: &crate::config::web::Web) -> Option<Arc<crate::web::sso::SsoRuntime>> {
+    use crate::web::sso::{AllowedUsers, SsoRuntime};
+
+    let Some(path) = web.sso_public_key_file.as_ref() else {
+        log::error!(
+            "[web].sso_enabled=true but sso_public_key_file is missing; \
+             SSO disabled for this run"
+        );
+        return None;
+    };
+    if web.sso_audience.is_empty() {
+        log::error!("[web].sso_enabled=true but sso_audience is empty; SSO disabled for this run");
+        return None;
+    }
+    let allowed = AllowedUsers::from_config(&web.sso_allowed_users);
+    match SsoRuntime::from_pem_file(path, &web.sso_audience, allowed, web.sso_proxy_url.clone()) {
+        Ok(rt) => Some(Arc::new(rt)),
+        Err(e) => {
+            log::error!("[web] SSO disabled: {e}");
+            None
         }
     }
 }

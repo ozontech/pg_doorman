@@ -21,8 +21,8 @@
 mod http;
 mod listener;
 mod router;
-mod state;
-mod wire;
+pub(crate) mod state;
+pub(crate) mod wire;
 
 #[cfg(test)]
 mod tests;

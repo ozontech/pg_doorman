@@ -1,7 +1,7 @@
 use crate::config::Config;
-use crate::web::auth::{AuthIdentity, AuthOutcome, AuthSource};
+use crate::web::auth::{AuthIdentity, AuthOutcome, AuthSource, Role};
 
-use super::router::{dispatch, is_admin_only};
+use super::router::{dispatch, required_role};
 use super::state::WebServerOptions;
 use super::wire::ParsedRequest;
 
@@ -194,7 +194,7 @@ fn dispatch_rejects_post() {
     let r = dispatch(
         &req("POST", "/api/foo"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 405);
 }
@@ -204,7 +204,7 @@ fn dispatch_404_when_ui_inactive() {
     let r = dispatch(
         &req("GET", "/api/foo"),
         &opts(false, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 404);
 }
@@ -214,7 +214,7 @@ fn dispatch_unknown_api_returns_501() {
     let r = dispatch(
         &req("GET", "/api/not-yet-wired"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 501);
 }
@@ -224,7 +224,7 @@ fn dispatch_overview_returns_200() {
     let r = dispatch(
         &req("GET", "/api/overview"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -234,7 +234,7 @@ fn dispatch_version_returns_200() {
     let r = dispatch(
         &req("GET", "/api/version"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -244,7 +244,7 @@ fn dispatch_pools_returns_200() {
     let r = dispatch(
         &req("GET", "/api/pools"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -257,7 +257,7 @@ fn dispatch_admin_anonymous_json_request_returns_401_without_challenge() {
     let r = dispatch(
         &req_json("GET", "/api/logs"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
     assert!(
@@ -273,7 +273,7 @@ fn dispatch_401_on_anonymous_admin_path() {
     let r = dispatch(
         &req("GET", "/api/logs"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
     assert!(r
@@ -291,14 +291,14 @@ fn dispatch_401_on_anonymous_public_when_ui_anonymous_false() {
     let r = dispatch(
         &req("GET", "/api/overview"),
         &opts(true, false),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
 }
 
 #[test]
 fn dispatch_serves_spa_shell_at_root() {
-    let r = dispatch(&req("GET", "/"), &opts(true, true), admin_outcome());
+    let r = dispatch(&req("GET", "/"), &opts(true, true), &admin_outcome());
     assert_eq!(r.status, 200);
     assert!(
         r.extra_headers
@@ -311,7 +311,7 @@ fn dispatch_serves_spa_shell_at_root() {
 #[test]
 fn dispatch_serves_spa_shell_for_unknown_route() {
     // Client-side router hits this path on a hard refresh of a deep link.
-    let r = dispatch(&req("GET", "/pools"), &opts(true, true), admin_outcome());
+    let r = dispatch(&req("GET", "/pools"), &opts(true, true), &admin_outcome());
     assert_eq!(r.status, 200);
     assert!(
         r.extra_headers
@@ -330,7 +330,7 @@ fn dispatch_serves_spa_shell_anonymously_when_ui_anonymous_false() {
         let r = dispatch(
             &req("GET", path),
             &opts(true, false),
-            AuthOutcome::Anonymous,
+            &AuthOutcome::Anonymous,
         );
         assert_eq!(
             r.status, 200,
@@ -352,7 +352,7 @@ fn dispatch_still_gates_api_when_ui_anonymous_false_after_spa_relax() {
     let r = dispatch(
         &req("GET", "/api/overview"),
         &opts(true, false),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
 }
@@ -366,7 +366,7 @@ fn dispatch_returns_404_for_unknown_asset_when_index_missing() {
     let r = dispatch(
         &req("GET", "/assets/missing.js"),
         &opts(true, true),
-        admin_outcome(),
+        &admin_outcome(),
     );
     // SPA fallback always returns 200 with the index when the bundle is
     // present. If we ever ship without dist, this would be 404.
@@ -374,18 +374,119 @@ fn dispatch_returns_404_for_unknown_asset_when_index_missing() {
 }
 
 #[test]
-fn is_admin_only_recognises_logs() {
-    assert!(is_admin_only("/api/logs"));
-    assert!(is_admin_only("/api/logs?since=10"));
-    assert!(is_admin_only("/api/prepared/text/abc"));
-    assert!(is_admin_only("/api/interner/top"));
+fn required_role_admin_for_management() {
+    assert_eq!(required_role("/api/admin/reload", true), Role::Admin);
+    assert_eq!(required_role("/api/admin/pause", false), Role::Admin);
 }
 
 #[test]
-fn is_admin_only_does_not_match_public() {
-    assert!(!is_admin_only("/api/overview"));
-    assert!(!is_admin_only("/api/pools"));
-    assert!(!is_admin_only("/api/prepared"));
+fn required_role_sso_for_personal_data() {
+    assert_eq!(required_role("/api/logs", true), Role::Sso);
+    assert_eq!(required_role("/api/prepared/text/abc", true), Role::Sso);
+    assert_eq!(required_role("/api/top/queries", true), Role::Sso);
+    assert_eq!(required_role("/api/interner/top", true), Role::Sso);
+}
+
+#[test]
+fn required_role_public_when_anonymous_allowed() {
+    assert_eq!(required_role("/api/version", true), Role::Anonymous);
+    assert_eq!(required_role("/api/overview", true), Role::Anonymous);
+    assert_eq!(required_role("/api/pools", true), Role::Anonymous);
+    assert_eq!(required_role("/api/prepared", true), Role::Anonymous);
+}
+
+#[test]
+fn required_role_sso_when_anonymous_forbidden() {
+    assert_eq!(required_role("/api/version", false), Role::Sso);
+    assert_eq!(required_role("/api/overview", false), Role::Sso);
+    assert_eq!(required_role("/api/pools", false), Role::Sso);
+}
+
+fn sso_outcome() -> AuthOutcome {
+    AuthOutcome::Sso(AuthIdentity {
+        username: "alice".into(),
+        source: AuthSource::Sso,
+    })
+}
+
+#[test]
+fn dispatch_sso_can_get_logs_via_async_branch() {
+    // /api/logs is normally handled by the async branch in handle_connection;
+    // when it falls into dispatch(), Sso role passes the role check (200/501
+    // — never 401/403).
+    let r = dispatch(&req("GET", "/api/logs"), &opts(true, false), &sso_outcome());
+    assert!(r.status != 401 && r.status != 403, "got {}", r.status);
+}
+
+#[test]
+fn dispatch_sso_forbidden_on_management_path() {
+    // /api/admin/* requires Admin; Sso role gets 403, not 401.
+    let r = dispatch(
+        &req("GET", "/api/admin/reload"),
+        &opts(true, true),
+        &sso_outcome(),
+    );
+    assert_eq!(r.status, 403);
+    let body = std::str::from_utf8(&r.body).unwrap();
+    assert!(body.contains("admin role required"));
+}
+
+#[test]
+fn dispatch_anonymous_unauthorized_on_management_path() {
+    // /api/admin/* — Anonymous gets 401 (login), not 403.
+    let r = dispatch(
+        &req("GET", "/api/admin/reload"),
+        &opts(true, true),
+        &AuthOutcome::Anonymous,
+    );
+    assert_eq!(r.status, 401);
+}
+
+#[test]
+fn dispatch_anonymous_cannot_get_logs() {
+    let r = dispatch(
+        &req("GET", "/api/logs"),
+        &opts(true, true),
+        &AuthOutcome::Anonymous,
+    );
+    assert_eq!(r.status, 401);
+}
+
+#[test]
+fn dispatch_rejected_on_public_returns_401() {
+    let r = dispatch(
+        &req("GET", "/api/version"),
+        &opts(true, true),
+        &AuthOutcome::Rejected,
+    );
+    assert_eq!(r.status, 401);
+}
+
+#[test]
+fn auth_config_anonymous_when_sso_disabled() {
+    let r = dispatch(
+        &req("GET", "/api/auth/config"),
+        &opts(true, true),
+        &AuthOutcome::Anonymous,
+    );
+    assert_eq!(r.status, 200);
+    let body = std::str::from_utf8(&r.body).unwrap();
+    assert!(body.contains(r#""sso_enabled":false"#));
+    assert!(body.contains(r#""current_user":null"#));
+}
+
+#[test]
+fn auth_config_carries_admin_identity() {
+    let r = dispatch(
+        &req("GET", "/api/auth/config"),
+        &opts(true, false),
+        &admin_outcome(),
+    );
+    assert_eq!(r.status, 200);
+    let body = std::str::from_utf8(&r.body).unwrap();
+    assert!(body.contains(r#""role":"admin""#));
+    assert!(body.contains(r#""source":"basic""#));
+    assert!(body.contains(r#""username":"admin""#));
 }
 
 #[test]
@@ -393,7 +494,7 @@ fn dispatch_clients_returns_200() {
     let r = dispatch(
         &req("GET", "/api/clients"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -403,7 +504,7 @@ fn dispatch_clients_with_query_params_returns_200() {
     let r = dispatch(
         &req("GET", "/api/clients?limit=10&sort=errors_total"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -413,7 +514,7 @@ fn dispatch_servers_returns_200() {
     let r = dispatch(
         &req("GET", "/api/servers"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -423,7 +524,7 @@ fn dispatch_connections_returns_200() {
     let r = dispatch(
         &req("GET", "/api/connections"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -433,7 +534,7 @@ fn dispatch_stats_returns_200() {
     let r = dispatch(
         &req("GET", "/api/stats"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -443,7 +544,7 @@ fn dispatch_databases_returns_200() {
     let r = dispatch(
         &req("GET", "/api/databases"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -453,7 +554,7 @@ fn dispatch_users_returns_200() {
     let r = dispatch(
         &req("GET", "/api/users"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -463,7 +564,7 @@ fn dispatch_auth_query_returns_200() {
     let r = dispatch(
         &req("GET", "/api/auth_query"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -473,7 +574,7 @@ fn dispatch_config_returns_200() {
     let r = dispatch(
         &req("GET", "/api/config"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -483,7 +584,7 @@ fn dispatch_log_level_returns_200() {
     let r = dispatch(
         &req("GET", "/api/log_level"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -493,7 +594,7 @@ fn dispatch_pool_coordinator_returns_200() {
     let r = dispatch(
         &req("GET", "/api/pool_coordinator"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -503,7 +604,7 @@ fn dispatch_pool_scaling_returns_200() {
     let r = dispatch(
         &req("GET", "/api/pool_scaling"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -514,7 +615,7 @@ fn dispatch_sockets_returns_200_on_linux() {
     let r = dispatch(
         &req("GET", "/api/sockets"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     // 500 acceptable in sandbox; handler did not panic = pass.
     assert!(r.status == 200 || r.status == 500, "got {}", r.status);
@@ -526,7 +627,7 @@ fn dispatch_sockets_returns_503_on_non_linux() {
     let r = dispatch(
         &req("GET", "/api/sockets"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 503);
 }
@@ -536,7 +637,7 @@ fn dispatch_prepared_returns_200() {
     let r = dispatch(
         &req("GET", "/api/prepared"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -546,7 +647,7 @@ fn dispatch_interner_returns_200() {
     let r = dispatch(
         &req("GET", "/api/interner"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -556,7 +657,7 @@ fn dispatch_interner_top_anonymous_returns_401() {
     let r = dispatch(
         &req("GET", "/api/interner/top"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
 }
@@ -566,7 +667,7 @@ fn dispatch_interner_top_admin_returns_200() {
     let r = dispatch(
         &req("GET", "/api/interner/top?n=10"),
         &opts(true, true),
-        admin_outcome(),
+        &admin_outcome(),
     );
     assert_eq!(r.status, 200);
 }
@@ -576,7 +677,7 @@ fn dispatch_prepared_text_anonymous_returns_401() {
     let r = dispatch(
         &req("GET", "/api/prepared/text/0x123"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
 }
@@ -586,7 +687,7 @@ fn dispatch_prepared_text_admin_unknown_hash_returns_404() {
     let r = dispatch(
         &req("GET", "/api/prepared/text/0xdeadbeef"),
         &opts(true, true),
-        admin_outcome(),
+        &admin_outcome(),
     );
     assert_eq!(r.status, 404);
 }
@@ -596,7 +697,7 @@ fn dispatch_top_clients_returns_200() {
     let r = dispatch(
         &req("GET", "/api/top/clients"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -608,7 +709,7 @@ fn dispatch_top_queries_anonymous_returns_401() {
     let r = dispatch(
         &req("GET", "/api/top/queries"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 401);
 }
@@ -618,7 +719,7 @@ fn dispatch_top_queries_admin_returns_200() {
     let r = dispatch(
         &req("GET", "/api/top/queries"),
         &opts(true, true),
-        admin_outcome(),
+        &admin_outcome(),
     );
     assert_eq!(r.status, 200);
 }
@@ -628,7 +729,7 @@ fn dispatch_top_prepared_returns_200() {
     let r = dispatch(
         &req("GET", "/api/top/prepared"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -638,7 +739,7 @@ fn dispatch_apps_returns_200() {
     let r = dispatch(
         &req("GET", "/api/apps"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }
@@ -648,7 +749,7 @@ fn dispatch_events_returns_200() {
     let r = dispatch(
         &req("GET", "/api/events"),
         &opts(true, true),
-        AuthOutcome::Anonymous,
+        &AuthOutcome::Anonymous,
     );
     assert_eq!(r.status, 200);
 }

@@ -160,6 +160,20 @@ impl Response {
         Response::status(401, "Unauthorized")
     }
 
+    /// 403 with a small JSON envelope the SPA can render as a "needs
+    /// admin role" toast. No `WWW-Authenticate` — the credentials are
+    /// valid, just insufficient for this path, so the auth modal must
+    /// stay closed.
+    pub(crate) fn forbidden(reason: &'static str) -> Self {
+        let body = format!(r#"{{"error":"forbidden","message":"{reason}"}}"#);
+        Response {
+            status: 403,
+            reason: "Forbidden",
+            extra_headers: vec![("Content-Type", "application/json".into())],
+            body: body.into_bytes(),
+        }
+    }
+
     /// Serves a static asset (SPA bundle file). Hashed assets get a long
     /// immutable cache; the SPA shell (`index.html`) is no-cache so a redeploy
     /// reaches operators on their next reload. When the caller advertises
