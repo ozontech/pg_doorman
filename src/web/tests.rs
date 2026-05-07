@@ -18,7 +18,7 @@ use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::web::{start_web_server, WebServerOptions};
+use crate::web::{serve_on, WebServerOptions};
 
 fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
     WebServerOptions {
@@ -29,14 +29,24 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
     }
 }
 
+/// Bind on `127.0.0.1:0`, ask the kernel for an actual port, hand the
+/// pre-bound listener to the accept loop. Replaces the previous
+/// `portpicker::pick_unused_port + sleep(150ms)` pattern that codex
+/// flagged: pick_unused_port races between picking and binding (the
+/// port can be claimed in that window), and the fixed sleep was a
+/// readiness fudge instead of a synchronisation point.
 async fn spawn_server(opts: WebServerOptions) -> u16 {
-    let port = portpicker::pick_unused_port().expect("free port");
-    let host = format!("127.0.0.1:{port}");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind 127.0.0.1:0");
+    let port = listener.local_addr().expect("local_addr").port();
     tokio::spawn(async move {
-        start_web_server(&host, opts).await;
+        serve_on(listener, opts).await;
     });
-    // small wait for bind; matches existing test pattern
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // The listener already accepts connections — this short yield gives
+    // the spawned task a tick to enter the accept loop. Two orders of
+    // magnitude shorter than the old 150 ms sleep.
+    tokio::time::sleep(Duration::from_millis(5)).await;
     port
 }
 

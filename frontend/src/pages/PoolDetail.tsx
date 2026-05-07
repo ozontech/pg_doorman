@@ -16,6 +16,7 @@ import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
 import { describeSqlstate } from "../lib/sqlstate";
 import { evaluatePool } from "../lib/thresholds";
+import { tip } from "../lib/tooltips";
 import type {
   PoolCoordinatorDto,
   PoolCoordinatorRowDto,
@@ -208,40 +209,79 @@ export default function PoolDetail() {
 
       <div className="flex-1 px-6 py-6">
         <Section title="Latency">
-          <KV label="query p95 / p99" value={`${pool.query_p95_ms} / ${pool.query_p99_ms} ms`} />
+          <KV
+            label="query p95 / p99"
+            value={`${pool.query_p95_ms} / ${pool.query_p99_ms} ms`}
+            tip={tip.queryP95}
+          />
           <KV
             label="transactions p95 / p99"
             value={`${pool.transactions_p95_ms} / ${pool.transactions_p99_ms} ms`}
+            tip={tip.txP95}
           />
-          <KV label="wait avg / p95" value={`${pool.wait_avg_ms} / ${pool.wait_p95_ms} ms`} />
-          <KV label="oldest active query" value={`${pool.max_active_age_ms} ms`} />
+          <KV
+            label="wait avg / p95"
+            value={`${pool.wait_avg_ms} / ${pool.wait_p95_ms} ms`}
+            tip={tip.waitAvg}
+          />
+          <KV
+            label="oldest active query"
+            value={`${pool.max_active_age_ms} ms`}
+            tip={tip.oldestActive}
+          />
         </Section>
 
         <Section title="Throughput (cumulative)">
-          <KV label="queries total" value={pool.queries_total.toLocaleString()} />
-          <KV label="transactions total" value={pool.transactions_total.toLocaleString()} />
-          <KV label="errors total" value={pool.errors_total.toLocaleString()} />
+          <KV
+            label="queries total"
+            value={pool.queries_total.toLocaleString()}
+            tip={tip.queriesTotal}
+          />
+          <KV
+            label="transactions total"
+            value={pool.transactions_total.toLocaleString()}
+            tip={tip.txTotal}
+          />
+          <KV
+            label="errors total"
+            value={pool.errors_total.toLocaleString()}
+            tip={tip.errorsTotal}
+          />
         </Section>
 
         <Section title="Connections">
-          <KV label="active / idle" value={`${pool.active} / ${pool.idle}`} />
-          <KV label="connections / max" value={`${pool.connections} / ${pool.max_connections}`} />
-          <KV label="waiting" value={String(pool.waiting)} />
-          <KV label="pool mode" value={pool.pool_mode} />
-          <KV label="paused" value={pool.paused ? "yes" : "no"} />
-          <KV label="epoch" value={String(pool.epoch)} />
+          <KV
+            label="active / idle"
+            value={`${pool.active} / ${pool.idle}`}
+            tip={tip.connectionsActiveIdle}
+          />
+          <KV
+            label="connections / max"
+            value={`${pool.connections} / ${pool.max_connections}`}
+            tip={tip.connectionsTotal}
+          />
+          <KV label="waiting" value={String(pool.waiting)} tip={tip.waiting} />
+          <KV label="pool mode" value={pool.pool_mode} tip={tip.poolMode} />
+          <KV label="paused" value={pool.paused ? "yes" : "no"} tip={tip.paused} />
+          <KV label="epoch" value={String(pool.epoch)} tip={tip.epoch} />
         </Section>
 
         <Section title="TLS & fallback">
           <KV
             label="fallback active"
             value={pool.fallback_active ? "yes (Patroni cooldown)" : "no"}
+            tip={tip.fallbackActive}
           />
           <KV
             label="TLS handshake errors total"
             value={pool.tls_handshake_errors_total.toLocaleString()}
+            tip={tip.tlsHandshakeErrors}
           />
-          <KV label="TLS backend connections" value={String(pool.tls_backend_connections)} />
+          <KV
+            label="TLS backend connections"
+            value={String(pool.tls_backend_connections)}
+            tip={tip.tlsBackendConnections}
+          />
         </Section>
 
         <Section title="Coordinator">
@@ -513,9 +553,12 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function KV({ label, value }: { label: string; value: string }) {
+function KV({ label, value, tip }: { label: string; value: string; tip?: string }) {
   return (
-    <div className="flex items-baseline justify-between border-b border-border/50 py-1 last:border-b-0">
+    <div
+      className="flex items-baseline justify-between border-b border-border/50 py-1 last:border-b-0"
+      title={tip}
+    >
       <span className="text-text-muted">{label}</span>
       <span className="font-mono text-text tabular">{value}</span>
     </div>
@@ -536,12 +579,24 @@ function CoordinatorBlock({ row }: { row: PoolCoordinatorRowDto | null }) {
   const reserve_free = row.reserve_size > row.reserve_used ? row.reserve_size - row.reserve_used : 0;
   return (
     <>
-      <KV label="max_db_conn" value={String(row.max_db_conn)} />
-      <KV label="current" value={`${row.current} (${free} free)`} />
-      <KV label="reserve" value={`${row.reserve_used} / ${row.reserve_size} used (${reserve_free} free)`} />
-      <KV label="evictions" value={row.evictions.toLocaleString()} />
-      <KV label="reserve acquisitions" value={row.reserve_acq.toLocaleString()} />
-      <KV label="exhaustions" value={row.exhaustions.toLocaleString()} />
+      <KV label="max_db_conn" value={String(row.max_db_conn)} tip={tip.coordMaxDbConn} />
+      <KV label="current" value={`${row.current} (${free} free)`} tip={tip.coordCurrent} />
+      <KV
+        label="reserve"
+        value={`${row.reserve_used} / ${row.reserve_size} used (${reserve_free} free)`}
+        tip={tip.coordReserveUsed}
+      />
+      <KV label="evictions" value={row.evictions.toLocaleString()} tip={tip.coordEvictions} />
+      <KV
+        label="reserve acquisitions"
+        value={row.reserve_acq.toLocaleString()}
+        tip={tip.coordReserveAcq}
+      />
+      <KV
+        label="exhaustions"
+        value={row.exhaustions.toLocaleString()}
+        tip={tip.coordExhaustions}
+      />
     </>
   );
 }
@@ -557,16 +612,37 @@ function ScalingBlock({ row }: { row: PoolScalingRowDto | null }) {
   }
   return (
     <>
-      <KV label="in-flight creates" value={String(row.inflight)} />
-      <KV label="creates total" value={row.creates.toLocaleString()} />
+      <KV label="in-flight creates" value={String(row.inflight)} tip={tip.scalingInflight} />
+      <KV
+        label="creates total"
+        value={row.creates.toLocaleString()}
+        tip={tip.scalingCreates}
+      />
       <KV
         label="gate waits"
         value={`${row.gate_waits.toLocaleString()} (${row.gate_budget_ex.toLocaleString()} budget exceeded)`}
+        tip={tip.scalingGateWaits}
       />
-      <KV label="anticipation: notified" value={row.antic_notify.toLocaleString()} />
-      <KV label="anticipation: timed out" value={row.antic_timeout.toLocaleString()} />
-      <KV label="create fallback" value={row.create_fallback.toLocaleString()} />
-      <KV label="replenish deferred" value={row.replenish_def.toLocaleString()} />
+      <KV
+        label="anticipation: notified"
+        value={row.antic_notify.toLocaleString()}
+        tip={tip.scalingAnticNotify}
+      />
+      <KV
+        label="anticipation: timed out"
+        value={row.antic_timeout.toLocaleString()}
+        tip={tip.scalingAnticTimeout}
+      />
+      <KV
+        label="create fallback"
+        value={row.create_fallback.toLocaleString()}
+        tip={tip.scalingCreateFallback}
+      />
+      <KV
+        label="replenish deferred"
+        value={row.replenish_def.toLocaleString()}
+        tip={tip.scalingReplenishDef}
+      />
     </>
   );
 }

@@ -13,6 +13,7 @@
 //! `sysconf(3)` to keep the file dependency-free.
 
 use std::sync::atomic::Ordering;
+use std::sync::LazyLock;
 
 use crate::app::server::STARTED_AT;
 use crate::web::metrics::system::get_process_memory_usage;
@@ -26,25 +27,36 @@ use super::now_unix_ms;
 #[cfg(target_os = "linux")]
 const CLK_TCK_HZ: u64 = 100;
 
-pub(crate) fn collect_process() -> ProcessDto {
-    let pid = std::process::id();
-    let hostname = read_hostname();
-    let uptime_seconds = STARTED_AT.elapsed().map(|d| d.as_secs()).unwrap_or(0);
-    let started_at_ms = STARTED_AT
+/// Process-lifetime constants — read them once on first request. The
+/// alternative (read on every poll) costs an extra `/proc/self/limits`
+/// read + libc::sysconf call + hostname syscall per /api/process tick;
+/// at 1 Hz UI polling that is ~3 file reads/sec for values that cannot
+/// change without re-exec.
+static HOSTNAME: LazyLock<String> = LazyLock::new(read_hostname_uncached);
+static CPU_CORES: LazyLock<u32> = LazyLock::new(|| num_cpus::get() as u32);
+static PID: LazyLock<u32> = LazyLock::new(std::process::id);
+#[cfg(target_os = "linux")]
+static FD_LIMIT: LazyLock<u64> = LazyLock::new(read_linux_fd_limit_uncached);
+static STARTED_AT_MS: LazyLock<u64> = LazyLock::new(|| {
+    STARTED_AT
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+        .unwrap_or(0)
+});
 
-    let cpu_cores = num_cpus::get() as u32;
+pub(crate) fn collect_process() -> ProcessDto {
+    let pid = *PID;
+    let hostname = HOSTNAME.clone();
+    let uptime_seconds = STARTED_AT.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+    let started_at_ms = *STARTED_AT_MS;
+
+    let cpu_cores = *CPU_CORES;
 
     #[cfg(target_os = "linux")]
     let (cpu_user_us, cpu_system_us, threads, threads_breakdown) = read_linux_cpu();
     #[cfg(target_os = "linux")]
-    let (vm_size_bytes, fd_open, fd_limit) = (
-        read_linux_vm_size_bytes(),
-        read_linux_fd_open(),
-        read_linux_fd_limit(),
-    );
+    let (vm_size_bytes, fd_open, fd_limit) =
+        (read_linux_vm_size_bytes(), read_linux_fd_open(), *FD_LIMIT);
 
     #[cfg(not(target_os = "linux"))]
     let (cpu_user_us, cpu_system_us, threads, threads_breakdown): (
@@ -408,7 +420,7 @@ fn build_categories(
     cats
 }
 
-fn read_hostname() -> String {
+fn read_hostname_uncached() -> String {
     // `gethostname(3)` lives in libc; reading `/proc/sys/kernel/hostname`
     // works on Linux without a libc binding. Bounded read keeps the call
     // cheap on hosts with overlong names.
@@ -491,7 +503,7 @@ fn read_linux_fd_open() -> u64 {
 }
 
 #[cfg(target_os = "linux")]
-fn read_linux_fd_limit() -> u64 {
+fn read_linux_fd_limit_uncached() -> u64 {
     let Ok(limits) = std::fs::read_to_string("/proc/self/limits") else {
         return 0;
     };
