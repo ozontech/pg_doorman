@@ -71,7 +71,8 @@ PgCat намеренно опущен: у него центр тяжести —
 | Direct-handoff (возвращающийся сервер уходит самому давно ждущему клиенту через in-process oneshot-канал) | Да | Нет | Нет |
 | Строгий FIFO порядок ожидающих | Да | Нет (LIFO через `server_round_robin = 0`) | Нет |
 | `min_pool_size` (warm connections) | Да | Нет | Да |
-| Prepared statements в transaction mode | Да (двухуровневый кеш, query interner, переименование `DOORMAN_N`) | Да (с 1.21, `max_prepared_statements`, переименование `PGBOUNCER_*`) | Да (`pool_reserve_prepared_statement`) |
+| Prepared statements в transaction mode | Да (именованные и анонимные, двухуровневый кеш, query interner) | Да (именованные, с 1.21, `max_prepared_statements`) | Да (именованные, `pool_reserve_prepared_statement`) |
+| Кеш анонимного `Parse` для производительности | Да (`DOORMAN_N`, переиспользование между клиентами пула) | Нет (анонимный `Parse` проходит без изменений) | Нет (требуются именованные prepared statements) |
 | Smart cleanup при checkin (пропустить `DEALLOCATE ALL`, если кеш не трогали) | Да (`RESET ALL` / `DEALLOCATE ALL` по факту мутаций) | Нет (всегда `DISCARD ALL`, если задан `server_reset_query`) | Да (auto) |
 | LISTEN / NOTIFY pinning в transaction mode | Нет | Нет | Экспериментально |
 | Cross-rule connection cap (`shared_pool`) | Нет | Нет | Да (с 1.5.1) |

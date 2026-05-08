@@ -1,12 +1,17 @@
-# Anonymous Prepared Statement Caching
+# Anonymous Parse Caching
 
-PostgreSQL doesn't cache plans for anonymous prepared statements:
-every `Bind` re-runs the planner from scratch. PgDoorman fills that
-gap by transparently remapping every anonymous `Parse` to an internal
-`DOORMAN_<N>` name on the backend, so the plan lands in the backend's
-named prepared statement registry and gets reused. The reuse spans
-`Bind`s of one client and `Bind`s of different clients sharing the
-same pool.
+PgDoorman caches anonymous `Parse` as a performance optimization for
+transaction pooling. Many drivers send short parameterised queries as
+`Parse` with an empty statement name; without a remap, PostgreSQL
+does planner work again on every `Bind`, and the hot OLTP path pays
+that cost on every call.
+
+PgDoorman transparently remaps every anonymous `Parse` to an internal
+`DOORMAN_<N>` name on the backend. The plan lands in the backend's
+named prepared statement registry and gets reused across `Bind`s of
+one client and across clients sharing the same pool. The main effect
+is less planner CPU and fewer repeated backend Parses for the same
+query shape.
 
 The remap is transparent to the driver: clients send and receive
 empty statement names just as they would against a vanilla
@@ -15,7 +20,28 @@ PostgreSQL.
 This is a feature unique to PgDoorman. PgBouncer (1.21+) and Odyssey
 support prepared statements in transaction mode, but only for
 **named** statements; anonymous `Parse` is forwarded unchanged and
-re-planned on every call.
+re-planned on every call. Cache bounds, LRU, TTL, and observability
+exist to keep the performance optimization controlled under dynamic
+SQL, not to replace the performance goal.
+
+## What gets faster
+
+Anonymous `Parse` caching removes repeated work from hot
+parameterised query paths:
+
+- the backend does not receive the same `Parse` on every reuse of an
+  already known query shape;
+- PostgreSQL can use a prepared statement already created on that
+  backend connection;
+- different clients in the same pool share one pool-level entry
+  instead of warming the same query independently;
+- on a server-cache hit, PgDoorman synthesizes `ParseComplete`
+  without a PostgreSQL round-trip.
+
+This is primarily a performance optimization for OLTP workloads with
+repeated query shapes. Cache caps, TTL, and the interner exist so the
+speedup does not become unbounded memory growth in the pooler or on
+PostgreSQL backends.
 
 ## The PostgreSQL baseline
 
@@ -45,8 +71,8 @@ pooler forwards the empty `Parse` name as-is, every client's `Bind`
 runs against a backend that has no plan cached for that query. Hot
 OLTP paths pay the planner cost on every call.
 
-Named prepared statements solve plan caching, but they push the
-bookkeeping problem onto the pooler:
+Named prepared statements solve planner performance, but they push
+the bookkeeping problem onto the pooler:
 
 - The pooler must remember each client's named statements until the
   client disconnects, even if the pool-level shared cache evicts the
@@ -161,7 +187,8 @@ the same anonymous query share one allocation in memory.
 - **API workloads with a small set of hot queries.** A handful of
   unique `SELECT` / `INSERT` shapes shared across thousands of
   clients. Pool-cache hit rate near 100 %, planner runs once per
-  backend per query, scales linearly with concurrency.
+  backend per query shape, and later calls go through `Bind` against
+  already prepared backend state.
 - **Drivers that pin to anonymous prepared.** `lib/pq`, `libpq`
   `PQexecParams`, JDBC's `serverPreparedStatementType=NONE`. Without
   the remap they would re-plan on every call.
@@ -184,7 +211,7 @@ the same anonymous query share one allocation in memory.
   across sessions. The pool-level cache still shares the query text
   across sessions; the backend planner still runs once per session.
 
-Track effectiveness with the Prometheus counters
+Track effectiveness as a performance feature with the Prometheus counters
 `pg_doorman_servers_prepared_hits` and
 `pg_doorman_servers_prepared_misses`. A sustained miss rate above
 30 % means the remap is spending CPU and memory without delivering
@@ -193,7 +220,7 @@ plan-cache reuse. Either disable it or raise
 
 ## How other poolers handle this
 
-| Pooler          | Plan cache for anonymous Parse                    |
+| Pooler          | Parse/plan cache for anonymous prepared statements |
 | --------------- | :------------------------------------------------ |
 | **PgDoorman**   | Yes: transparent remap to `DOORMAN_<N>`           |
 | PgBouncer 1.21+ | No: named only, anonymous forwarded unchanged     |

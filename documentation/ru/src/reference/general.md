@@ -450,7 +450,7 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 
 Полная картина того, как этот параметр взаимодействует с `server_prepared_statements_cache_size`,
 `client_anonymous_prepared_cache_size` и query interner — в туториале
-[Anonymous Prepared Statement Caching](../tutorials/prepared-statements.md).
+[Кеш Parse для анонимных prepared statements](../tutorials/prepared-statements.md).
 
 По умолчанию: `8192`.
 
