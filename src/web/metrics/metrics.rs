@@ -23,12 +23,13 @@ use super::{
     COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
     SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
     SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
-    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_ERRORS_TOTAL,
-    SHOW_POOLS_MAXWAIT_MICROSECONDS, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_PAUSED,
-    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_CONNECTIONS, SHOW_CONNECTIONS_TOTAL, SHOW_POOLS_BYTES, SHOW_POOLS_BYTES_TOTAL,
+    SHOW_POOLS_CLIENT, SHOW_POOLS_ERRORS_TOTAL, SHOW_POOLS_MAXWAIT_MICROSECONDS,
+    SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_PAUSED, SHOW_POOLS_QUERIES_COUNTER,
+    SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL, SHOW_POOLS_QUERIES_TOTAL_TIME,
     SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
-    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
-    SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
+    SHOW_POOLS_TRANSACTIONS_TOTAL, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG,
+    SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
     SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
 };
 
@@ -61,9 +62,29 @@ fn update_connection_metrics() {
     ];
 
     for (conn_type, counter) in &connection_types {
+        let value = counter.load(Ordering::Relaxed);
         SHOW_CONNECTIONS
             .with_label_values(&[conn_type])
-            .set(counter.load(Ordering::Relaxed) as f64);
+            .set(value as f64);
+        emit_counter_delta(
+            &SHOW_CONNECTIONS_TOTAL.with_label_values(&[conn_type]),
+            value as u64,
+        );
+    }
+}
+
+/// Bumps a Prometheus counter to a given cumulative value sourced from
+/// a monotonic atomic. The function compares `value` against the
+/// counter's current reading and increments by the positive delta;
+/// non-positive deltas (which would only happen on counter reset, i.e.
+/// process restart wiping both atomics in lock-step) are silently
+/// ignored. Used by the parallel `*_total` counters that mirror the
+/// deprecated gauge form of monotonic data.
+#[inline]
+fn emit_counter_delta(counter: &prometheus::IntCounter, value: u64) {
+    let prev = counter.get();
+    if value > prev {
+        counter.inc_by(value - prev);
     }
 }
 
@@ -240,11 +261,25 @@ fn update_pool_avg_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
         ),
     ];
 
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
     for (metric, value) in &avg_metrics {
-        metric
-            .with_label_values(&[identifier.user.as_str(), identifier.db.as_str()])
-            .set(*value);
+        metric.with_label_values(&[user, database]).set(*value);
     }
+
+    // Counter-form mirrors of the two monotonic gauges above. The
+    // wait-time average and the *_total_time gauges are not
+    // counter-shaped (rolling averages and summed durations are still
+    // surfaced through histograms), so only query/transaction counts
+    // get a parallel `_total`.
+    emit_counter_delta(
+        &SHOW_POOLS_QUERIES_TOTAL.with_label_values(&[user, database]),
+        stats.total_query_count,
+    );
+    emit_counter_delta(
+        &SHOW_POOLS_TRANSACTIONS_TOTAL.with_label_values(&[user, database]),
+        stats.total_xact_count,
+    );
 }
 
 fn update_pool_server_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
@@ -301,14 +336,24 @@ fn update_client_state_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
 }
 
 fn update_byte_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
-    let labels_recv: [&str; 3] = ["received", identifier.user.as_str(), identifier.db.as_str()];
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
+
     SHOW_POOLS_BYTES
-        .with_label_values(&labels_recv)
+        .with_label_values(&["received", user, database])
         .set(stats.bytes_received as f64);
-    let labels_sent: [&str; 3] = ["sent", identifier.user.as_str(), identifier.db.as_str()];
     SHOW_POOLS_BYTES
-        .with_label_values(&labels_sent)
+        .with_label_values(&["sent", user, database])
         .set(stats.bytes_sent as f64);
+
+    emit_counter_delta(
+        &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["received", user, database]),
+        stats.bytes_received,
+    );
+    emit_counter_delta(
+        &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["sent", user, database]),
+        stats.bytes_sent,
+    );
 }
 
 fn update_percentile_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {

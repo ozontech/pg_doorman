@@ -95,16 +95,39 @@ pub(crate) static TOTAL_MEMORY: Lazy<Gauge> = Lazy::new(|| {
     gauge
 });
 
+/// DEPRECATED: monotonic value exposed as a Gauge — `rate()` works in
+/// practice but Prometheus reset detection breaks on restart because the
+/// gauge does not declare itself as monotonic. Prefer
+/// `pg_doorman_connections_total`. Scheduled for removal in 3.10.
 pub(crate) static SHOW_CONNECTIONS: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
         "pg_doorman_connection_count",
-        "Counter of new connections by type handled by pg_doorman. Types include: 'plain' (unencrypted connections), 'tls' (encrypted connections), 'cancel' (connection cancellation requests), and 'total' (sum of all connections).",
+        "DEPRECATED, removed in 3.10: cumulative count of accepted connections by type ('plain'/'tls'/'cancel'/'total'). Exposed as a gauge but the underlying counter is monotonic — Prometheus reset detection cannot tell a process restart apart from a counter wrap. Use pg_doorman_connections_total instead.",
         ), &["type"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+/// Per-type cumulative counter of accepted client connections.
+/// Replaces the gauge form `pg_doorman_connection_count`, which the
+/// scrape protocol could not flag as monotonic — so a process restart
+/// looked indistinguishable from a counter wrap-around. Updated by the
+/// scrape path from the same atomic counters that already feed the
+/// gauge, via per-scrape delta emission.
+pub(crate) static SHOW_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_connections_total",
+            "Cumulative count of accepted client connections by type: 'plain' (unencrypted), 'tls' (encrypted), 'cancel' (cancel-query startup), 'total' (sum of all). Counter form replaces pg_doorman_connection_count.",
+        ),
+        &["type"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
 });
 
 #[cfg(target_os = "linux")]
@@ -226,17 +249,36 @@ pub(crate) static SHOW_POOLS_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     counter
 });
 
+/// DEPRECATED: monotonic byte counter shipped as a Gauge. Prefer
+/// `pg_doorman_pools_bytes_total`. Scheduled for removal in 3.10.
 pub(crate) static SHOW_POOLS_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_bytes",
-            "Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections.",
+            "DEPRECATED, removed in 3.10: cumulative bytes transferred per direction/user/database, exposed as a gauge. Use pg_doorman_pools_bytes_total instead — Prometheus then handles reset detection correctly across restarts.",
         ),
         &["direction", "user", "database"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+/// Per-pool, per-direction byte counter. Direction is 'received'
+/// (client → backend) or 'sent' (backend → client). Replaces the
+/// gauge form `pg_doorman_pools_bytes`. Updated from the same atomic
+/// counters that feed the existing gauge.
+pub(crate) static SHOW_POOLS_BYTES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_pools_bytes_total",
+            "Cumulative bytes transferred per pool and direction. Direction is 'received' (data from client) or 'sent' (data to client). Counter form replaces pg_doorman_pools_bytes.",
+        ),
+        &["direction", "user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
 });
 
 pub(crate) static SHOW_POOL_CACHE_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
@@ -577,17 +619,34 @@ pub(crate) static SHOW_POOLS_TRANSACTIONS_PERCENTILE: Lazy<GaugeVec> = Lazy::new
     gauge
 });
 
+/// DEPRECATED: monotonic transaction count exposed as a Gauge. Prefer
+/// `pg_doorman_pools_transactions_total`. Scheduled for removal in 3.10.
 pub(crate) static SHOW_POOLS_TRANSACTIONS_COUNTER: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_transactions_count",
-            "Counter of transactions executed in connection pools by user and database. Helps track transaction volume and identify users or databases with high transaction rates.",
+            "DEPRECATED, removed in 3.10: cumulative transaction count per user/database, exposed as a gauge. Use pg_doorman_pools_transactions_total instead.",
         ),
         &["user", "database"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+/// Cumulative transaction count per pool. Replaces the gauge form
+/// `pg_doorman_pools_transactions_count`.
+pub(crate) static SHOW_POOLS_TRANSACTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_pools_transactions_total",
+            "Cumulative transaction count per pool, by user and database. Counter form replaces pg_doorman_pools_transactions_count.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
 });
 
 pub(crate) static SHOW_POOLS_TRANSACTIONS_TOTAL_TIME: Lazy<GaugeVec> = Lazy::new(|| {
@@ -603,17 +662,34 @@ pub(crate) static SHOW_POOLS_TRANSACTIONS_TOTAL_TIME: Lazy<GaugeVec> = Lazy::new
     gauge
 });
 
+/// DEPRECATED: monotonic query count exposed as a Gauge. Prefer
+/// `pg_doorman_pools_queries_total`. Scheduled for removal in 3.10.
 pub(crate) static SHOW_POOLS_QUERIES_COUNTER: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_queries_count",
-            "Counter of queries executed in connection pools by user and database. Helps track query volume and identify users or databases with high query rates.",
+            "DEPRECATED, removed in 3.10: cumulative query count per user/database, exposed as a gauge. Use pg_doorman_pools_queries_total instead.",
         ),
         &["user", "database"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+/// Cumulative query count per pool. Replaces the gauge form
+/// `pg_doorman_pools_queries_count`.
+pub(crate) static SHOW_POOLS_QUERIES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_pools_queries_total",
+            "Cumulative query count per pool, by user and database. Counter form replaces pg_doorman_pools_queries_count.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
 });
 
 pub(crate) static SHOW_POOLS_QUERIES_TOTAL_TIME: Lazy<GaugeVec> = Lazy::new(|| {
