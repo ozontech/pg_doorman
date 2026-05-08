@@ -54,6 +54,7 @@ groups:
           sum by (job, instance, database) (
             increase(pg_doorman_pool_coordinator_total{type="exhaustions"}[5m])
           ) >= 1
+        for: 2m
         labels:
           severity: critical
           service: pg_doorman
@@ -79,18 +80,22 @@ groups:
             size reserve_pool_size for the burst pattern.
 
       - alert: PgDoormanCoordinatorReserveInUse
-        expr: min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) > 0
-        for: 1m
+        expr: |
+          min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) > 0
+          and on (job, instance, database)
+          pg_doorman:coordinator_reserve_usage:ratio > 0.5
+        for: 5m
         labels:
           severity: warning
           service: pg_doorman
         annotations:
           summary: "pg_doorman coordinator reserve continuously in use for {{ $labels.database }}"
           runbook: |
-            Reserve should return to zero after retain_connections_time when
-            main has headroom. Compute main_used = current - reserve_used in
-            SHOW POOL_COORDINATOR; if main_used == max_db_conn, the database
-            is undersized.
+            Reserve has stayed non-zero for 15m and current usage is above
+            half. Reserve should return to zero after retain_connections_time
+            when main has headroom. Compute main_used = current - reserve_used
+            in SHOW POOL_COORDINATOR; if main_used == max_db_conn, the
+            database is undersized.
 
       - alert: PgDoormanCoordinatorReserveNearFull
         expr: pg_doorman:coordinator_reserve_usage:ratio > 0.8
