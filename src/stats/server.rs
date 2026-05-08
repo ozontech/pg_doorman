@@ -308,6 +308,11 @@ impl ServerStats {
     #[inline(always)]
     pub fn idle(&self, microseconds: u64) {
         self.address.stats.xact_time_add(microseconds);
+        crate::web::metrics::observe_pool_transaction_microseconds(
+            &self.address.username,
+            &self.address.pool_name,
+            microseconds,
+        );
         self.set_state(SERVER_STATE_IDLE);
     }
 
@@ -323,6 +328,11 @@ impl ServerStats {
     pub fn add_xact_time_and_idle(&self, microseconds: u64) {
         self.set_state(SERVER_STATE_IDLE);
         self.address.stats.xact_time_add(microseconds);
+        crate::web::metrics::observe_pool_transaction_microseconds(
+            &self.address.username,
+            &self.address.pool_name,
+            microseconds,
+        );
     }
 
     //
@@ -458,6 +468,11 @@ impl ServerStats {
         // Update server stats and address aggregation stats
         self.set_application(application_name);
         self.address.stats.wait_time_add(microseconds);
+        crate::web::metrics::observe_pool_wait_microseconds(
+            &self.address.username,
+            &self.address.pool_name,
+            microseconds,
+        );
     }
 
     /// Records a query execution and updates related statistics.
@@ -472,6 +487,11 @@ impl ServerStats {
         self.address.stats.query_count_add();
         self.address.stats.query_time_add_microseconds(microseconds);
         self.query_count.fetch_add(1, Ordering::Relaxed);
+        crate::web::metrics::observe_pool_query_microseconds(
+            &self.address.username,
+            &self.address.pool_name,
+            microseconds,
+        );
     }
 
     /// Records a transaction execution and updates related statistics.

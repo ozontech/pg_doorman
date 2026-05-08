@@ -21,7 +21,8 @@ mod tests;
 // Re-exports
 pub(crate) use handler::write_metrics_response;
 pub use metrics::{
-    observe_anonymous_eviction, observe_backend_create_phase, observe_streaming_bytes,
+    observe_anonymous_eviction, observe_backend_create_phase, observe_pool_query_microseconds,
+    observe_pool_transaction_microseconds, observe_pool_wait_microseconds, observe_streaming_bytes,
     observe_streaming_event, record_interner_gc, record_listener_rejection, record_synthetic_miss,
 };
 
@@ -489,11 +490,14 @@ pub(crate) static QUERY_INTERNER_GC_DURATION_SECONDS: Lazy<Histogram> = Lazy::ne
     histogram
 });
 
+/// DEPRECATED: pre-aggregated percentile gauges that cannot be summed
+/// across pods. Prefer `pg_doorman_pools_query_duration_seconds_bucket`
+/// and `histogram_quantile()`. Scheduled for removal in 3.10.
 pub(crate) static SHOW_POOLS_QUERIES_PERCENTILE: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_queries_percentile",
-            "Query execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps identify slow queries and performance trends across different users and databases.",
+            "DEPRECATED, removed in 3.10: pre-aggregated query latency percentiles (50/90/95/99) per user and database, in milliseconds. Use pg_doorman_pools_query_duration_seconds (histogram) with histogram_quantile() instead — that one composes correctly across replicas.",
         ),
         &["percentile", "user", "database"],
     )
@@ -502,11 +506,13 @@ pub(crate) static SHOW_POOLS_QUERIES_PERCENTILE: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+/// DEPRECATED: see `SHOW_POOLS_QUERIES_PERCENTILE`. Prefer
+/// `pg_doorman_pools_transaction_duration_seconds_bucket`.
 pub(crate) static SHOW_POOLS_TRANSACTIONS_PERCENTILE: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_transactions_percentile",
-            "Transaction execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps monitor transaction performance and identify long-running transactions that might impact database performance.",
+            "DEPRECATED, removed in 3.10: pre-aggregated transaction latency percentiles (50/90/95/99) per user and database, in milliseconds. Use pg_doorman_pools_transaction_duration_seconds (histogram) with histogram_quantile() instead.",
         ),
         &["percentile", "user", "database"],
     )
@@ -567,17 +573,86 @@ pub(crate) static SHOW_POOLS_QUERIES_TOTAL_TIME: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+/// DEPRECATED: running mean that drowns spikes. Prefer
+/// `pg_doorman_pools_wait_duration_seconds_bucket` with
+/// `histogram_quantile()` for tail latency. Scheduled for removal in 3.10.
 pub(crate) static SHOW_POOLS_WAIT_TIME_AVG: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_avg_wait_time",
-            "Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks.",
+            "DEPRECATED, removed in 3.10: running mean of client checkout wait per user and database, in milliseconds. The running mean washes out tail latency spikes that operators care about; use pg_doorman_pools_wait_duration_seconds (histogram) with histogram_quantile() instead.",
         ),
         &["user", "database"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+/// Server-side query latency histogram per pool. Buckets cover OLTP and
+/// the long-tail OLAP-style queries (0.5 ms → 5 s). Replaces the
+/// pre-aggregated `pg_doorman_pools_queries_percentile` gauges, which
+/// could not be summed across replicas — `histogram_quantile()` here
+/// gives correct quantiles even when several pg_doorman pods scrape
+/// into the same Prometheus.
+pub(crate) static SHOW_POOLS_QUERY_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_pools_query_duration_seconds",
+            "Server-side query latency per pool (StartupMessage-to-CommandComplete time \
+             of every individual query that pg_doorman forwards). Use histogram_quantile() \
+             over the _bucket series for percentiles; rate(_count) for QPS.",
+        )
+        .buckets(vec![0.0005, 0.005, 0.05, 0.5, 5.0]),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
+});
+
+/// Transaction latency histogram per pool. Captures the full
+/// transaction span (BEGIN/start to COMMIT/end), so values are
+/// typically larger than per-query latency by the number of statements
+/// in the transaction plus inter-statement gaps. Replaces
+/// `pg_doorman_pools_transactions_percentile`.
+pub(crate) static SHOW_POOLS_TRANSACTION_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_pools_transaction_duration_seconds",
+            "Transaction latency per pool — full span from transaction start to its \
+             COMMIT or ROLLBACK reply, including inter-statement application gaps. \
+             Use histogram_quantile() over the _bucket series for percentiles; \
+             rate(_count) for TPS.",
+        )
+        .buckets(vec![0.001, 0.01, 0.1, 1.0, 10.0]),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
+});
+
+/// Client checkout-wait latency histogram per pool. Records the full
+/// time `Pool::timeout_get` spent before handing a backend to the
+/// client (semaphore wait, anticipation, coordinator path, burst gate,
+/// `server_pool.create()`). Replaces `pg_doorman_pools_avg_wait_time`,
+/// whose running mean drowns spikes operators care about.
+pub(crate) static SHOW_POOLS_WAIT_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_pools_wait_duration_seconds",
+            "Client checkout wait latency per pool — the time a client spent in \
+             pg_doorman's queue before receiving a backend connection. Sustained p99 \
+             above query duration means the pool, not PostgreSQL, is the bottleneck. \
+             Use histogram_quantile() for percentiles.",
+        )
+        .buckets(vec![0.0001, 0.001, 0.01, 0.1, 1.0]),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
 });
 
 /// Aggregated prepared-statement hits across all backends of a pool.

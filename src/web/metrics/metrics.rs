@@ -764,6 +764,43 @@ pub fn observe_backend_create_phase(phase: &'static str, seconds: f64) {
         .observe(seconds);
 }
 
+/// Observes one query duration in the per-pool query histogram. Caller
+/// passes microseconds because every existing call site already has
+/// that unit; the conversion to seconds happens once here, behind the
+/// inline call, so the hot path stays one division and one
+/// `with_label_values` lookup.
+#[inline]
+pub fn observe_pool_query_microseconds(user: &str, database: &str, microseconds: u64) {
+    super::SHOW_POOLS_QUERY_DURATION_SECONDS
+        .with_label_values(&[user, database])
+        .observe(microseconds as f64 / 1_000_000.0);
+}
+
+/// Observes one transaction duration in the per-pool transaction
+/// histogram. Mirrors `AddressStats::xact_time_add` and silently drops
+/// zero-microsecond inputs: the `idle(0)` and `add_xact_time_and_idle(0)`
+/// call sites fire on backend creation and on `Drop for Client` without
+/// representing a real transaction, and recording them would pull the
+/// histogram's lowest bucket toward background noise.
+#[inline]
+pub fn observe_pool_transaction_microseconds(user: &str, database: &str, microseconds: u64) {
+    if microseconds == 0 {
+        return;
+    }
+    super::SHOW_POOLS_TRANSACTION_DURATION_SECONDS
+        .with_label_values(&[user, database])
+        .observe(microseconds as f64 / 1_000_000.0);
+}
+
+/// Observes one client checkout wait in the per-pool wait histogram.
+/// Same unit-conversion contract as `observe_pool_query_microseconds`.
+#[inline]
+pub fn observe_pool_wait_microseconds(user: &str, database: &str, microseconds: u64) {
+    super::SHOW_POOLS_WAIT_DURATION_SECONDS
+        .with_label_values(&[user, database])
+        .observe(microseconds as f64 / 1_000_000.0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_sqlstate;
@@ -811,5 +848,53 @@ mod tests {
         assert_eq!(classify_sqlstate("25000"), "other");
         assert_eq!(classify_sqlstate("25001"), "other");
         assert_eq!(classify_sqlstate("25P01"), "other");
+    }
+
+    #[test]
+    fn pool_transaction_observe_drops_zero_microseconds() {
+        // idle(0) and add_xact_time_and_idle(0) fire on backend
+        // creation and on `Drop for Client`; recording those zeros
+        // would tug the lowest bucket toward background noise.
+        let user = "zero_obs_user";
+        let database = "zero_obs_db";
+        let child = super::super::SHOW_POOLS_TRANSACTION_DURATION_SECONDS
+            .with_label_values(&[user, database]);
+
+        let before = child.get_sample_count();
+        super::observe_pool_transaction_microseconds(user, database, 0);
+        assert_eq!(child.get_sample_count(), before);
+
+        super::observe_pool_transaction_microseconds(user, database, 1);
+        assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn pool_query_observe_records_zero_microseconds() {
+        // query_time_add_microseconds historically records zero-elapsed
+        // queries (sub-microsecond ones) — keep parity here so the
+        // gauge family and the histogram see the same denominator.
+        let user = "zero_q_user";
+        let database = "zero_q_db";
+        let child =
+            super::super::SHOW_POOLS_QUERY_DURATION_SECONDS.with_label_values(&[user, database]);
+
+        let before = child.get_sample_count();
+        super::observe_pool_query_microseconds(user, database, 0);
+        assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn pool_wait_observe_records_zero_microseconds() {
+        // Zero-length checkouts are the healthy-pool baseline; keep
+        // recording them so histogram_quantile reflects "checkout was
+        // instant" instead of going silent on a healthy pool.
+        let user = "zero_w_user";
+        let database = "zero_w_db";
+        let child =
+            super::super::SHOW_POOLS_WAIT_DURATION_SECONDS.with_label_values(&[user, database]);
+
+        let before = child.get_sample_count();
+        super::observe_pool_wait_microseconds(user, database, 0);
+        assert_eq!(child.get_sample_count(), before + 1);
     }
 }
