@@ -146,22 +146,28 @@ where
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
 
-    // Wire bytes for the streaming counter: 1 type byte + message_len, since
-    // message_len already covers the 4-byte length field plus the payload.
-    // server.stats.data_received uses server.buffer.len() + message_len for
-    // historical reasons, which double-counts the length field; we keep the
-    // legacy total there to avoid changing existing dashboards.
-    let streamed_bytes = 1u64 + message_len as u64;
-
-    // Stream the large message directly
+    // Header (1 byte type code + 4 byte length field) already left
+    // pg_doorman in `write_all_flush` above; the payload is what
+    // `proxy_copy_data_with_timeout` streams. The counter is bumped
+    // by header + actually-forwarded payload so a partial copy is
+    // recorded as the bytes that actually reached the wire, not the
+    // declared frame size that promised more than was delivered.
+    const HEADER_BYTES: u64 = 1 + mem::size_of::<i32>() as u64;
+    let mut payload_copied: usize = 0;
     let res = proxy_copy_data_with_timeout(
         get_config().general.proxy_copy_data_timeout.as_std(),
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),
+        &mut payload_copied,
     )
     .await;
-    record_streaming(server, "data_row", res.is_ok(), streamed_bytes);
+    record_streaming(
+        server,
+        "data_row",
+        res.is_ok(),
+        HEADER_BYTES + payload_copied as u64,
+    );
     if let Err(err) = res {
         server.mark_bad(err.to_string().as_str());
         return Err(err);
@@ -199,18 +205,24 @@ where
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
 
-    // Wire bytes for the streaming counter — see handle_large_data_row for
-    // the rationale behind diverging from server.stats.data_received.
-    let streamed_bytes = 1u64 + message_len as u64;
-
-    // Stream the large message directly
+    // Same wire-bytes contract as in `handle_large_data_row`: header
+    // is on the wire after the buffer flush above, the payload is
+    // counted from what `proxy_copy_data` actually shipped.
+    const HEADER_BYTES: u64 = 1 + mem::size_of::<i32>() as u64;
+    let mut payload_copied: usize = 0;
     let res = proxy_copy_data(
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),
+        &mut payload_copied,
     )
     .await;
-    record_streaming(server, "copy_data", res.is_ok(), streamed_bytes);
+    record_streaming(
+        server,
+        "copy_data",
+        res.is_ok(),
+        HEADER_BYTES + payload_copied as u64,
+    );
     res?;
 
     server.bad = prev_bad;
