@@ -60,7 +60,7 @@ mislead readers.
 ## Alert rules
 
 A complete `groups:` block is shipped at
-`monitoring/prometheus-rules/pg_doorman_interner.yaml`. The five
+`monitoring/prometheus-rules/query-interner.yaml`. The five
 alerts:
 
 - **`PgDoormanAnonInternerMemoryHigh`** (critical) — ANON bytes

@@ -48,7 +48,8 @@ pg_doorman экспортирует следующие метрики:
 
 | Метрика | Описание |
 |---------|----------|
-| `pg_doorman_connection_count` | Счётчик новых соединений по типу, обработанных pg_doorman. Типы: 'plain' (нешифрованные соединения), 'tls' (шифрованные соединения), 'cancel' (запросы на отмену соединения), 'total' (сумма всех соединений). |
+| `pg_doorman_connections_total` | Кумулятивный счётчик принятых клиентских соединений по типу. Типы: `plain` (без шифрования), `tls` (TLS), `cancel` (запросы отмены при стартапе), `total` (сумма). Counter; для скорости используйте `rate(pg_doorman_connections_total[5m])`. |
+| `pg_doorman_connection_count` | DEPRECATED, удаляется в 3.10. Gauge-зеркало `pg_doorman_connections_total` оставлено на один минор. Новые правила и панели должны читать counter. |
 
 ### Метрики сокетов (только Linux)
 
@@ -62,7 +63,8 @@ pg_doorman экспортирует следующие метрики:
 |---------|----------|
 | `pg_doorman_pools_clients` | Число клиентов в пулах соединений по статусу, пользователю и базе. Значения статуса: `idle` (подключён, но не выполняет запросы), `waiting` (ждёт серверного соединения), `active` (выполняет запросы). |
 | `pg_doorman_pools_servers` | Число серверов в пулах соединений по статусу, пользователю и базе. Значения статуса: `active` (обслуживает клиента) и `idle` (свободен для новых соединений). |
-| `pg_doorman_pools_bytes` | Сумма байт, переданных через пулы соединений, по направлению, пользователю и базе. Направления: `received` (от клиентов) и `sent` (клиентам). |
+| `pg_doorman_pools_bytes_total` | Кумулятивные байты, переданные через пулы соединений, по направлению (`received`/`sent`), пользователю и базе. Counter; для пропускной способности — `rate(pg_doorman_pools_bytes_total[5m])`. |
+| `pg_doorman_pools_bytes` | DEPRECATED, удаляется в 3.10. Gauge-зеркало `pg_doorman_pools_bytes_total`. |
 
 | `pg_doorman_pool_size` | Сконфигурированный максимальный размер пула на пользователя и базу. Полезен для расчёта оставшейся ёмкости пула вместе с pg_doorman_pools_servers. |
 
@@ -70,13 +72,18 @@ pg_doorman экспортирует следующие метрики:
 
 | Метрика | Описание |
 |---------|----------|
-| `pg_doorman_pools_queries_percentile` | Перцентили времени выполнения запросов по пользователю и базе. Перцентили: `99`, `95`, `90`, `50` (медиана). В миллисекундах. |
-| `pg_doorman_pools_transactions_percentile` | Перцентили времени выполнения транзакций по пользователю и базе. Перцентили: `99`, `95`, `90`, `50` (медиана). В миллисекундах. |
-| `pg_doorman_pools_transactions_count` | Счётчик транзакций, выполненных в пулах соединений, по пользователю и базе. |
+| `pg_doorman_pools_query_duration_seconds` | Гистограмма времени выполнения запросов на стороне PostgreSQL по пулу, в секундах. Квантили: `histogram_quantile(q, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))`. QPS — `rate(_count[5m])`. |
+| `pg_doorman_pools_transaction_duration_seconds` | Гистограмма полного времени транзакций по пулу, в секундах. Контракт композиции тот же. |
+| `pg_doorman_pools_wait_duration_seconds` | Гистограмма времени ожидания клиентского checkout по пулу, в секундах. Для tail-wait — `histogram_quantile(0.99, ...)`. |
+| `pg_doorman_pools_transactions_total` | Кумулятивный счётчик транзакций по пулу. Counter; TPS — `rate(pg_doorman_pools_transactions_total[5m])`. |
+| `pg_doorman_pools_queries_percentile` | DEPRECATED, удаляется в 3.10. Pre-aggregated gauge перцентилей — не суммируется между репликами. Используйте `pg_doorman_pools_query_duration_seconds_bucket` с `histogram_quantile()`. |
+| `pg_doorman_pools_transactions_percentile` | DEPRECATED, удаляется в 3.10. См. `pg_doorman_pools_transaction_duration_seconds`. |
+| `pg_doorman_pools_transactions_count` | DEPRECATED, удаляется в 3.10. Gauge-зеркало `pg_doorman_pools_transactions_total`. |
 | `pg_doorman_pools_transactions_total_time` | Сумма времени выполнения транзакций в пулах соединений, по пользователю и базе. В миллисекундах. |
-| `pg_doorman_pools_queries_count` | Счётчик запросов, выполненных в пулах соединений, по пользователю и базе. |
+| `pg_doorman_pools_queries_total` | Кумулятивный счётчик запросов по пулу. Counter; QPS — `rate(pg_doorman_pools_queries_total[5m])`. |
+| `pg_doorman_pools_queries_count` | DEPRECATED, удаляется в 3.10. Gauge-зеркало `pg_doorman_pools_queries_total`. |
 | `pg_doorman_pools_queries_total_time` | Сумма времени выполнения запросов в пулах соединений, по пользователю и базе. В миллисекундах. |
-| `pg_doorman_pools_avg_wait_time` | Среднее время ожидания клиентов в пулах соединений, по пользователю и базе. В миллисекундах. |
+| `pg_doorman_pools_avg_wait_time` | DEPRECATED, удаляется в 3.10. Running mean, который замывает tail-spikes ожидания. Используйте `pg_doorman_pools_wait_duration_seconds_bucket` с `histogram_quantile()`. |
 
 ### Метрики auth_query
 
@@ -84,9 +91,13 @@ pg_doorman экспортирует следующие метрики:
 
 | Метрика | Описание |
 |---------|----------|
-| `pg_doorman_auth_query_cache` | Метрики кеша auth_query по типу и базе. Типы: `entries` (текущее число закешированных учётных данных), `hits` (попадания в кеш с найденной валидной записью), `misses` (промахи в кеше, потребовавшие запроса к PostgreSQL), `refetches` (повторные запросы, вызванные ошибкой аутентификации с устаревшими учётными данными), `rate_limited` (попытки повторного запроса, ограниченные `min_interval`). |
-| `pg_doorman_auth_query_auth` | Результаты аутентификации auth_query по результату и базе. Результаты: `success` (успешная аутентификация) и `failure` (неверный пароль или несовпадение учётных данных). |
-| `pg_doorman_auth_query_executor` | Метрики executor auth_query по типу и базе. Типы: `queries` (всего запросов, выполненных к PostgreSQL для получения учётных данных) и `errors` (запросы, завершившиеся ошибкой подключения или выполнения). |
+| `pg_doorman_auth_query_cache_total` | Кумулятивные события кеша auth_query по типу (`hits`/`misses`/`refetches`/`rate_limited`) и базе. Counter; снапшот `entries` остаётся на `pg_doorman_auth_query_cache`. |
+| `pg_doorman_auth_query_auth_total` | Кумулятивные результаты аутентификации auth_query по `result` (`success`/`failure`) и базе. Counter. |
+| `pg_doorman_auth_query_executor_total` | Кумулятивные события executor auth_query по типу (`queries`/`errors`) и базе. Counter. |
+| `pg_doorman_auth_query_dynamic_pools_total` | Кумулятивные события жизненного цикла динамических пулов auth_query по типу (`created`/`destroyed`) и базе. Counter; снапшот `current` остаётся на `pg_doorman_auth_query_dynamic_pools`. |
+| `pg_doorman_auth_query_cache` | Снапшот `entries` (текущее число закешированных учётных данных). Кумулятивные члены deprecated в этой метрике — используйте `pg_doorman_auth_query_cache_total`. |
+| `pg_doorman_auth_query_auth` | DEPRECATED, удаляется в 3.10. Gauge-зеркало `pg_doorman_auth_query_auth_total`. |
+| `pg_doorman_auth_query_executor` | DEPRECATED, удаляется в 3.10. Gauge-зеркало `pg_doorman_auth_query_executor_total`. |
 | `pg_doorman_auth_query_dynamic_pools` | Метрики жизненного цикла динамических пулов auth_query по типу и базе. Типы: `current` (сейчас активные динамические пулы), `created` (всего пулов создано с момента старта), `destroyed` (всего пулов, собранных garbage collection или удалённых на RELOAD). Имеет смысл только в passthrough mode. |
 
 ### Метрики серверов
@@ -125,7 +136,7 @@ pg_doorman экспортирует следующие метрики:
 ### Темп подключений
 
 ```
-rate(pg_doorman_connection_count{type="total"}[5m])
+rate(pg_doorman_connections_total{type="total"}[5m])
 ```
 
 ### Загрузка пула
@@ -134,26 +145,26 @@ rate(pg_doorman_connection_count{type="total"}[5m])
 sum by (database) (pg_doorman_pools_clients{status="active"}) / sum by (database) (pg_doorman_pools_servers{status="active"} + pg_doorman_pools_servers{status="idle"})
 ```
 
-### Медленные запросы
+### Медленные запросы (p99)
 
 ```
-pg_doorman_pools_queries_percentile{percentile="99"}
+histogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))
 ```
 
-### Время ожидания клиентов
+### Время ожидания клиентов (p99)
 
 ```
-pg_doorman_pools_avg_wait_time
+histogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_wait_duration_seconds_bucket[5m])))
 ```
 
 ### Hit rate кеша auth_query
 
 ```
-pg_doorman_auth_query_cache{type="hits"} / (pg_doorman_auth_query_cache{type="hits"} + pg_doorman_auth_query_cache{type="misses"})
+rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]) / clamp_min(rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]) + rate(pg_doorman_auth_query_cache_total{type="misses"}[5m]), 0.001)
 ```
 
 ### Темп ошибок auth_query
 
 ```
-rate(pg_doorman_auth_query_auth{result="failure"}[5m])
+rate(pg_doorman_auth_query_auth_total{result="failure"}[5m])
 ```

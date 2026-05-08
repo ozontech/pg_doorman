@@ -1,5 +1,19 @@
 # Перцентили задержек
 
+> **Замена в этом релизе**: pre-aggregated gauges
+> `pg_doorman_pools_queries_percentile`, `pg_doorman_pools_transactions_percentile`
+> и `pg_doorman_pools_avg_wait_time` помечены DEPRECATED и удаляются
+> в 3.10. Вместо них экспортируются Prometheus-гистограммы:
+>
+> - `pg_doorman_pools_query_duration_seconds`
+> - `pg_doorman_pools_transaction_duration_seconds`
+> - `pg_doorman_pools_wait_duration_seconds`
+>
+> Перцентили считаются через `histogram_quantile(q, sum by (le, ...) (rate(_bucket[5m])))`
+> и корректно агрегируются между репликами — pre-aggregated gauges
+> для этого не пригодны (усреднять квантили математически неверно).
+> Bundled rules и dashboard уже мигрированы; обновите свои PromQL.
+
 pg_doorman измеряет задержки запросов и транзакций на пул, используя HDR Histogram. В Prometheus экспортируются четыре перцентиля: p50, p90, p95, p99.
 
 Эта страница объясняет, откуда берутся числа и как их читать.
