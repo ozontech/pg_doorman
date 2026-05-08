@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Admin-команды - Документация PgDoorman</title>
+        <title>Команды администратора - Документация PgDoorman</title>
 
 
         <!-- Custom HTML head -->
@@ -160,14 +160,14 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="admin-команды"><a class="header" href="#admin-команды">Admin-команды</a></h1>
-<p>pg_doorman предоставляет admin-базу, совместимую с протоколом Postgres. Подключайтесь к тому же порту, что и обычные клиенты, но с <code>dbname=pgdoorman</code> и admin-учёткой из конфига:</p>
+                        <h1 id="Команды-администратора"><a class="header" href="#Команды-администратора">Команды администратора</a></h1>
+<p>pg_doorman предоставляет административную базу, совместимую с протоколом Postgres. Подключайтесь к тому же порту, что и обычные клиенты, но с <code>dbname=pgdoorman</code> и административной учётной записью из конфига:</p>
 <pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman
 </code></pre>
 <p>Или через connection string <code>psql</code>:</p>
 <pre><code class="language-bash">psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 </code></pre>
-<p>Admin-команды читаются через <code>SHOW &lt;subcommand&gt;</code> или выполняются голыми глаголами (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
+<p>Команды администратора читаются через <code>SHOW &lt;subcommand&gt;</code> или выполняются голыми глаголами (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
 <h2 id="Команды-show"><a class="header" href="#Команды-show">Команды SHOW</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Команда</th><th>Назначение</th></tr></thead><tbody>
 <tr><td><code>SHOW HELP</code></td><td>Список доступных команд.</td></tr>
@@ -176,7 +176,7 @@
 <tr><td><code>SHOW POOLS</code></td><td>Снимок утилизации пула на пару user×database: idle/active/waiting клиенты, idle/active серверы.</td></tr>
 <tr><td><code>SHOW POOLS_EXTENDED</code></td><td><code>SHOW POOLS</code> плюс полученные/отправленные байты и среднее время ожидания.</td></tr>
 <tr><td><code>SHOW POOLS_MEMORY</code></td><td>Учёт памяти на пул для кэша prepared statements (клиентский и серверный).</td></tr>
-<tr><td><code>SHOW POOL_COORDINATOR</code></td><td>Состояние Pool Coordinator на базу: текущие соединения, использование резерва, число вытеснений. См. <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</td></tr>
+<tr><td><code>SHOW POOL_COORDINATOR</code></td><td>Состояние координатора пулов на базу: текущие соединения, использование резерва, число вытеснений. См. <a href="../concepts/pool-coordinator.html">Координатор пулов</a>.</td></tr>
 <tr><td><code>SHOW POOL_SCALING</code></td><td>Метрики anticipation/burst: in-flight create-операции, ожидания на воротах, anticipation notifies/timeouts.</td></tr>
 <tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td>Закэшированные prepared statements на пул: hash, имя, текст запроса, число попаданий.</td></tr>
 <tr><td><code>SHOW CLIENTS</code></td><td>Активные клиенты: ID, database, user, имя приложения, адрес, состояние TLS, счётчики transaction/query/error, возраст.</td></tr>
@@ -197,7 +197,7 @@
 <tr><td><code>PAUSE</code></td><td>Прекратить принимать новые клиентские запросы. Существующие клиенты завершают свои транзакции.</td></tr>
 <tr><td><code>PAUSE &lt;database&gt;</code></td><td>Поставить на паузу один пул.</td></tr>
 <tr><td><code>RESUME</code> / <code>RESUME &lt;database&gt;</code></td><td>Возобновить после <code>PAUSE</code>.</td></tr>
-<tr><td><code>RECONNECT</code> / <code>RECONNECT &lt;database&gt;</code></td><td>Принудительно пересоздать соединения с бэкендом (закрыть простаивающие, дренировать активные). Новые соединения берутся из PostgreSQL.</td></tr>
+<tr><td><code>RECONNECT</code> / <code>RECONNECT &lt;database&gt;</code></td><td>Принудительно пересоздать соединения с PostgreSQL (закрыть простаивающие, дренировать активные). Новые соединения берутся из PostgreSQL.</td></tr>
 <tr><td><code>RELOAD</code></td><td>То же, что и <code>SIGHUP</code> — перезагрузить конфиг с диска.</td></tr>
 <tr><td><code>SHUTDOWN</code></td><td>То же, что и <code>SIGTERM</code> — плавное завершение работы.</td></tr>
 <tr><td><code>KILL &lt;database&gt;</code></td><td>Сбросить всех клиентов, подключённых к конкретному пулу.</td></tr>
@@ -211,8 +211,8 @@
 mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0       | 0.0
 </code></pre>
 <ul>
-<li><code>cl_waiting &gt; 0</code> означает, что клиенты застряли в ожидании бэкенда. Либо поднимите <code>pool_size</code>, либо проверьте медленные запросы.</li>
-<li><code>sv_idle</code> соответствует свободным бэкендам; <code>sv_active</code> — занятым; <code>sv_used</code> — зарезервированным координатором (см. ниже).</li>
+<li><code>cl_waiting &gt; 0</code> означает, что клиенты застряли в ожидании серверного соединения. Либо поднимите <code>pool_size</code>, либо проверьте медленные запросы.</li>
+<li><code>sv_idle</code> соответствует свободным серверным соединениям; <code>sv_active</code> — занятым; <code>sv_used</code> — зарезервированным координатором (см. ниже).</li>
 <li><code>maxwait</code> — самое долгое текущее ожидание в секундах. Если оно вырастает за <code>query_wait_timeout</code>, клиенты получают ошибки.</li>
 </ul>
 <h3 id="show-pool_coordinator"><a class="header" href="#show-pool_coordinator"><code>SHOW POOL_COORDINATOR</code></a></h3>
@@ -224,7 +224,7 @@ mydb     | 80          | 78      | 16           | 2            | 142       | 18 
 <li><code>reserve_acq</code> высокий: всплески — норма, но возможно вы недооценили размер. Подумайте о повышении <code>max_db_connections</code>, а не о ставке на резерв.</li>
 <li><code>exhaustions</code> ненулевые: даже резерв был полным. Клиенты упёрлись в <code>query_wait_timeout</code>. Поднимите потолок.</li>
 </ul>
-<p>Тонкости настройки см. в <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<p>Тонкости настройки см. в <a href="../concepts/pool-coordinator.html">Координатор пулов</a>.</p>
 <h3 id="show-pool_scaling"><a class="header" href="#show-pool_scaling"><code>SHOW POOL_SCALING</code></a></h3>
 <pre><code>user | database | inflight | creates | gate_waits | burst_gate_budget_ex | antic_notify | antic_timeout | create_fallback | replenish_def
 app  | mydb     | 1        | 12345   | 87         | 3                    | 142          | 8             | 22              | 0
@@ -237,18 +237,18 @@ app  | mydb     | 1        | 12345   | 87         | 3                    | 142  
 </ul>
 <p>См. <a href="../tutorials/pool-pressure.html#%D0%9F%D0%B0%D1%80%D0%B0%D0%BC%D0%B5%D1%82%D1%80%D1%8B-%D1%82%D1%8E%D0%BD%D0%B8%D0%BD%D0%B3%D0%B0">Пул под нагрузкой → Параметры тюнинга</a>.</p>
 <h2 id="Аутентификация"><a class="header" href="#Аутентификация">Аутентификация</a></h2>
-<p>Admin-база использует учётку из <code>general.admin_username</code> и <code>general.admin_password</code>:</p>
+<p>Административная база использует учётку из <code>general.admin_username</code> и <code>general.admin_password</code>:</p>
 <pre><code class="language-yaml">general:
   admin_username: "admin"
   admin_password: "change_me"
 </code></pre>
-<p>Admin-соединения не проходят через правила <code>pg_hba.conf</code> — они идут напрямую в admin-обработчик. Ограничивайте admin-доступ на сетевом уровне (<code>listen_addresses</code>, фаервол) или используйте Unix-сокеты.</p>
+<p>Административные соединения не проходят через правила <code>pg_hba.conf</code> — они идут напрямую в обработчик администратора. Ограничивайте административный доступ на сетевом уровне (<code>listen_addresses</code>, фаервол) или используйте Unix-сокеты.</p>
 <h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
 <ul>
-<li><a href="../reference/prometheus.html">Prometheus reference</a> — те же данные в машинно-читаемом виде.</li>
-<li><a href="../concepts/pool-coordinator.html">Pool Coordinator</a> — что говорит вам <code>SHOW POOL_COORDINATOR</code>.</li>
-<li><a href="../tutorials/pool-pressure.html">Pool Pressure</a> — что говорит вам <code>SHOW POOL_SCALING</code>.</li>
-<li><a href="../tutorials/troubleshooting.html">Troubleshooting</a> — типичные сбои и их вывод в <code>SHOW</code>.</li>
+<li><a href="../reference/prometheus.html">Справочник Prometheus</a> — те же данные в машинно-читаемом виде.</li>
+<li><a href="../concepts/pool-coordinator.html">Координатор пулов</a> — что говорит вам <code>SHOW POOL_COORDINATOR</code>.</li>
+<li><a href="../tutorials/pool-pressure.html">Пул под нагрузкой</a> — что говорит вам <code>SHOW POOL_SCALING</code>.</li>
+<li><a href="../tutorials/troubleshooting.html">Диагностика</a> — типичные сбои и их вывод в <code>SHOW</code>.</li>
 </ul>
 
                     </main>

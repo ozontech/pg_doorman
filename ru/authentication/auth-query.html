@@ -165,11 +165,11 @@
 <h2 id="Два-режима"><a class="header" href="#Два-режима">Два режима</a></h2>
 <p>pg_doorman поддерживает два режима; оба настраиваются в одном блоке <code>auth_query</code>. Выбор зависит от того, задан ли <code>server_user</code>:</p>
 <ul>
-<li><strong>Режим passthrough</strong> (без <code>server_user</code>): каждый аутентифицированный пользователь получает собственный пул бэкенда, аутентифицированный под ним же. Сохраняет идентичность бэкенда на пользователя для <code>current_user</code>, row-level security и audit logs.</li>
-<li><strong>Выделенный режим</strong> (с <code>server_user</code>): все динамические пользователи разделяют один пул бэкенда, аутентифицированный как <code>server_user</code>. Это размен идентичности бэкенда на более высокое переиспользование пула и меньшее число соединений.</li>
+<li><strong>Сквозной режим</strong> (без <code>server_user</code>): каждый аутентифицированный пользователь получает собственный пул серверных соединений, аутентифицированный под ним же. Сохраняет идентичность PostgreSQL для <code>current_user</code>, row-level security и audit logs.</li>
+<li><strong>Выделенный режим</strong> (с <code>server_user</code>): все динамические пользователи разделяют один пул серверных соединений, аутентифицированный как <code>server_user</code>. Это размен идентичности PostgreSQL на более высокое переиспользование пула и меньшее число соединений.</li>
 </ul>
-<p>auth_query в стиле PgBouncer — это выделенный режим. Odyssey поддерживает оба. В pg_doorman режим passthrough — по умолчанию.</p>
-<h2 id="Режим-passthrough"><a class="header" href="#Режим-passthrough">Режим passthrough</a></h2>
+<p>auth_query в стиле PgBouncer — это выделенный режим. Odyssey поддерживает оба. В pg_doorman сквозной режим включён по умолчанию.</p>
+<h2 id="Сквозной-режим"><a class="header" href="#Сквозной-режим">Сквозной режим</a></h2>
 <pre><code class="language-yaml">pools:
   mydb:
     server_host: "127.0.0.1"
@@ -190,9 +190,9 @@
 <li>pg_doorman выполняет запрос с <code>$1 = 'alice'</code> и получает её хеш.</li>
 <li>Кэширует хеш в памяти на <code>cache_ttl</code> секунд.</li>
 <li>Выполняет passthrough-аутентификацию MD5 или SCRAM (смотрите <a href="passthrough.html">Passthrough</a>).</li>
-<li>Открывает соединение с бэкендом, аутентифицированное как <code>alice</code> с тем же хешем.</li>
+<li>Открывает соединение с PostgreSQL, аутентифицированное как <code>alice</code> с тем же хешем.</li>
 </ol>
-<h2 id="Выделенный-режим-dedicated"><a class="header" href="#Выделенный-режим-dedicated">Выделенный режим (dedicated)</a></h2>
+<h2 id="Выделенный-режим"><a class="header" href="#Выделенный-режим">Выделенный режим</a></h2>
 <pre><code class="language-yaml">pools:
   mydb:
     server_host: "127.0.0.1"
@@ -212,10 +212,10 @@
 <p>Установка <code>server_user</code> переключает режим. Теперь:</p>
 <ol>
 <li>Клиент аутентифицируется как <code>alice</code> против хеша, возвращённого запросом.</li>
-<li>Пул бэкенда аутентифицирован как <code>app</code> (значение <code>server_user</code>) и общий для всех динамических пользователей.</li>
+<li>Пул серверных соединений аутентифицирован как <code>app</code> (значение <code>server_user</code>) и общий для всех динамических пользователей.</li>
 <li><code>current_user</code> в PostgreSQL всегда будет <code>app</code>, независимо от того, какой клиент подключился.</li>
 </ol>
-<p>Используйте этот режим, когда у вас много пользователей (тысячи) и пулы бэкенда на каждого исчерпали бы слоты соединений PostgreSQL.</p>
+<p>Используйте этот режим, когда у вас много пользователей (тысячи) и отдельные серверные пулы на каждого исчерпали бы слоты соединений PostgreSQL.</p>
 <h2 id="Рекомендуемая-настройка-postgresql"><a class="header" href="#Рекомендуемая-настройка-postgresql">Рекомендуемая настройка PostgreSQL</a></h2>
 <p>Не используйте суперпользователя для lookup. Создайте отдельную функцию с <code>SECURITY DEFINER</code>:</p>
 <pre><code class="language-sql">CREATE OR REPLACE FUNCTION pg_doorman_lookup(uname text)
@@ -245,11 +245,11 @@ GRANT EXECUTE ON FUNCTION pg_doorman_lookup(text) TO auth_lookup;
 </div>
 <p>Длительности — строки в кавычках: <code>"1h"</code>, <code>"30m"</code>, <code>"300s"</code>. Голое целое число интерпретируется как миллисекунды — <code>cache_ttl: 3600</code> будет кэшировать на 3.6 секунды, не на час.</p>
 <p>Кэш — пер-пуловый, в памяти, сбрасывается при <code>RELOAD</code>. После ротации пароля пользователя сделайте перезапуск или <code>RELOAD</code>.</p>
-<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<h2 id="Мониторинг"><a class="header" href="#Мониторинг">Мониторинг</a></h2>
 <p><code>SHOW AUTH_QUERY</code> показывает статистику по базам:</p>
 <pre><code>database | cache_entries | cache_hits | cache_misses | cache_refetches | rate_limited | auth_success | auth_failure | executor_queries | executor_errors
 </code></pre>
-<p>Метрики Prometheus: <code>pg_doorman_auth_query_cache</code>, <code>pg_doorman_auth_query_auth</code>, <code>pg_doorman_auth_query_executor</code>, <code>pg_doorman_auth_query_dynamic_pools</code>. Смотрите <a href="../observability/admin-commands.html">Admin commands</a>.</p>
+<p>Метрики Prometheus: <code>pg_doorman_auth_query_cache</code>, <code>pg_doorman_auth_query_auth</code>, <code>pg_doorman_auth_query_executor</code>, <code>pg_doorman_auth_query_dynamic_pools</code>. Смотрите <a href="../observability/admin-commands.html">команды администратора</a>.</p>
 
                     </main>
 

@@ -172,7 +172,7 @@
 <a class="admonition-anchor-link" href="#admonition-Встроенная-диагностическая-консоль"></a>
 </div>
 <div>
-<p>PgDoorman может отдавать web-консоль на том же адресе и порту, что и <code>/metrics</code>. Это локальная панель для быстрой диагностики процесса и пулов, а не замена долгосрочному мониторингу в Prometheus/Grafana.</p>
+<p>PgDoorman может отдавать веб-консоль на том же адресе и порту, что и <code>/metrics</code>. Это локальная панель для быстрой диагностики процесса и пулов, а не замена долгосрочному мониторингу в Prometheus/Grafana.</p>
 <p>На одном экране собраны основные сигналы для разбора инцидента: насыщение пулов, p95/p99 задержки запросов, транзакций и ожидания соединения, ошибки по SQLSTATE, застрявшие запросы, состояние кеша prepared statements, query interner, хвост лога, CPU по потокам tokio-worker и память процесса (<code>jemalloc</code>, <code>/proc/self/status</code>, код/библиотеки, стеки, swap). Таблицы Pools, Clients, Apps и Caches сортируются и фильтруются; для приложений и клиентов показываются текущие QPS и TPS.</p>
 <p>Из консоли можно выполнить Pause, Resume, Reconnect и Reload для одного пула или всего инстанса. Остальные экраны доступны только для чтения. UI включается только при <code>[web].ui = true</code> и непустом <code>general.admin_password</code>, отличном от <code>admin</code>; иначе pg_doorman оставляет только <code>/metrics</code> и пишет <code>WARN</code> в лог.</p>
 <p><a href="guides/web-ui.html">Подробнее →</a></p>
@@ -186,8 +186,8 @@
 <a class="admonition-anchor-link" href="#admonition-Координатор-пулов"></a>
 </div>
 <div>
-<p>PgDoorman ограничивает суммарное число backend-соединений к одной базе через <code>max_db_connections</code>. Если лимит уже выбран, координатор может освободить idle-соединение у пула с запасом и отдать слот клиенту, который ждёт соединение.</p>
-<p>Reserve pool сглаживает короткие всплески, а <code>min_guaranteed_pool_size</code> защищает важные нагрузки от вытеснения. В PgBouncer <code>max_db_connections</code> задаёт общий лимит, но не перераспределяет уже открытые idle-соединения между пулами; в Odyssey прямого аналога нет.</p>
+<p>PgDoorman ограничивает суммарное число серверных соединений к одной базе через <code>max_db_connections</code>. Если лимит уже выбран, координатор может освободить свободное соединение у пула с запасом и отдать слот клиенту, который ждёт соединение.</p>
+<p>Резервный пул сглаживает короткие всплески, а <code>min_guaranteed_pool_size</code> защищает важные нагрузки от вытеснения. В PgBouncer <code>max_db_connections</code> задаёт общий лимит, но не перераспределяет уже открытые свободные соединения между пулами; в Odyssey прямого аналога нет.</p>
 <p><a href="concepts/pool-coordinator.html">Подробнее →</a></p>
 </div>
 </div>
@@ -199,8 +199,8 @@
 <a class="admonition-anchor-link" href="#admonition-fallback-через-patroni"></a>
 </div>
 <div>
-<p>Если PgDoorman запущен рядом с PostgreSQL и локальный backend пропадает во время Patroni switchover, пулер может временно направлять новые backend-соединения на другой живой узел кластера. Для выбора узла используется Patroni REST API (<code>GET /cluster</code>), с приоритетом <code>sync_standby</code> перед <code>replica</code>.</p>
-<p>Локальный backend уходит в cooldown, а fallback-соединения получают короткий lifetime. Когда локальный узел снова доступен, пул возвращается на него без отдельного HAProxy или <code>consul-template</code> перед пулером. Настройки <code>patroni_api_urls</code> и <code>fallback_cooldown</code> задаются в <code>[general]</code>.</p>
+<p>Если PgDoorman запущен рядом с PostgreSQL и локальный сервер пропадает во время Patroni switchover, пулер может временно направлять новые серверные соединения на другой живой узел кластера. Для выбора узла используется Patroni REST API (<code>GET /cluster</code>), с приоритетом <code>sync_standby</code> перед <code>replica</code>.</p>
+<p>Локальный сервер уходит в период охлаждения, а fallback-соединения получают короткий lifetime. Когда локальный узел снова доступен, пул возвращается на него без отдельного HAProxy или <code>consul-template</code> перед пулером. Настройки <code>patroni_api_urls</code> и <code>fallback_cooldown</code> задаются в <code>[general]</code>.</p>
 <p><a href="tutorials/patroni-assisted-fallback.html">Подробнее →</a></p>
 </div>
 </div>
@@ -212,45 +212,46 @@
 <a class="admonition-anchor-link" href="#admonition-Плавное-обновление-бинаря"></a>
 </div>
 <div>
-<p>PgDoorman поддерживает переход на новый бинарь по <code>SIGUSR2</code>: новый процесс начинает принимать соединения, а старый передаёт ему idle-клиентов без повторного TCP-подключения. Это снижает всплеск backend <code>auth</code>/SCRAM и позволяет обновлять пулер без полной остановки трафика.</p>
-<p>Idle-сессия переезжает как тот же клиентский сокет через <code>SCM_RIGHTS</code>, вместе с ключами отмены запросов и состоянием prepared-statement cache. Клиенты внутри транзакции остаются на старом процессе до завершения транзакции и мигрируют, когда снова становятся idle. Перенос TLS-состояния OpenSSL доступен только в Linux-сборке с фичей <code>tls-migration</code>; по умолчанию она выключена.</p>
-<p>У PgBouncer (<code>-R</code>, устарел с 1.20, или rolling restart через <code>so_reuseport</code>) и Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) перезапуск без остановки приёма в основном переводит новые подключения на новый процесс; старые сессии остаются на прежнем до отключения клиентов. Отличие PgDoorman здесь - перенос idle-сессий и подготовленного состояния между процессами.</p>
+<p>PgDoorman поддерживает переход на новый бинарь по <code>SIGUSR2</code>: новый процесс начинает принимать соединения, а старый передаёт ему свободных клиентов без повторного TCP-подключения. Это снижает всплеск <code>auth</code>/SCRAM к PostgreSQL и позволяет обновлять пулер без полной остановки трафика.</p>
+<p>Свободная сессия переезжает как тот же клиентский сокет через <code>SCM_RIGHTS</code>, вместе с ключами отмены запросов и состоянием кеша prepared statements. Клиенты внутри транзакции остаются на старом процессе до завершения транзакции и мигрируют, когда снова становятся свободными. Перенос TLS-состояния OpenSSL доступен только в Linux-сборке с фичей <code>tls-migration</code>; по умолчанию она выключена.</p>
+<p>У PgBouncer (<code>-R</code>, устарел с 1.20, или rolling restart через <code>so_reuseport</code>) и Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) перезапуск без остановки приёма в основном переводит новые подключения на новый процесс; старые сессии остаются на прежнем до отключения клиентов. Отличие PgDoorman здесь - перенос свободных сессий и подготовленного состояния между процессами.</p>
 <p><a href="tutorials/binary-upgrade.html">Подробнее →</a></p>
 </div>
 </div>
-<div id="admonition-Кеш-анонимных-prepared-statements" class="admonition admonish-success" role="note" aria-labelledby="admonition-Кеш-анонимных-prepared-statements-title">
+<div id="admonition-Кеш-parse-для-анонимных-prepared-statements" class="admonition admonish-success" role="note" aria-labelledby="admonition-Кеш-parse-для-анонимных-prepared-statements-title">
 <div class="admonition-title">
-<div id="admonition-Кеш-анонимных-prepared-statements-title">
-<p>Кеш анонимных prepared statements</p>
+<div id="admonition-Кеш-parse-для-анонимных-prepared-statements-title">
+<p>Кеш Parse для анонимных prepared statements</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-Кеш-анонимных-prepared-statements"></a>
+<a class="admonition-anchor-link" href="#admonition-Кеш-parse-для-анонимных-prepared-statements"></a>
 </div>
 <div>
-<p>В extended protocol многие драйверы отправляют <code>Parse</code> с пустым именем для коротких параметризованных запросов. Для пулера в transaction mode это неудобный случай: unnamed statement привязан к backend-сессии и плохо переживает переход клиента между backend-соединениями.</p>
-<p>PgDoorman назначает такому <code>Parse</code> служебное имя вида <code>DOORMAN_&lt;N&gt;</code> на стороне PostgreSQL и хранит соответствие в пуле. PostgreSQL видит именованный prepared statement, а последующие <code>Bind</code> для того же запроса могут использовать уже подготовленное состояние. Приложению не нужно переводить драйвер на явные имена statement.</p>
+<p>В extended protocol многие драйверы отправляют <code>Parse</code> с пустым именем для коротких параметризованных запросов. Без подмены такой запрос на горячем пути снова и снова платит CPU планировщика PostgreSQL и повторный <code>Parse</code> на бэкенде.</p>
+<p>PgDoorman назначает такому <code>Parse</code> служебное имя вида <code>DOORMAN_&lt;N&gt;</code> на стороне PostgreSQL и хранит соответствие в пуле. PostgreSQL видит именованный prepared statement, а последующие <code>Bind</code> для той же формы запроса могут использовать уже подготовленное состояние. Выигрыш основной: меньше работы планировщика и меньше повторных <code>Parse</code> на бэкенде для повторяющихся OLTP-запросов. Приложению не нужно переводить драйвер на явные имена statement.</p>
 <p>PgBouncer 1.21+ и Odyssey умеют работать с именованными prepared statements в transaction mode. PgDoorman дополнительно обрабатывает безымянные prepared statements, которые часто встречаются у драйверов по умолчанию.</p>
-<p>Кеш имеет ограничения и жизненный цикл. Анонимные записи истекают по таймауту бездействия, именованные освобождаются, когда на них больше нет ссылок. <code>SHOW INTERNER</code> и метрики Prometheus показывают размер кеша, число записей и вытеснения, чтобы рост динамического SQL был виден до проблем с памятью.</p>
+<p>Чтобы оптимизация производительности не превращалась в неконтролируемую память, кеш имеет ограничения и жизненный цикл. Анонимные записи истекают по таймауту бездействия, именованные освобождаются, когда на них больше нет ссылок. <code>SHOW INTERNER</code> и метрики Prometheus показывают размер кеша, число записей, попадания, промахи и вытеснения.</p>
 <p><a href="tutorials/prepared-statements.html">Подробнее →</a></p>
 </div>
 </div>
 <h2 id="Почему-pgdoorman"><a class="header" href="#Почему-pgdoorman">Почему PgDoorman</a></h2>
 <ul>
-<li><strong>Prepared statements без ручных имен.</strong> PgDoorman может переиспользовать подготовленное состояние в пределах пула, включая безымянный <code>Parse</code>, который многие драйверы отправляют для коротких параметризованных запросов. Размер кеша, записи и вытеснения видны через <code>SHOW INTERNER</code> и метрики.</li>
-<li><strong>Один пул для всех рабочих потоков.</strong> Рабочие потоки используют общий набор backend-соединений. При масштабировании PgBouncer несколькими процессами за <code>so_reuseport</code> каждый процесс держит свой пул, поэтому свободные соединения могут распределяться неравномерно.</li>
-<li><strong>Контроль всплесков при создании соединений.</strong> Если много клиентов одновременно ждут несколько свободных backend-соединений, PgDoorman ограничивает параллельное создание новых соединений (<code>scaling_max_parallel_creates</code>) и передаёт вернувшийся backend самому старому ожидающему клиенту.</li>
-<li><strong>Предсказуемая задержка выдачи соединения.</strong> Ожидающие клиенты обслуживаются по FIFO. PgDoorman заранее заменяет backend-соединения перед истечением <code>server_lifetime</code>, чтобы ротация поколения не превращалась во всплеск задержки при выдаче соединения.</li>
-<li><strong>Быстрое обнаружение обрыва backend.</strong> Если backend пропадает во время транзакции, PgDoorman отслеживает это параллельно чтению клиента и возвращает SQLSTATE <code>08006</code>, не дожидаясь системного TCP keepalive.</li>
+<li><strong>Кеш <code>Parse</code> на горячих запросах.</strong> PgDoorman переиспользует подготовленное состояние в пределах пула, включая безымянный <code>Parse</code>, который многие драйверы отправляют для коротких параметризованных запросов. Это снижает CPU планировщика PostgreSQL на повторяющихся OLTP-запросах; размер кеша, попадания, промахи и вытеснения видны через <code>SHOW INTERNER</code> и метрики.</li>
+<li><strong>Один пул для всех рабочих потоков.</strong> Рабочие потоки используют общий набор серверных соединений. При масштабировании PgBouncer несколькими процессами за <code>so_reuseport</code> каждый процесс держит свой пул, поэтому свободные соединения могут распределяться неравномерно.</li>
+<li><strong>Контроль всплесков при создании соединений.</strong> Если много клиентов одновременно ждут несколько свободных серверных соединений, PgDoorman ограничивает параллельное создание новых соединений (<code>scaling_max_parallel_creates</code>) и передаёт вернувшееся соединение самому старому ожидающему клиенту.</li>
+<li><strong>Предсказуемая задержка выдачи соединения.</strong> Ожидающие клиенты обслуживаются по FIFO. PgDoorman заранее заменяет серверные соединения перед истечением <code>server_lifetime</code>, чтобы ротация поколения не превращалась во всплеск задержки при выдаче соединения.</li>
+<li><strong>Быстрое обнаружение обрыва PostgreSQL.</strong> Если серверное соединение пропадает во время транзакции, PgDoorman отслеживает это параллельно чтению клиента и возвращает SQLSTATE <code>08006</code>, не дожидаясь системного TCP keepalive.</li>
 <li><strong>Операционные инструменты в бинаре.</strong> Конфиг пишется в YAML или TOML, длительности задаются как <code>30s</code> или <code>5m</code>, <code>pg_doorman generate --host ...</code> собирает стартовый конфиг из существующего PostgreSQL, <code>pg_doorman -t</code> проверяет конфиг без запуска сервера, а <code>/metrics</code> доступен без отдельного экспортёра.</li>
 </ul>
 <h2 id="Сравнение"><a class="header" href="#Сравнение">Сравнение</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Функция</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>Общий пул соединений для всех рабочих потоков</td><td style="text-align: center">Да</td><td style="text-align: center">Нет, один рабочий поток</td><td style="text-align: center">Рабочие процессы с отдельными пулами</td></tr>
 <tr><td>Prepared statements в transaction pooling</td><td style="text-align: center">Да</td><td style="text-align: center">Да, с версии 1.21</td><td style="text-align: center">Да, через <code>pool_reserve_prepared_statement</code></td></tr>
-<tr><td>Общий лимит backend-соединений к базе</td><td style="text-align: center">Да, с вытеснением idle-соединений</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Кеш анонимного <code>Parse</code> для горячих параметризованных запросов</td><td style="text-align: center">Да, переиспользуется между клиентами пула</td><td style="text-align: center">Нет, только именованные</td><td style="text-align: center">Нет, только именованные</td></tr>
+<tr><td>Общий лимит серверных соединений к базе</td><td style="text-align: center">Да, с вытеснением свободных соединений</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Переключение на резервный узел через Patroni</td><td style="text-align: center">Да, встроено</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Опережающая замена стареющих backend-соединений</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Обрыв backend во время транзакции</td><td style="text-align: center">Да, возвращает <code>08006</code> без ожидания TCP keepalive</td><td style="text-align: center">Нет, ждёт TCP keepalive</td><td style="text-align: center">Нет, ждёт TCP keepalive</td></tr>
-<tr><td>Обновление бинаря с переносом idle-сессий</td><td style="text-align: center">Да, через <code>SCM_RIGHTS</code>; TLS-состояние при сборке <code>tls-migration</code></td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td></tr>
+<tr><td>Опережающая замена стареющих серверных соединений</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Обрыв серверного соединения во время транзакции</td><td style="text-align: center">Да, возвращает <code>08006</code> без ожидания TCP keepalive</td><td style="text-align: center">Нет, ждёт TCP keepalive</td><td style="text-align: center">Нет, ждёт TCP keepalive</td></tr>
+<tr><td>Обновление бинаря с переносом свободных сессий</td><td style="text-align: center">Да, через <code>SCM_RIGHTS</code>; TLS-состояние при сборке <code>tls-migration</code></td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td></tr>
 <tr><td>TLS-соединение от пулера к PostgreSQL</td><td style="text-align: center">Да, 5 режимов и reload по <code>SIGHUP</code></td><td style="text-align: center">Да, <code>server_tls_*</code> и reload по <code>RELOAD</code></td><td style="text-align: center">Нет</td></tr>
 <tr><td>SCRAM passthrough без открытого пароля в конфиге</td><td style="text-align: center">Да, извлекает <code>ClientKey</code> из <code>SCRAM proof</code></td><td style="text-align: center">Да, зашифрованный SCRAM secret через <code>auth_query</code>/<code>userlist.txt</code>, с 1.14</td><td style="text-align: center">Да</td></tr>
 <tr><td>JWT-аутентификация (RSA-SHA256)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>

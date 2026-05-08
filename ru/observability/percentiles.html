@@ -226,12 +226,12 @@ wait avg:   0.05ms
 xacts:      p50=215   p90=1850  p95=2400  p99=4900
 wait avg:   180ms
 </code></pre>
-<p>С задержкой запросов всё в порядке — PostgreSQL здоров. Но транзакции медленные, а время ожидания 180 мс. Клиенты выстраиваются в очередь за бэкендами. Проверьте <code>SHOW POOLS</code> на <code>cl_waiting &gt; 0</code> и <code>SHOW POOL_COORDINATOR</code> на вытеснения или исчерпания. Вероятное лечение: поднять <code>pool_size</code> или <code>max_db_connections</code>. См. <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<p>С задержкой запросов всё в порядке — PostgreSQL здоров. Но транзакции медленные, а время ожидания 180 мс. Клиенты выстраиваются в очередь за серверными соединениями. Проверьте <code>SHOW POOLS</code> на <code>cl_waiting &gt; 0</code> и <code>SHOW POOL_COORDINATOR</code> на вытеснения или исчерпания. Вероятное лечение: поднять <code>pool_size</code> или <code>max_db_connections</code>. См. <a href="../concepts/pool-coordinator.html">Координатор пулов</a>.</p>
 <h3 id="Один-медленный-пользователь"><a class="header" href="#Один-медленный-пользователь">Один медленный пользователь</a></h3>
 <pre><code>user "fast_app":   queries p99=12   xacts p99=35
 user "report_job": queries p99=4500 xacts p99=8000
 </code></pre>
-<p><code>report_job</code> тянет общую базу вниз. С включённым Pool Coordinator медленные транзакции <code>report_job</code> приводят к тому, что под давлением он первым отдаёт свои соединения (вытеснение смещено по p95-времени транзакций). Без Coordinator выделите <code>report_job</code> его собственный <code>min_guaranteed_pool_size</code>, чтобы он не голодил <code>fast_app</code>.</p>
+<p><code>report_job</code> тянет общую базу вниз. С включённым координатором пулов медленные транзакции <code>report_job</code> приводят к тому, что под давлением он первым отдаёт свои соединения (вытеснение смещено по p95-времени транзакций). Без координатора выделите <code>report_job</code> его собственный <code>min_guaranteed_pool_size</code>, чтобы он не голодил <code>fast_app</code>.</p>
 <h2 id="grafana"><a class="header" href="#grafana">Grafana</a></h2>
 <p>Пример запроса задержки запросов по перцентилю:</p>
 <pre><code class="language-promql">pg_doorman_pools_queries_percentile{database="mydb"}

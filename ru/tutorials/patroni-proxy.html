@@ -197,7 +197,7 @@
 <li><strong>pg_doorman</strong> живёт на хостах PostgreSQL. Делает пулинг, ведёт кеш prepared statements и парсит протокол — работа, которой выгодна низкая задержка до локального сокета.</li>
 <li><strong>patroni_proxy</strong> живёт рядом с приложением. Маршрутизирует TCP, владеет role-aware failover-решением и не лезет в дела пулера.</li>
 </ul>
-<p>Если поток приложения небольшой и одного pg_doorman на кластер достаточно, схема сжимается до одного pg_doorman с включённым <a href="patroni-assisted-fallback.html">Patroni-assisted fallback</a>, а <code>patroni_proxy</code> можно вообще не разворачивать.</p>
+<p>Если поток приложения небольшой и одного pg_doorman на кластер достаточно, схема сжимается до одного pg_doorman с включённым <a href="patroni-assisted-fallback.html">fallback через Patroni</a>, а <code>patroni_proxy</code> можно вообще не разворачивать.</p>
 <h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
 <p>Пример <code>patroni_proxy.yaml</code>:</p>
 <pre><code class="language-yaml"># Интервал обновления кластера в секундах (по умолчанию: 3)

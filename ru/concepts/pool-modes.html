@@ -162,7 +162,7 @@
                     <main>
                         <h1 id="Режимы-пула"><a class="header" href="#Режимы-пула">Режимы пула</a></h1>
 <p>pg_doorman поддерживает два режима пула: <code>transaction</code> и <code>session</code>. Режим задаётся для пула, при необходимости переопределяется для конкретного пользователя.</p>
-<p>Режима <code>statement</code> нет. В statement-пулинге backend ротируется после каждого оператора — это вынуждает клиентов отказаться от мульти-statement транзакций и полностью ломает протокол prepared statements. Все оптимизации pg_doorman (кеш prepared statements, direct handoff, строгий FIFO-планировщик) рассчитаны на транзакционный режим. PgBouncer оставляет <code>statement</code> для обратной совместимости; Odyssey его не реализует.</p>
+<p>Режима <code>statement</code> нет. В statement-пулинге серверное соединение ротируется после каждого оператора — это вынуждает клиентов отказаться от мульти-statement транзакций и полностью ломает протокол prepared statements. Все оптимизации pg_doorman (кеш prepared statements, прямая передача, строгий FIFO-планировщик) рассчитаны на транзакционный режим. PgBouncer оставляет <code>statement</code> для обратной совместимости; Odyssey его не реализует.</p>
 <h2 id="Транзакционный-режим-рекомендуется"><a class="header" href="#Транзакционный-режим-рекомендуется">Транзакционный режим (рекомендуется)</a></h2>
 <pre><code class="language-yaml">pools:
   mydb:
@@ -233,7 +233,7 @@
 <ul>
 <li>Параметр <code>pool_mode</code>: <a href="../reference/pool.html#pool_mode">Настройки пула</a>.</li>
 <li><code>cleanup_server_connections</code>: <a href="../reference/pool.html#cleanup_server_connections">Настройки пула</a>.</li>
-<li>Размер пула: <a href="pool-coordinator.html">Pool Coordinator</a>, <a href="../tutorials/pool-pressure.html">Пул под нагрузкой</a>.</li>
+<li>Размер пула: <a href="pool-coordinator.html">Координатор пулов</a>, <a href="../tutorials/pool-pressure.html">Пул под нагрузкой</a>.</li>
 </ul>
 
                     </main>

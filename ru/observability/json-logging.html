@@ -225,7 +225,7 @@ StandardError=journal
 <p><code>journalctl -u pg_doorman -o json</code> возвращает JSON обратно.</p>
 <h2 id="Оговорки"><a class="header" href="#Оговорки">Оговорки</a></h2>
 <ul>
-<li>Для production выбирайте <code>text</code> (терминалы, syslog) или <code>structured</code> (log shippers). <code>debug</code> зарезервирован под будущее использование и сейчас равен <code>text</code>.</li>
+<li>Для промышленной эксплуатации выбирайте <code>text</code> (терминалы, syslog) или <code>structured</code> (log shippers). <code>debug</code> зарезервирован под будущее использование и сейчас равен <code>text</code>.</li>
 <li><code>file</code> и <code>line</code> берутся из мест вызова макроса <code>log</code>. Они доступны в release-сборках, потому что pg_doorman поставляется с включённой отладочной информацией.</li>
 <li>Логгер не включает trace-идентификаторы и корреляцию запросов. Для трассировки на запрос используйте <code>SHOW CLIENTS</code> и Prometheus-метрики.</li>
 </ul>
@@ -233,7 +233,7 @@ StandardError=journal
 <ul>
 <li><a href="../reference/prometheus.html">Prometheus reference</a> — для машинно-читаемых метрик.</li>
 <li><a href="percentiles.html">Latency Percentiles</a> — для сигналов о производительности.</li>
-<li><a href="admin-commands.html">Admin Commands</a> — для интроспекции в рантайме.</li>
+<li><a href="admin-commands.html">Команды администратора</a> — для интроспекции в рантайме.</li>
 </ul>
 
                     </main>

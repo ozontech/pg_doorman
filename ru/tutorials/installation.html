@@ -161,7 +161,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="Установка-pgdoorman"><a class="header" href="#Установка-pgdoorman">Установка PgDoorman</a></h1>
-<p>PgDoorman работает на Linux и macOS. Для production рекомендуем собирать самим — так вы контролируете версию Rust, целевую платформу и зависимости. Также доступны готовые пакеты из репозиториев и статические бинарники. Docker — только для тестов.</p>
+<p>PgDoorman работает на Linux и macOS. Для промышленной эксплуатации рекомендуем собирать самим — так вы контролируете версию Rust, целевую платформу и зависимости. Также доступны готовые пакеты из репозиториев и статические бинарники. Docker — только для тестов.</p>
 <h2 id="Системные-требования"><a class="header" href="#Системные-требования">Системные требования</a></h2>
 <ul>
 <li>Linux (рекомендуется) или macOS</li>
@@ -177,9 +177,9 @@ cargo build --release
 sudo install -m 0755 target/release/pg_doorman /usr/local/bin/pg_doorman
 </code></pre>
 <p><code>cargo build --release</code> собирает оптимизированный бинарник в <code>target/release/pg_doorman</code>. Требования к окружению и процесс разработки описаны в <a href="./contributing.html">Участие в проекте</a>.</p>
-<h3 id="cargo-features"><a class="header" href="#cargo-features">Cargo features</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>По умолчанию</th><th>Эффект</th></tr></thead><tbody>
-<tr><td><code>tls-migration</code></td><td>выкл</td><td>Vendored OpenSSL 3.5.5 с патчем, позволяющим TLS-клиентам пережить обновление бинарника. <strong>Нужен для zero-downtime перезапуска TLS-клиентов.</strong></td></tr>
+<h3 id="Фичи-cargo"><a class="header" href="#Фичи-cargo">Фичи Cargo</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Фича</th><th>По умолчанию</th><th>Эффект</th></tr></thead><tbody>
+<tr><td><code>tls-migration</code></td><td>выкл</td><td>Vendored OpenSSL 3.5.5 с патчем, позволяющим TLS-клиентам пережить обновление бинарника. <strong>Нужен для обновления TLS-клиентов без простоя.</strong></td></tr>
 <tr><td><code>pam</code></td><td>выкл</td><td>Поддержка аутентификации PAM (Linux).</td></tr>
 </tbody></table>
 </div>
@@ -194,12 +194,12 @@ sudo install -m 0755 target/release/pg_doorman /usr/local/bin/pg_doorman
 <li>Утилиты <code>perl</code> и <code>patch</code> в <code>PATH</code>.</li>
 <li>Около 5 минут дополнительного времени сборки на компиляцию OpenSSL.</li>
 </ul>
-<p><strong>Офлайн-сборка (air-gapped среды):</strong></p>
+<p><strong>Сборка без доступа к интернету:</strong></p>
 <pre><code class="language-bash">curl -fLO https://github.com/openssl/openssl/releases/download/openssl-3.5.5/openssl-3.5.5.tar.gz
 OPENSSL_SOURCE_TARBALL=$(pwd)/openssl-3.5.5.tar.gz \
   cargo build --release --features tls-migration
 </code></pre>
-<p>Старый и новый процесс должны использовать одни и те же <code>tls_certificate</code> и <code>tls_private_key</code>. Полное описание upgrade-процесса, мониторинг и диагностика — в <a href="./binary-upgrade.html#tls-migration">Graceful Binary Upgrade → TLS migration</a>.</p>
+<p>Старый и новый процесс должны использовать одни и те же <code>tls_certificate</code> и <code>tls_private_key</code>. Полное описание процесса обновления, мониторинг и диагностика — в <a href="./binary-upgrade.html#%D0%9C%D0%B8%D0%B3%D1%80%D0%B0%D1%86%D0%B8%D1%8F-TLS-%D1%81%D0%B5%D1%81%D1%81%D0%B8%D0%B9">плавном обновлении бинаря</a>.</p>
 <p>Для упаковки в deb/rpm смотрите каталоги <code>debian/</code> и <code>pkg/</code> в репозитории. Пример <code>Dockerfile.ubuntu22-tls</code> собирает образ с поддержкой TLS migration на Ubuntu 22.04.</p>
 <h2 id="Пакеты-из-репозиториев"><a class="header" href="#Пакеты-из-репозиториев">Пакеты из репозиториев</a></h2>
 <p>Готовые deb- и rpm-пакеты публикуются с теми же релизными тегами. Используйте их, когда сборка из исходников нежелательна.</p>
@@ -239,7 +239,7 @@ sudo mv pg_doorman /usr/local/bin/
 </code></pre>
 <p>Пропуск checksum-шага означает доверие сетевому пути между вами и <code>objects.githubusercontent.com</code>. Не делайте так.</p>
 <h2 id="docker-только-для-тестов"><a class="header" href="#docker-только-для-тестов">Docker (только для тестов)</a></h2>
-<p>Docker поддерживается для разработки, CI и быстрых демо. Для production не рекомендуется — упаковка и управление жизненным циклом проще через пакеты из репозиториев выше.</p>
+<p>Docker поддерживается для разработки, CI и быстрых демо. Для промышленной эксплуатации не рекомендуется — упаковка и управление жизненным циклом проще через пакеты из репозиториев выше.</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
   ghcr.io/ozontech/pg_doorman
@@ -256,7 +256,7 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c "SHOW VERSION;"
 <li><a href="./basic-usage.html">Базовое использование</a> — первый конфиг, admin-консоль, мониторинг.</li>
 <li><a href="../authentication/overview.html">Аутентификация</a> — выбор подходящего метода.</li>
 <li><a href="../operations/signals.html">Сигналы и перезагрузка</a> — сигналы, reload, интеграция с systemd.</li>
-<li><a href="./binary-upgrade.html">Graceful Binary Upgrade</a> — замена бинарника без потери клиентов.</li>
+<li><a href="./binary-upgrade.html">Плавное обновление бинаря</a> — замена бинарника без потери клиентов.</li>
 </ul>
 
                     </main>

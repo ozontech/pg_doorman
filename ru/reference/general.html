@@ -185,7 +185,7 @@ pools:
         password: "mypassword"
         pool_size: 40
 </code></pre>
-<h3 id="Пример-конфигурации-toml-legacy"><a class="header" href="#Пример-конфигурации-toml-legacy">Пример конфигурации TOML (legacy)</a></h3>
+<h3 id="Пример-конфигурации-toml-для-совместимости"><a class="header" href="#Пример-конфигурации-toml-для-совместимости">Пример конфигурации TOML (для совместимости)</a></h3>
 <pre><code class="language-toml">[general]
 host = "0.0.0.0"
 port = 6432
@@ -383,7 +383,7 @@ pg_doorman generate --no-comments --output config.yaml
 <p>Максимальный возраст серверного соединения. Когда соединение превышает этот возраст и переходит
 в idle, оно закрывается на ближайшем цикле retain. Активные транзакции не прерываются.
 Применяется ко всем соединениям, включая прогретые, которые никогда не выдавались клиенту.
-Каждое соединение получает джиттер ±20%, чтобы избежать thundering herd. Установите <code>0</code>, чтобы отключить.
+Каждое соединение получает джиттер ±20%, чтобы избежать лавины одновременных закрытий. Установите <code>0</code>, чтобы отключить.
 Аналог <code>server_lifetime</code> из PgBouncer.</p>
 <p>По умолчанию: <code>1200000 (20 min)</code>.</p>
 <h3 id="retain_connections_time"><a class="header" href="#retain_connections_time">retain_connections_time</a></h3>
@@ -406,7 +406,7 @@ pg_doorman generate --no-comments --output config.yaml
 <p>Когда соединение простояло в пуле дольше этого таймаута, pg_doorman отправляет минимальный запрос (<code>;</code>),
 чтобы проверить, что соединение живо, прежде чем выдать его клиенту. Если проверка не проходит,
 соединение отбрасывается и берётся новое.</p>
-<p>Установите <code>0</code>, чтобы отключить проверку (не рекомендуется для production-окружений с возможной
+<p>Установите <code>0</code>, чтобы отключить проверку (не рекомендуется для промышленной эксплуатации с возможной
 сетевой нестабильностью или рестартами PostgreSQL).</p>
 <p>По умолчанию: <code>60s (60 seconds)</code>.</p>
 <h3 id="server_round_robin"><a class="header" href="#server_round_robin">server_round_robin</a></h3>
@@ -467,7 +467,7 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 Кеш хранит соответствие между хешем запроса и переписанным именем prepared statement.</p>
 <p>Полная картина того, как этот параметр взаимодействует с <code>server_prepared_statements_cache_size</code>,
 <code>client_anonymous_prepared_cache_size</code> и query interner — в туториале
-<a href="../tutorials/prepared-statements.html">Anonymous Prepared Statement Caching</a>.</p>
+<a href="../tutorials/prepared-statements.html">Кеш Parse для анонимных prepared statements</a>.</p>
 <p>По умолчанию: <code>8192</code>.</p>
 <h3 id="server_prepared_statements_cache_size"><a class="header" href="#server_prepared_statements_cache_size">server_prepared_statements_cache_size</a></h3>
 <p>Размер LRU <code>DOORMAN_&lt;N&gt;</code> на каждое серверное соединение, независимо от кеша уровня пула.
@@ -508,7 +508,7 @@ config reload не меняет частоту проходов работающ
 Когда анонимная запись простаивает дольше указанных секунд, она помечается и вытесняется
 на следующем проходе, который всё ещё видит её бездействующей.</p>
 <p>Значение <code>0</code> полностью отключает TTL: анонимные записи живут до перезапуска процесса.
-Это соответствует поведению до 3.7 и нужно для legacy-развёртываний, которые опираются
+Это соответствует поведению до 3.7 и нужно для старых развёртываний, которые опираются
 на кросс-batch unnamed prepared statements; в остальных случаях оставляйте значение по умолчанию.</p>
 <p><strong>Live-reloadable</strong>: перечитывается на каждом проходе, поэтому config reload меняет
 эффективный TTL без рестарта.</p>
@@ -536,7 +536,7 @@ config reload не меняет частоту проходов работающ
 <h3 id="scaling_max_parallel_creates"><a class="header" href="#scaling_max_parallel_creates">scaling_max_parallel_creates</a></h3>
 <p>Ограничитель всплесков для создания соединений. Без этого лимита N параллельных
 вызывающих <code>timeout_get</code>, не нашедших соединения в idle-пуле, независимо инициируют
-backend-connect, создавая всплески thundering-herd под нагрузкой. С лимитом одновременно
+подключение к PostgreSQL, создавая лавину подключений под нагрузкой. С лимитом одновременно
 выполняется не больше указанного числа creates на пул; остальные кратко ждут на Notify
 и затем либо подхватывают только что возвращённое idle-соединение, либо занимают следующий
 слот для create. Значение по умолчанию <code>2</code> — компромисс между пропускной способностью

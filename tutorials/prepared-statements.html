@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Anonymous Prepared Statement Caching - PgDoorman Documentation</title>
+        <title>Anonymous Parse Caching - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -160,21 +160,44 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="anonymous-prepared-statement-caching"><a class="header" href="#anonymous-prepared-statement-caching">Anonymous Prepared Statement Caching</a></h1>
-<p>PostgreSQL doesn't cache plans for anonymous prepared statements:
-every <code>Bind</code> re-runs the planner from scratch. PgDoorman fills that
-gap by transparently remapping every anonymous <code>Parse</code> to an internal
-<code>DOORMAN_&lt;N&gt;</code> name on the backend, so the plan lands in the backend's
-named prepared statement registry and gets reused. The reuse spans
-<code>Bind</code>s of one client and <code>Bind</code>s of different clients sharing the
-same pool.</p>
+                        <h1 id="anonymous-parse-caching"><a class="header" href="#anonymous-parse-caching">Anonymous Parse Caching</a></h1>
+<p>PgDoorman caches anonymous <code>Parse</code> as a performance optimization for
+transaction pooling. Many drivers send short parameterised queries as
+<code>Parse</code> with an empty statement name; without a remap, PostgreSQL
+does planner work again on every <code>Bind</code>, and the hot OLTP path pays
+that cost on every call.</p>
+<p>PgDoorman transparently remaps every anonymous <code>Parse</code> to an internal
+<code>DOORMAN_&lt;N&gt;</code> name on the backend. The plan lands in the backend's
+named prepared statement registry and gets reused across <code>Bind</code>s of
+one client and across clients sharing the same pool. The main effect
+is less planner CPU and fewer repeated backend Parses for the same
+query shape.</p>
 <p>The remap is transparent to the driver: clients send and receive
 empty statement names just as they would against a vanilla
 PostgreSQL.</p>
 <p>This is a feature unique to PgDoorman. PgBouncer (1.21+) and Odyssey
 support prepared statements in transaction mode, but only for
 <strong>named</strong> statements; anonymous <code>Parse</code> is forwarded unchanged and
-re-planned on every call.</p>
+re-planned on every call. Cache bounds, LRU, TTL, and observability
+exist to keep the performance optimization controlled under dynamic
+SQL, not to replace the performance goal.</p>
+<h2 id="what-gets-faster"><a class="header" href="#what-gets-faster">What gets faster</a></h2>
+<p>Anonymous <code>Parse</code> caching removes repeated work from hot
+parameterised query paths:</p>
+<ul>
+<li>the backend does not receive the same <code>Parse</code> on every reuse of an
+already known query shape;</li>
+<li>PostgreSQL can use a prepared statement already created on that
+backend connection;</li>
+<li>different clients in the same pool share one pool-level entry
+instead of warming the same query independently;</li>
+<li>on a server-cache hit, PgDoorman synthesizes <code>ParseComplete</code>
+without a PostgreSQL round-trip.</li>
+</ul>
+<p>This is primarily a performance optimization for OLTP workloads with
+repeated query shapes. Cache caps, TTL, and the interner exist so the
+speedup does not become unbounded memory growth in the pooler or on
+PostgreSQL backends.</p>
 <h2 id="the-postgresql-baseline"><a class="header" href="#the-postgresql-baseline">The PostgreSQL baseline</a></h2>
 <p>A <code>Parse</code> message carries a statement name. An empty name means
 <strong>anonymous</strong>, anything else means <strong>named</strong>:</p>
@@ -196,8 +219,8 @@ protocol carries an empty name.</p>
 pooler forwards the empty <code>Parse</code> name as-is, every client's <code>Bind</code>
 runs against a backend that has no plan cached for that query. Hot
 OLTP paths pay the planner cost on every call.</p>
-<p>Named prepared statements solve plan caching, but they push the
-bookkeeping problem onto the pooler:</p>
+<p>Named prepared statements solve planner performance, but they push
+the bookkeeping problem onto the pooler:</p>
 <ul>
 <li>The pooler must remember each client's named statements until the
 client disconnects, even if the pool-level shared cache evicts the
@@ -293,7 +316,8 @@ the same anonymous query share one allocation in memory.</p>
 <li><strong>API workloads with a small set of hot queries.</strong> A handful of
 unique <code>SELECT</code> / <code>INSERT</code> shapes shared across thousands of
 clients. Pool-cache hit rate near 100 %, planner runs once per
-backend per query, scales linearly with concurrency.</li>
+backend per query shape, and later calls go through <code>Bind</code> against
+already prepared backend state.</li>
 <li><strong>Drivers that pin to anonymous prepared.</strong> <code>lib/pq</code>, <code>libpq</code>
 <code>PQexecParams</code>, JDBC's <code>serverPreparedStatementType=NONE</code>. Without
 the remap they would re-plan on every call.</li>
@@ -316,14 +340,14 @@ in-flight operations, so the server cache can't reuse entries
 across sessions. The pool-level cache still shares the query text
 across sessions; the backend planner still runs once per session.</li>
 </ul>
-<p>Track effectiveness with the Prometheus counters
+<p>Track effectiveness as a performance feature with the Prometheus counters
 <code>pg_doorman_servers_prepared_hits</code> and
 <code>pg_doorman_servers_prepared_misses</code>. A sustained miss rate above
 30 % means the remap is spending CPU and memory without delivering
 plan-cache reuse. Either disable it or raise
 <code>prepared_statements_cache_size</code>.</p>
 <h2 id="how-other-poolers-handle-this"><a class="header" href="#how-other-poolers-handle-this">How other poolers handle this</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Pooler</th><th style="text-align: left">Plan cache for anonymous Parse</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th>Pooler</th><th style="text-align: left">Parse/plan cache for anonymous prepared statements</th></tr></thead><tbody>
 <tr><td><strong>PgDoorman</strong></td><td style="text-align: left">Yes: transparent remap to <code>DOORMAN_&lt;N&gt;</code></td></tr>
 <tr><td>PgBouncer 1.21+</td><td style="text-align: left">No: named only, anonymous forwarded unchanged</td></tr>
 <tr><td>Odyssey</td><td style="text-align: left">No: named only, <code>pool_reserve_prepared_statement</code></td></tr>
