@@ -89,17 +89,22 @@ fn emit_process_counter_delta(counter: &prometheus::IntCounter, value: u64) {
     }
 }
 
-/// Per-source delta tracker for counters whose source can be replaced
-/// during the process lifetime: every `AddressStats::default()` minted
-/// by `ConnectionPool::from_config` reopens its `total_*` counters at
-/// zero. Holding our own previous-value map per metric label lets the
-/// exporter detect that reset (`current < previous`) and emit the
-/// current cumulative as the post-reset delta exactly once instead
-/// of either freezing — the failure mode if we treat the Prometheus
-/// counter as the previous mark, since the counter never goes back —
-/// or fabricating duplicates each scrape.
+/// Per-source delta tracker for counters whose underlying state can
+/// be replaced during the process lifetime: every `AddressStats::default()`
+/// minted by `ConnectionPool::from_config` reopens its `total_*`
+/// counters at zero, and `AuthQueryStats::default()` does the same on
+/// auth-query state recreate.
+///
+/// The tracker remembers `(last_value, last_generation)` per metric
+/// label tuple. Every `observe` call carries the source's current
+/// generation; if it differs from what we last saw, the source has
+/// been replaced and we emit `current` as the post-reset delta —
+/// even when `current` is already larger than `last_value`, which is
+/// the case the previous "compare against the Prometheus counter"
+/// strategy missed when the new generation grew past the previous
+/// cumulative between two scrapes.
 struct CounterDeltaTracker<K> {
-    prev: std::sync::Mutex<std::collections::HashMap<K, u64>>,
+    prev: std::sync::Mutex<std::collections::HashMap<K, (u64, u64)>>,
 }
 
 impl<K> CounterDeltaTracker<K>
@@ -112,25 +117,30 @@ where
         }
     }
 
-    /// Records `current` as the latest source value for `key` and
-    /// increments `counter` by the appropriate delta. On source reset
-    /// (the new `current` is below the previous mark) the post-reset
-    /// `current` is emitted once and the tracker realigns.
-    fn observe(&self, counter: &prometheus::IntCounter, key: K, current: u64) {
+    /// Records `current` as the latest source value for `key` under
+    /// `generation` and increments `counter` by the appropriate delta.
+    /// A change in `generation` (source recreate) emits `current`
+    /// once; otherwise the regular `current >= last_value` delta
+    /// applies. The unusual case of the same generation reporting a
+    /// smaller `current` is treated defensively as a reset too.
+    fn observe(&self, counter: &prometheus::IntCounter, key: K, generation: u64, current: u64) {
         let mut prev = match self.prev.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        let last = prev.get(&key).copied().unwrap_or(0);
-        let delta = if current >= last {
-            current - last
+        let entry = prev.entry(key).or_insert((0, 0));
+        let (last_value, last_generation) = *entry;
+        let delta = if generation != last_generation {
+            current
+        } else if current >= last_value {
+            current - last_value
         } else {
             current
         };
         if delta > 0 {
             counter.inc_by(delta);
         }
-        prev.insert(key, current);
+        *entry = (current, generation);
     }
 
     /// Drops entries whose keys are not in `current_keys`, returning
@@ -357,17 +367,31 @@ fn update_server_metrics() {
             .with_label_values(&[user.as_str(), database.as_str()])
             .set(misses);
 
+        // Use the pool's `AddressStats` generation so the tracker
+        // detects a reload that wipes server stats. If the pool no
+        // longer exists in the snapshot — extremely rare race with
+        // RELOAD — fall back to 0; the next scrape will pick up the
+        // real generation and emit the post-reset delta then.
+        let source_generation = snap
+            .pool_lookup
+            .iter()
+            .find(|(id, _)| id.user == user && id.db == database)
+            .map(|(_, s)| s.source_generation)
+            .unwrap_or(0);
+
         let key: PoolKey = (user.clone(), database.clone());
         SERVERS_PREPARED_HITS_PREV.observe(
             &SHOW_SERVERS_PREPARED_HITS_TOTAL
                 .with_label_values(&[user.as_str(), database.as_str()]),
             key.clone(),
+            source_generation,
             hits as u64,
         );
         SERVERS_PREPARED_MISSES_PREV.observe(
             &SHOW_SERVERS_PREPARED_MISSES_TOTAL
                 .with_label_values(&[user.as_str(), database.as_str()]),
             key.clone(),
+            source_generation,
             misses as u64,
         );
         current_keys.insert(key);
@@ -421,11 +445,13 @@ fn update_pool_avg_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     POOL_QUERIES_PREV.observe(
         &SHOW_POOLS_QUERIES_TOTAL.with_label_values(&[user, database]),
         pool_key.clone(),
+        stats.source_generation,
         stats.total_query_count,
     );
     POOL_TRANSACTIONS_PREV.observe(
         &SHOW_POOLS_TRANSACTIONS_TOTAL.with_label_values(&[user, database]),
         pool_key,
+        stats.source_generation,
         stats.total_xact_count,
     );
 }
@@ -501,11 +527,13 @@ fn update_byte_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
             user.to_string(),
             database.to_string(),
         ),
+        stats.source_generation,
         stats.bytes_received,
     );
     POOL_BYTES_PREV.observe(
         &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["sent", user, database]),
         ("sent".to_string(), user.to_string(), database.to_string()),
+        stats.source_generation,
         stats.bytes_sent,
     );
 }
@@ -575,6 +603,7 @@ fn update_auth_query_metrics() {
             .with_label_values(&["rate_limited", db])
             .set(s.cache_rate_limited as f64);
 
+        let source_generation = state.stats.generation;
         for (kind, value) in [
             ("hits", s.cache_hits),
             ("misses", s.cache_misses),
@@ -585,6 +614,7 @@ fn update_auth_query_metrics() {
             AUTH_QUERY_CACHE_PREV.observe(
                 &AUTH_QUERY_CACHE_TOTAL.with_label_values(&[kind, db]),
                 key.clone(),
+                source_generation,
                 value,
             );
             cache_keys.insert(key);
@@ -602,6 +632,7 @@ fn update_auth_query_metrics() {
             AUTH_QUERY_AUTH_PREV.observe(
                 &AUTH_QUERY_AUTH_TOTAL.with_label_values(&[result, db]),
                 key.clone(),
+                source_generation,
                 value,
             );
             auth_keys.insert(key);
@@ -622,6 +653,7 @@ fn update_auth_query_metrics() {
             AUTH_QUERY_EXECUTOR_PREV.observe(
                 &AUTH_QUERY_EXECUTOR_TOTAL.with_label_values(&[kind, db]),
                 key.clone(),
+                source_generation,
                 value,
             );
             executor_keys.insert(key);
@@ -646,6 +678,7 @@ fn update_auth_query_metrics() {
             AUTH_QUERY_DYNAMIC_POOLS_PREV.observe(
                 &AUTH_QUERY_DYNAMIC_POOLS_TOTAL.with_label_values(&[kind, db]),
                 key.clone(),
+                source_generation,
                 value,
             );
             dyn_keys.insert(key);
@@ -894,12 +927,20 @@ fn update_pool_errors_metrics() {
     // bucket the counter exposes.
     let mut current_sums: std::collections::HashMap<PoolErrorsKey, u64> =
         std::collections::HashMap::new();
+    let mut pool_generations: std::collections::HashMap<(String, String), u64> =
+        std::collections::HashMap::new();
 
     for (identifier, pool) in get_all_pools().iter() {
         let user = identifier.user.as_str();
         let database = identifier.db.as_str();
 
-        let snap = pool.address().stats.errors_by_sqlstate_snapshot();
+        let address_stats = &pool.address().stats;
+        pool_generations.insert(
+            (user.to_string(), database.to_string()),
+            address_stats.generation,
+        );
+
+        let snap = address_stats.errors_by_sqlstate_snapshot();
         for (code, count) in snap {
             let class = classify_sqlstate(&code);
             let key = (user.to_string(), database.to_string(), class);
@@ -907,18 +948,22 @@ fn update_pool_errors_metrics() {
         }
     }
 
-    // Drive the tracker — it knows the previous source value per
-    // (user, database, class) tuple and detects address replacement
-    // (current < previous) by emitting `current` once. Crucially it
-    // then updates its own previous-mark, so the next scrape with the
-    // same `current` produces a zero delta. The earlier implementation
-    // used `IntCounter::get()` as the previous mark; that wedged each
-    // scrape into another fabricated increment because the Prometheus
-    // counter never goes backwards.
+    // Drive the tracker — it carries `(last_value, last_generation)`
+    // per (user, database, class) tuple. A change in `generation` means
+    // `Pool::from_config` minted a fresh `AddressStats` whose counters
+    // start at zero, even when the new generation has already grown
+    // past the previous cumulative between two scrapes. In that case
+    // the tracker emits `current` as the post-reset delta. Without the
+    // generation hint, the older `current < previous` heuristic missed
+    // exactly that race.
     for (key, &current_sum) in &current_sums {
         let counter =
             SHOW_POOLS_ERRORS_TOTAL.with_label_values(&[key.0.as_str(), key.1.as_str(), key.2]);
-        POOL_ERRORS_PREV.observe(&counter, key.clone(), current_sum);
+        let generation = pool_generations
+            .get(&(key.0.clone(), key.1.clone()))
+            .copied()
+            .unwrap_or(0);
+        POOL_ERRORS_PREV.observe(&counter, key.clone(), generation, current_sum);
     }
 
     // Drop labels for triples that disappeared since the last scrape —
@@ -1189,8 +1234,8 @@ mod tests {
 
     #[test]
     fn counter_delta_tracker_emits_post_reset_delta_only_once() {
-        // Reproduces the codex review HIGH 1 / HIGH 2 scenario: a
-        // pool whose `AddressStats` was replaced by `Pool::from_config`
+        // Reproduces the codex review scenario for the same generation:
+        // a pool whose `AddressStats` was replaced by `Pool::from_config`
         // reports a smaller cumulative value than what the Prometheus
         // counter holds. The tracker must increment by `current` once
         // and a follow-up scrape with the same `current` must not
@@ -1199,28 +1244,50 @@ mod tests {
         let counter =
             prometheus::IntCounter::new("pg_doorman_test_reset_counter", "test counter").unwrap();
 
-        tracker.observe(&counter, "key", 1_000);
+        let gen_a = 1u64;
+        let gen_b = 2u64;
+
+        tracker.observe(&counter, "key", gen_a, 1_000);
         assert_eq!(counter.get(), 1_000, "first observe sets the baseline");
 
-        tracker.observe(&counter, "key", 10);
+        // Same generation, source dropped to 10 — defensive reset path.
+        tracker.observe(&counter, "key", gen_a, 10);
         assert_eq!(
             counter.get(),
             1_010,
-            "source reset emits `current` as the post-reset delta",
+            "source reset within same generation emits `current` as the delta",
         );
 
-        tracker.observe(&counter, "key", 10);
+        tracker.observe(&counter, "key", gen_a, 10);
         assert_eq!(
             counter.get(),
             1_010,
             "the same source value on the next scrape must not produce more increments",
         );
 
-        tracker.observe(&counter, "key", 15);
+        tracker.observe(&counter, "key", gen_a, 15);
         assert_eq!(
             counter.get(),
             1_015,
             "subsequent growth advances by the actual delta",
+        );
+
+        // codex review BLOCKER 1: new generation already grew past the
+        // previous cumulative between two scrapes. `current >= last`
+        // is misleading — the source identity changed, this is a
+        // recreate, not a continuation.
+        tracker.observe(&counter, "key", gen_b, 1_500);
+        assert_eq!(
+            counter.get(),
+            1_015 + 1_500,
+            "different generation emits the new cumulative as the delta",
+        );
+
+        tracker.observe(&counter, "key", gen_b, 1_600);
+        assert_eq!(
+            counter.get(),
+            1_015 + 1_500 + 100,
+            "subsequent scrapes within the same generation use the in-generation delta",
         );
     }
 
@@ -1234,8 +1301,8 @@ mod tests {
         let counter =
             prometheus::IntCounter::new("pg_doorman_test_stale_counter", "test counter").unwrap();
 
-        tracker.observe(&counter, "alive", 5);
-        tracker.observe(&counter, "stale", 7);
+        tracker.observe(&counter, "alive", 1, 5);
+        tracker.observe(&counter, "stale", 1, 7);
 
         let mut current = std::collections::HashSet::new();
         current.insert("alive");
@@ -1244,7 +1311,7 @@ mod tests {
 
         // After drain the tracker no longer remembers `stale`; observing
         // a fresh value treats it as a brand-new key.
-        tracker.observe(&counter, "stale", 100);
+        tracker.observe(&counter, "stale", 2, 100);
         assert_eq!(
             counter.get(),
             5 + 7 + 100,

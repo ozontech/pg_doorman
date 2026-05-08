@@ -195,6 +195,12 @@ pub struct PoolStats {
     /// incident sees the same per-pool state the dashboard does.
     pub fallback_active: bool,
 
+    /// Source identifier of the underlying `AddressStats`. Carries the
+    /// `generation` field minted at construction so the Prometheus
+    /// scrape path can detect that a `Pool::from_config` reload mints
+    /// a fresh `AddressStats` whose `total_*` counters start at zero.
+    pub source_generation: u64,
+
     /// Configured maximum pool size (from user config or default)
     pub pool_size: u32,
 }
@@ -290,6 +296,7 @@ impl PoolStats {
             avg_query_time_microseconds: 0,
             paused: false,
             fallback_active: false,
+            source_generation: 0,
             pool_size: 0,
         }
     }
@@ -561,6 +568,12 @@ impl PoolStats {
 
             // Pool size from config
             current.pool_size = pool.settings.user.pool_size;
+
+            // Carry the underlying source identity so Prometheus
+            // delta tracking can detect a `Pool::from_config` reload
+            // even when the new generation has already grown past the
+            // previous cumulative between two scrapes.
+            current.source_generation = address.generation;
 
             // Load pause state
             current.paused = pool.database.is_paused();
