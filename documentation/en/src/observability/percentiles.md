@@ -1,18 +1,18 @@
 # Latency Percentiles
 
-> **Migrate to histograms**: the pre-aggregated gauges
+> **Migrate to histograms.** The pre-aggregated gauges
 > `pg_doorman_pools_queries_percentile`, `pg_doorman_pools_transactions_percentile`,
 > and `pg_doorman_pools_avg_wait_time` are deprecated and will be
-> removed in 3.10. Use the Prometheus histograms instead:
+> removed in 3.10. Use the Prometheus histograms for new PromQL:
 >
 > - `pg_doorman_pools_query_duration_seconds`
 > - `pg_doorman_pools_transaction_duration_seconds`
 > - `pg_doorman_pools_wait_duration_seconds`
 >
-> Compute quantiles with `histogram_quantile(q, sum by (le, ...) (rate(_bucket[5m])))`
-> — those compose correctly across replicas. Averaging pre-aggregated
-> percentiles is mathematically wrong; the bundled rules and dashboard
-> have already moved to the histogram form, update your PromQL too.
+> Compute quantiles with
+> `histogram_quantile(q, sum by (le, ...) (rate(_bucket[5m])))`.
+> That form can be aggregated across replicas; averaging pre-computed
+> percentiles does not produce a valid aggregate.
 
 PgDoorman tracks query and transaction latency per pool using HDR Histograms. Four percentiles are exposed to Prometheus: p50, p90, p95, p99.
 

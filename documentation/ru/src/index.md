@@ -1,53 +1,55 @@
 # PgDoorman
 
-Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Drop-in замена для [PgBouncer](https://www.pgbouncer.org/) и [Odyssey](https://github.com/yandex/odyssey), альтернатива [PgCat](https://github.com/postgresml/pgcat). Три года в production у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.
+Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Совместимая замена для [PgBouncer](https://www.pgbouncer.org/) и [Odyssey](https://github.com/yandex/odyssey), альтернатива [PgCat](https://github.com/postgresml/pgcat). Три года в промышленной эксплуатации у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.
 
-[Скачать PgDoorman {{VERSION}}](tutorials/installation.md) · [Сравнение](comparison.md) · [Benchmarks](benchmarks.md)
+[Скачать PgDoorman {{VERSION}}](tutorials/installation.md) · [Сравнение](comparison.md) · [Бенчмарки](benchmarks.md)
 
 ## Ключевые возможности
 
-```admonish success title="Встроенный диагностический дашборд"
-Диагностическая консоль, встроенная в бинарь pg_doorman и обслуживаемая тем же портом, что и `/metrics`. Что показывает: тайлы насыщения пулов, sparkline p95/p99 латентности по пулам, ошибки в разбивке по SQLSTATE на каждый пул, top-N застрявших запросов, разбор памяти jemalloc по категориям (live allocations / фрагментация / внутренние кеши / code+libs / стеки / swap), значения из `/proc/self/status` с пояснениями рядом с цифрами, per-thread CPU tokio-worker'ов, атрибуцию prepared cache, содержимое query interner, живой хвост лога. Сортируемые и фильтруемые таблицы Pools / Clients / Apps / Caches; live qps и tx-per-second на каждое приложение и каждого клиента.
+```admonish success title="Встроенная диагностическая консоль"
+PgDoorman может отдавать web-консоль на том же адресе и порту, что и `/metrics`. Это локальная панель для быстрой диагностики процесса и пулов, а не замена долгосрочному мониторингу в Prometheus/Grafana.
 
-PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy и Cloud SQL Auth Proxy отдают `/metrics` и admin-консоль через psql. Тот стек, который пришлось бы собирать поверх — Prometheus + Grafana + memory exporter + кастомный набор панелей, — у pg_doorman уже встроен.
+На одном экране собраны основные сигналы для разбора инцидента: насыщение пулов, p95/p99 задержки запросов, транзакций и ожидания соединения, ошибки по SQLSTATE, застрявшие запросы, состояние кеша prepared statements, query interner, хвост лога, CPU по потокам tokio-worker и память процесса (`jemalloc`, `/proc/self/status`, код/библиотеки, стеки, swap). Таблицы Pools, Clients, Apps и Caches сортируются и фильтруются; для приложений и клиентов показываются текущие QPS и TPS.
 
-Pause / Resume / Reconnect / Reload запускаются с той же страницы, per-pool или глобально. В остальном read-only. Консоль включается только при `[web].ui = true` и `admin_password`, отличном от пустой строки и от значения по умолчанию `admin`; с незаданным паролем pg_doorman остаётся в режиме «только `/metrics`» и пишет `WARN` в лог.
+Из консоли можно выполнить Pause, Resume, Reconnect и Reload для одного пула или всего инстанса. Остальные экраны доступны только для чтения. UI включается только при `[web].ui = true` и непустом `general.admin_password`, отличном от `admin`; иначе pg_doorman оставляет только `/metrics` и пишет `WARN` в лог.
 
 [Подробнее →](guides/web-ui.md)
 ```
 
-```admonish success title="Pool Coordinator"
-PgDoorman ограничивает суммарное число backend-соединений к одной базе. При достижении `max_db_connections` координатор вытесняет idle-соединение у пользователя с наибольшим запасом, ранжируя кандидатов по p95 времени транзакции — медленные пулы уступают первыми. Reserve pool поглощает короткие всплески; per-user `min_guaranteed_pool_size` исключает критичные нагрузки из списка вытеснения.
+```admonish success title="Координатор пулов"
+PgDoorman ограничивает суммарное число backend-соединений к одной базе через `max_db_connections`. Если лимит уже выбран, координатор может освободить idle-соединение у пула с запасом и отдать слот клиенту, который ждёт соединение.
 
-В PgBouncer `max_db_connections` есть, но без вытеснения и без честности распределения — при достижении лимита клиенты ждут, пока существующие соединения сами не закроются по idle timeout. В Odyssey аналога нет.
+Reserve pool сглаживает короткие всплески, а `min_guaranteed_pool_size` защищает важные нагрузки от вытеснения. В PgBouncer `max_db_connections` задаёт общий лимит, но не перераспределяет уже открытые idle-соединения между пулами; в Odyssey прямого аналога нет.
 
 [Подробнее →](concepts/pool-coordinator.md)
 ```
 
-```admonish success title="Patroni-assisted Fallback"
-Когда PgDoorman работает рядом с PostgreSQL на одной машине и switchover Patroni убивает локальный backend, PgDoorman опрашивает Patroni REST API (`GET /cluster`), выбирает живого члена кластера (приоритет `sync_standby` → `replica`) и направляет новые соединения туда. Локальный backend уходит в cooldown; fallback-соединения наследуют короткий lifetime — пул возвращается на локальный узел сразу, как только тот восстанавливается.
+```admonish success title="Fallback через Patroni"
+Если PgDoorman запущен рядом с PostgreSQL и локальный backend пропадает во время Patroni switchover, пулер может временно направлять новые backend-соединения на другой живой узел кластера. Для выбора узла используется Patroni REST API (`GET /cluster`), с приоритетом `sync_standby` перед `replica`.
 
-Задайте `patroni_api_urls` и `fallback_cooldown` в `[general]`, и это применится ко всем пулам. Без HAProxy и `consul-template` перед пулером.
+Локальный backend уходит в cooldown, а fallback-соединения получают короткий lifetime. Когда локальный узел снова доступен, пул возвращается на него без отдельного HAProxy или `consul-template` перед пулером. Настройки `patroni_api_urls` и `fallback_cooldown` задаются в `[general]`.
 
 [Подробнее →](tutorials/patroni-assisted-fallback.md)
 ```
 
-```admonish success title="Graceful Binary Upgrade"
-Обновляйте PgDoorman в рабочее время, без maintenance window. Приложения не получают ошибок переподключения, PostgreSQL не накрывает лавиной `auth`/SCRAM handshake-ов от одновременных reconnect-ов, идущие транзакции не падают.
+```admonish success title="Плавное обновление бинаря"
+PgDoorman поддерживает переход на новый бинарь по `SIGUSR2`: новый процесс начинает принимать соединения, а старый передаёт ему idle-клиентов без повторного TCP-подключения. Это снижает всплеск backend `auth`/SCRAM и позволяет обновлять пулер без полной остановки трафика.
 
-По `SIGUSR2` старый процесс передаёт TCP-сокет каждого idle-клиента новому через `SCM_RIGHTS` — тот же сокет, без переподключения — вместе с cancel keys и кешем prepared statements. Клиенты внутри транзакции дорабатывают её на старом процессе и мигрируют, как только становятся idle. Со сборкой `tls-migration` (Linux, отключено по умолчанию) переезжает и cipher state OpenSSL — TLS-сессии переживают upgrade без re-handshake.
+Idle-сессия переезжает как тот же клиентский сокет через `SCM_RIGHTS`, вместе с ключами отмены запросов и состоянием prepared-statement cache. Клиенты внутри транзакции остаются на старом процессе до завершения транзакции и мигрируют, когда снова становятся idle. Перенос TLS-состояния OpenSSL доступен только в Linux-сборке с фичей `tls-migration`; по умолчанию она выключена.
 
-Online restart в PgBouncer (`-R`, deprecated с 1.20; либо rolling restart через `so_reuseport`) и в Odyssey (`SIGUSR2` + `bindwith_reuseport`) устроены одинаково: новый процесс принимает новые соединения, старый дорабатывает до тех пор, пока его клиенты сами не отключатся. Сессии, prepared statements и TLS-состояние между процессами не переезжают.
+У PgBouncer (`-R`, устарел с 1.20, или rolling restart через `so_reuseport`) и Odyssey (`SIGUSR2` + `bindwith_reuseport`) перезапуск без остановки приёма в основном переводит новые подключения на новый процесс; старые сессии остаются на прежнем до отключения клиентов. Отличие PgDoorman здесь - перенос idle-сессий и подготовленного состояния между процессами.
 
 [Подробнее →](tutorials/binary-upgrade.md)
 ```
 
-```admonish success title="Кеш плана для анонимных prepared statements"
-PostgreSQL не кеширует план анонимных prepared statements (`Parse` с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый `Bind` заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное `DOORMAN_<N>` на бэкенде, и план попадает в реестр именованных statement бэкенда — переиспользуется между `Bind`'ами одного клиента и между клиентами одного пула.
+```admonish success title="Кеш анонимных prepared statements"
+В extended protocol многие драйверы отправляют `Parse` с пустым именем для коротких параметризованных запросов. Для пулера в transaction mode это неудобный случай: unnamed statement привязан к backend-сессии и плохо переживает переход клиента между backend-соединениями.
 
-PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для **именованных** statement; анонимный `Parse` пробрасывается без изменений и каждый раз перепланируется. PgDoorman переписывает анонимный `Parse` сам.
+PgDoorman назначает такому `Parse` служебное имя вида `DOORMAN_<N>` на стороне PostgreSQL и хранит соответствие в пуле. PostgreSQL видит именованный prepared statement, а последующие `Bind` для того же запроса могут использовать уже подготовленное состояние. Приложению не нужно переводить драйвер на явные имена statement.
 
-Кеш ограничен и наблюдаем. Анонимные записи истекают по бездействию, именованные освобождаются, как только на них никто не ссылается, а `SHOW INTERNER` и метрики Prometheus показывают объём в реальном времени — поток сгенерированного SQL больше не удерживает память пулера до перезапуска.
+PgBouncer 1.21+ и Odyssey умеют работать с именованными prepared statements в transaction mode. PgDoorman дополнительно обрабатывает безымянные prepared statements, которые часто встречаются у драйверов по умолчанию.
+
+Кеш имеет ограничения и жизненный цикл. Анонимные записи истекают по таймауту бездействия, именованные освобождаются, когда на них больше нет ссылок. `SHOW INTERNER` и метрики Prometheus показывают размер кеша, число записей и вытеснения, чтобы рост динамического SQL был виден до проблем с памятью.
 
 [Подробнее →](tutorials/prepared-statements.md)
 ```
@@ -59,7 +61,7 @@ PgBouncer (1.21+) и Odyssey поддерживают prepared statements в tra
 - **Контроль всплесков при создании соединений.** Если много клиентов одновременно ждут несколько свободных backend-соединений, PgDoorman ограничивает параллельное создание новых соединений (`scaling_max_parallel_creates`) и передаёт вернувшийся backend самому старому ожидающему клиенту.
 - **Предсказуемая задержка выдачи соединения.** Ожидающие клиенты обслуживаются по FIFO. PgDoorman заранее заменяет backend-соединения перед истечением `server_lifetime`, чтобы ротация поколения не превращалась во всплеск задержки при выдаче соединения.
 - **Быстрое обнаружение обрыва backend.** Если backend пропадает во время транзакции, PgDoorman отслеживает это параллельно чтению клиента и возвращает SQLSTATE `08006`, не дожидаясь системного TCP keepalive.
-- **Операционные инструменты в бинаре.** Конфиг пишется в YAML или TOML, длительности задаются как `30s` или `5m`, `pg_doorman generate --host ...` собирает стартовый конфиг из существующего PostgreSQL, `pg_doorman -t` проверяет конфиг без запуска сервера, а `/metrics` доступен без отдельного exporter.
+- **Операционные инструменты в бинаре.** Конфиг пишется в YAML или TOML, длительности задаются как `30s` или `5m`, `pg_doorman generate --host ...` собирает стартовый конфиг из существующего PostgreSQL, `pg_doorman -t` проверяет конфиг без запуска сервера, а `/metrics` доступен без отдельного экспортёра.
 
 ## Сравнение
 
@@ -73,17 +75,17 @@ PgBouncer (1.21+) и Odyssey поддерживают prepared statements в tra
 | Обрыв backend во время транзакции                        | Да, возвращает `08006` без ожидания TCP keepalive | Нет, ждёт TCP keepalive | Нет, ждёт TCP keepalive |
 | Обновление бинаря с переносом idle-сессий                | Да, через `SCM_RIGHTS`; TLS-состояние при сборке `tls-migration` | Нет, старые сессии остаются в старом процессе | Нет, старые сессии остаются в старом процессе |
 | TLS-соединение от пулера к PostgreSQL                    | Да, 5 режимов и reload по `SIGHUP` | Да, `server_tls_*` и reload по `RELOAD` |            Нет             |
-| SCRAM passthrough без открытого пароля в конфиге         | Да, извлекает `ClientKey` из proof | Да, зашифрованный SCRAM secret через `auth_query`/`userlist.txt`, с 1.14 |            Да              |
+| SCRAM passthrough без открытого пароля в конфиге         | Да, извлекает `ClientKey` из `SCRAM proof` | Да, зашифрованный SCRAM secret через `auth_query`/`userlist.txt`, с 1.14 |            Да              |
 | JWT-аутентификация (RSA-SHA256)                          |          Да           |                Нет                  |            Нет             |
 | PAM, `pg_hba.conf` и `auth_query`                        |          Да           |                Да                   |            Да              |
 | LDAP-аутентификация                                      |          Нет          |          Да, с версии 1.25           |            Да              |
 | Формат конфигурации                                      |     YAML или TOML      |                INI                  |       Собственный формат    |
 | Структурированные JSON-логи                              |          Да           |                Нет                  |   Да, `log_format "json"`  |
-| Перцентили задержек p50/p90/p95/p99                      | Да, через встроенный `/metrics` |     Нет, только средние значения |  Да, через отдельный Go exporter |
-| Диагностическая web-консоль                              |     Да, встроенная     | Нет, только admin console через psql | Нет, только admin console через psql |
+| Перцентили задержек p50/p90/p95/p99                      | Да, через встроенный `/metrics` |     Нет, только средние значения |  Да, через отдельный экспортёр на Go |
+| Диагностическая web-консоль                              |     Да, встроенная     | Нет, только admin-консоль через psql | Нет, только admin-консоль через psql |
 | Проверка конфига без запуска сервера                     |      Да, `-t`          |                Нет                  |            Нет             |
 | Генерация начального конфига из PostgreSQL               | Да, `generate --host`  |                Нет                  |            Нет             |
-| Эндпоинт Prometheus                                      | Встроенный `/metrics` |       Отдельный exporter            |  Отдельный Go exporter     |
+| HTTP-эндпоинт Prometheus                                 | Встроенный `/metrics` |       Отдельный экспортёр           |  Отдельный экспортёр на Go |
 
 [Полная матрица фич →](comparison.md)
 
@@ -138,6 +140,6 @@ pools:
 
 - Впервые видите PgDoorman? Начните с [Обзора](tutorials/overview.md), затем [Установка](tutorials/installation.md) и [Базовое использование](tutorials/basic-usage.md).
 - Мигрируете с PgBouncer или Odyssey? Прочитайте [Сравнение](comparison.md) и [Аутентификацию](authentication/overview.md).
-- Используете Patroni? См. [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md) и [`patroni_proxy`](tutorials/patroni-proxy.md).
-- Готовитесь к production? Прочитайте [Пул под нагрузкой](tutorials/pool-pressure.md) и [Pool Coordinator](concepts/pool-coordinator.md).
-- Эксплуатируете PgDoorman? См. [Binary upgrade](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md), [Troubleshooting](tutorials/troubleshooting.md).
+- Используете Patroni? См. [Fallback через Patroni](tutorials/patroni-assisted-fallback.md) и [`patroni_proxy`](tutorials/patroni-proxy.md).
+- Готовитесь к промышленной эксплуатации? Прочитайте [Пул под нагрузкой](tutorials/pool-pressure.md) и [Координатор пулов](concepts/pool-coordinator.md).
+- Эксплуатируете PgDoorman? См. [Обновление бинаря](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md), [Диагностику проблем](tutorials/troubleshooting.md).
