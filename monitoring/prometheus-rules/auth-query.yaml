@@ -1,0 +1,124 @@
+groups:
+  - name: auth_query_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:auth_query_lookup_rate5m
+        expr: |
+          sum by (job, instance, database) (
+            clamp_min(rate(pg_doorman_auth_query_cache{type=~"hits|misses"}[5m]), 0)
+          )
+
+      - record: pg_doorman:auth_query_cache_hit:ratio
+        expr: |
+          sum by (job, instance, database) (
+            clamp_min(rate(pg_doorman_auth_query_cache{type="hits"}[5m]), 0)
+          )
+          /
+          clamp_min(
+            sum by (job, instance, database) (
+              clamp_min(rate(pg_doorman_auth_query_cache{type=~"hits|misses"}[5m]), 0)
+            ),
+            0.001
+          )
+
+      - record: pg_doorman:auth_query_failure:ratio
+        expr: |
+          sum by (job, instance, database) (
+            clamp_min(rate(pg_doorman_auth_query_auth{result="failure"}[5m]), 0)
+          )
+          /
+          clamp_min(
+            sum by (job, instance, database) (
+              clamp_min(rate(pg_doorman_auth_query_auth{result=~"success|failure"}[5m]), 0)
+            ),
+            0.001
+          )
+
+  - name: auth_query_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanAuthQueryExecutorErrors
+        expr: |
+          sum by (job, instance, database) (
+            increase(pg_doorman_auth_query_executor{type="errors"}[5m])
+          ) >= 3
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman auth_query executor errors for {{ $labels.database }}"
+          runbook: |
+            Auth query calls to PostgreSQL are failing. Check connectivity,
+            auth_query SQL, credentials, and PostgreSQL logs for the auth
+            database before restarting pg_doorman.
+
+      - alert: PgDoormanAuthQueryFailuresHigh
+        expr: |
+          pg_doorman:auth_query_failure:ratio > 0.05
+          and on (job, instance, database)
+          sum by (job, instance, database) (
+            clamp_min(rate(pg_doorman_auth_query_auth{result="failure"}[5m]), 0)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman auth_query failures > 5% for {{ $labels.database }}"
+          runbook: |
+            Failure spike after a deploy usually means credential mismatch or
+            stale secrets. Sustained failures without a deploy may be bad
+            clients; correlate with pg_doorman logs and source addresses.
+
+      - alert: PgDoormanAuthQueryCacheHitRateLow
+        expr: |
+          pg_doorman:auth_query_cache_hit:ratio < 0.8
+          and on (job, instance, database)
+          pg_doorman:auth_query_lookup_rate5m > 1
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman auth_query cache hit rate < 80% for {{ $labels.database }}"
+          runbook: |
+            Low cache hit rate adds latency to new connections and increases
+            load on PostgreSQL. Increase auth_query cache_ttl or investigate
+            high user churn.
+
+      - alert: PgDoormanAuthQueryRateLimitedRefetches
+        expr: |
+          sum by (job, instance, database) (
+            increase(pg_doorman_auth_query_cache{type="rate_limited"}[10m])
+          ) >= 3
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman auth_query refetches rate-limited for {{ $labels.database }}"
+          runbook: |
+            Clients are retrying auth failures faster than auth_query
+            min_interval allows. Check for stale credentials and credential
+            rotation timing.
+
+      - alert: PgDoormanAuthQueryDynamicPoolsHigh
+        expr: |
+          max by (job, instance, database) (
+            pg_doorman_auth_query_dynamic_pools{type="current"}
+          ) > 100
+          and on (job, instance, database)
+          max by (job, instance, database) (
+            deriv(pg_doorman_auth_query_dynamic_pools{type="current"}[30m])
+          ) > 0.02
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman auth_query dynamic pools growing above 100 for {{ $labels.database }}"
+          runbook: |
+            Passthrough auth_query is creating many per-user pools. Check for
+            unexpected database names, user sprawl, or clients creating
+            short-lived roles that keep pools alive.

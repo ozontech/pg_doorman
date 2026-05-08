@@ -1,0 +1,43 @@
+groups:
+  - name: connections_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:connection_rate5m
+        expr: |
+          sum by (job, instance, type) (
+            clamp_min(rate(pg_doorman_connection_count[5m]), 0)
+          )
+
+      - record: pg_doorman:cancel_connection_ratio5m
+        expr: |
+          sum by (job, instance) (
+            clamp_min(rate(pg_doorman_connection_count{type="cancel"}[5m]), 0)
+          )
+          /
+          clamp_min(
+            sum by (job, instance) (
+              clamp_min(rate(pg_doorman_connection_count{type="total"}[5m]), 0)
+            ),
+            0.001
+          )
+
+  - name: connections_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanCancelConnectionRateHigh
+        expr: |
+          pg_doorman:cancel_connection_ratio5m > 0.05
+          and on (job, instance)
+          sum by (job, instance) (
+            clamp_min(rate(pg_doorman_connection_count{type="cancel"}[5m]), 0)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman cancel requests > 5% of connections on {{ $labels.instance }}"
+          runbook: |
+            High cancel traffic usually means application timeouts, slow
+            PostgreSQL queries, or client-side deadline churn. Correlate with
+            query/transaction p99 and PostgreSQL logs around cancel requests.

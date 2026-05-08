@@ -1,0 +1,99 @@
+groups:
+  - name: prepared_statements_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:prepared_lookup_rate5m
+        expr: |
+          sum by (job, instance, user, database) (
+            clamp_min(rate(pg_doorman_servers_prepared_hits[5m]), 0)
+          )
+          +
+          sum by (job, instance, user, database) (
+            clamp_min(rate(pg_doorman_servers_prepared_misses[5m]), 0)
+          )
+
+      - record: pg_doorman:prepared_hit:ratio
+        expr: |
+          sum by (job, instance, user, database) (
+            clamp_min(rate(pg_doorman_servers_prepared_hits[5m]), 0)
+          )
+          /
+          clamp_min(
+            sum by (job, instance, user, database) (
+              clamp_min(rate(pg_doorman_servers_prepared_hits[5m]), 0)
+            )
+            +
+            sum by (job, instance, user, database) (
+              clamp_min(rate(pg_doorman_servers_prepared_misses[5m]), 0)
+            ),
+            0.001
+          )
+
+      - record: pg_doorman:prepared_cache_memory:bytes
+        expr: |
+          sum by (job, instance, user, database) (pg_doorman_pool_prepared_cache_bytes)
+          +
+          sum by (job, instance, user, database) (pg_doorman_clients_prepared_cache_bytes)
+
+  - name: prepared_statements_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanPreparedAnonymousEvictionsHigh
+        expr: |
+          sum by (job, instance, user, database) (
+            rate(pg_doorman_clients_prepared_anonymous_evictions_total[5m])
+          ) > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman anonymous prepared LRU evictions > 10/s for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            client_anonymous_prepared_cache_size is too small for the workload
+            or the application generates unique anonymous prepared statements
+            on the hot path.
+
+      - alert: PgDoormanPreparedCacheMemoryHigh
+        expr: pg_doorman:prepared_cache_memory:bytes > 536870912
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman prepared cache memory > 512MiB for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Correlate with named entries, anonymous evictions, and total RSS.
+            Dynamic statement names or unique query text usually drive this;
+            reduce prepared cache sizes only after identifying the workload.
+
+      - alert: PgDoormanClientNamedPreparedGrowing
+        expr: |
+          deriv(pg_doorman_clients_prepared_named_entries[30m]) > 0
+          and pg_doorman_clients_prepared_named_entries > 10000
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman named prepared entries growing for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Named client prepared statements are unbounded until client
+            disconnect or DEALLOCATE. Check drivers/frameworks that mint a
+            unique prepared statement name per query.
+
+      - alert: PgDoormanPreparedHitRatioLow
+        expr: |
+          pg_doorman:prepared_hit:ratio < 0.8
+          and on (job, instance, user, database)
+          pg_doorman:prepared_lookup_rate5m > 1
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman prepared hit ratio < 80% for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Backends are frequently missing prepared statements. Check whether
+            applications reuse names consistently and whether pool churn or
+            reconnects are invalidating backend-local prepared state.

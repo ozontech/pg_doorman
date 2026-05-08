@@ -1,0 +1,98 @@
+groups:
+  - name: latency_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:query_p99_ms:max
+        expr: |
+          max by (job, instance, user, database) (
+            pg_doorman_pools_queries_percentile{percentile="99"}
+          )
+
+      - record: pg_doorman:transaction_p99_ms:max
+        expr: |
+          max by (job, instance, user, database) (
+            pg_doorman_pools_transactions_percentile{percentile="99"}
+          )
+
+      - record: pg_doorman:query_rate5m
+        expr: |
+          sum by (job, instance, user, database) (
+            clamp_min(rate(pg_doorman_pools_queries_count[5m]), 0)
+          )
+
+      - record: pg_doorman:transaction_rate5m
+        expr: |
+          sum by (job, instance, user, database) (
+            clamp_min(rate(pg_doorman_pools_transactions_count[5m]), 0)
+          )
+
+  - name: latency_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanQueryP99High
+        expr: |
+          pg_doorman:query_p99_ms:max > 1000
+          and on (job, instance, user, database)
+          pg_doorman:query_rate5m > 1
+          and on (job, instance, user, database)
+          (
+            sum by (job, instance, user, database) (
+              pg_doorman_pools_clients{status="waiting"}
+            ) > 0
+            or
+            (
+              sum by (job, instance, user, database) (
+                pg_doorman_pools_servers{status="active"}
+              )
+              /
+              clamp_min(
+                sum by (job, instance, user, database) (pg_doorman_pool_size),
+                1
+              )
+            ) > 0.8
+          )
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman query p99 > 1s for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            PostgreSQL execution latency as seen by pg_doorman is high and the
+            pool is waiting or above 80% active server usage. Check
+            pg_stat_activity and pg_stat_statements for the affected user and
+            database; pg_doorman cannot identify the SQL text from this metric.
+
+      - alert: PgDoormanTransactionP99High
+        expr: |
+          pg_doorman:transaction_p99_ms:max > 5000
+          and on (job, instance, user, database)
+          pg_doorman:transaction_rate5m > 0.1
+          and on (job, instance, user, database)
+          (
+            sum by (job, instance, user, database) (
+              pg_doorman_pools_clients{status="waiting"}
+            ) > 0
+            or
+            (
+              sum by (job, instance, user, database) (
+                pg_doorman_pools_servers{status="active"}
+              )
+              /
+              clamp_min(
+                sum by (job, instance, user, database) (pg_doorman_pool_size),
+                1
+              )
+            ) > 0.8
+          )
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman transaction p99 > 5s for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Long transactions are keeping backend connections checked out while
+            the pool is waiting or above 80% active server usage. Check
+            PostgreSQL for long-running or idle-in-transaction sessions from
+            this pool user.

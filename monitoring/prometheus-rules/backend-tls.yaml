@@ -1,0 +1,53 @@
+groups:
+  - name: backend_tls_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:server_tls_handshake_duration_seconds:p99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (job, instance, pool, le) (
+              rate(pg_doorman_server_tls_handshake_duration_seconds_bucket[5m])
+            )
+          )
+
+      - record: pg_doorman:server_tls_handshake_rate5m
+        expr: |
+          sum by (job, instance, pool) (
+            rate(pg_doorman_server_tls_handshake_duration_seconds_count[5m])
+          )
+
+  - name: backend_tls_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanServerTLSHandshakeErrors
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_server_tls_handshake_errors_total[5m])
+          ) >= 3
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman backend TLS handshake errors for {{ $labels.pool }}"
+          runbook: |
+            New backend TLS connections are failing. Check PostgreSQL TLS
+            configuration, CA bundle, certificate hostname, and recent SIGHUP
+            certificate reloads.
+
+      - alert: PgDoormanServerTLSHandshakeSlow
+        expr: |
+          pg_doorman:server_tls_handshake_duration_seconds:p99 > 1
+          and on (job, instance, pool)
+          pg_doorman:server_tls_handshake_rate5m > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman backend TLS handshake p99 > 1s for {{ $labels.pool }}"
+          runbook: |
+            Slow TLS handshakes increase backend create latency. Check CPU,
+            certificate verification path, DNS, and PostgreSQL accept/startup
+            pressure.

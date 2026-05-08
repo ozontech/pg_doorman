@@ -1,5 +1,5 @@
 groups:
-  - name: pg_doorman_query_interner
+  - name: query_interner
     interval: 30s
     rules:
       # ANON memory blowup. Threshold 1.5 GiB matches a steady-state of
@@ -10,6 +10,7 @@ groups:
         for: 5m
         labels:
           severity: critical
+          service: pg_doorman
         annotations:
           summary: "ANON interner > 1.5 GiB on {{ $labels.instance }}"
           runbook: |
@@ -24,6 +25,7 @@ groups:
         for: 10m
         labels:
           severity: critical
+          service: pg_doorman
         annotations:
           summary: "Anon prepared expiring before next Bind ({{ $value | humanize }}/s)"
           runbook: |
@@ -46,6 +48,7 @@ groups:
         for: 15m
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "ANON interner growing without TTL eviction"
           runbook: |
@@ -62,6 +65,7 @@ groups:
         for: 15m
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "Interner GC P99 > 50ms on {{ $labels.instance }}"
           runbook: |
@@ -80,6 +84,7 @@ groups:
         for: 2h
         labels:
           severity: warning
+          service: pg_doorman
         annotations:
           summary: "NAMED interner growing without GC eviction"
           runbook: |

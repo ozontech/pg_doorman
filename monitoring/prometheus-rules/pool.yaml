@@ -1,0 +1,81 @@
+groups:
+  - name: pool_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:pool_waiting_clients:sum
+        expr: |
+          sum by (job, instance, user, database) (
+            pg_doorman_pools_clients{status="waiting"}
+          )
+
+      - record: pg_doorman:pool_active_server_utilization:ratio
+        expr: |
+          sum by (job, instance, user, database) (
+            pg_doorman_pools_servers{status="active"}
+          )
+          /
+          clamp_min(
+            sum by (job, instance, user, database) (pg_doorman_pool_size),
+            1
+          )
+
+  - name: pool_health
+    interval: 30s
+    rules:
+      - alert: PgDoormanPoolWaitingClients
+        expr: pg_doorman:pool_waiting_clients:sum > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman clients waiting in {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Check SHOW POOLS and SHOW POOL_SCALING. Sustained waiting means
+            the pool cannot hand out backend connections quickly enough; look
+            for high cl_waiting, sv_active near pool_size, or create_fallback.
+
+      - alert: PgDoormanPoolSaturated
+        expr: |
+          pg_doorman:pool_active_server_utilization:ratio > 0.95
+          and on (job, instance, user, database)
+          pg_doorman:pool_waiting_clients:sum > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman pool saturated for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Active backend usage is above 95% and clients are waiting.
+            Increase pool_size if PostgreSQL has headroom, or find long
+            transactions holding server connections out of rotation.
+
+      - alert: PgDoormanPoolWaitTimeHigh
+        expr: |
+          max by (job, instance, user, database) (
+            pg_doorman_pools_avg_wait_time
+          ) > 250
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman average wait time > 250ms for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Check SHOW POOLS, SHOW STATS, and slow query latency. If p99 query
+            or transaction time is rising, fix the backend workload first; if
+            only wait time is high, inspect pool scaling and coordinator state.
+
+      - alert: PgDoormanLongActiveCheckout
+        expr: pg_doorman_pools_oldest_active_age_ms > 300000
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman active checkout older than 5m in {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            A server connection has been checked out for a long time. Inspect
+            PostgreSQL pg_stat_activity for long transactions, idle-in-
+            transaction sessions, or slow queries from the affected pool user.
