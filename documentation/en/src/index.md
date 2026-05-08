@@ -42,19 +42,21 @@ PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport` rolli
 [Read more →](tutorials/binary-upgrade.md)
 ```
 
-```admonish success title="Anonymous Prepared Statement Caching"
-PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-name `Parse` most drivers send for one-shot parameterised queries) — every `Bind` re-runs the planner from scratch. PgDoorman transparently rewrites the empty name to an internal `DOORMAN_<N>` on the backend, so the plan lands in the backend's named prepared registry and gets reused across `Bind`s of the same client and across clients sharing the pool.
+```admonish success title="Anonymous Parse Caching"
+In extended protocol, many drivers send short parameterised queries as `Parse` with an empty statement name. Without a remap, that hot path keeps paying PostgreSQL planner CPU and repeated backend `Parse` work on every reuse.
+
+PgDoorman rewrites the empty name to an internal `DOORMAN_<N>` on the backend and keeps the mapping in the pool. PostgreSQL sees a named prepared statement, so later `Bind`s for the same query shape can reuse prepared backend state across one client and across clients sharing the pool. The primary value is performance: less planner work and fewer backend Parses on repeated OLTP queries.
 
 PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for **named** statements; an anonymous `Parse` is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.
 
-The cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and `SHOW INTERNER` plus matching Prometheus metrics make the footprint live — so a workload built on dynamically generated SQL can't pin pooler memory forever.
+To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and `SHOW INTERNER` plus Prometheus metrics expose cache size, hits, misses, and evictions.
 
 [Read more →](tutorials/prepared-statements.md)
 ```
 
 ## Why PgDoorman
 
-- **Caches `Parse` across clients.** Plans are reused between clients sharing a pool — including the anonymous `Parse` most drivers send for one-shot parameterised queries. The cache is bounded and observable.
+- **Caches `Parse` on hot query paths.** Prepared backend state is reused between clients sharing a pool, including the anonymous `Parse` most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; cache size, hits, misses, and evictions are visible through `SHOW INTERNER` and metrics.
 - **Multi-threaded, single shared pool.** All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind `so_reuseport` — gives each instance its own pool, and idle counts can drift between processes for the same database.
 - **Thundering herd suppression.** When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (`scaling_max_parallel_creates`) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.
 - **Bounded tail latency.** Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of `server_lifetime`, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.
@@ -67,6 +69,7 @@ The cache is bounded and observable. Anonymous entries time out on idle, named e
 | -------------------------------------------------------- | :-------------------: | :---------------------------------: | :------------------------: |
 | Multi-threaded with shared pool                          |          Yes          |        No (single-threaded)         |  Workers, separate pools   |
 | Prepared statements in transaction mode                  |          Yes          |           Yes (since 1.21)          | Yes (`pool_reserve_prepared_statement`) |
+| Anonymous `Parse` cache for hot parameterised queries    | Yes, reused across clients in a pool | No, named statements only | No, named statements only |
 | Pool Coordinator (per-database cap, priority eviction)   |          Yes          |                 No                  |             No             |
 | Patroni-assisted fallback (built-in)                     |          Yes          |                 No                  |             No             |
 | Pre-replacement on `server_lifetime` expiry              |          Yes          |                 No                  |             No             |

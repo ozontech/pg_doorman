@@ -71,7 +71,8 @@ See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md), [`patro
 | Direct-handoff (returning server goes to longest-waiting client via in-process oneshot channel) | Yes | No | No |
 | Strict FIFO ordering of waiters | Yes | No (LIFO via `server_round_robin = 0`) | No |
 | `min_pool_size` (warm connections) | Yes | No | Yes |
-| Prepared statements in transaction mode | Yes (two-level cache, query interner, `DOORMAN_N` remap) | Yes (since 1.21, `max_prepared_statements`, `PGBOUNCER_*` remap) | Yes (`pool_reserve_prepared_statement`) |
+| Prepared statements in transaction mode | Yes (named and anonymous, two-level cache, query interner) | Yes (named, since 1.21, `max_prepared_statements`) | Yes (named, `pool_reserve_prepared_statement`) |
+| Anonymous `Parse` cache for performance | Yes (`DOORMAN_N`, reused across clients in a pool) | No (anonymous `Parse` passes through unchanged) | No (named statements required) |
 | Smart cleanup on checkin (skip `DEALLOCATE ALL` if cache untouched) | Yes (mutation-tracking `RESET ALL` / `DEALLOCATE ALL` on demand) | No (always `DISCARD ALL` if `server_reset_query` set) | Yes (auto) |
 | LISTEN / NOTIFY pinning in transaction mode | No | No | Experimental |
 | Cross-rule connection cap (`shared_pool`) | No | No | Yes (since 1.5.1) |

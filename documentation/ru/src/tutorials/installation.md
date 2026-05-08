@@ -1,6 +1,6 @@
 # Установка PgDoorman
 
-PgDoorman работает на Linux и macOS. Для production рекомендуем собирать самим — так вы контролируете версию Rust, целевую платформу и зависимости. Также доступны готовые пакеты из репозиториев и статические бинарники. Docker — только для тестов.
+PgDoorman работает на Linux и macOS. Для промышленной эксплуатации рекомендуем собирать самим — так вы контролируете версию Rust, целевую платформу и зависимости. Также доступны готовые пакеты из репозиториев и статические бинарники. Docker — только для тестов.
 
 ## Системные требования
 
@@ -22,11 +22,11 @@ sudo install -m 0755 target/release/pg_doorman /usr/local/bin/pg_doorman
 
 `cargo build --release` собирает оптимизированный бинарник в `target/release/pg_doorman`. Требования к окружению и процесс разработки описаны в [Участие в проекте](./contributing.md).
 
-### Cargo features
+### Фичи Cargo
 
-| Feature | По умолчанию | Эффект |
+| Фича | По умолчанию | Эффект |
 | --- | --- | --- |
-| `tls-migration` | выкл | Vendored OpenSSL 3.5.5 с патчем, позволяющим TLS-клиентам пережить обновление бинарника. **Нужен для zero-downtime перезапуска TLS-клиентов.** |
+| `tls-migration` | выкл | Vendored OpenSSL 3.5.5 с патчем, позволяющим TLS-клиентам пережить обновление бинарника. **Нужен для обновления TLS-клиентов без простоя.** |
 | `pam` | выкл | Поддержка аутентификации PAM (Linux). |
 
 ### Сборка с миграцией TLS-клиентов
@@ -45,7 +45,7 @@ cargo build --release --features tls-migration
 - Утилиты `perl` и `patch` в `PATH`.
 - Около 5 минут дополнительного времени сборки на компиляцию OpenSSL.
 
-**Офлайн-сборка (air-gapped среды):**
+**Сборка без доступа к интернету:**
 
 ```bash
 curl -fLO https://github.com/openssl/openssl/releases/download/openssl-3.5.5/openssl-3.5.5.tar.gz
@@ -53,7 +53,7 @@ OPENSSL_SOURCE_TARBALL=$(pwd)/openssl-3.5.5.tar.gz \
   cargo build --release --features tls-migration
 ```
 
-Старый и новый процесс должны использовать одни и те же `tls_certificate` и `tls_private_key`. Полное описание upgrade-процесса, мониторинг и диагностика — в [Graceful Binary Upgrade → TLS migration](./binary-upgrade.md#tls-migration).
+Старый и новый процесс должны использовать одни и те же `tls_certificate` и `tls_private_key`. Полное описание процесса обновления, мониторинг и диагностика — в [плавном обновлении бинаря](./binary-upgrade.md#Миграция-TLS-сессий).
 
 Для упаковки в deb/rpm смотрите каталоги `debian/` и `pkg/` в репозитории. Пример `Dockerfile.ubuntu22-tls` собирает образ с поддержкой TLS migration на Ubuntu 22.04.
 
@@ -105,7 +105,7 @@ sudo mv pg_doorman /usr/local/bin/
 
 ## Docker (только для тестов)
 
-Docker поддерживается для разработки, CI и быстрых демо. Для production не рекомендуется — упаковка и управление жизненным циклом проще через пакеты из репозиториев выше.
+Docker поддерживается для разработки, CI и быстрых демо. Для промышленной эксплуатации не рекомендуется — упаковка и управление жизненным циклом проще через пакеты из репозиториев выше.
 
 ```bash
 docker run -p 6432:6432 \
@@ -130,4 +130,4 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c "SHOW VERSION;"
 - [Базовое использование](./basic-usage.md) — первый конфиг, admin-консоль, мониторинг.
 - [Аутентификация](../authentication/overview.md) — выбор подходящего метода.
 - [Сигналы и перезагрузка](../operations/signals.md) — сигналы, reload, интеграция с systemd.
-- [Graceful Binary Upgrade](./binary-upgrade.md) — замена бинарника без потери клиентов.
+- [Плавное обновление бинаря](./binary-upgrade.md) — замена бинарника без потери клиентов.

@@ -96,7 +96,7 @@ host all       admin       10.1.1.0/24 scram-sha-256
 host all       all         0.0.0.0/0  reject
 ```
 
-### Заблокировать legacy MD5 из открытого интернета
+### Заблокировать устаревший MD5 из открытого интернета
 
 ```
 hostssl all all 0.0.0.0/0 scram-sha-256

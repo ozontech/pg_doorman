@@ -12,10 +12,10 @@ PgCat намеренно опущен: у него центр тяжести —
 | --- | :-: | :-: | :-: |
 | MD5 password | Да | Да | Да |
 | SCRAM-SHA-256 (клиент → пулер) | Да | Да | Да |
-| SCRAM-SHA-256 passthrough (без plaintext-пароля в конфиге) | Да (`ClientKey` извлекается из клиентского proof) | Да (с 1.14, encrypted SCRAM secret в `auth_query` / `userlist.txt`) | Да |
-| MD5 passthrough | Да | Да | Да |
+| Сквозной SCRAM-SHA-256 (без открытого пароля в конфиге) | Да (`ClientKey` извлекается из proof клиента) | Да (с 1.14, encrypted SCRAM secret в `auth_query` / `userlist.txt`) | Да |
+| Сквозной MD5 | Да | Да | Да |
 | `auth_query` (динамические пользователи) | Да | Да | Да |
-| `auth_query` passthrough mode (свой backend identity на каждого пользователя) | Да | Нет (один `auth_user` на все lookup-ы) | Да |
+| Сквозной режим `auth_query` (своя идентичность PostgreSQL для каждого пользователя) | Да | Нет (один `auth_user` на все lookup-запросы) | Да |
 | Файл в формате `pg_hba.conf` | Да (файл или inline) | Да (`auth_hba_file`) | Да (с 1.4) |
 | PAM | Да (Linux) | Да (`auth_type=pam` или через HBA) | Да |
 | JWT (RSA-SHA256) | Да | Нет | Нет |
@@ -47,37 +47,38 @@ PgCat намеренно опущен: у него центр тяжести —
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
-| Patroni-assisted fallback (встроенный `/cluster` lookup) | Да | Нет | Нет |
+| Fallback через Patroni (встроенный lookup `/cluster`) | Да | Нет | Нет |
 | Bundled TCP-прокси с маршрутизацией по ролям (`patroni_proxy`) | Да | Нет | Нет |
 | Защита от лага реплик | Да (`max_lag_in_bytes` в `patroni_proxy`) | Нет | Да (`watchdog_lag_query` + `catchup_timeout`) |
-| Несколько backend-хостов с балансировкой | Да (`patroni_proxy`) | Да (с 1.24, `load_balance_hosts`) | Да |
+| Несколько хостов PostgreSQL с балансировкой | Да (`patroni_proxy`) | Да (с 1.24, `load_balance_hosts`) | Да |
 | `target_session_attrs` (read-write / read-only routing) | Да (через роли `patroni_proxy`) | Нет | Да |
 | Sequential routing rules (правило-в-порядке-первое-совпадение) | Нет | Нет | Да |
 | Маршрутизация по типу соединения (TCP vs UNIX) | Нет | Нет | Да |
 | Выбор хоста с учётом availability zone | Нет | Нет | Да |
 
-См. [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md), [`patroni_proxy`](tutorials/patroni-proxy.md).
+См. [Fallback через Patroni](tutorials/patroni-assisted-fallback.md), [`patroni_proxy`](tutorials/patroni-proxy.md).
 
 ## Пулинг
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
-| Pool modes | session, transaction | session, transaction, statement | session, transaction |
-| Pool Coordinator (per-database cap с приоритетным вытеснением) | Да (`max_db_connections` + вытеснение по p95) | Нет (`max_db_connections` ставит клиентов в очередь, пока существующие соединения не закроются по idle timeout) | Нет |
-| Reserve pool | Да (`reserve_pool_size`) | Да (`reserve_pool_size`) | Нет |
+| Режимы пула | session, transaction | session, transaction, statement | session, transaction |
+| Координатор пулов (лимит на базу с приоритетным вытеснением) | Да (`max_db_connections` + вытеснение по p95) | Нет (`max_db_connections` ставит клиентов в очередь, пока существующие соединения не закроются по idle timeout) | Нет |
+| Резервный пул | Да (`reserve_pool_size`) | Да (`reserve_pool_size`) | Нет |
 | Per-user `min_guaranteed_pool_size` | Да | Нет | Нет |
 | Опережающая замена при истечении `server_lifetime` (warm-up до экспирации старого) | Да (порог 95%, до 3 параллельных) | Нет | Нет |
-| Anticipation / burst scaling (`scaling_warm_pool_ratio`, fast retries) | Да | Нет | Нет |
-| Direct-handoff (возвращающийся сервер уходит самому давно ждущему клиенту через in-process oneshot-канал) | Да | Нет | Нет |
+| Упреждающее ожидание и ограничение всплеска (`scaling_warm_pool_ratio`, быстрые повторы) | Да | Нет | Нет |
+| Прямая передача (возвращающееся соединение уходит самому давно ждущему клиенту через in-process oneshot-канал) | Да | Нет | Нет |
 | Строгий FIFO порядок ожидающих | Да | Нет (LIFO через `server_round_robin = 0`) | Нет |
 | `min_pool_size` (warm connections) | Да | Нет | Да |
-| Prepared statements в transaction mode | Да (двухуровневый кеш, query interner, переименование `DOORMAN_N`) | Да (с 1.21, `max_prepared_statements`, переименование `PGBOUNCER_*`) | Да (`pool_reserve_prepared_statement`) |
-| Smart cleanup при checkin (пропустить `DEALLOCATE ALL`, если кеш не трогали) | Да (`RESET ALL` / `DEALLOCATE ALL` по факту мутаций) | Нет (всегда `DISCARD ALL`, если задан `server_reset_query`) | Да (auto) |
+| Prepared statements в transaction mode | Да (именованные и анонимные, двухуровневый кеш, query interner) | Да (именованные, с 1.21, `max_prepared_statements`) | Да (именованные, `pool_reserve_prepared_statement`) |
+| Кеш анонимного `Parse` для производительности | Да (`DOORMAN_N`, переиспользование между клиентами пула) | Нет (анонимный `Parse` проходит без изменений) | Нет (требуются именованные prepared statements) |
+| Умная очистка при возврате соединения (пропустить `DEALLOCATE ALL`, если кеш не менялся) | Да (`RESET ALL` / `DEALLOCATE ALL` по факту мутаций) | Нет (всегда `DISCARD ALL`, если задан `server_reset_query`) | Да (auto) |
 | LISTEN / NOTIFY pinning в transaction mode | Нет | Нет | Экспериментально |
 | Cross-rule connection cap (`shared_pool`) | Нет | Нет | Да (с 1.5.1) |
-| Admin-команды `PAUSE` / `RESUME` / `RECONNECT` | Да | Да | Да (с 1.4.1) |
+| Команды администратора `PAUSE` / `RESUME` / `RECONNECT` | Да | Да | Да (с 1.4.1) |
 
-См. [Pool Coordinator](concepts/pool-coordinator.md), [Пул под нагрузкой](tutorials/pool-pressure.md).
+См. [Координатор пулов](concepts/pool-coordinator.md), [Пул под нагрузкой](tutorials/pool-pressure.md).
 
 ## Лимиты и таймауты
 
@@ -93,7 +94,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | `max_db_client_connections` | Нет | Да (с 1.24) | Нет |
 | Per-user `query_timeout` | Нет | Да (с 1.24) | Нет |
 | Per-user `reserve_pool_size` | Нет | Да (с 1.24) | Нет |
-| Уведомление клиента, пока тот ждёт backend | Нет | Да (с 1.25, `query_wait_notify`) | Да (`pool_notice_after_waiting_ms`) |
+| Уведомление клиента, пока тот ждёт серверное соединение | Нет | Да (с 1.25, `query_wait_notify`) | Да (`pool_notice_after_waiting_ms`) |
 
 См. [Справочник по general-настройкам](reference/general.md), [Справочник по pool-настройкам](reference/pool.md).
 
@@ -101,11 +102,11 @@ PgCat намеренно опущен: у него центр тяжести —
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
-| Встроенный admin web UI (HTML-консоль в бинаре) | Да (HTML-консоль на том же порту, что и `/metrics`, включается через `[web].ui`) | Нет (только psql admin-консоль) | Нет (только psql admin-консоль) |
+| Встроенная веб-консоль администратора | Да (HTML-консоль на том же порту, что и `/metrics`, включается через `[web].ui`) | Нет (только psql admin-консоль) | Нет (только psql admin-консоль) |
 | Prometheus-эндпоинт | Встроенный `/metrics` | Внешний (`pgbouncer_exporter`) | Внешний (Go-exporter sidecar, опрашивает admin-консоль) |
 | Перцентили задержки на пул (p50, p90, p95, p99) | Да (HDR Histogram) | Нет (только средние в `SHOW STATS`) | Да через exporter (TDigest, требует rule-опцию `quantiles`) |
 | Счётчики prepared statements в `SHOW STATS` | Да | Да (с 1.24) | Нет |
-| JSON structured logging | Да (`--log-format structured`) | Нет | Да (`log_format "json"`) |
+| Структурированные JSON-логи | Да (`--log-format structured`) | Нет | Да (`log_format "json"`) |
 | Управление уровнем логов в рантайме (`SET log_level`) | Да | Нет | Нет |
 | `SHOW POOL_COORDINATOR` / `SHOW POOL_SCALING` / `SHOW SOCKETS` | Да | Нет | Нет |
 | `SHOW PREPARED_STATEMENTS` | Да | Нет | Нет |
@@ -117,22 +118,22 @@ PgCat намеренно опущен: у него центр тяжести —
 | Метрики Patroni API | Да | Нет | Нет |
 | Метрики fallback (active flag, текущий хост, hits) | Да | Нет | Нет |
 
-См. [Справочник Prometheus-метрик](reference/prometheus.md), [Admin-команды](observability/admin-commands.md).
+См. [Справочник Prometheus-метрик](reference/prometheus.md), [Команды администратора](observability/admin-commands.md).
 
 ## Эксплуатация
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
-| Binary upgrade с миграцией сессий (TCP-сокет, cancel keys, prepared cache) | Да (`SCM_RIGHTS`, плюс TLS state со сборкой `tls-migration`) | Нет: `-R` deprecated с 1.20; rolling restart через `so_reuseport` оставляет старые сессии на старом процессе | Нет: `SIGUSR2` + `bindwith_reuseport` оставляет старые сессии на старом процессе |
+| Обновление бинаря с миграцией сессий (TCP-сокет, cancel keys, prepared cache) | Да (`SCM_RIGHTS`, плюс TLS state со сборкой `tls-migration`) | Нет: `-R` deprecated с 1.20; rolling restart через `so_reuseport` оставляет старые сессии на старом процессе | Нет: `SIGUSR2` + `bindwith_reuseport` оставляет старые сессии на старом процессе |
 | Формат конфига | YAML или TOML | INI | Свой формат (lex/yacc) |
 | Человекочитаемые длительности и размеры (`30s`, `1h`, `256MB`) | Да | Нет (целые микросекунды / байты) | Нет |
 | Режим проверки конфига (`pg_doorman -t`) | Да | Нет | Нет |
 | Авто-конфиг из PostgreSQL (`pg_doorman generate --host`) | Да | Нет | Нет |
-| `SIGHUP` reload | Да (server TLS certs включены; client TLS требует restart) | Да (`auth_file`, `auth_hba_file`, server и client TLS certs) | Да |
+| Перезагрузка по `SIGHUP` | Да (серверные TLS-сертификаты включены; клиентский TLS требует рестарта) | Да (`auth_file`, `auth_hba_file`, server и client TLS certs) | Да |
 | systemd `sd-notify` (`Type=notify`) | Да | Нет | Нет |
 | Лимит памяти (`max_memory_usage`) | Да | Нет | Нет |
 
-См. [Binary upgrade](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
+См. [Плавное обновление бинаря](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
 
 ## Протокол
 
@@ -152,7 +153,7 @@ PgCat намеренно опущен: у него центр тяжести —
 
 - **Нужна LDAP-аутентификация.** Используйте Odyssey или PgBouncer 1.25+.
 - **Нужен replication passthrough для logical replication tools.** Используйте PgBouncer 1.23+.
-- **Нужен `transaction_timeout`, который enforced пулером.** Используйте PgBouncer 1.25+.
+- **Нужен `transaction_timeout`, который применяет сам пулер.** Используйте PgBouncer 1.25+.
 - **Нужен горизонтальный шардинг внутри пулера.** Используйте PgCat.
 
-Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и binary upgrade с миграцией живых сессий — PgDoorman ближе по профилю.
+Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и обновление бинаря с миграцией живых сессий — PgDoorman ближе по профилю.

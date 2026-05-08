@@ -2,7 +2,7 @@
 
 pg_doorman поддерживает два режима пула: `transaction` и `session`. Режим задаётся для пула, при необходимости переопределяется для конкретного пользователя.
 
-Режима `statement` нет. В statement-пулинге backend ротируется после каждого оператора — это вынуждает клиентов отказаться от мульти-statement транзакций и полностью ломает протокол prepared statements. Все оптимизации pg_doorman (кеш prepared statements, direct handoff, строгий FIFO-планировщик) рассчитаны на транзакционный режим. PgBouncer оставляет `statement` для обратной совместимости; Odyssey его не реализует.
+Режима `statement` нет. В statement-пулинге серверное соединение ротируется после каждого оператора — это вынуждает клиентов отказаться от мульти-statement транзакций и полностью ломает протокол prepared statements. Все оптимизации pg_doorman (кеш prepared statements, прямая передача, строгий FIFO-планировщик) рассчитаны на транзакционный режим. PgBouncer оставляет `statement` для обратной совместимости; Odyssey его не реализует.
 
 ## Транзакционный режим (рекомендуется)
 
@@ -96,4 +96,4 @@ pools:
 
 - Параметр `pool_mode`: [Настройки пула](../reference/pool.md#pool_mode).
 - `cleanup_server_connections`: [Настройки пула](../reference/pool.md#cleanup_server_connections).
-- Размер пула: [Pool Coordinator](pool-coordinator.md), [Пул под нагрузкой](../tutorials/pool-pressure.md).
+- Размер пула: [Координатор пулов](pool-coordinator.md), [Пул под нагрузкой](../tutorials/pool-pressure.md).
