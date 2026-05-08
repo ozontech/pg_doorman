@@ -873,6 +873,100 @@ pub(crate) static AUTH_QUERY_DYNAMIC_POOLS: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+/// Counter form of `auth_query_cache` for the cumulative `type`s
+/// (hits/misses/refetches/rate_limited). The `entries` value is a
+/// snapshot, not cumulative, so it stays on the gauge form.
+pub(crate) static AUTH_QUERY_CACHE_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_cache_total",
+            "Cumulative auth query cache events by type ('hits'/'misses'/'refetches'/'rate_limited') and database.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter form of `auth_query_auth` outcomes.
+pub(crate) static AUTH_QUERY_AUTH_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_auth_total",
+            "Cumulative auth query authentication outcomes by result ('success'/'failure') and database.",
+        ),
+        &["result", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter form of `auth_query_executor`. Both `queries` and `errors`
+/// are cumulative.
+pub(crate) static AUTH_QUERY_EXECUTOR_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_executor_total",
+            "Cumulative auth query executor events by type ('queries'/'errors') and database.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter form of `auth_query_dynamic_pools` for the cumulative
+/// `type`s (created/destroyed). The `current` value is a snapshot,
+/// not cumulative, so it stays on the gauge form.
+pub(crate) static AUTH_QUERY_DYNAMIC_POOLS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_dynamic_pools_total",
+            "Cumulative auth query dynamic pool lifecycle events by type ('created'/'destroyed') and database.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter form of `servers_prepared_hits`. The gauge form aggregates
+/// per-pool sums across live backends and naturally drops when a
+/// backend is recycled; this counter mirrors the same per-pool sum
+/// through the delta tracker so a `rate()` over the counter is stable
+/// across the `server_lifetime` rotation churn.
+pub(crate) static SHOW_SERVERS_PREPARED_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_servers_prepared_hits_total",
+            "Cumulative prepared-statement cache hits across all backends of each pool, by user and database.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter form of `servers_prepared_misses`. See
+/// `SHOW_SERVERS_PREPARED_HITS_TOTAL` for the rationale.
+pub(crate) static SHOW_SERVERS_PREPARED_MISSES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_servers_prepared_misses_total",
+            "Cumulative prepared-statement cache misses across all backends of each pool, by user and database.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 pub(crate) static COORDINATOR: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(

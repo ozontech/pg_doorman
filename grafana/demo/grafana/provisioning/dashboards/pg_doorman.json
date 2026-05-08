@@ -1542,13 +1542,13 @@
       },
       "targets": [
         {
-          "expr": "clamp_max(sum by (user, database) (pg_doorman_servers_prepared_hits{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}) / clamp_min(sum by (user, database) (pg_doorman_servers_prepared_hits{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}) + sum by (user, database) (pg_doorman_servers_prepared_misses{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}), 1), 1)",
+          "expr": "clamp_max(sum by (user, database) (rate(pg_doorman_servers_prepared_hits_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])) / clamp_min(sum by (user, database) (rate(pg_doorman_servers_prepared_hits_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])) + sum by (user, database) (rate(pg_doorman_servers_prepared_misses_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])), 0.001), 1)",
           "refId": "",
           "legendFormat": "{{user}}@{{database}}"
         }
       ],
       "title": "Prepared Statement Hit Ratio",
-      "description": "Cache hits / total lookups. Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
+      "description": "Cache hits / total lookups (rate over the per-pool counters). Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -1735,7 +1735,7 @@
       },
       "targets": [
         {
-          "expr": "clamp_max(rate(pg_doorman_auth_query_cache{type=\"hits\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]) / clamp_min(rate(pg_doorman_auth_query_cache{type=\"hits\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]) + rate(pg_doorman_auth_query_cache{type=\"misses\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]), 0.001), 1)",
+          "expr": "clamp_max(rate(pg_doorman_auth_query_cache_total{type=\"hits\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]) / clamp_min(rate(pg_doorman_auth_query_cache_total{type=\"hits\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]) + rate(pg_doorman_auth_query_cache_total{type=\"misses\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]), 0.001), 1)",
           "refId": "",
           "legendFormat": "{{database}}"
         }
@@ -1779,12 +1779,12 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_auth_query_auth{result=\"success\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "expr": "rate(pg_doorman_auth_query_auth_total{result=\"success\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "success/s"
         },
         {
-          "expr": "rate(pg_doorman_auth_query_auth{result=\"failure\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "expr": "rate(pg_doorman_auth_query_auth_total{result=\"failure\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "failure/s"
         }
@@ -1834,7 +1834,7 @@
         }
       ],
       "title": "Dynamic Pools",
-      "description": "Auto-created pools for auth_query users. Unexpected growth indicates wrong database names or unplanned user sprawl.",
+      "description": "Auto-created pools for auth_query users (snapshot count, gauge). Unexpected growth indicates wrong database names or unplanned user sprawl.",
       "datasource": {
         "uid": "prometheus"
       },

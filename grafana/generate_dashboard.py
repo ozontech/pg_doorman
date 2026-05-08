@@ -424,14 +424,14 @@ p_hit_ratio = ts_panel(
     "Prepared Statement Hit Ratio", [
         prom(
             f'clamp_max('
-            f'sum by (user, database) (pg_doorman_servers_prepared_hits{{{S}}}) / '
-            f'clamp_min(sum by (user, database) (pg_doorman_servers_prepared_hits{{{S}}}) + '
-            f'sum by (user, database) (pg_doorman_servers_prepared_misses{{{S}}}), 1)'
+            f'sum by (user, database) (rate(pg_doorman_servers_prepared_hits_total{{{S}}}[$__rate_interval])) / '
+            f'clamp_min(sum by (user, database) (rate(pg_doorman_servers_prepared_hits_total{{{S}}}[$__rate_interval])) + '
+            f'sum by (user, database) (rate(pg_doorman_servers_prepared_misses_total{{{S}}}[$__rate_interval])), 0.001)'
             f', 1)',
             "{{user}}@{{database}}",
         ),
     ], unit="percentunit", w=8,
-    desc="Cache hits / total lookups. Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
+    desc="Cache hits / total lookups (rate over the per-pool counters). Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
 )
 p_client_named = ts_panel(
     "Client Named Entries", [
@@ -464,9 +464,9 @@ p_auth_cache = ts_panel(
     "Auth Cache Hit Rate", [
         prom(
             f'clamp_max('
-            f'rate(pg_doorman_auth_query_cache{{type="hits", {SD}}}[$__rate_interval]) / '
-            f'clamp_min(rate(pg_doorman_auth_query_cache{{type="hits", {SD}}}[$__rate_interval]) + '
-            f'rate(pg_doorman_auth_query_cache{{type="misses", {SD}}}[$__rate_interval]), 0.001)'
+            f'rate(pg_doorman_auth_query_cache_total{{type="hits", {SD}}}[$__rate_interval]) / '
+            f'clamp_min(rate(pg_doorman_auth_query_cache_total{{type="hits", {SD}}}[$__rate_interval]) + '
+            f'rate(pg_doorman_auth_query_cache_total{{type="misses", {SD}}}[$__rate_interval]), 0.001)'
             f', 1)',
             "{{database}}",
         ),
@@ -475,8 +475,14 @@ p_auth_cache = ts_panel(
 )
 p_auth_outcomes = ts_panel(
     "Auth Outcomes", [
-        prom(f'rate(pg_doorman_auth_query_auth{{result="success", {SD}}}[$__rate_interval])', "success/s"),
-        prom(f'rate(pg_doorman_auth_query_auth{{result="failure", {SD}}}[$__rate_interval])', "failure/s"),
+        prom(
+            f'rate(pg_doorman_auth_query_auth_total{{result="success", {SD}}}[$__rate_interval])',
+            "success/s",
+        ),
+        prom(
+            f'rate(pg_doorman_auth_query_auth_total{{result="failure", {SD}}}[$__rate_interval])',
+            "failure/s",
+        ),
     ], w=8,
     desc="Auth success vs failure rate. Failure spike after deploy = credential mismatch. Sustained failures = check source IPs in logs.",
 )
@@ -484,7 +490,7 @@ p_dynamic_pools = ts_panel(
     "Dynamic Pools", [
         prom(f'pg_doorman_auth_query_dynamic_pools{{type="current", {SD}}}', "current"),
     ], w=8,
-    desc="Auto-created pools for auth_query users. Unexpected growth indicates wrong database names or unplanned user sprawl.",
+    desc="Auto-created pools for auth_query users (snapshot count, gauge). Unexpected growth indicates wrong database names or unplanned user sprawl.",
 )
 
 # ---------------------------------------------------------------------------

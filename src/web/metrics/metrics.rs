@@ -19,9 +19,11 @@ use super::system::get_process_memory_usage;
 #[cfg(target_os = "linux")]
 use super::SHOW_SOCKETS;
 use super::{
-    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
-    COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
-    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
+    AUTH_QUERY_AUTH, AUTH_QUERY_AUTH_TOTAL, AUTH_QUERY_CACHE, AUTH_QUERY_CACHE_TOTAL,
+    AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_DYNAMIC_POOLS_TOTAL, AUTH_QUERY_EXECUTOR,
+    AUTH_QUERY_EXECUTOR_TOTAL, COORDINATOR, COORDINATOR_TOTALS, POOL_SCALING_GAUGE,
+    POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES,
+    SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
     SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
     SHOW_CONNECTIONS, SHOW_CONNECTIONS_TOTAL, SHOW_POOLS_BYTES, SHOW_POOLS_BYTES_TOTAL,
     SHOW_POOLS_CLIENT, SHOW_POOLS_ERRORS_TOTAL, SHOW_POOLS_MAXWAIT_MICROSECONDS,
@@ -30,7 +32,8 @@ use super::{
     SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
     SHOW_POOLS_TRANSACTIONS_TOTAL, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG,
     SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
-    SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
+    SHOW_SERVERS_PREPARED_HITS_TOTAL, SHOW_SERVERS_PREPARED_MISSES,
+    SHOW_SERVERS_PREPARED_MISSES_TOTAL, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -152,11 +155,27 @@ where
 
 type PoolKey = (String, String);
 type PoolBytesKey = (String, String, String);
+/// (database, type) for the auth_query counter family. The type
+/// component is `&'static str` because every value is one of a small
+/// set of compile-time literals.
+type AuthQueryKey = (String, &'static str);
 
 static POOL_QUERIES_PREV: Lazy<CounterDeltaTracker<PoolKey>> = Lazy::new(CounterDeltaTracker::new);
 static POOL_TRANSACTIONS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
     Lazy::new(CounterDeltaTracker::new);
 static POOL_BYTES_PREV: Lazy<CounterDeltaTracker<PoolBytesKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_CACHE_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_AUTH_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_EXECUTOR_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_DYNAMIC_POOLS_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static SERVERS_PREPARED_HITS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static SERVERS_PREPARED_MISSES_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
     Lazy::new(CounterDeltaTracker::new);
 
 #[cfg(target_os = "linux")]
@@ -329,6 +348,7 @@ fn update_server_metrics() {
         }
     }
 
+    let mut current_keys: std::collections::HashSet<PoolKey> = std::collections::HashSet::new();
     for ((user, database), (hits, misses)) in totals {
         SHOW_SERVERS_PREPARED_HITS
             .with_label_values(&[user.as_str(), database.as_str()])
@@ -336,6 +356,28 @@ fn update_server_metrics() {
         SHOW_SERVERS_PREPARED_MISSES
             .with_label_values(&[user.as_str(), database.as_str()])
             .set(misses);
+
+        let key: PoolKey = (user.clone(), database.clone());
+        SERVERS_PREPARED_HITS_PREV.observe(
+            &SHOW_SERVERS_PREPARED_HITS_TOTAL
+                .with_label_values(&[user.as_str(), database.as_str()]),
+            key.clone(),
+            hits as u64,
+        );
+        SERVERS_PREPARED_MISSES_PREV.observe(
+            &SHOW_SERVERS_PREPARED_MISSES_TOTAL
+                .with_label_values(&[user.as_str(), database.as_str()]),
+            key.clone(),
+            misses as u64,
+        );
+        current_keys.insert(key);
+    }
+
+    for stale in SERVERS_PREPARED_HITS_PREV.drain_stale(&current_keys) {
+        let _ = SHOW_SERVERS_PREPARED_HITS_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
+    }
+    for stale in SERVERS_PREPARED_MISSES_PREV.drain_stale(&current_keys) {
+        let _ = SHOW_SERVERS_PREPARED_MISSES_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
     }
 }
 
@@ -505,11 +547,18 @@ fn update_auth_query_metrics() {
 
     let dynamic = DYNAMIC_POOLS.load();
 
+    let mut cache_keys: std::collections::HashSet<AuthQueryKey> = std::collections::HashSet::new();
+    let mut auth_keys: std::collections::HashSet<AuthQueryKey> = std::collections::HashSet::new();
+    let mut executor_keys: std::collections::HashSet<AuthQueryKey> =
+        std::collections::HashSet::new();
+    let mut dyn_keys: std::collections::HashSet<AuthQueryKey> = std::collections::HashSet::new();
+
     for (pool_name, state) in states.iter() {
         let db = pool_name.as_str();
         let s = state.stats.snapshot();
 
-        // Cache metrics
+        // Cache metrics — gauge form keeps `entries` as a snapshot,
+        // counter form mirrors only the cumulative members.
         AUTH_QUERY_CACHE
             .with_label_values(&["entries", db])
             .set(state.cache_len() as f64);
@@ -526,6 +575,21 @@ fn update_auth_query_metrics() {
             .with_label_values(&["rate_limited", db])
             .set(s.cache_rate_limited as f64);
 
+        for (kind, value) in [
+            ("hits", s.cache_hits),
+            ("misses", s.cache_misses),
+            ("refetches", s.cache_refetches),
+            ("rate_limited", s.cache_rate_limited),
+        ] {
+            let key: AuthQueryKey = (db.to_string(), kind);
+            AUTH_QUERY_CACHE_PREV.observe(
+                &AUTH_QUERY_CACHE_TOTAL.with_label_values(&[kind, db]),
+                key.clone(),
+                value,
+            );
+            cache_keys.insert(key);
+        }
+
         // Auth outcomes
         AUTH_QUERY_AUTH
             .with_label_values(&["success", db])
@@ -533,6 +597,15 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_AUTH
             .with_label_values(&["failure", db])
             .set(s.auth_failure as f64);
+        for (result, value) in [("success", s.auth_success), ("failure", s.auth_failure)] {
+            let key: AuthQueryKey = (db.to_string(), result);
+            AUTH_QUERY_AUTH_PREV.observe(
+                &AUTH_QUERY_AUTH_TOTAL.with_label_values(&[result, db]),
+                key.clone(),
+                value,
+            );
+            auth_keys.insert(key);
+        }
 
         // Executor metrics
         AUTH_QUERY_EXECUTOR
@@ -541,6 +614,18 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_EXECUTOR
             .with_label_values(&["errors", db])
             .set(s.executor_errors as f64);
+        for (kind, value) in [
+            ("queries", s.executor_queries),
+            ("errors", s.executor_errors),
+        ] {
+            let key: AuthQueryKey = (db.to_string(), kind);
+            AUTH_QUERY_EXECUTOR_PREV.observe(
+                &AUTH_QUERY_EXECUTOR_TOTAL.with_label_values(&[kind, db]),
+                key.clone(),
+                value,
+            );
+            executor_keys.insert(key);
+        }
 
         // Dynamic pool metrics
         let dyn_current = dynamic.iter().filter(|id| id.db == *pool_name).count();
@@ -553,6 +638,31 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_DYNAMIC_POOLS
             .with_label_values(&["destroyed", db])
             .set(s.dynamic_pools_destroyed as f64);
+        for (kind, value) in [
+            ("created", s.dynamic_pools_created),
+            ("destroyed", s.dynamic_pools_destroyed),
+        ] {
+            let key: AuthQueryKey = (db.to_string(), kind);
+            AUTH_QUERY_DYNAMIC_POOLS_PREV.observe(
+                &AUTH_QUERY_DYNAMIC_POOLS_TOTAL.with_label_values(&[kind, db]),
+                key.clone(),
+                value,
+            );
+            dyn_keys.insert(key);
+        }
+    }
+
+    for stale in AUTH_QUERY_CACHE_PREV.drain_stale(&cache_keys) {
+        let _ = AUTH_QUERY_CACHE_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
+    }
+    for stale in AUTH_QUERY_AUTH_PREV.drain_stale(&auth_keys) {
+        let _ = AUTH_QUERY_AUTH_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
+    }
+    for stale in AUTH_QUERY_EXECUTOR_PREV.drain_stale(&executor_keys) {
+        let _ = AUTH_QUERY_EXECUTOR_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
+    }
+    for stale in AUTH_QUERY_DYNAMIC_POOLS_PREV.drain_stale(&dyn_keys) {
+        let _ = AUTH_QUERY_DYNAMIC_POOLS_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
     }
 }
 
