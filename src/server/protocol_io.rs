@@ -146,20 +146,31 @@ where
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
 
-    // Stream the large message directly
-    match proxy_copy_data_with_timeout(
+    // Header (1 byte type code + 4 byte length field) already left
+    // pg_doorman in `write_all_flush` above; the payload is what
+    // `proxy_copy_data_with_timeout` streams. The counter is bumped
+    // by header + actually-forwarded payload so a partial copy is
+    // recorded as the bytes that actually reached the wire, not the
+    // declared frame size that promised more than was delivered.
+    const HEADER_BYTES: u64 = 1 + mem::size_of::<i32>() as u64;
+    let mut payload_copied: usize = 0;
+    let res = proxy_copy_data_with_timeout(
         get_config().general.proxy_copy_data_timeout.as_std(),
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),
+        &mut payload_copied,
     )
-    .await
-    {
-        Ok(_) => (),
-        Err(err) => {
-            server.mark_bad(err.to_string().as_str());
-            return Err(err);
-        }
+    .await;
+    record_streaming(
+        server,
+        "data_row",
+        res.is_ok(),
+        HEADER_BYTES + payload_copied as u64,
+    );
+    if let Err(err) = res {
+        server.mark_bad(err.to_string().as_str());
+        return Err(err);
     }
 
     if !prev_bad {
@@ -194,13 +205,25 @@ where
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
 
-    // Stream the large message directly
-    proxy_copy_data(
+    // Same wire-bytes contract as in `handle_large_data_row`: header
+    // is on the wire after the buffer flush above, the payload is
+    // counted from what `proxy_copy_data` actually shipped.
+    const HEADER_BYTES: u64 = 1 + mem::size_of::<i32>() as u64;
+    let mut payload_copied: usize = 0;
+    let res = proxy_copy_data(
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),
+        &mut payload_copied,
     )
-    .await?;
+    .await;
+    record_streaming(
+        server,
+        "copy_data",
+        res.is_ok(),
+        HEADER_BYTES + payload_copied as u64,
+    );
+    res?;
 
     server.bad = prev_bad;
     server
@@ -210,6 +233,17 @@ where
     server.buffer.clear();
     server.stats.wait_idle();
     Ok(server.buffer.clone())
+}
+
+/// Helper that bumps both streaming counters from the streaming handlers.
+/// `kind` is "data_row" or "copy_data"; the boolean carries the proxy
+/// outcome and is mapped to the "ok"/"error" label.
+fn record_streaming(server: &Server, kind: &'static str, ok: bool, total_bytes: u64) {
+    let user = server.address.username.as_str();
+    let database = server.address.database.as_str();
+    let result = if ok { "ok" } else { "error" };
+    crate::web::metrics::observe_streaming_event(user, database, kind, result);
+    crate::web::metrics::observe_streaming_bytes(user, database, kind, total_bytes);
 }
 
 /// Handles ReadyForQuery ('Z') message - indicates server is ready for a new query.

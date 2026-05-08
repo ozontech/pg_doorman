@@ -415,7 +415,8 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "### Connection Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_connection_count` | Counter of new connections by type handled by pg_doorman. Types include: 'plain' (unencrypted connections), 'tls' (encrypted connections), 'cancel' (connection cancellation requests), and 'total' (sum of all connections). |\n");
+    let _ = writeln!(out, "| `pg_doorman_connections_total` | Cumulative count of accepted client connections by type. Types include: 'plain' (unencrypted), 'tls' (encrypted), 'cancel' (cancel-query startup), and 'total' (sum of all). Counter form; use `rate(pg_doorman_connections_total[5m])` for connection rate. |");
+    let _ = writeln!(out, "| `pg_doorman_connection_count` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_connections_total` kept for one minor release. New rules and dashboards must consume the counter form. |\n");
 
     // Socket Metrics
     let _ = writeln!(out, "### Socket Metrics (Linux only)\n");
@@ -429,20 +430,26 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "|--------|-------------|");
     let _ = writeln!(out, "| `pg_doorman_pools_clients` | Number of clients in connection pools by status, user, and database. Status values include: 'idle' (connected but not executing queries), 'waiting' (waiting for a server connection), and 'active' (currently executing queries). Helps monitor connection pool utilization and client distribution. |");
     let _ = writeln!(out, "| `pg_doorman_pools_servers` | Number of servers in connection pools by status, user, and database. Status values include: 'active' (actively serving clients) and 'idle' (available for new connections). Helps monitor server availability and load distribution. |");
-    let _ = writeln!(out, "| `pg_doorman_pools_bytes` | Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections. |\n");
+    let _ = writeln!(out, "| `pg_doorman_pools_bytes_total` | Cumulative bytes transferred per pool and direction. Direction values include: 'received' (data from client) and 'sent' (data to client). Counter form; use `rate(pg_doorman_pools_bytes_total[5m])` for throughput. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_bytes` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_pools_bytes_total`. |\n");
     let _ = writeln!(out, "| `pg_doorman_pool_size` | Configured maximum pool size per user and database. Useful for calculating remaining pool capacity together with pg_doorman_pools_servers. |\n");
 
     // Query and Transaction Metrics
     let _ = writeln!(out, "### Query and Transaction Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_pools_queries_percentile` | Query execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps identify slow queries and performance trends across different users and databases. |");
-    let _ = writeln!(out, "| `pg_doorman_pools_transactions_percentile` | Transaction execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps monitor transaction performance and identify long-running transactions that might impact database performance. |");
-    let _ = writeln!(out, "| `pg_doorman_pools_transactions_count` | Counter of transactions executed in connection pools by user and database. Helps track transaction volume and identify users or databases with high transaction rates. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_query_duration_seconds` | Server-side query latency histogram per pool, in seconds. Use `histogram_quantile(q, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))` for quantiles; `rate(_count[5m])` for QPS. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_transaction_duration_seconds` | End-to-end transaction latency histogram per pool, in seconds. Same composition contract as `pg_doorman_pools_query_duration_seconds`. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_wait_duration_seconds` | Client checkout wait latency histogram per pool, in seconds. Use `histogram_quantile(0.99, ...)` for tail wait. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_transactions_total` | Cumulative transaction count per pool. Counter form; use `rate(pg_doorman_pools_transactions_total[5m])` for TPS. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_queries_percentile` | DEPRECATED, removed in 3.10. Pre-aggregated percentile gauge that cannot be summed across replicas. Use `pg_doorman_pools_query_duration_seconds_bucket` with `histogram_quantile()`. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_transactions_percentile` | DEPRECATED, removed in 3.10. See `pg_doorman_pools_transaction_duration_seconds`. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_transactions_count` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_pools_transactions_total`. |");
     let _ = writeln!(out, "| `pg_doorman_pools_transactions_total_time` | Total time spent executing transactions in connection pools by user and database. Values are in milliseconds. Helps monitor overall transaction performance and identify users or databases with high transaction execution times. |");
-    let _ = writeln!(out, "| `pg_doorman_pools_queries_count` | Counter of queries executed in connection pools by user and database. Helps track query volume and identify users or databases with high query rates. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_queries_total` | Cumulative query count per pool. Counter form; use `rate(pg_doorman_pools_queries_total[5m])` for QPS. |");
+    let _ = writeln!(out, "| `pg_doorman_pools_queries_count` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_pools_queries_total`. |");
     let _ = writeln!(out, "| `pg_doorman_pools_queries_total_time` | Total time spent executing queries in connection pools by user and database. Values are in milliseconds. Helps monitor overall query performance and identify users or databases with high query execution times. |");
-    let _ = writeln!(out, "| `pg_doorman_pools_avg_wait_time` | Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks. |\n");
+    let _ = writeln!(out, "| `pg_doorman_pools_avg_wait_time` | DEPRECATED, removed in 3.10. Running mean that drowns tail wait spikes. Use `pg_doorman_pools_wait_duration_seconds_bucket` with `histogram_quantile()`. |\n");
 
     // Auth Query Metrics
     let _ = writeln!(out, "### Auth Query Metrics\n");
@@ -452,17 +459,21 @@ fn write_prometheus_metrics_section(out: &mut String) {
     );
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_auth_query_cache` | Auth query cache metrics by type and database. Types include: `entries` (current cached credentials), `hits` (cache lookups that found a valid entry), `misses` (cache lookups that required a PostgreSQL fetch), `refetches` (re-fetches triggered by auth failure with stale credentials), `rate_limited` (re-fetch attempts that were rate-limited by `min_interval`). |");
-    let _ = writeln!(out, "| `pg_doorman_auth_query_auth` | Auth query authentication outcomes by result and database. Results include: `success` (successful authentication) and `failure` (wrong password or credential mismatch). |");
-    let _ = writeln!(out, "| `pg_doorman_auth_query_executor` | Auth query executor metrics by type and database. Types include: `queries` (total queries executed against PostgreSQL to fetch credentials) and `errors` (queries that failed due to connection or execution errors). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_cache_total` | Cumulative auth query cache events by type (`hits`/`misses`/`refetches`/`rate_limited`) and database. Counter form; the `entries` snapshot stays on `pg_doorman_auth_query_cache`. |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_auth_total` | Cumulative auth query authentication outcomes by result (`success`/`failure`) and database. Counter form. |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_executor_total` | Cumulative auth query executor events by type (`queries`/`errors`) and database. Counter form. |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_dynamic_pools_total` | Cumulative auth query dynamic pool lifecycle events by type (`created`/`destroyed`) and database. Counter form; the `current` snapshot stays on `pg_doorman_auth_query_dynamic_pools`. |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_cache` | Snapshot gauge for `entries` (current cached credentials). Cumulative members are deprecated in this metric — use `pg_doorman_auth_query_cache_total`. |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_auth` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_auth_query_auth_total`. |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_executor` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_auth_query_executor_total`. |");
     let _ = writeln!(out, "| `pg_doorman_auth_query_dynamic_pools` | Auth query dynamic pool lifecycle metrics by type and database. Types include: `current` (currently active dynamic pools), `created` (total pools created since startup), `destroyed` (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode. |\n");
 
     // Server Metrics
     let _ = writeln!(out, "### Server Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead. |");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance. |\n");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with `pg_doorman_servers_prepared_misses` to derive hit ratio. |");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statement_cache_size`. |\n");
 
     // Per-Client Prepared Statement Cache Metrics
     let _ = writeln!(out, "### Per-Client Prepared Statement Cache Metrics\n");
@@ -488,28 +499,31 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "### Connection Rate\n");
     let _ = writeln!(
         out,
-        "```\nrate(pg_doorman_connection_count{{type=\"total\"}}[5m])\n```\n"
+        "```\nrate(pg_doorman_connections_total{{type=\"total\"}}[5m])\n```\n"
     );
 
     let _ = writeln!(out, "### Pool Utilization\n");
     let _ = writeln!(out, "```\nsum by (database) (pg_doorman_pools_clients{{status=\"active\"}}) / sum by (database) (pg_doorman_pools_servers{{status=\"active\"}} + pg_doorman_pools_servers{{status=\"idle\"}})\n```\n");
 
-    let _ = writeln!(out, "### Slow Queries\n");
+    let _ = writeln!(out, "### Slow Queries (p99)\n");
     let _ = writeln!(
         out,
-        "```\npg_doorman_pools_queries_percentile{{percentile=\"99\"}}\n```\n"
+        "```\nhistogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))\n```\n"
     );
 
-    let _ = writeln!(out, "### Client Wait Time\n");
-    let _ = writeln!(out, "```\npg_doorman_pools_avg_wait_time\n```\n");
+    let _ = writeln!(out, "### Client Wait Time (p99)\n");
+    let _ = writeln!(
+        out,
+        "```\nhistogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_wait_duration_seconds_bucket[5m])))\n```\n"
+    );
 
     let _ = writeln!(out, "### Auth Query Cache Hit Rate\n");
-    let _ = writeln!(out, "```\npg_doorman_auth_query_cache{{type=\"hits\"}} / (pg_doorman_auth_query_cache{{type=\"hits\"}} + pg_doorman_auth_query_cache{{type=\"misses\"}})\n```\n");
+    let _ = writeln!(out, "```\nrate(pg_doorman_auth_query_cache_total{{type=\"hits\"}}[5m]) / clamp_min(rate(pg_doorman_auth_query_cache_total{{type=\"hits\"}}[5m]) + rate(pg_doorman_auth_query_cache_total{{type=\"misses\"}}[5m]), 0.001)\n```\n");
 
     let _ = writeln!(out, "### Auth Query Failure Rate\n");
     let _ = writeln!(
         out,
-        "```\nrate(pg_doorman_auth_query_auth{{result=\"failure\"}}[5m])\n```\n"
+        "```\nrate(pg_doorman_auth_query_auth_total{{result=\"failure\"}}[5m])\n```\n"
     );
 }
 

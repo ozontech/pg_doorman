@@ -37,6 +37,11 @@ services:
       - "19090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      # Mount the upstream rule bundle into the same path
+      # `prometheus.yml` references via `rule_files`. Demo Prometheus
+      # evaluates the official rules so dashboard/rule drift surfaces
+      # locally rather than in production.
+      - ../../monitoring/prometheus-rules:/etc/prometheus/rules:ro
     depends_on:
       - pg_doorman
     restart: unless-stopped

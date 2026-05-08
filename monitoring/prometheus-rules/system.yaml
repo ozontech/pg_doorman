@@ -1,0 +1,48 @@
+groups:
+  - name: system_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:socket_count:sum
+        expr: |
+          sum by (job, instance) (pg_doorman_sockets)
+
+      - record: pg_doorman:pool_connection_slots:sum
+        expr: |
+          sum by (job, instance) (pg_doorman_pools_clients)
+          +
+          sum by (job, instance) (pg_doorman_pools_servers)
+
+  - name: system_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanProcessMemoryHigh
+        expr: |
+          pg_doorman_total_memory > 1073741824
+          and deriv(pg_doorman_total_memory[30m]) > 524288
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman RSS growing fast on {{ $labels.instance }}"
+          runbook: |
+            Correlate RSS with prepared cache, query interner, socket count,
+            and connection count. Growth above 512KiB/s for 30m usually means
+            cache churn, dynamic SQL / statement names, or a process leak.
+
+      - alert: PgDoormanSocketCountHigh
+        expr: |
+          pg_doorman:socket_count:sum > 10000
+          and on (job, instance)
+          pg_doorman:socket_count:sum
+            > 2 * pg_doorman:pool_connection_slots:sum + 1000
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman socket count is high relative to pool state on {{ $labels.instance }}"
+          runbook: |
+            Socket count is much higher than tracked client/server pool
+            connections. Inspect OS socket states for CLOSE_WAIT, SYN_SENT,
+            or large unix-socket growth, and compare with process fd limits.

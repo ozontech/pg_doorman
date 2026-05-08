@@ -241,25 +241,43 @@ where
 }
 
 /// Copy data from one stream to another with a timeout.
+///
+/// `copied` is updated as bytes flow so the caller can record the
+/// actual amount forwarded even when the underlying copy fails or
+/// times out partway through. On a clean copy `copied == len` on
+/// return; on a timeout-driven cancellation the future is dropped and
+/// `copied` reflects how far the copy got before tokio aborted it.
 pub async fn proxy_copy_data_with_timeout<R, W>(
     duration: tokio::time::Duration,
     read: &mut R,
     write: &mut W,
     len: usize,
-) -> Result<usize, Error>
+    copied: &mut usize,
+) -> Result<(), Error>
 where
     R: tokio::io::AsyncRead + std::marker::Unpin,
     W: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    match timeout(duration, proxy_copy_data(read, write, len)).await {
-        Ok(Ok(len)) => Ok(len),
+    match timeout(duration, proxy_copy_data(read, write, len, copied)).await {
+        Ok(Ok(())) => Ok(()),
         Ok(Err(err)) => Err(err),
         Err(_) => Err(ProxyTimeout),
     }
 }
 
 /// Copy data from one stream to another.
-pub async fn proxy_copy_data<R, W>(read: &mut R, write: &mut W, len: usize) -> Result<usize, Error>
+///
+/// The caller passes `copied` initialized to zero; the function bumps
+/// it as each chunk lands in the writer. On `Err` the value reflects
+/// what actually reached the wire before the failure, which the
+/// streaming-byte counter relies on to avoid overstating large-message
+/// throughput on partial reads or writer disconnects.
+pub async fn proxy_copy_data<R, W>(
+    read: &mut R,
+    write: &mut W,
+    len: usize,
+    copied: &mut usize,
+) -> Result<(), Error>
 where
     R: tokio::io::AsyncRead + std::marker::Unpin,
     W: tokio::io::AsyncWrite + std::marker::Unpin,
@@ -289,15 +307,30 @@ where
             ));
         }
 
-        // write.
-        match write.write_all(&buffer[..bytes_readed]).await {
-            Ok(_) => {}
-            Err(err) => {
-                return Err(Error::SocketError(format!(
-                    "Error writing to socket: {err:?}"
-                )))
+        // Write in a partial-aware loop so `copied` reflects bytes
+        // that actually reached the writer even when the underlying
+        // sink fails halfway through a chunk. `write_all` would hide
+        // that signal because it returns Err without saying how much
+        // of the buffer it managed to push first.
+        let mut written = 0usize;
+        while written < bytes_readed {
+            match write.write(&buffer[written..bytes_readed]).await {
+                Ok(0) => {
+                    return Err(Error::SocketError(
+                        "Error writing to socket: writer accepted no bytes".to_string(),
+                    ))
+                }
+                Ok(n) => {
+                    written += n;
+                    *copied += n;
+                }
+                Err(err) => {
+                    return Err(Error::SocketError(format!(
+                        "Error writing to socket: {err:?}"
+                    )))
+                }
             }
-        };
+        }
 
         bytes_remained -= bytes_readed;
         if bytes_remained == 0 {
@@ -307,7 +340,7 @@ where
             buffer_size = bytes_remained;
         }
     }
-    Ok(len)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -813,5 +846,83 @@ mod tests {
 
         assert!(cap_after < cap_before,
             "split() leaves remainder capacity ({cap_after}) much less than original ({cap_before})");
+    }
+
+    /// `proxy_copy_data` must report the bytes that actually reached the
+    /// writer when the writer fails partway through, not the full
+    /// declared frame size. The streaming-byte counter relies on this
+    /// to avoid overstating large-message throughput on disconnects.
+    #[tokio::test]
+    async fn proxy_copy_data_partial_writer_failure_records_actual_bytes() {
+        use std::io::ErrorKind;
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::AsyncWrite;
+
+        struct LimitedWriter {
+            limit: usize,
+            written: usize,
+        }
+
+        impl AsyncWrite for LimitedWriter {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buf: &[u8],
+            ) -> Poll<std::io::Result<usize>> {
+                let me = self.get_mut();
+                if me.written >= me.limit {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        ErrorKind::BrokenPipe,
+                        "test writer hit its limit",
+                    )));
+                }
+                let take = buf.len().min(me.limit - me.written);
+                me.written += take;
+                Poll::Ready(Ok(take))
+            }
+
+            fn poll_flush(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn poll_shutdown(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        // Source has 1000 bytes; writer truncates after 200.
+        let payload = vec![0xABu8; 1000];
+        let mut reader = Cursor::new(payload);
+        let mut writer = LimitedWriter {
+            limit: 200,
+            written: 0,
+        };
+
+        let mut copied: usize = 0;
+        let res = proxy_copy_data(&mut reader, &mut writer, 1000, &mut copied).await;
+
+        assert!(
+            res.is_err(),
+            "writer failure must propagate as `Err`, got Ok"
+        );
+        assert!(
+            copied <= 200,
+            "must not over-report bytes that never made it past the writer (copied = {copied})",
+        );
+        assert!(
+            copied > 0,
+            "writer accepted some bytes before failing — counter must reflect them",
+        );
+        assert!(
+            copied < 1000,
+            "the failure must abort short of the declared frame size",
+        );
     }
 }

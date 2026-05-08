@@ -1,5 +1,19 @@
 # Перцентили задержек
 
+> **Переход на гистограммы.** Метрики
+> `pg_doorman_pools_queries_percentile`, `pg_doorman_pools_transactions_percentile`
+> и `pg_doorman_pools_avg_wait_time` устарели и будут удалены в 3.10.
+> Для новых запросов PromQL используйте гистограммы:
+>
+> - `pg_doorman_pools_query_duration_seconds`
+> - `pg_doorman_pools_transaction_duration_seconds`
+> - `pg_doorman_pools_wait_duration_seconds`
+>
+> Перцентили считайте через
+> `histogram_quantile(q, sum by (le, ...) (rate(_bucket[5m])))`.
+> Такой запрос можно агрегировать между репликами; усреднение заранее
+> посчитанных перцентилей корректного результата не даёт.
+
 pg_doorman измеряет задержки запросов и транзакций на пул, используя HDR Histogram. В Prometheus экспортируются четыре перцентиля: p50, p90, p95, p99.
 
 Эта страница объясняет, откуда берутся числа и как их читать.
@@ -115,4 +129,4 @@ JSON дашборда лежит в директории `grafana/` проект
 - [Admin Commands](admin-commands.md) — читать перцентили напрямую через `SHOW POOLS_EXTENDED`.
 - [Prometheus reference](../reference/prometheus.md) — полный список метрик с метками.
 - [Pool Pressure](../tutorials/pool-pressure.md) — диагностические рецепты, когда перцентили выглядят неправильно.
-- [Benchmarks](../benchmarks.md) — эталонные распределения перцентилей под нагрузкой.
+- [Бенчмарки](../benchmarks.md) — эталонные распределения перцентилей под нагрузкой.

@@ -1,0 +1,197 @@
+groups:
+  - name: pool_pressure_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:coordinator_usage:ratio
+        expr: |
+          sum by (job, instance, database) (
+            pg_doorman_pool_coordinator{type="connections"}
+          )
+          /
+          clamp_min(
+            sum by (job, instance, database) (
+              pg_doorman_pool_coordinator{type="max_connections"}
+            ),
+            1
+          )
+
+      - record: pg_doorman:coordinator_reserve_usage:ratio
+        expr: |
+          sum by (job, instance, database) (
+            pg_doorman_pool_coordinator{type="reserve_in_use"}
+          )
+          /
+          clamp_min(
+            sum by (job, instance, database) (
+              pg_doorman_pool_coordinator{type="reserve_pool_size"}
+            ),
+            1
+          )
+
+      - record: pg_doorman:pool_scaling_create_rate5m
+        expr: |
+          sum by (job, instance, user, database) (
+            rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m])
+          )
+
+      - record: pg_doorman:pool_scaling_gate_wait_rate5m
+        expr: |
+          sum by (job, instance, user, database) (
+            rate(pg_doorman_pool_scaling_total{type="burst_gate_waits"}[5m])
+          )
+
+      - record: pg_doorman:pool_scaling_create_fallback_rate5m
+        expr: |
+          sum by (job, instance, user, database) (
+            rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m])
+          )
+
+  - name: pool_pressure_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanCoordinatorExhausted
+        expr: |
+          sum by (job, instance, database) (
+            increase(pg_doorman_pool_coordinator_total{type="exhaustions"}[5m])
+          ) >= 1
+        for: 2m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman coordinator exhausted for {{ $labels.database }}"
+          runbook: |
+            A client received a database-exhausted error. Run SHOW
+            POOL_COORDINATOR and SHOW POOLS. If current == max_db_conn +
+            reserve_size, raise max_db_connections or reserve_pool_size after
+            confirming PostgreSQL max_connections headroom.
+
+      - alert: PgDoormanCoordinatorNearLimit
+        expr: pg_doorman:coordinator_usage:ratio > 0.85
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman coordinator above 85% for {{ $labels.database }}"
+          runbook: |
+            This is capacity lead time before exhaustion. If current climbs
+            steadily, raise max_db_connections. If it oscillates near the cap,
+            size reserve_pool_size for the burst pattern.
+
+      - alert: PgDoormanCoordinatorReserveInUse
+        expr: |
+          min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) > 0
+          and on (job, instance, database)
+          pg_doorman:coordinator_reserve_usage:ratio > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman coordinator reserve continuously in use for {{ $labels.database }}"
+          runbook: |
+            Reserve has stayed non-zero for 15m and current usage is above
+            half. Reserve should return to zero after retain_connections_time
+            when main has headroom. Compute main_used = current - reserve_used
+            in SHOW POOL_COORDINATOR; if main_used == max_db_conn, the
+            database is undersized.
+
+      - alert: PgDoormanCoordinatorReserveNearFull
+        expr: pg_doorman:coordinator_reserve_usage:ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman coordinator reserve > 80% for {{ $labels.database }}"
+          runbook: |
+            Reserve is nearly exhausted. If this happens during normal traffic,
+            raise max_db_connections after checking PostgreSQL headroom; if it
+            is only during failover or deploy bursts, tune reserve_pool_size.
+
+      - alert: PgDoormanCoordinatorThrashing
+        expr: |
+          pg_doorman:coordinator_usage:ratio > 0.95
+          and on (job, instance, database)
+          sum by (job, instance, database) (
+            rate(pg_doorman_pool_coordinator_total{type="evictions"}[5m])
+          ) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman coordinator evicting while near cap for {{ $labels.database }}"
+          runbook: |
+            The coordinator is closing peer idle connections to make room.
+            Enable or raise reserve_pool_size for burst absorption; if reserve
+            and evictions both climb, raise max_db_connections after checking
+            PostgreSQL capacity.
+
+      - alert: PgDoormanBurstGateSaturated
+        expr: |
+          pg_doorman:pool_scaling_gate_wait_rate5m
+            > 0.5 * pg_doorman:pool_scaling_create_rate5m
+          and on (job, instance, user, database)
+          pg_doorman:pool_scaling_create_rate5m > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman burst gate saturated for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Check SHOW POOL_SCALING. If inflight_creates sits at the cap,
+            backend connect/auth/startup is slow. If inflight cycles below the
+            cap, raise scaling_max_parallel_creates within the documented
+            safety ceiling.
+
+      - alert: PgDoormanCreateFallbackFiring
+        expr: |
+          pg_doorman:pool_scaling_create_fallback_rate5m > 0.1
+          and on (job, instance, user, database)
+          pg_doorman:pool_scaling_create_rate5m > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman anticipation falls through to creates for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Phase 4 is not catching returned connections before deadline. If
+            transaction latency is high, fix slow queries; otherwise raise
+            pool_size or query_wait_timeout for the affected workload.
+
+      - alert: PgDoormanReplenishDeferred
+        expr: increase(pg_doorman_pool_scaling_total{type="replenish_deferred"}[1h]) > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman replenish deferred for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Background min_pool_size replenish is losing the burst gate to
+            client traffic. If sv_idle + sv_active stays below min_pool_size,
+            raise scaling_max_parallel_creates or accept min_pool_size as
+            best-effort during load.
+
+      - alert: PgDoormanInflightCreatesStuck
+        expr: |
+          min_over_time(pg_doorman_pool_scaling{type="inflight_creates"}[5m]) > 0
+          and on (job, instance, user, database)
+          sum by (job, instance, user, database) (
+            increase(pg_doorman_pool_scaling_total{type="creates_started"}[5m])
+          ) == 0
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman backend creates continuously in flight for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            A pool had at least one backend connect/auth/startup in flight for
+            the whole window. Time direct psql connect from the pg_doorman
+            host and check PostgreSQL pg_stat_activity for startup or
+            authenticating sessions.

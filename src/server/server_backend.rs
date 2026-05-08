@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 // External crate imports
 use bytes::{Buf, BufMut, BytesMut};
@@ -792,7 +792,11 @@ impl Server {
             .as_ref()
             .unwrap_or(&user.username)
             .clone();
-        // StartupMessage
+        // StartupMessage. The auth phase is wall-clock from the
+        // outbound write here to the inbound AuthenticationOK ('R' with
+        // code 0); see the `'R'` branch below.
+        let auth_started = Instant::now();
+        let mut startup_started: Option<Instant> = None;
         startup(
             &mut stream,
             username.clone(),
@@ -883,6 +887,19 @@ impl Server {
                         backend_auth_snapshot.as_ref(),
                     )
                     .await?;
+
+                    // auth_code 0 is AuthenticationOK; the auth phase
+                    // ends here and the post-auth startup phase begins.
+                    // Setting startup_started only on the first OK
+                    // shields against any future code path that might
+                    // read another 'R' afterwards.
+                    if auth_code == 0 && startup_started.is_none() {
+                        crate::web::metrics::observe_backend_create_phase(
+                            "auth",
+                            auth_started.elapsed().as_secs_f64(),
+                        );
+                        startup_started = Some(Instant::now());
+                    }
                 }
 
                 // ErrorResponse
@@ -942,6 +959,18 @@ impl Server {
                 // ReadyForQuery
                 'Z' => {
                     let _idle = read_message_data(&mut stream, code as u8, len).await?;
+
+                    // Close out the post-auth startup phase. We expect
+                    // startup_started to be set by the AuthenticationOK
+                    // branch above; if it isn't (a backend that skipped
+                    // sending AuthenticationOK), fall back to the auth
+                    // start so the metric still reflects total time
+                    // beyond TCP/TLS instead of going silent.
+                    let phase_started = startup_started.unwrap_or(auth_started);
+                    crate::web::metrics::observe_backend_create_phase(
+                        "startup",
+                        phase_started.elapsed().as_secs_f64(),
+                    );
 
                     let server = Server {
                         address: address.to_owned(),

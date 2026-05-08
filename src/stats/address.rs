@@ -103,6 +103,29 @@ pub struct AddressStats {
     /// shard's read lock for the atomic increment, the slow path inserts a
     /// new shard entry under a brief write lock.
     pub errors_by_sqlstate: DashMap<String, AtomicU64>,
+
+    /// Process-unique identifier for this `AddressStats` instance.
+    /// Every `Default::default()` mints a fresh value from a static
+    /// monotonic counter. The Prometheus scrape path passes this into
+    /// the per-pool counter delta tracker so a `Pool::from_config`
+    /// recreate (which mints a fresh `AddressStats`) is detected as a
+    /// source reset even when the new generation has already grown
+    /// past the previous cumulative between two scrapes.
+    pub generation: u64,
+}
+
+/// Source identifier counter for `AddressStats`. Each fresh instance
+/// minted by `Default` reads-and-increments this monotonically so the
+/// scrape-side delta tracker can spot pool recreations even when label
+/// values are unchanged.
+static ADDRESS_STATS_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// Returns a unique generation token for the next `AddressStats`.
+/// The first observation in any `CounterDeltaTracker` is treated as a
+/// reset only when the stored generation differs from this value, so
+/// 0 is reserved as the "never observed" sentinel.
+pub fn next_address_stats_generation() -> u64 {
+    ADDRESS_STATS_GENERATION.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Default for AddressStats {
@@ -117,6 +140,7 @@ impl Default for AddressStats {
             wait_histogram: Mutex::new(new_histogram()),
             p95_xact_time_us: AtomicU64::new(0),
             errors_by_sqlstate: DashMap::new(),
+            generation: next_address_stats_generation(),
         }
     }
 }

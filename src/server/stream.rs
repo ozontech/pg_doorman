@@ -142,6 +142,7 @@ impl StreamInner {
 }
 
 pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
+    let started = Instant::now();
     let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
         Ok(s) => s,
         Err(err) => {
@@ -154,6 +155,11 @@ pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<St
 
     configure_unix_socket(&stream);
 
+    crate::web::metrics::observe_backend_create_phase(
+        "tcp_connect",
+        started.elapsed().as_secs_f64(),
+    );
+
     Ok(StreamInner::UnixSocket { stream })
 }
 
@@ -163,6 +169,7 @@ pub(crate) async fn create_tcp_stream_inner(
     server_tls: &ServerTlsConfig,
     pool_name: &str,
 ) -> Result<StreamInner, Error> {
+    let tcp_started = Instant::now();
     let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
         Ok(stream) => stream,
         Err(err) => {
@@ -174,6 +181,11 @@ pub(crate) async fn create_tcp_stream_inner(
     };
 
     configure_tcp_socket(&stream);
+
+    crate::web::metrics::observe_backend_create_phase(
+        "tcp_connect",
+        tcp_started.elapsed().as_secs_f64(),
+    );
 
     if !server_tls.mode.sends_ssl_request() {
         log::debug!(
@@ -187,6 +199,7 @@ pub(crate) async fn create_tcp_stream_inner(
         "tls negotiation started, server_tls_mode={} host={host} port={port}",
         server_tls.mode
     );
+    let tls_started = Instant::now();
     ssl_request(&mut stream).await?;
 
     let response = match stream.read_u8().await {
@@ -226,6 +239,10 @@ pub(crate) async fn create_tcp_stream_inner(
                     crate::web::metrics::SHOW_SERVER_TLS_HANDSHAKE_DURATION
                         .with_label_values(&[pool_name])
                         .observe(elapsed.as_secs_f64());
+                    crate::web::metrics::observe_backend_create_phase(
+                        "tls",
+                        tls_started.elapsed().as_secs_f64(),
+                    );
                     Ok(StreamInner::TCPTls { stream: tls_stream })
                 }
                 // We do NOT retry on a new plain TCP socket when TLS handshake

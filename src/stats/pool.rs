@@ -104,8 +104,14 @@ pub struct PoolStats {
     /// Total time clients spent waiting for server connections (microseconds)
     pub wait_time: u64,
 
-    /// Total number of errors encountered
-    pub errors: u64,
+    /// Average errors per second (sourced from AddressStats::averages.errors)
+    pub avg_errors: u64,
+
+    /// Cumulative number of errors encountered (sourced from
+    /// AddressStats::total.errors). Before the field existed, the SHOW
+    /// STATS `total_errors` column reused `avg_errors` and silently
+    /// reported the running average twice.
+    pub total_errors: u64,
 
     /// Percentile statistics for transaction execution times (from HDR histogram)
     pub xact_percentile: Percentile,
@@ -183,6 +189,18 @@ pub struct PoolStats {
     /// Whether the pool is paused (PAUSE command)
     pub paused: bool,
 
+    /// Whether the pool's primary backend is in cooldown and pg_doorman
+    /// is currently routing through a fallback host. Sourced from
+    /// `pg_doorman_fallback_active` so an operator at `psql` during an
+    /// incident sees the same per-pool state the dashboard does.
+    pub fallback_active: bool,
+
+    /// Source identifier of the underlying `AddressStats`. Carries the
+    /// `generation` field minted at construction so the Prometheus
+    /// scrape path can detect that a `Pool::from_config` reload mints
+    /// a fresh `AddressStats` whose `total_*` counters start at zero.
+    pub source_generation: u64,
+
     /// Configured maximum pool size (from user config or default)
     pub pool_size: u32,
 }
@@ -252,7 +270,8 @@ impl PoolStats {
             xact_time: 0,
             query_time: 0,
             wait_time: 0,
-            errors: 0,
+            avg_errors: 0,
+            total_errors: 0,
             // Percentiles from HDR histogram
             xact_percentile,
             query_percentile,
@@ -276,6 +295,8 @@ impl PoolStats {
             avg_xact_time_microsecons: 0,
             avg_query_time_microseconds: 0,
             paused: false,
+            fallback_active: false,
+            source_generation: 0,
             pool_size: 0,
         }
     }
@@ -348,6 +369,7 @@ impl PoolStats {
             ("maxwait_us", DataType::Numeric),
             ("avg_xact_time", DataType::Numeric),
             ("paused", DataType::Text),
+            ("fallback_active", DataType::Text),
             ("oldest_active_age_ms", DataType::Numeric),
         ]
     }
@@ -421,6 +443,7 @@ impl PoolStats {
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
             Cow::Owned(self.avg_xact_time_microsecons.to_string()),
             Cow::Borrowed(if self.paused { "1" } else { "0" }),
+            Cow::Borrowed(if self.fallback_active { "1" } else { "0" }),
             Cow::Owned(self.oldest_active_age_ms.to_string()),
         ]
     }
@@ -489,12 +512,12 @@ impl PoolStats {
             Cow::Owned(self.total_xact_time_microseconds.to_string()),
             Cow::Owned(self.total_query_time_microseconds.to_string()),
             Cow::Owned(self.wait_time.to_string()),
-            Cow::Owned(self.errors.to_string()),
+            Cow::Owned(self.total_errors.to_string()),
             Cow::Owned(self.avg_xact_count.to_string()),
             Cow::Owned(self.avg_query_count.to_string()),
             Cow::Owned(self.avg_recv.to_string()),
             Cow::Owned(self.avg_sent.to_string()),
-            Cow::Owned(self.errors.to_string()),
+            Cow::Owned(self.avg_errors.to_string()),
             Cow::Owned(self.avg_xact_time_microsecons.to_string()),
             Cow::Owned(self.avg_query_time_microseconds.to_string()),
             Cow::Owned(self.avg_wait_time.to_string()),
@@ -546,8 +569,22 @@ impl PoolStats {
             // Pool size from config
             current.pool_size = pool.settings.user.pool_size;
 
+            // Carry the underlying source identity so Prometheus
+            // delta tracking can detect a `Pool::from_config` reload
+            // even when the new generation has already grown past the
+            // previous cumulative between two scrapes.
+            current.source_generation = address.generation;
+
             // Load pause state
             current.paused = pool.database.is_paused();
+
+            // Read fallback state from the same Prometheus gauge the
+            // /api/pools and Web UI do — keeps SHOW POOLS in lockstep
+            // with the dashboard during an incident.
+            current.fallback_active = crate::web::metrics::FALLBACK_ACTIVE
+                .with_label_values(&[identifier.db.as_str()])
+                .get()
+                > 0.5;
 
             // Load average statistics
             current.avg_xact_count = address.averages.xact_count.load(Ordering::Relaxed);
@@ -562,9 +599,10 @@ impl PoolStats {
                 .averages
                 .query_time_microseconds
                 .load(Ordering::Relaxed);
-            current.errors = address.averages.errors.load(Ordering::Relaxed);
+            current.avg_errors = address.averages.errors.load(Ordering::Relaxed);
 
             // Load total statistics
+            current.total_errors = address.total.errors.load(Ordering::Relaxed);
             current.bytes_received = address.total.bytes_received.load(Ordering::Relaxed);
             current.bytes_sent = address.total.bytes_sent.load(Ordering::Relaxed);
             current.xact_time = address.total.xact_time_microseconds.load(Ordering::Relaxed);
@@ -760,6 +798,34 @@ mod tests {
             assert_eq!(stats.sv_active, 0, "{id} sv_active should be 0");
             assert_eq!(stats.sv_idle, 0, "{id} sv_idle should be 0");
         }
+    }
+
+    /// Pin the SHOW STATS row layout so the per-second running mean and
+    /// the cumulative counter never collapse back into a single source.
+    /// The original bug emitted both columns from the same field, so a
+    /// regression has to flip total_errors and avg_errors to identical
+    /// values to slip through — this test guards that case.
+    #[test]
+    fn show_stats_row_separates_total_errors_from_avg_errors() {
+        let percentile = Percentile {
+            p99: 0,
+            p95: 0,
+            p90: 0,
+            p50: 0,
+        };
+        let mut stats = PoolStats::new_with_percentiles(
+            PoolIdentifier::new("shop", "alice"),
+            PoolMode::Transaction,
+            percentile.clone(),
+            percentile.clone(),
+            percentile,
+        );
+        stats.total_errors = 100;
+        stats.avg_errors = 5;
+
+        let row = stats.generate_show_stats_row();
+        assert_eq!(row[9].as_ref(), "100", "column 9 should be total_errors");
+        assert_eq!(row[14].as_ref(), "5", "column 14 should be avg_errors");
     }
 
     /// Both entry points must agree on shape when fed the same global

@@ -64,7 +64,7 @@ pg_doorman. Хранилище разделено на две независим
 ## Правила алертов
 
 Готовый блок `groups:` лежит в
-`monitoring/prometheus-rules/pg_doorman_interner.yaml`. Пять
+`monitoring/prometheus-rules/query-interner.yaml`. Пять
 алертов.
 
 - **`PgDoormanAnonInternerMemoryHigh`** (critical) — байты ANON

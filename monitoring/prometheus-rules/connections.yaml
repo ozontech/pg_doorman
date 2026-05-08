@@ -1,0 +1,44 @@
+groups:
+  - name: connections_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:connection_rate5m
+        expr: |
+          sum by (job, instance, type) (
+            rate(pg_doorman_connections_total[5m])
+          )
+
+      - record: pg_doorman:cancel_connection_ratio5m
+        expr: |
+          sum by (job, instance) (
+            rate(pg_doorman_connections_total{type="cancel"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (job, instance) (
+              rate(pg_doorman_connections_total{type="total"}[5m])
+            ),
+            0.001
+          )
+
+  - name: connections_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanCancelConnectionRateHigh
+        expr: |
+          pg_doorman:cancel_connection_ratio5m > 0.10
+          and on (job, instance)
+          sum by (job, instance) (
+            rate(pg_doorman_connections_total{type="cancel"}[5m])
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman cancel requests > 10% of connections on {{ $labels.instance }}"
+          runbook: |
+            Sustained cancel traffic above 10% with at least 0.5 cancel/s. The
+            longer window and stricter thresholds skip deploy-time bursts of
+            cancels by design. Correlate with query/transaction p99 and
+            PostgreSQL logs around the affected timestamp.

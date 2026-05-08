@@ -1,0 +1,120 @@
+groups:
+  - name: patroni_fallback_recording
+    interval: 30s
+    rules:
+      - record: pg_doorman:patroni_api_duration_seconds:p99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (job, instance, pool, le) (
+              rate(pg_doorman_patroni_api_duration_seconds_bucket[5m])
+            )
+          )
+
+      - record: pg_doorman:patroni_api_request_rate5m
+        expr: |
+          sum by (job, instance, pool) (
+            rate(pg_doorman_patroni_api_duration_seconds_count[5m])
+          )
+
+  - name: patroni_fallback_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanFallbackActive
+        expr: |
+          (
+            max by (job, instance, pool) (pg_doorman_fallback_active) > 0
+            and on (job, instance, pool)
+            sum by (job, instance, pool) (
+              increase(pg_doorman_fallback_connections_total[10m])
+            ) > 0
+          )
+          unless on (job, instance, pool)
+          (
+            min by (job, instance, pool) (
+              min_over_time(pg_doorman_fallback_active[15m])
+            ) > 0
+            and on (job, instance, pool)
+            sum by (job, instance, pool) (
+              increase(pg_doorman_fallback_connections_total[30m])
+            ) >= 2
+          )
+        for: 2m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman fallback active for {{ $labels.pool }}"
+          runbook: |
+            The local backend is in cooldown and new backend connections are
+            using a fallback host. Short activations are expected during
+            failover; sustained activations mean local PostgreSQL is not
+            recovering.
+
+      - alert: PgDoormanFallbackActiveLong
+        expr: |
+          min by (job, instance, pool) (
+            min_over_time(pg_doorman_fallback_active[15m])
+          ) > 0
+          and on (job, instance, pool)
+          sum by (job, instance, pool) (
+            increase(pg_doorman_fallback_connections_total[30m])
+          ) >= 2
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman fallback active for 15m on {{ $labels.pool }}"
+          runbook: |
+            The local backend has not recovered after multiple cooldown
+            windows. Check Patroni state, local PostgreSQL startup, and whether
+            pg_doorman can connect to the local socket/host again.
+
+      - alert: PgDoormanPatroniApiErrors
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_patroni_api_errors_total[5m])
+          ) >= 3
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman Patroni API errors for {{ $labels.pool }}"
+          runbook: |
+            All configured Patroni API URLs are failing or timing out. Check
+            Patroni API reachability from the pg_doorman host and make sure at
+            least two API URLs are configured for redundancy.
+
+      - alert: PgDoormanPatroniApiSlow
+        expr: |
+          pg_doorman:patroni_api_duration_seconds:p99 > 1
+          and on (job, instance, pool)
+          pg_doorman:patroni_api_request_rate5m > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman Patroni API p99 > 1s for {{ $labels.pool }}"
+          runbook: |
+            Slow /cluster calls delay fallback. Check network path, Patroni
+            API load, and HTTP timeout settings.
+
+      - alert: PgDoormanFallbackCandidateFailuresHigh
+        expr: |
+          sum by (job, instance, pool, reason) (
+            rate(pg_doorman_fallback_candidate_failures_total[5m])
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman fallback candidate failures high for {{ $labels.pool }}"
+          runbook: |
+            Candidate startup is failing repeatedly. Use the reason label to
+            distinguish connect_error, startup_error, server_unavailable,
+            timeout, and other; check credentials and candidate PostgreSQL
+            readiness.

@@ -1,6 +1,13 @@
 global:
   scrape_interval: 5s
 
+# Bundle the upstream pg_doorman rule set so the demo Prometheus
+# evaluates the same recording / alerting rules an operator runs in
+# production. This catches rule/metric drift on every demo bring-up
+# without requiring a separate CI step.
+rule_files:
+  - /etc/prometheus/rules/*.yaml
+
 scrape_configs:
   - job_name: pg_doorman
     static_configs:

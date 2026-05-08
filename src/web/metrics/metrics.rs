@@ -19,16 +19,21 @@ use super::system::get_process_memory_usage;
 #[cfg(target_os = "linux")]
 use super::SHOW_SOCKETS;
 use super::{
-    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
-    COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
-    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
+    AUTH_QUERY_AUTH, AUTH_QUERY_AUTH_TOTAL, AUTH_QUERY_CACHE, AUTH_QUERY_CACHE_TOTAL,
+    AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_DYNAMIC_POOLS_TOTAL, AUTH_QUERY_EXECUTOR,
+    AUTH_QUERY_EXECUTOR_TOTAL, COORDINATOR, COORDINATOR_TOTALS, POOL_SCALING_GAUGE,
+    POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES,
+    SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
     SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
-    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS,
-    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_CONNECTIONS, SHOW_CONNECTIONS_TOTAL, SHOW_POOLS_BYTES, SHOW_POOLS_BYTES_TOTAL,
+    SHOW_POOLS_CLIENT, SHOW_POOLS_ERRORS_TOTAL, SHOW_POOLS_MAXWAIT_MICROSECONDS,
+    SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_PAUSED, SHOW_POOLS_QUERIES_COUNTER,
+    SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL, SHOW_POOLS_QUERIES_TOTAL_TIME,
     SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
-    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
-    SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
-    SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
+    SHOW_POOLS_TRANSACTIONS_TOTAL, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG,
+    SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
+    SHOW_SERVERS_PREPARED_HITS_TOTAL, SHOW_SERVERS_PREPARED_MISSES,
+    SHOW_SERVERS_PREPARED_MISSES_TOTAL, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -40,6 +45,7 @@ pub fn update_metrics() {
     update_socket_metrics();
 
     update_pool_metrics();
+    update_pool_errors_metrics();
     update_server_metrics();
     update_auth_query_metrics();
     update_coordinator_metrics();
@@ -59,11 +65,128 @@ fn update_connection_metrics() {
     ];
 
     for (conn_type, counter) in &connection_types {
+        let value = counter.load(Ordering::Relaxed);
         SHOW_CONNECTIONS
             .with_label_values(&[conn_type])
-            .set(counter.load(Ordering::Relaxed) as f64);
+            .set(value as f64);
+        emit_process_counter_delta(
+            &SHOW_CONNECTIONS_TOTAL.with_label_values(&[conn_type]),
+            value as u64,
+        );
     }
 }
+
+/// Bumps a Prometheus counter from a process-lifetime monotonic source
+/// (a `static AtomicUsize` that survives RELOAD). Reads
+/// `counter.get()` as the previous mark, so MUST NOT be used for any
+/// source that can shrink mid-process — pool stats are wiped on
+/// `Pool::from_config`. See `CounterDeltaTracker` for those.
+#[inline]
+fn emit_process_counter_delta(counter: &prometheus::IntCounter, value: u64) {
+    let prev = counter.get();
+    if value > prev {
+        counter.inc_by(value - prev);
+    }
+}
+
+/// Per-source delta tracker for counters whose underlying state can
+/// be replaced during the process lifetime: every `AddressStats::default()`
+/// minted by `ConnectionPool::from_config` reopens its `total_*`
+/// counters at zero, and `AuthQueryStats::default()` does the same on
+/// auth-query state recreate.
+///
+/// The tracker remembers `(last_value, last_generation)` per metric
+/// label tuple. Every `observe` call carries the source's current
+/// generation; if it differs from what we last saw, the source has
+/// been replaced and we emit `current` as the post-reset delta —
+/// even when `current` is already larger than `last_value`, which is
+/// the case the previous "compare against the Prometheus counter"
+/// strategy missed when the new generation grew past the previous
+/// cumulative between two scrapes.
+struct CounterDeltaTracker<K> {
+    prev: std::sync::Mutex<std::collections::HashMap<K, (u64, u64)>>,
+}
+
+impl<K> CounterDeltaTracker<K>
+where
+    K: std::cmp::Eq + std::hash::Hash + Clone,
+{
+    fn new() -> Self {
+        Self {
+            prev: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Records `current` as the latest source value for `key` under
+    /// `generation` and increments `counter` by the appropriate delta.
+    /// A change in `generation` (source recreate) emits `current`
+    /// once; otherwise the regular `current >= last_value` delta
+    /// applies. The unusual case of the same generation reporting a
+    /// smaller `current` is treated defensively as a reset too.
+    fn observe(&self, counter: &prometheus::IntCounter, key: K, generation: u64, current: u64) {
+        let mut prev = match self.prev.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let entry = prev.entry(key).or_insert((0, 0));
+        let (last_value, last_generation) = *entry;
+        let delta = if generation != last_generation {
+            current
+        } else if current >= last_value {
+            current - last_value
+        } else {
+            current
+        };
+        if delta > 0 {
+            counter.inc_by(delta);
+        }
+        *entry = (current, generation);
+    }
+
+    /// Drops entries whose keys are not in `current_keys`, returning
+    /// them so the caller can issue `remove_label_values` on the
+    /// owning `IntCounterVec`.
+    fn drain_stale(&self, current_keys: &std::collections::HashSet<K>) -> Vec<K> {
+        let mut prev = match self.prev.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let stale: Vec<K> = prev
+            .keys()
+            .filter(|k| !current_keys.contains(*k))
+            .cloned()
+            .collect();
+        for key in &stale {
+            prev.remove(key);
+        }
+        stale
+    }
+}
+
+type PoolKey = (String, String);
+type PoolBytesKey = (String, String, String);
+/// (database, type) for the auth_query counter family. The type
+/// component is `&'static str` because every value is one of a small
+/// set of compile-time literals.
+type AuthQueryKey = (String, &'static str);
+
+static POOL_QUERIES_PREV: Lazy<CounterDeltaTracker<PoolKey>> = Lazy::new(CounterDeltaTracker::new);
+static POOL_TRANSACTIONS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static POOL_BYTES_PREV: Lazy<CounterDeltaTracker<PoolBytesKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_CACHE_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_AUTH_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_EXECUTOR_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static AUTH_QUERY_DYNAMIC_POOLS_PREV: Lazy<CounterDeltaTracker<AuthQueryKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static SERVERS_PREPARED_HITS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static SERVERS_PREPARED_MISSES_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
+    Lazy::new(CounterDeltaTracker::new);
 
 #[cfg(target_os = "linux")]
 fn update_socket_metrics() {
@@ -107,7 +230,47 @@ fn update_pool_metrics() {
         update_percentile_metrics(identifier, stats);
         update_pool_cache_metrics(identifier, stats);
         update_pool_size_metrics(identifier, stats);
+        update_pool_state_metrics(identifier, stats);
     }
+
+    // Drop label sets for the resettable `_total` counters whose
+    // pools disappeared on RELOAD. The counter values themselves
+    // never go backwards in Prometheus; this only removes the time
+    // series so a later pool with the same `(user, database)` does
+    // not inherit a non-zero `previous` mark from the tracker.
+    let current_pool_keys: std::collections::HashSet<PoolKey> = snap
+        .pool_lookup
+        .keys()
+        .map(|id| (id.user.clone(), id.db.clone()))
+        .collect();
+
+    for stale in POOL_QUERIES_PREV.drain_stale(&current_pool_keys) {
+        let _ = SHOW_POOLS_QUERIES_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
+    }
+    for stale in POOL_TRANSACTIONS_PREV.drain_stale(&current_pool_keys) {
+        let _ = SHOW_POOLS_TRANSACTIONS_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
+    }
+
+    let mut current_bytes_keys: std::collections::HashSet<PoolBytesKey> =
+        std::collections::HashSet::with_capacity(snap.pool_lookup.len() * 2);
+    for id in snap.pool_lookup.keys() {
+        current_bytes_keys.insert(("received".to_string(), id.user.clone(), id.db.clone()));
+        current_bytes_keys.insert(("sent".to_string(), id.user.clone(), id.db.clone()));
+    }
+    for stale in POOL_BYTES_PREV.drain_stale(&current_bytes_keys) {
+        let _ = SHOW_POOLS_BYTES_TOTAL.remove_label_values(&[&stale.0, &stale.1, &stale.2]);
+    }
+}
+
+fn update_pool_state_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
+    SHOW_POOLS_PAUSED
+        .with_label_values(&[user, database])
+        .set(if stats.paused { 1 } else { 0 });
+    SHOW_POOLS_MAXWAIT_MICROSECONDS
+        .with_label_values(&[user, database])
+        .set(stats.maxwait as f64);
 }
 
 fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
@@ -168,30 +331,24 @@ fn update_server_metrics() {
     // direct global read if the cache is somehow empty (e.g. the
     // first scrape racing with TTL expiry).
     let snap = crate::web::routes::collect::snapshot();
+
+    // Aggregate hits and misses per (user, database) across all backends.
+    // The PID-level breakdown lived here historically but exploded the
+    // cardinality once `server_lifetime` expired the first generation
+    // of backends — every reconnect minted a fresh PID label that
+    // Prometheus then carried for the staleness window.
+    let mut totals: std::collections::HashMap<(String, String), (f64, f64)> =
+        std::collections::HashMap::new();
+
     for server in snap.server_states.values() {
-        // Borrow username/pool_name from the Arc<ServerStats>; the snapshot
-        // owns the Arc for the duration of this loop body, so the slices
-        // remain valid for the metric label calls below.
         let username = server.username();
         let pool_name = server.pool_name();
-        let process_id = server.process_id().to_string();
 
-        let server_metrics = [
-            (
-                &SHOW_SERVERS_PREPARED_HITS,
-                server.prepared_hit_count.load(Ordering::Relaxed) as f64,
-            ),
-            (
-                &SHOW_SERVERS_PREPARED_MISSES,
-                server.prepared_miss_count.load(Ordering::Relaxed) as f64,
-            ),
-        ];
-
-        for (metric, value) in &server_metrics {
-            metric
-                .with_label_values(&[username, pool_name, &process_id])
-                .set(*value);
-        }
+        let entry = totals
+            .entry((username.to_string(), pool_name.to_string()))
+            .or_insert((0.0, 0.0));
+        entry.0 += server.prepared_hit_count.load(Ordering::Relaxed) as f64;
+        entry.1 += server.prepared_miss_count.load(Ordering::Relaxed) as f64;
 
         // Count TLS-encrypted backend connections per pool.
         if server.tls() {
@@ -199,6 +356,52 @@ fn update_server_metrics() {
                 .with_label_values(&[pool_name])
                 .inc();
         }
+    }
+
+    let mut current_keys: std::collections::HashSet<PoolKey> = std::collections::HashSet::new();
+    for ((user, database), (hits, misses)) in totals {
+        SHOW_SERVERS_PREPARED_HITS
+            .with_label_values(&[user.as_str(), database.as_str()])
+            .set(hits);
+        SHOW_SERVERS_PREPARED_MISSES
+            .with_label_values(&[user.as_str(), database.as_str()])
+            .set(misses);
+
+        // Use the pool's `AddressStats` generation so the tracker
+        // detects a reload that wipes server stats. If the pool no
+        // longer exists in the snapshot — extremely rare race with
+        // RELOAD — fall back to 0; the next scrape will pick up the
+        // real generation and emit the post-reset delta then.
+        let source_generation = snap
+            .pool_lookup
+            .iter()
+            .find(|(id, _)| id.user == user && id.db == database)
+            .map(|(_, s)| s.source_generation)
+            .unwrap_or(0);
+
+        let key: PoolKey = (user.clone(), database.clone());
+        SERVERS_PREPARED_HITS_PREV.observe(
+            &SHOW_SERVERS_PREPARED_HITS_TOTAL
+                .with_label_values(&[user.as_str(), database.as_str()]),
+            key.clone(),
+            source_generation,
+            hits as u64,
+        );
+        SERVERS_PREPARED_MISSES_PREV.observe(
+            &SHOW_SERVERS_PREPARED_MISSES_TOTAL
+                .with_label_values(&[user.as_str(), database.as_str()]),
+            key.clone(),
+            source_generation,
+            misses as u64,
+        );
+        current_keys.insert(key);
+    }
+
+    for stale in SERVERS_PREPARED_HITS_PREV.drain_stale(&current_keys) {
+        let _ = SHOW_SERVERS_PREPARED_HITS_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
+    }
+    for stale in SERVERS_PREPARED_MISSES_PREV.drain_stale(&current_keys) {
+        let _ = SHOW_SERVERS_PREPARED_MISSES_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
     }
 }
 
@@ -223,11 +426,34 @@ fn update_pool_avg_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
         ),
     ];
 
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
     for (metric, value) in &avg_metrics {
-        metric
-            .with_label_values(&[identifier.user.as_str(), identifier.db.as_str()])
-            .set(*value);
+        metric.with_label_values(&[user, database]).set(*value);
     }
+
+    // Counter-form mirrors of the two monotonic gauges above. The
+    // wait-time average and the *_total_time gauges are not
+    // counter-shaped (rolling averages and summed durations are still
+    // surfaced through histograms), so only query/transaction counts
+    // get a parallel `_total`. Pool stats live across at most one
+    // RELOAD: `Pool::from_config` mints a fresh `AddressStats` whose
+    // counters start at zero. The dedicated trackers detect that and
+    // emit the post-reset delta instead of either freezing the metric
+    // or fabricating duplicates each scrape.
+    let pool_key = (user.to_string(), database.to_string());
+    POOL_QUERIES_PREV.observe(
+        &SHOW_POOLS_QUERIES_TOTAL.with_label_values(&[user, database]),
+        pool_key.clone(),
+        stats.source_generation,
+        stats.total_query_count,
+    );
+    POOL_TRANSACTIONS_PREV.observe(
+        &SHOW_POOLS_TRANSACTIONS_TOTAL.with_label_values(&[user, database]),
+        pool_key,
+        stats.source_generation,
+        stats.total_xact_count,
+    );
 }
 
 fn update_pool_server_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
@@ -258,6 +484,8 @@ fn reset_pool_metrics() {
     SHOW_POOLS_QUERIES_COUNTER.reset();
     SHOW_POOLS_QUERIES_TOTAL_TIME.reset();
     SHOW_POOL_SIZE.reset();
+    SHOW_POOLS_PAUSED.reset();
+    SHOW_POOLS_MAXWAIT_MICROSECONDS.reset();
 }
 
 fn update_pool_size_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
@@ -282,14 +510,32 @@ fn update_client_state_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
 }
 
 fn update_byte_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
-    let labels_recv: [&str; 3] = ["received", identifier.user.as_str(), identifier.db.as_str()];
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
+
     SHOW_POOLS_BYTES
-        .with_label_values(&labels_recv)
+        .with_label_values(&["received", user, database])
         .set(stats.bytes_received as f64);
-    let labels_sent: [&str; 3] = ["sent", identifier.user.as_str(), identifier.db.as_str()];
     SHOW_POOLS_BYTES
-        .with_label_values(&labels_sent)
+        .with_label_values(&["sent", user, database])
         .set(stats.bytes_sent as f64);
+
+    POOL_BYTES_PREV.observe(
+        &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["received", user, database]),
+        (
+            "received".to_string(),
+            user.to_string(),
+            database.to_string(),
+        ),
+        stats.source_generation,
+        stats.bytes_received,
+    );
+    POOL_BYTES_PREV.observe(
+        &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["sent", user, database]),
+        ("sent".to_string(), user.to_string(), database.to_string()),
+        stats.source_generation,
+        stats.bytes_sent,
+    );
 }
 
 fn update_percentile_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
@@ -329,11 +575,18 @@ fn update_auth_query_metrics() {
 
     let dynamic = DYNAMIC_POOLS.load();
 
+    let mut cache_keys: std::collections::HashSet<AuthQueryKey> = std::collections::HashSet::new();
+    let mut auth_keys: std::collections::HashSet<AuthQueryKey> = std::collections::HashSet::new();
+    let mut executor_keys: std::collections::HashSet<AuthQueryKey> =
+        std::collections::HashSet::new();
+    let mut dyn_keys: std::collections::HashSet<AuthQueryKey> = std::collections::HashSet::new();
+
     for (pool_name, state) in states.iter() {
         let db = pool_name.as_str();
         let s = state.stats.snapshot();
 
-        // Cache metrics
+        // Cache metrics — gauge form keeps `entries` as a snapshot,
+        // counter form mirrors only the cumulative members.
         AUTH_QUERY_CACHE
             .with_label_values(&["entries", db])
             .set(state.cache_len() as f64);
@@ -350,6 +603,23 @@ fn update_auth_query_metrics() {
             .with_label_values(&["rate_limited", db])
             .set(s.cache_rate_limited as f64);
 
+        let source_generation = state.stats.generation;
+        for (kind, value) in [
+            ("hits", s.cache_hits),
+            ("misses", s.cache_misses),
+            ("refetches", s.cache_refetches),
+            ("rate_limited", s.cache_rate_limited),
+        ] {
+            let key: AuthQueryKey = (db.to_string(), kind);
+            AUTH_QUERY_CACHE_PREV.observe(
+                &AUTH_QUERY_CACHE_TOTAL.with_label_values(&[kind, db]),
+                key.clone(),
+                source_generation,
+                value,
+            );
+            cache_keys.insert(key);
+        }
+
         // Auth outcomes
         AUTH_QUERY_AUTH
             .with_label_values(&["success", db])
@@ -357,6 +627,16 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_AUTH
             .with_label_values(&["failure", db])
             .set(s.auth_failure as f64);
+        for (result, value) in [("success", s.auth_success), ("failure", s.auth_failure)] {
+            let key: AuthQueryKey = (db.to_string(), result);
+            AUTH_QUERY_AUTH_PREV.observe(
+                &AUTH_QUERY_AUTH_TOTAL.with_label_values(&[result, db]),
+                key.clone(),
+                source_generation,
+                value,
+            );
+            auth_keys.insert(key);
+        }
 
         // Executor metrics
         AUTH_QUERY_EXECUTOR
@@ -365,6 +645,19 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_EXECUTOR
             .with_label_values(&["errors", db])
             .set(s.executor_errors as f64);
+        for (kind, value) in [
+            ("queries", s.executor_queries),
+            ("errors", s.executor_errors),
+        ] {
+            let key: AuthQueryKey = (db.to_string(), kind);
+            AUTH_QUERY_EXECUTOR_PREV.observe(
+                &AUTH_QUERY_EXECUTOR_TOTAL.with_label_values(&[kind, db]),
+                key.clone(),
+                source_generation,
+                value,
+            );
+            executor_keys.insert(key);
+        }
 
         // Dynamic pool metrics
         let dyn_current = dynamic.iter().filter(|id| id.db == *pool_name).count();
@@ -377,6 +670,32 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_DYNAMIC_POOLS
             .with_label_values(&["destroyed", db])
             .set(s.dynamic_pools_destroyed as f64);
+        for (kind, value) in [
+            ("created", s.dynamic_pools_created),
+            ("destroyed", s.dynamic_pools_destroyed),
+        ] {
+            let key: AuthQueryKey = (db.to_string(), kind);
+            AUTH_QUERY_DYNAMIC_POOLS_PREV.observe(
+                &AUTH_QUERY_DYNAMIC_POOLS_TOTAL.with_label_values(&[kind, db]),
+                key.clone(),
+                source_generation,
+                value,
+            );
+            dyn_keys.insert(key);
+        }
+    }
+
+    for stale in AUTH_QUERY_CACHE_PREV.drain_stale(&cache_keys) {
+        let _ = AUTH_QUERY_CACHE_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
+    }
+    for stale in AUTH_QUERY_AUTH_PREV.drain_stale(&auth_keys) {
+        let _ = AUTH_QUERY_AUTH_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
+    }
+    for stale in AUTH_QUERY_EXECUTOR_PREV.drain_stale(&executor_keys) {
+        let _ = AUTH_QUERY_EXECUTOR_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
+    }
+    for stale in AUTH_QUERY_DYNAMIC_POOLS_PREV.drain_stale(&dyn_keys) {
+        let _ = AUTH_QUERY_DYNAMIC_POOLS_TOTAL.remove_label_values(&[stale.1, stale.0.as_str()]);
     }
 }
 
@@ -569,6 +888,98 @@ fn update_pool_scaling_metrics() {
     prev.retain(|(_, user, db), _| !stale_pairs.contains(&(user.clone(), db.clone())));
 }
 
+/// Maps a 5-character canonical SQLSTATE code to its bounded label
+/// class. The output is a `'static` string so it can flow into
+/// `IntCounterVec::with_label_values` without an allocation. Classes
+/// follow Postgres SQLSTATE chapters: `08` is connection_exception,
+/// `53` is insufficient_resources, `57` is operator_intervention.
+/// `25P02` and `26000` keep their full code because each one points at
+/// a distinct misuse pattern — a transaction-scope leak under session
+/// pooling and an evicted anonymous prepared statement, respectively.
+/// Anything else collapses into `other` so the label space stays
+/// constant regardless of what the backend returns.
+fn classify_sqlstate(code: &str) -> &'static str {
+    match code {
+        "25P02" => "25P02",
+        "26000" => "26000",
+        c if c.starts_with("08") => "08",
+        c if c.starts_with("53") => "53",
+        c if c.starts_with("57") => "57",
+        _ => "other",
+    }
+}
+
+/// (user, database, sqlstate-class) key for the per-pool error
+/// counter delta tracker. The class is `&'static str` because
+/// `classify_sqlstate` returns one of six interned literals.
+type PoolErrorsKey = (String, String, &'static str);
+
+static POOL_ERRORS_PREV: Lazy<CounterDeltaTracker<PoolErrorsKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+
+fn update_pool_errors_metrics() {
+    use crate::pool::get_all_pools;
+
+    // Aggregate per-pool snapshots into bounded sqlstate classes.
+    // `errors_by_sqlstate_snapshot` returns canonical 5-character codes
+    // (the address-side increment validates them); classify_sqlstate
+    // collapses each one into the {08, 53, 57, 25P02, 26000, other}
+    // bucket the counter exposes.
+    let mut current_sums: std::collections::HashMap<PoolErrorsKey, u64> =
+        std::collections::HashMap::new();
+    let mut pool_generations: std::collections::HashMap<(String, String), u64> =
+        std::collections::HashMap::new();
+
+    for (identifier, pool) in get_all_pools().iter() {
+        let user = identifier.user.as_str();
+        let database = identifier.db.as_str();
+
+        let address_stats = &pool.address().stats;
+        pool_generations.insert(
+            (user.to_string(), database.to_string()),
+            address_stats.generation,
+        );
+
+        let snap = address_stats.errors_by_sqlstate_snapshot();
+        for (code, count) in snap {
+            let class = classify_sqlstate(&code);
+            let key = (user.to_string(), database.to_string(), class);
+            *current_sums.entry(key).or_insert(0) += count;
+        }
+    }
+
+    // Drive the tracker — it carries `(last_value, last_generation)`
+    // per (user, database, class) tuple. A change in `generation` means
+    // `Pool::from_config` minted a fresh `AddressStats` whose counters
+    // start at zero, even when the new generation has already grown
+    // past the previous cumulative between two scrapes. In that case
+    // the tracker emits `current` as the post-reset delta. Without the
+    // generation hint, the older `current < previous` heuristic missed
+    // exactly that race.
+    for (key, &current_sum) in &current_sums {
+        let counter =
+            SHOW_POOLS_ERRORS_TOTAL.with_label_values(&[key.0.as_str(), key.1.as_str(), key.2]);
+        let generation = pool_generations
+            .get(&(key.0.clone(), key.1.clone()))
+            .copied()
+            .unwrap_or(0);
+        POOL_ERRORS_PREV.observe(&counter, key.clone(), generation, current_sum);
+    }
+
+    // Drop labels for triples that disappeared since the last scrape —
+    // typically a pool removed by RELOAD. `remove_label_values` is
+    // best-effort; ignoring its return is intentional.
+    let current_keys: std::collections::HashSet<PoolErrorsKey> =
+        current_sums.keys().cloned().collect();
+    for stale in POOL_ERRORS_PREV.drain_stale(&current_keys) {
+        let _ = SHOW_POOLS_ERRORS_TOTAL.remove_label_values(&[
+            stale.0.as_str(),
+            stale.1.as_str(),
+            stale.2,
+        ]);
+    }
+}
+
 /// Called by the GC tokio task on every sweep tick. Updates the interner
 /// gauges (entries, bytes per kind), increments eviction counters, and
 /// observes the sweep duration in the histogram. The byte totals come
@@ -608,4 +1019,303 @@ pub fn record_interner_gc(
 /// the caches (interner, pool cache, client cache).
 pub fn record_synthetic_miss() {
     super::QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL.inc();
+}
+
+/// Records one large-message streaming event. Called from
+/// `handle_large_data_row` and `handle_large_copy_data` after the
+/// outcome is known. `kind` is "data_row" or "copy_data"; `result` is
+/// "ok" or "error".
+#[inline]
+pub fn observe_streaming_event(user: &str, database: &str, kind: &str, result: &str) {
+    super::STREAMING_EVENTS_TOTAL
+        .with_label_values(&[user, database, kind, result])
+        .inc();
+}
+
+/// Records bytes forwarded for one streaming event. Called once per
+/// event, before the result is known, so the bytes flowed during a
+/// failed stream are still counted.
+#[inline]
+pub fn observe_streaming_bytes(user: &str, database: &str, kind: &str, bytes: u64) {
+    super::STREAMING_BYTES_TOTAL
+        .with_label_values(&[user, database, kind])
+        .inc_by(bytes);
+}
+
+/// Records one client rejection at the listener / pre-auth stage.
+/// `reason` must be one of the labels documented on
+/// `LISTENER_REJECTIONS_TOTAL`; passing any other value still works but
+/// inflates the cardinality the metric was designed to bound.
+#[inline]
+pub fn record_listener_rejection(reason: &'static str) {
+    super::LISTENER_REJECTIONS_TOTAL
+        .with_label_values(&[reason])
+        .inc();
+}
+
+/// Observes wall-clock duration of one backend connection setup phase.
+/// `phase` must be one of `tcp_connect`, `tls`, `auth`, `startup` —
+/// passing any other value still works but breaks the cardinality
+/// contract documented on `BACKEND_CREATE_DURATION_SECONDS`.
+#[inline]
+pub fn observe_backend_create_phase(phase: &'static str, seconds: f64) {
+    super::BACKEND_CREATE_DURATION_SECONDS
+        .with_label_values(&[phase])
+        .observe(seconds);
+}
+
+/// Observes one query duration in the per-pool query histogram. Caller
+/// passes microseconds because every existing call site already has
+/// that unit; the conversion to seconds happens once here, behind the
+/// inline call, so the hot path stays one division and one
+/// `with_label_values` lookup.
+#[inline]
+pub fn observe_pool_query_microseconds(user: &str, database: &str, microseconds: u64) {
+    super::SHOW_POOLS_QUERY_DURATION_SECONDS
+        .with_label_values(&[user, database])
+        .observe(microseconds as f64 / 1_000_000.0);
+}
+
+/// Observes one transaction duration in the per-pool transaction
+/// histogram. Mirrors `AddressStats::xact_time_add` and silently drops
+/// zero-microsecond inputs: the `idle(0)` and `add_xact_time_and_idle(0)`
+/// call sites fire on backend creation and on `Drop for Client` without
+/// representing a real transaction, and recording them would pull the
+/// histogram's lowest bucket toward background noise.
+#[inline]
+pub fn observe_pool_transaction_microseconds(user: &str, database: &str, microseconds: u64) {
+    if microseconds == 0 {
+        return;
+    }
+    super::SHOW_POOLS_TRANSACTION_DURATION_SECONDS
+        .with_label_values(&[user, database])
+        .observe(microseconds as f64 / 1_000_000.0);
+}
+
+/// Observes one client checkout wait in the per-pool wait histogram.
+/// Same unit-conversion contract as `observe_pool_query_microseconds`.
+#[inline]
+pub fn observe_pool_wait_microseconds(user: &str, database: &str, microseconds: u64) {
+    super::SHOW_POOLS_WAIT_DURATION_SECONDS
+        .with_label_values(&[user, database])
+        .observe(microseconds as f64 / 1_000_000.0);
+}
+
+/// Refreshes the trio of static info gauges: `build_info` (constant
+/// version label), `users_configured` (one series per (user, database,
+/// pool_mode) triple from the active config), and `log_level` (current
+/// effective filter from `app::log_level::get_log_level`). Called on
+/// startup and on every config reload — `BUILD_INFO` is idempotent,
+/// the other two are reset + repopulated so disappeared pools and
+/// rolled-back log overrides drop their series straight away.
+pub fn refresh_static_info_metrics() {
+    super::BUILD_INFO
+        .with_label_values(&[env!("CARGO_PKG_VERSION")])
+        .set(1);
+
+    super::USERS_CONFIGURED.reset();
+    let config = crate::config::get_config();
+    for (database, pool) in &config.pools {
+        let pool_mode = pool.pool_mode.to_string();
+        for user in &pool.users {
+            super::USERS_CONFIGURED
+                .with_label_values(&[
+                    user.username.as_str(),
+                    database.as_str(),
+                    pool_mode.as_str(),
+                ])
+                .set(1);
+        }
+    }
+
+    super::LOG_LEVEL_INFO.reset();
+    let level = crate::app::log_level::get_log_level();
+    super::LOG_LEVEL_INFO
+        .with_label_values(&[level.as_str()])
+        .set(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_sqlstate;
+
+    #[test]
+    fn class_08_collapses_connection_exception_codes() {
+        assert_eq!(classify_sqlstate("08000"), "08");
+        assert_eq!(classify_sqlstate("08003"), "08");
+        assert_eq!(classify_sqlstate("08006"), "08");
+        assert_eq!(classify_sqlstate("08P01"), "08");
+    }
+
+    #[test]
+    fn class_53_collapses_insufficient_resources_codes() {
+        assert_eq!(classify_sqlstate("53000"), "53");
+        assert_eq!(classify_sqlstate("53100"), "53");
+        assert_eq!(classify_sqlstate("53200"), "53");
+        assert_eq!(classify_sqlstate("53300"), "53");
+    }
+
+    #[test]
+    fn class_57_collapses_operator_intervention_codes() {
+        assert_eq!(classify_sqlstate("57000"), "57");
+        assert_eq!(classify_sqlstate("57014"), "57");
+        assert_eq!(classify_sqlstate("57P01"), "57");
+        assert_eq!(classify_sqlstate("57P03"), "57");
+    }
+
+    #[test]
+    fn special_codes_keep_their_full_value() {
+        assert_eq!(classify_sqlstate("25P02"), "25P02");
+        assert_eq!(classify_sqlstate("26000"), "26000");
+    }
+
+    #[test]
+    fn unknown_codes_collapse_into_other() {
+        assert_eq!(classify_sqlstate("23505"), "other");
+        assert_eq!(classify_sqlstate("42P01"), "other");
+        assert_eq!(classify_sqlstate("XX000"), "other");
+        assert_eq!(classify_sqlstate(""), "other");
+    }
+
+    #[test]
+    fn other_class_25_codes_do_not_steal_25p02_label() {
+        assert_eq!(classify_sqlstate("25000"), "other");
+        assert_eq!(classify_sqlstate("25001"), "other");
+        assert_eq!(classify_sqlstate("25P01"), "other");
+    }
+
+    #[test]
+    fn pool_transaction_observe_drops_zero_microseconds() {
+        // idle(0) and add_xact_time_and_idle(0) fire on backend
+        // creation and on `Drop for Client`; recording those zeros
+        // would tug the lowest bucket toward background noise.
+        let user = "zero_obs_user";
+        let database = "zero_obs_db";
+        let child = super::super::SHOW_POOLS_TRANSACTION_DURATION_SECONDS
+            .with_label_values(&[user, database]);
+
+        let before = child.get_sample_count();
+        super::observe_pool_transaction_microseconds(user, database, 0);
+        assert_eq!(child.get_sample_count(), before);
+
+        super::observe_pool_transaction_microseconds(user, database, 1);
+        assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn pool_query_observe_records_zero_microseconds() {
+        // query_time_add_microseconds historically records zero-elapsed
+        // queries (sub-microsecond ones) — keep parity here so the
+        // gauge family and the histogram see the same denominator.
+        let user = "zero_q_user";
+        let database = "zero_q_db";
+        let child =
+            super::super::SHOW_POOLS_QUERY_DURATION_SECONDS.with_label_values(&[user, database]);
+
+        let before = child.get_sample_count();
+        super::observe_pool_query_microseconds(user, database, 0);
+        assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn pool_wait_observe_records_zero_microseconds() {
+        // Zero-length checkouts are the healthy-pool baseline; keep
+        // recording them so histogram_quantile reflects "checkout was
+        // instant" instead of going silent on a healthy pool.
+        let user = "zero_w_user";
+        let database = "zero_w_db";
+        let child =
+            super::super::SHOW_POOLS_WAIT_DURATION_SECONDS.with_label_values(&[user, database]);
+
+        let before = child.get_sample_count();
+        super::observe_pool_wait_microseconds(user, database, 0);
+        assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn counter_delta_tracker_emits_post_reset_delta_only_once() {
+        // Reproduces the codex review scenario for the same generation:
+        // a pool whose `AddressStats` was replaced by `Pool::from_config`
+        // reports a smaller cumulative value than what the Prometheus
+        // counter holds. The tracker must increment by `current` once
+        // and a follow-up scrape with the same `current` must not
+        // fabricate another delta.
+        let tracker: super::CounterDeltaTracker<&'static str> = super::CounterDeltaTracker::new();
+        let counter =
+            prometheus::IntCounter::new("pg_doorman_test_reset_counter", "test counter").unwrap();
+
+        let gen_a = 1u64;
+        let gen_b = 2u64;
+
+        tracker.observe(&counter, "key", gen_a, 1_000);
+        assert_eq!(counter.get(), 1_000, "first observe sets the baseline");
+
+        // Same generation, source dropped to 10 — defensive reset path.
+        tracker.observe(&counter, "key", gen_a, 10);
+        assert_eq!(
+            counter.get(),
+            1_010,
+            "source reset within same generation emits `current` as the delta",
+        );
+
+        tracker.observe(&counter, "key", gen_a, 10);
+        assert_eq!(
+            counter.get(),
+            1_010,
+            "the same source value on the next scrape must not produce more increments",
+        );
+
+        tracker.observe(&counter, "key", gen_a, 15);
+        assert_eq!(
+            counter.get(),
+            1_015,
+            "subsequent growth advances by the actual delta",
+        );
+
+        // codex review BLOCKER 1: new generation already grew past the
+        // previous cumulative between two scrapes. `current >= last`
+        // is misleading — the source identity changed, this is a
+        // recreate, not a continuation.
+        tracker.observe(&counter, "key", gen_b, 1_500);
+        assert_eq!(
+            counter.get(),
+            1_015 + 1_500,
+            "different generation emits the new cumulative as the delta",
+        );
+
+        tracker.observe(&counter, "key", gen_b, 1_600);
+        assert_eq!(
+            counter.get(),
+            1_015 + 1_500 + 100,
+            "subsequent scrapes within the same generation use the in-generation delta",
+        );
+    }
+
+    #[test]
+    fn counter_delta_tracker_drain_stale_forgets_removed_keys() {
+        // After a key disappears from the active scrape (pool removed
+        // by RELOAD), the tracker must forget its previous mark so a
+        // future pool that reuses the same `(user, database)` does not
+        // inherit a non-zero baseline.
+        let tracker: super::CounterDeltaTracker<&'static str> = super::CounterDeltaTracker::new();
+        let counter =
+            prometheus::IntCounter::new("pg_doorman_test_stale_counter", "test counter").unwrap();
+
+        tracker.observe(&counter, "alive", 1, 5);
+        tracker.observe(&counter, "stale", 1, 7);
+
+        let mut current = std::collections::HashSet::new();
+        current.insert("alive");
+        let stale = tracker.drain_stale(&current);
+        assert_eq!(stale, vec!["stale"]);
+
+        // After drain the tracker no longer remembers `stale`; observing
+        // a fresh value treats it as a brand-new key.
+        tracker.observe(&counter, "stale", 2, 100);
+        assert_eq!(
+            counter.get(),
+            5 + 7 + 100,
+            "drained keys are forgotten — re-observing emits from zero",
+        );
+    }
 }
