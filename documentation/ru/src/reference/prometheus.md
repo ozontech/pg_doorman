@@ -93,8 +93,8 @@ pg_doorman экспортирует следующие метрики:
 
 | Метрика | Описание |
 |---------|----------|
-| `pg_doorman_servers_prepared_hits` | Счётчик попаданий Prepared Statement в бэкендах баз по пользователю и базе. |
-| `pg_doorman_servers_prepared_misses` | Счётчик промахов Prepared Statement в бэкендах баз по пользователю и базе. |
+| `pg_doorman_servers_prepared_hits` | Совокупное число попаданий в кэш prepared statement по всем бэкендам пула, с лейблами user и database. Сравните с `pg_doorman_servers_prepared_misses` для расчёта hit-ratio. |
+| `pg_doorman_servers_prepared_misses` | Совокупное число промахов prepared statement по всем бэкендам пула, с лейблами user и database. Устойчиво ненулевая скорость указывает на запросы, для которых стоит включить prepare, либо на нехватку `server_prepared_statement_cache_size`. |
 
 ### Метрики серверного TLS
 

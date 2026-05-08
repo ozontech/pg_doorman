@@ -433,8 +433,8 @@ Prometheus-метрики (полный список в [Prometheus](../referenc
 - `pg_doorman_clients_prepared_named_entries{user, database}`
 - `pg_doorman_clients_prepared_anonymous_entries{user, database}`
 - `pg_doorman_clients_prepared_anonymous_evictions_total{user, database}`
-- `pg_doorman_servers_prepared_hits{user, database, backend_pid}`
-- `pg_doorman_servers_prepared_misses`
+- `pg_doorman_servers_prepared_hits{user, database}`
+- `pg_doorman_servers_prepared_misses{user, database}`
 - `pg_doorman_async_clients_count`
 
 ## Алертинг

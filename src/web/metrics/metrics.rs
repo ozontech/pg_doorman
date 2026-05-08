@@ -182,30 +182,24 @@ fn update_server_metrics() {
     // direct global read if the cache is somehow empty (e.g. the
     // first scrape racing with TTL expiry).
     let snap = crate::web::routes::collect::snapshot();
+
+    // Aggregate hits and misses per (user, database) across all backends.
+    // The PID-level breakdown lived here historically but exploded the
+    // cardinality once `server_lifetime` expired the first generation
+    // of backends — every reconnect minted a fresh PID label that
+    // Prometheus then carried for the staleness window.
+    let mut totals: std::collections::HashMap<(String, String), (f64, f64)> =
+        std::collections::HashMap::new();
+
     for server in snap.server_states.values() {
-        // Borrow username/pool_name from the Arc<ServerStats>; the snapshot
-        // owns the Arc for the duration of this loop body, so the slices
-        // remain valid for the metric label calls below.
         let username = server.username();
         let pool_name = server.pool_name();
-        let process_id = server.process_id().to_string();
 
-        let server_metrics = [
-            (
-                &SHOW_SERVERS_PREPARED_HITS,
-                server.prepared_hit_count.load(Ordering::Relaxed) as f64,
-            ),
-            (
-                &SHOW_SERVERS_PREPARED_MISSES,
-                server.prepared_miss_count.load(Ordering::Relaxed) as f64,
-            ),
-        ];
-
-        for (metric, value) in &server_metrics {
-            metric
-                .with_label_values(&[username, pool_name, &process_id])
-                .set(*value);
-        }
+        let entry = totals
+            .entry((username.to_string(), pool_name.to_string()))
+            .or_insert((0.0, 0.0));
+        entry.0 += server.prepared_hit_count.load(Ordering::Relaxed) as f64;
+        entry.1 += server.prepared_miss_count.load(Ordering::Relaxed) as f64;
 
         // Count TLS-encrypted backend connections per pool.
         if server.tls() {
@@ -213,6 +207,15 @@ fn update_server_metrics() {
                 .with_label_values(&[pool_name])
                 .inc();
         }
+    }
+
+    for ((user, database), (hits, misses)) in totals {
+        SHOW_SERVERS_PREPARED_HITS
+            .with_label_values(&[user.as_str(), database.as_str()])
+            .set(hits);
+        SHOW_SERVERS_PREPARED_MISSES
+            .with_label_values(&[user.as_str(), database.as_str()])
+            .set(misses);
     }
 }
 

@@ -461,8 +461,8 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "### Server Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead. |");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance. |\n");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with `pg_doorman_servers_prepared_misses` to derive hit ratio. |");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statement_cache_size`. |\n");
 
     // Per-Client Prepared Statement Cache Metrics
     let _ = writeln!(out, "### Per-Client Prepared Statement Cache Metrics\n");

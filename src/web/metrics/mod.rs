@@ -580,26 +580,34 @@ pub(crate) static SHOW_POOLS_WAIT_TIME_AVG: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+/// Aggregated prepared-statement hits across all backends of a pool.
+/// `backend_pid` is intentionally absent: each backend's PID survives only
+/// `server_lifetime` (20 minutes by default, often shorter under churn),
+/// so labelling per PID would leak hundreds of stale series per pool per
+/// day even though every useful query (`sum by (user, database) (...)`,
+/// `rate(...)`) immediately collapses them anyway.
 pub(crate) static SHOW_SERVERS_PREPARED_HITS: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_servers_prepared_hits",
-            "Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead.",
+            "Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with pg_doorman_servers_prepared_misses to derive hit ratio.",
         ),
-        &["user", "database", "backend_pid"],
+        &["user", "database"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
 });
 
+/// Aggregated prepared-statement misses across all backends of a pool.
+/// See `SHOW_SERVERS_PREPARED_HITS` for why `backend_pid` is not a label.
 pub(crate) static SHOW_SERVERS_PREPARED_MISSES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_servers_prepared_misses",
-            "Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance.",
+            "Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger server_prepared_statement_cache_size.",
         ),
-        &["user", "database", "backend_pid"],
+        &["user", "database"],
     )
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
