@@ -2513,6 +2513,529 @@
         "y": 129
       },
       "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Pool State",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 137
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pools_paused{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Paused Pools",
+      "description": "1 when the pool is currently paused via PAUSE admin command, 0 when running. A pool stuck at 1 after incident triage drops all client traffic until manually resumed.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 138
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pools_maxwait_microseconds{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"} / 1000",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Pool Max Wait (worst client)",
+      "description": "Largest single client checkout wait in each pool, taken as max(client.max_wait_time) across alive clients. Each client tracks its own lifetime maximum, so a spike means 'someone in this pool ever waited this long', not 'someone is waiting now'.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 138
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Pool Errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 146
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (sqlstate) (rate(pg_doorman_pools_errors_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "{{sqlstate}}"
+        }
+      ],
+      "title": "Pool Errors per Second by SQLSTATE Class",
+      "description": "Backend errors per pool, bucketed by SQLSTATE class: 08 (connection_exception), 53 (insufficient_resources), 57 (operator_intervention), 25P02 (in_failed_sql_transaction), 26000 (invalid_sql_statement_name), other. The full 5-character code is in /api/pools and the Web UI.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 147
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (user, database) (rate(pg_doorman_pools_errors_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Pool Errors per Second by Pool",
+      "description": "Same counter aggregated per pool. Use this view to find which pool produces the bulk of errors when the SQLSTATE breakdown shows a spike.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 147
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Listener Rejections",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 155
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_listener_rejections_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "title": "Pre-auth Rejections per Second by Reason",
+      "description": "Clients dropped before authentication, by reason: hba (HBA denied), tls_required (only_ssl_connections rejected plain text), tls_handshake_fail (TLS negotiation failed), protocol_error (unexpected startup sequence), invalid_startup (bad startup or socket error), too_many_clients (listener at capacity). Sustained 'hba' or 'tls_handshake_fail' is the bruteforce-from-outside signal.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 156
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Protocol Streaming",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 164
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (kind, result) (rate(pg_doorman_streaming_events_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "{{kind}}/{{result}}"
+        }
+      ],
+      "title": "Streaming Events per Second",
+      "description": "Large messages forwarded byte-for-byte by pg_doorman. kind is data_row or copy_data; result is ok or error. Sustained non-zero rate signals oversized BYTEA/JSONB payloads, COPY rows with pathological content, or a misbehaving ORM \u2014 pg_doorman buffers most messages in RAM, but anything above max_message_size is streamed to keep memory bounded.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 165
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(pg_doorman_streaming_bytes_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "title": "Streaming Bytes per Second",
+      "description": "Bytes pushed through the streaming path (header + payload). Counted even on failed events, so this measures what actually reached the client wire, not only fully delivered messages.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 165
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Backend Setup Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 173
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, phase) (rate(pg_doorman_backend_create_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "refId": "",
+          "legendFormat": "{{phase}} p99"
+        }
+      ],
+      "title": "Backend Setup p99 by Phase",
+      "description": "99th percentile of each backend connection setup phase: tcp_connect (raw socket), tls (SSL request + handshake), auth (StartupMessage to AuthenticationOK), startup (AuthenticationOK to ReadyForQuery). The phase you don't see is the phase that failed before completing.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 174
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, phase) (rate(pg_doorman_backend_create_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "refId": "",
+          "legendFormat": "{{phase}} p50"
+        }
+      ],
+      "title": "Backend Setup p50 by Phase",
+      "description": "Median of each setup phase. Compare against p99 to spot tail-latency outliers vs steady slowness.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 174
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (phase) (rate(pg_doorman_backend_create_duration_seconds_count{instance=~\"$instance\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "{{phase}}"
+        }
+      ],
+      "title": "Backend Setup Rate by Phase",
+      "description": "Backend connections completing each phase per second. tcp_connect rate equals total backend creates; gaps to tls/auth/startup mark drop-offs at each step.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 182
+      },
+      "repeatDirection": "h"
     }
   ]
 }
