@@ -18,14 +18,12 @@ pub(crate) fn collect_stats() -> StatsDto {
             total_xact_time: s.total_xact_time_microseconds,
             total_query_time: s.total_query_time_microseconds,
             total_wait_time: s.wait_time,
-            total_errors: s.errors,
+            total_errors: s.total_errors,
             avg_xact_count: s.avg_xact_count,
             avg_query_count: s.avg_query_count,
             avg_recv: s.avg_recv,
             avg_sent: s.avg_sent,
-            // `avg_errors` mirrors `generate_show_stats_row`: uses `errors` (no
-            // per-window rate stored in PoolStats).
-            avg_errors: s.errors,
+            avg_errors: s.avg_errors,
             avg_xact_time: s.avg_xact_time_microsecons,
             avg_query_time: s.avg_query_time_microseconds,
             avg_wait_time: s.avg_wait_time,

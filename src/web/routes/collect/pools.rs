@@ -60,7 +60,7 @@ pub(crate) fn collect_pools() -> PoolsDto {
             wait_p95_ms: stats.wait_percentile.p95 as f64 / 1_000.0,
             queries_total: stats.total_query_count,
             transactions_total: stats.total_xact_count,
-            errors_total: stats.errors,
+            errors_total: stats.total_errors,
             errors_by_sqlstate,
             paused: stats.paused,
             // RECONNECT bumps the per-pool epoch; surfacing it lets a DBA

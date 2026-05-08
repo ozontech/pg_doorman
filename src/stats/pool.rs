@@ -104,8 +104,14 @@ pub struct PoolStats {
     /// Total time clients spent waiting for server connections (microseconds)
     pub wait_time: u64,
 
-    /// Total number of errors encountered
-    pub errors: u64,
+    /// Average errors per second (sourced from AddressStats::averages.errors)
+    pub avg_errors: u64,
+
+    /// Cumulative number of errors encountered (sourced from
+    /// AddressStats::total.errors). Before the field existed, the SHOW
+    /// STATS `total_errors` column reused `avg_errors` and silently
+    /// reported the running average twice.
+    pub total_errors: u64,
 
     /// Percentile statistics for transaction execution times (from HDR histogram)
     pub xact_percentile: Percentile,
@@ -252,7 +258,8 @@ impl PoolStats {
             xact_time: 0,
             query_time: 0,
             wait_time: 0,
-            errors: 0,
+            avg_errors: 0,
+            total_errors: 0,
             // Percentiles from HDR histogram
             xact_percentile,
             query_percentile,
@@ -489,12 +496,12 @@ impl PoolStats {
             Cow::Owned(self.total_xact_time_microseconds.to_string()),
             Cow::Owned(self.total_query_time_microseconds.to_string()),
             Cow::Owned(self.wait_time.to_string()),
-            Cow::Owned(self.errors.to_string()),
+            Cow::Owned(self.total_errors.to_string()),
             Cow::Owned(self.avg_xact_count.to_string()),
             Cow::Owned(self.avg_query_count.to_string()),
             Cow::Owned(self.avg_recv.to_string()),
             Cow::Owned(self.avg_sent.to_string()),
-            Cow::Owned(self.errors.to_string()),
+            Cow::Owned(self.avg_errors.to_string()),
             Cow::Owned(self.avg_xact_time_microsecons.to_string()),
             Cow::Owned(self.avg_query_time_microseconds.to_string()),
             Cow::Owned(self.avg_wait_time.to_string()),
@@ -562,9 +569,10 @@ impl PoolStats {
                 .averages
                 .query_time_microseconds
                 .load(Ordering::Relaxed);
-            current.errors = address.averages.errors.load(Ordering::Relaxed);
+            current.avg_errors = address.averages.errors.load(Ordering::Relaxed);
 
             // Load total statistics
+            current.total_errors = address.total.errors.load(Ordering::Relaxed);
             current.bytes_received = address.total.bytes_received.load(Ordering::Relaxed);
             current.bytes_sent = address.total.bytes_sent.load(Ordering::Relaxed);
             current.xact_time = address.total.xact_time_microseconds.load(Ordering::Relaxed);
@@ -760,6 +768,34 @@ mod tests {
             assert_eq!(stats.sv_active, 0, "{id} sv_active should be 0");
             assert_eq!(stats.sv_idle, 0, "{id} sv_idle should be 0");
         }
+    }
+
+    /// Pin the SHOW STATS row layout so the per-second running mean and
+    /// the cumulative counter never collapse back into a single source.
+    /// The original bug emitted both columns from the same field, so a
+    /// regression has to flip total_errors and avg_errors to identical
+    /// values to slip through — this test guards that case.
+    #[test]
+    fn show_stats_row_separates_total_errors_from_avg_errors() {
+        let percentile = Percentile {
+            p99: 0,
+            p95: 0,
+            p90: 0,
+            p50: 0,
+        };
+        let mut stats = PoolStats::new_with_percentiles(
+            PoolIdentifier::new("shop", "alice"),
+            PoolMode::Transaction,
+            percentile.clone(),
+            percentile.clone(),
+            percentile,
+        );
+        stats.total_errors = 100;
+        stats.avg_errors = 5;
+
+        let row = stats.generate_show_stats_row();
+        assert_eq!(row[9].as_ref(), "100", "column 9 should be total_errors");
+        assert_eq!(row[14].as_ref(), "5", "column 14 should be avg_errors");
     }
 
     /// Both entry points must agree on shape when fed the same global

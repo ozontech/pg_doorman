@@ -83,8 +83,8 @@ pub(crate) fn collect_overview() -> OverviewDto {
 
         query_count_total,
         transaction_count_total,
-        // Sum of per-pool error counters. Already populated by PoolStats.errors.
-        errors_count_total: pool_lookup.values().map(|s| s.errors).sum(),
+        // Sum of per-pool cumulative error counters across all pools.
+        errors_count_total: pool_lookup.values().map(|s| s.total_errors).sum(),
 
         prepared_hits_total,
         prepared_misses_total,
