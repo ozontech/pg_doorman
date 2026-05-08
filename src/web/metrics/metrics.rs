@@ -801,6 +801,40 @@ pub fn observe_pool_wait_microseconds(user: &str, database: &str, microseconds: 
         .observe(microseconds as f64 / 1_000_000.0);
 }
 
+/// Refreshes the trio of static info gauges: `build_info` (constant
+/// version label), `users_configured` (one series per (user, database,
+/// pool_mode) triple from the active config), and `log_level` (current
+/// effective filter from `app::log_level::get_log_level`). Called on
+/// startup and on every config reload — `BUILD_INFO` is idempotent,
+/// the other two are reset + repopulated so disappeared pools and
+/// rolled-back log overrides drop their series straight away.
+pub fn refresh_static_info_metrics() {
+    super::BUILD_INFO
+        .with_label_values(&[env!("CARGO_PKG_VERSION")])
+        .set(1);
+
+    super::USERS_CONFIGURED.reset();
+    let config = crate::config::get_config();
+    for (database, pool) in &config.pools {
+        let pool_mode = pool.pool_mode.to_string();
+        for user in &pool.users {
+            super::USERS_CONFIGURED
+                .with_label_values(&[
+                    user.username.as_str(),
+                    database.as_str(),
+                    pool_mode.as_str(),
+                ])
+                .set(1);
+        }
+    }
+
+    super::LOG_LEVEL_INFO.reset();
+    let level = crate::app::log_level::get_log_level();
+    super::LOG_LEVEL_INFO
+        .with_label_values(&[level.as_str()])
+        .set(1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_sqlstate;

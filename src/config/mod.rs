@@ -799,6 +799,11 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     // reload, SIGHUP — gets the same behaviour.
     crate::web::refresh_options_from_config();
 
+    // Refresh static info gauges so disappeared pools and new
+    // (user, database, pool_mode) triples are reflected in
+    // /metrics on this same scrape.
+    crate::web::metrics::refresh_static_info_metrics();
+
     if old_config != new_config {
         info!("Config changed, reloading");
         ConnectionPool::from_config(client_server_map).await?;

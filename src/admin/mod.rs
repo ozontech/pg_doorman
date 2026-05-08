@@ -246,6 +246,11 @@ where
         "LOG_LEVEL" => match log_level::set_log_level(value) {
             Ok(()) => {
                 log::info!("SET log_level = '{}'", log_level::get_log_level());
+                // Re-export pg_doorman_log_level so the live filter
+                // shows up in /metrics on the next scrape — operators
+                // can confirm a mid-incident `SET log_level = debug`
+                // landed without grepping logs.
+                crate::web::metrics::refresh_static_info_metrics();
                 let mut res = BytesMut::new();
                 res.put(command_complete("SET"));
                 res.put_u8(b'Z');

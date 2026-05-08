@@ -288,6 +288,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         };
 
+        // Static info gauges (build_info, users_configured, log_level)
+        // need a populated config and an initialised log controller, so
+        // the first refresh runs after pool init. RELOAD calls the same
+        // helper, see config::reload_config.
+        crate::web::metrics::refresh_static_info_metrics();
+
         tokio::task::spawn(async move {
             let mut stats_collector = Collector::default();
             stats_collector.collect().await;

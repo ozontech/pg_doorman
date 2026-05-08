@@ -24,10 +24,66 @@ pub use metrics::{
     observe_anonymous_eviction, observe_backend_create_phase, observe_pool_query_microseconds,
     observe_pool_transaction_microseconds, observe_pool_wait_microseconds, observe_streaming_bytes,
     observe_streaming_event, record_interner_gc, record_listener_rejection, record_synthetic_miss,
+    refresh_static_info_metrics,
 };
 
 // Define the metrics we want to expose
 pub(crate) static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
+
+/// `build_info`-style gauge that always reports `1` and carries the
+/// pg_doorman version in a label. Pinned to one series per process so
+/// dashboards can join on `version` without affecting cardinality, and
+/// alerts can fire on a missing series after a deploy. Refreshed on
+/// startup and on every config reload (the value never changes mid-run,
+/// but RELOAD calls the same refresh path so a future override has one
+/// place to land).
+pub(crate) static BUILD_INFO: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_build_info",
+            "Static information about the running pg_doorman binary, exposed as a gauge fixed at 1. The version label carries the crate version (Cargo.toml) so dashboards can show 'which build is in production' without parsing logs.",
+        ),
+        &["version"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+/// One series per `(user, database, pool_mode)` triple defined in the
+/// active configuration, value always `1`. Refreshed on every config
+/// reload so an operator can spot pools that disappeared (series
+/// missing) or appeared (new series) without diffing the TOML.
+pub(crate) static USERS_CONFIGURED: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_users_configured",
+            "Configured (user, database, pool_mode) triples — one series per triple, value 1. Disappears on RELOAD when the corresponding pool is removed; appears when added.",
+        ),
+        &["user", "database", "pool_mode"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+/// Current effective log filter, reported as one series per active
+/// level/module-filter string with value `1`. The set of series
+/// changes when an operator runs `SET log_level = ...` via the admin
+/// console — a temporary `debug` enabled mid-incident shows up
+/// immediately and disappears when reverted.
+pub(crate) static LOG_LEVEL_INFO: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_log_level",
+            "Current effective log filter as reported by `SHOW LOG_LEVEL` / admin console. One series with value 1, label `level` carries the filter string (e.g. 'info', 'warn,pg_doorman::pool=debug').",
+        ),
+        &["level"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
 
 pub(crate) static TOTAL_MEMORY: Lazy<Gauge> = Lazy::new(|| {
     let gauge = Gauge::new(
