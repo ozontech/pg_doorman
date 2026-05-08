@@ -6,12 +6,12 @@
 
 pg_doorman поддерживает два режима; оба настраиваются в одном блоке `auth_query`. Выбор зависит от того, задан ли `server_user`:
 
-- **Режим passthrough** (без `server_user`): каждый аутентифицированный пользователь получает собственный пул бэкенда, аутентифицированный под ним же. Сохраняет идентичность бэкенда на пользователя для `current_user`, row-level security и audit logs.
-- **Выделенный режим** (с `server_user`): все динамические пользователи разделяют один пул бэкенда, аутентифицированный как `server_user`. Это размен идентичности бэкенда на более высокое переиспользование пула и меньшее число соединений.
+- **Сквозной режим** (без `server_user`): каждый аутентифицированный пользователь получает собственный пул серверных соединений, аутентифицированный под ним же. Сохраняет идентичность PostgreSQL для `current_user`, row-level security и audit logs.
+- **Выделенный режим** (с `server_user`): все динамические пользователи разделяют один пул серверных соединений, аутентифицированный как `server_user`. Это размен идентичности PostgreSQL на более высокое переиспользование пула и меньшее число соединений.
 
-auth_query в стиле PgBouncer — это выделенный режим. Odyssey поддерживает оба. В pg_doorman режим passthrough — по умолчанию.
+auth_query в стиле PgBouncer — это выделенный режим. Odyssey поддерживает оба. В pg_doorman сквозной режим включён по умолчанию.
 
-## Режим passthrough
+## Сквозной режим
 
 ```yaml
 pools:
@@ -37,9 +37,9 @@ pools:
 1. pg_doorman выполняет запрос с `$1 = 'alice'` и получает её хеш.
 2. Кэширует хеш в памяти на `cache_ttl` секунд.
 3. Выполняет passthrough-аутентификацию MD5 или SCRAM (смотрите [Passthrough](passthrough.md)).
-4. Открывает соединение с бэкендом, аутентифицированное как `alice` с тем же хешем.
+4. Открывает соединение с PostgreSQL, аутентифицированное как `alice` с тем же хешем.
 
-## Выделенный режим (dedicated)
+## Выделенный режим
 
 ```yaml
 pools:
@@ -62,10 +62,10 @@ pools:
 Установка `server_user` переключает режим. Теперь:
 
 1. Клиент аутентифицируется как `alice` против хеша, возвращённого запросом.
-2. Пул бэкенда аутентифицирован как `app` (значение `server_user`) и общий для всех динамических пользователей.
+2. Пул серверных соединений аутентифицирован как `app` (значение `server_user`) и общий для всех динамических пользователей.
 3. `current_user` в PostgreSQL всегда будет `app`, независимо от того, какой клиент подключился.
 
-Используйте этот режим, когда у вас много пользователей (тысячи) и пулы бэкенда на каждого исчерпали бы слоты соединений PostgreSQL.
+Используйте этот режим, когда у вас много пользователей (тысячи) и отдельные серверные пулы на каждого исчерпали бы слоты соединений PostgreSQL.
 
 ## Рекомендуемая настройка PostgreSQL
 
@@ -106,7 +106,7 @@ auth_query:
 
 Кэш — пер-пуловый, в памяти, сбрасывается при `RELOAD`. После ротации пароля пользователя сделайте перезапуск или `RELOAD`.
 
-## Observability
+## Мониторинг
 
 `SHOW AUTH_QUERY` показывает статистику по базам:
 
@@ -114,4 +114,4 @@ auth_query:
 database | cache_entries | cache_hits | cache_misses | cache_refetches | rate_limited | auth_success | auth_failure | executor_queries | executor_errors
 ```
 
-Метрики Prometheus: `pg_doorman_auth_query_cache`, `pg_doorman_auth_query_auth`, `pg_doorman_auth_query_executor`, `pg_doorman_auth_query_dynamic_pools`. Смотрите [Admin commands](../observability/admin-commands.md).
+Метрики Prometheus: `pg_doorman_auth_query_cache`, `pg_doorman_auth_query_auth`, `pg_doorman_auth_query_executor`, `pg_doorman_auth_query_dynamic_pools`. Смотрите [команды администратора](../observability/admin-commands.md).

@@ -116,7 +116,7 @@ pg_doorman экспортирует следующие метрики:
 | `pg_doorman_server_tls_handshake_duration_seconds` | histogram по пулу | Распределение длительности TLS handshake. |
 | `pg_doorman_server_tls_handshake_errors_total` | counter по пулу | Счётчик неуспешных TLS handshake. Алертить при ненулевой скорости. |
 
-Подробнее — см. [Клиентский и серверный TLS](../guides/tls.md#Observability).
+Подробнее — см. [Клиентский и серверный TLS](../guides/tls.md#Мониторинг).
 
 ## Дашборд Grafana
 

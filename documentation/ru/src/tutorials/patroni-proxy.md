@@ -41,7 +41,7 @@ graph TD
 - **pg_doorman** живёт на хостах PostgreSQL. Делает пулинг, ведёт кеш prepared statements и парсит протокол — работа, которой выгодна низкая задержка до локального сокета.
 - **patroni_proxy** живёт рядом с приложением. Маршрутизирует TCP, владеет role-aware failover-решением и не лезет в дела пулера.
 
-Если поток приложения небольшой и одного pg_doorman на кластер достаточно, схема сжимается до одного pg_doorman с включённым [Patroni-assisted fallback](patroni-assisted-fallback.md), а `patroni_proxy` можно вообще не разворачивать.
+Если поток приложения небольшой и одного pg_doorman на кластер достаточно, схема сжимается до одного pg_doorman с включённым [fallback через Patroni](patroni-assisted-fallback.md), а `patroni_proxy` можно вообще не разворачивать.
 
 ## Конфигурация
 

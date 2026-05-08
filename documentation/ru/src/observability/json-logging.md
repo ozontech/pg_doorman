@@ -94,7 +94,7 @@ StandardError=journal
 
 ## Оговорки
 
-- Для production выбирайте `text` (терминалы, syslog) или `structured` (log shippers). `debug` зарезервирован под будущее использование и сейчас равен `text`.
+- Для промышленной эксплуатации выбирайте `text` (терминалы, syslog) или `structured` (log shippers). `debug` зарезервирован под будущее использование и сейчас равен `text`.
 - `file` и `line` берутся из мест вызова макроса `log`. Они доступны в release-сборках, потому что pg_doorman поставляется с включённой отладочной информацией.
 - Логгер не включает trace-идентификаторы и корреляцию запросов. Для трассировки на запрос используйте `SHOW CLIENTS` и Prometheus-метрики.
 
@@ -102,4 +102,4 @@ StandardError=journal
 
 - [Prometheus reference](../reference/prometheus.md) — для машинно-читаемых метрик.
 - [Latency Percentiles](percentiles.md) — для сигналов о производительности.
-- [Admin Commands](admin-commands.md) — для интроспекции в рантайме.
+- [Команды администратора](admin-commands.md) — для интроспекции в рантайме.

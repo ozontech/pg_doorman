@@ -421,9 +421,9 @@ PostgreSQL. Чтобы сжать окно:
 показывает имена, которые держит текущий backend. Подсчёт строк там
 показывает, насколько близко backend подошёл к лимиту.
 
-## Observability
+## Мониторинг
 
-Admin-команды:
+Команды администратора:
 
 - `SHOW PREPARED_STATEMENTS` — pool, hash, name, query, `count_used`,
   `kind`. Топ записей по `count_used` показывает горячие запросы,
@@ -575,7 +575,7 @@ anonymous |    1337 |   234567
   `client_anonymous_prepared_cache_size`,
   `query_interner_gc_interval_seconds`,
   `query_interner_anon_idle_ttl_seconds`.
-- [Admin-команды](../observability/admin-commands.md) —
+- [Команды администратора](../observability/admin-commands.md) —
   `SHOW PREPARED_STATEMENTS`, `SHOW POOLS_MEMORY`,
   `SHOW INTERNER`, `RESET INTERNER`.
 - [Prometheus](../reference/prometheus.md) — полный список метрик.

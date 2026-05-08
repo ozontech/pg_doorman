@@ -28,26 +28,26 @@
 # Пулинг
 
 - [Режимы пула](concepts/pool-modes.md)
-- [Pool Coordinator](concepts/pool-coordinator.md)
+- [Координатор пулов](concepts/pool-coordinator.md)
 - [Кеш Parse для анонимных prepared statements](tutorials/prepared-statements.md)
 - [Пул под нагрузкой (продвинутое)](tutorials/pool-pressure.md)
 
 # Высокая доступность
 
-- [Patroni-assisted Fallback](tutorials/patroni-assisted-fallback.md)
+- [Fallback через Patroni](tutorials/patroni-assisted-fallback.md)
 - [patroni_proxy](tutorials/patroni-proxy.md)
 
 # Эксплуатация
 
-- [Graceful Binary Upgrade](tutorials/binary-upgrade.md)
+- [Плавное обновление бинаря](tutorials/binary-upgrade.md)
 - [Сигналы и перезагрузка](operations/signals.md)
 - [Мониторинг query interner](operations/monitoring-interner.md)
 - [Диагностика](tutorials/troubleshooting.md)
 
-# Observability
+# Мониторинг и диагностика
 
-- [Admin-команды](observability/admin-commands.md)
-- [Web UI](guides/web-ui.md)
+- [Команды администратора](observability/admin-commands.md)
+- [Веб-консоль](guides/web-ui.md)
 - [Структурированное JSON-логирование](observability/json-logging.md)
 - [Перцентили задержек](observability/percentiles.md)
 
@@ -55,10 +55,10 @@
 
 - [Общие настройки](reference/general.md)
 - [Настройки пула](reference/pool.md)
-- [Prometheus](reference/prometheus.md)
+- [Метрики Prometheus](reference/prometheus.md)
 
 ---
 
-- [Benchmarks](benchmarks.md)
-- [Changelog](changelog.md)
+- [Бенчмарки](benchmarks.md)
+- [История изменений](changelog.md)
 - [Участие в проекте](tutorials/contributing.md)
