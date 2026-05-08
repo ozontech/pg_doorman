@@ -66,27 +66,98 @@ fn update_connection_metrics() {
         SHOW_CONNECTIONS
             .with_label_values(&[conn_type])
             .set(value as f64);
-        emit_counter_delta(
+        emit_process_counter_delta(
             &SHOW_CONNECTIONS_TOTAL.with_label_values(&[conn_type]),
             value as u64,
         );
     }
 }
 
-/// Bumps a Prometheus counter to a given cumulative value sourced from
-/// a monotonic atomic. The function compares `value` against the
-/// counter's current reading and increments by the positive delta;
-/// non-positive deltas (which would only happen on counter reset, i.e.
-/// process restart wiping both atomics in lock-step) are silently
-/// ignored. Used by the parallel `*_total` counters that mirror the
-/// deprecated gauge form of monotonic data.
+/// Bumps a Prometheus counter from a process-lifetime monotonic source
+/// (a `static AtomicUsize` that survives RELOAD). Reads
+/// `counter.get()` as the previous mark, so MUST NOT be used for any
+/// source that can shrink mid-process — pool stats are wiped on
+/// `Pool::from_config`. See `CounterDeltaTracker` for those.
 #[inline]
-fn emit_counter_delta(counter: &prometheus::IntCounter, value: u64) {
+fn emit_process_counter_delta(counter: &prometheus::IntCounter, value: u64) {
     let prev = counter.get();
     if value > prev {
         counter.inc_by(value - prev);
     }
 }
+
+/// Per-source delta tracker for counters whose source can be replaced
+/// during the process lifetime: every `AddressStats::default()` minted
+/// by `ConnectionPool::from_config` reopens its `total_*` counters at
+/// zero. Holding our own previous-value map per metric label lets the
+/// exporter detect that reset (`current < previous`) and emit the
+/// current cumulative as the post-reset delta exactly once instead
+/// of either freezing — the failure mode if we treat the Prometheus
+/// counter as the previous mark, since the counter never goes back —
+/// or fabricating duplicates each scrape.
+struct CounterDeltaTracker<K> {
+    prev: std::sync::Mutex<std::collections::HashMap<K, u64>>,
+}
+
+impl<K> CounterDeltaTracker<K>
+where
+    K: std::cmp::Eq + std::hash::Hash + Clone,
+{
+    fn new() -> Self {
+        Self {
+            prev: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Records `current` as the latest source value for `key` and
+    /// increments `counter` by the appropriate delta. On source reset
+    /// (the new `current` is below the previous mark) the post-reset
+    /// `current` is emitted once and the tracker realigns.
+    fn observe(&self, counter: &prometheus::IntCounter, key: K, current: u64) {
+        let mut prev = match self.prev.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let last = prev.get(&key).copied().unwrap_or(0);
+        let delta = if current >= last {
+            current - last
+        } else {
+            current
+        };
+        if delta > 0 {
+            counter.inc_by(delta);
+        }
+        prev.insert(key, current);
+    }
+
+    /// Drops entries whose keys are not in `current_keys`, returning
+    /// them so the caller can issue `remove_label_values` on the
+    /// owning `IntCounterVec`.
+    fn drain_stale(&self, current_keys: &std::collections::HashSet<K>) -> Vec<K> {
+        let mut prev = match self.prev.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let stale: Vec<K> = prev
+            .keys()
+            .filter(|k| !current_keys.contains(*k))
+            .cloned()
+            .collect();
+        for key in &stale {
+            prev.remove(key);
+        }
+        stale
+    }
+}
+
+type PoolKey = (String, String);
+type PoolBytesKey = (String, String, String);
+
+static POOL_QUERIES_PREV: Lazy<CounterDeltaTracker<PoolKey>> = Lazy::new(CounterDeltaTracker::new);
+static POOL_TRANSACTIONS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+static POOL_BYTES_PREV: Lazy<CounterDeltaTracker<PoolBytesKey>> =
+    Lazy::new(CounterDeltaTracker::new);
 
 #[cfg(target_os = "linux")]
 fn update_socket_metrics() {
@@ -131,6 +202,34 @@ fn update_pool_metrics() {
         update_pool_cache_metrics(identifier, stats);
         update_pool_size_metrics(identifier, stats);
         update_pool_state_metrics(identifier, stats);
+    }
+
+    // Drop label sets for the resettable `_total` counters whose
+    // pools disappeared on RELOAD. The counter values themselves
+    // never go backwards in Prometheus; this only removes the time
+    // series so a later pool with the same `(user, database)` does
+    // not inherit a non-zero `previous` mark from the tracker.
+    let current_pool_keys: std::collections::HashSet<PoolKey> = snap
+        .pool_lookup
+        .keys()
+        .map(|id| (id.user.clone(), id.db.clone()))
+        .collect();
+
+    for stale in POOL_QUERIES_PREV.drain_stale(&current_pool_keys) {
+        let _ = SHOW_POOLS_QUERIES_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
+    }
+    for stale in POOL_TRANSACTIONS_PREV.drain_stale(&current_pool_keys) {
+        let _ = SHOW_POOLS_TRANSACTIONS_TOTAL.remove_label_values(&[&stale.0, &stale.1]);
+    }
+
+    let mut current_bytes_keys: std::collections::HashSet<PoolBytesKey> =
+        std::collections::HashSet::with_capacity(snap.pool_lookup.len() * 2);
+    for id in snap.pool_lookup.keys() {
+        current_bytes_keys.insert(("received".to_string(), id.user.clone(), id.db.clone()));
+        current_bytes_keys.insert(("sent".to_string(), id.user.clone(), id.db.clone()));
+    }
+    for stale in POOL_BYTES_PREV.drain_stale(&current_bytes_keys) {
+        let _ = SHOW_POOLS_BYTES_TOTAL.remove_label_values(&[&stale.0, &stale.1, &stale.2]);
     }
 }
 
@@ -271,13 +370,20 @@ fn update_pool_avg_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     // wait-time average and the *_total_time gauges are not
     // counter-shaped (rolling averages and summed durations are still
     // surfaced through histograms), so only query/transaction counts
-    // get a parallel `_total`.
-    emit_counter_delta(
+    // get a parallel `_total`. Pool stats live across at most one
+    // RELOAD: `Pool::from_config` mints a fresh `AddressStats` whose
+    // counters start at zero. The dedicated trackers detect that and
+    // emit the post-reset delta instead of either freezing the metric
+    // or fabricating duplicates each scrape.
+    let pool_key = (user.to_string(), database.to_string());
+    POOL_QUERIES_PREV.observe(
         &SHOW_POOLS_QUERIES_TOTAL.with_label_values(&[user, database]),
+        pool_key.clone(),
         stats.total_query_count,
     );
-    emit_counter_delta(
+    POOL_TRANSACTIONS_PREV.observe(
         &SHOW_POOLS_TRANSACTIONS_TOTAL.with_label_values(&[user, database]),
+        pool_key,
         stats.total_xact_count,
     );
 }
@@ -346,12 +452,18 @@ fn update_byte_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
         .with_label_values(&["sent", user, database])
         .set(stats.bytes_sent as f64);
 
-    emit_counter_delta(
+    POOL_BYTES_PREV.observe(
         &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["received", user, database]),
+        (
+            "received".to_string(),
+            user.to_string(),
+            database.to_string(),
+        ),
         stats.bytes_received,
     );
-    emit_counter_delta(
+    POOL_BYTES_PREV.observe(
         &SHOW_POOLS_BYTES_TOTAL.with_label_values(&["sent", user, database]),
+        ("sent".to_string(), user.to_string(), database.to_string()),
         stats.bytes_sent,
     );
 }
@@ -654,20 +766,16 @@ fn classify_sqlstate(code: &str) -> &'static str {
     }
 }
 
-/// (user, database, sqlstate-class) keys we exported on the previous
-/// scrape. Used to drop labels for pools that disappeared after a
-/// RELOAD so the time series do not linger in Prometheus forever.
+/// (user, database, sqlstate-class) key for the per-pool error
+/// counter delta tracker. The class is `&'static str` because
+/// `classify_sqlstate` returns one of six interned literals.
 type PoolErrorsKey = (String, String, &'static str);
 
-static POOL_ERRORS_PREV_KEYS: Lazy<std::sync::Mutex<std::collections::HashSet<PoolErrorsKey>>> =
-    Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+static POOL_ERRORS_PREV: Lazy<CounterDeltaTracker<PoolErrorsKey>> =
+    Lazy::new(CounterDeltaTracker::new);
 
 fn update_pool_errors_metrics() {
     use crate::pool::get_all_pools;
-
-    let Ok(mut prev_keys) = POOL_ERRORS_PREV_KEYS.lock() else {
-        return;
-    };
 
     // Aggregate per-pool snapshots into bounded sqlstate classes.
     // `errors_by_sqlstate_snapshot` returns canonical 5-character codes
@@ -689,23 +797,18 @@ fn update_pool_errors_metrics() {
         }
     }
 
-    // Emit deltas using the IntCounter's own value as "previously seen".
-    // If the snapshot is smaller than the counter (address replacement on
-    // pool restart drops errors_by_sqlstate to zero), we emit the current
-    // sum as the new delta so the counter still moves forward instead of
-    // silently swallowing recent errors.
-    for ((user, database, class), &current_sum) in &current_sums {
+    // Drive the tracker — it knows the previous source value per
+    // (user, database, class) tuple and detects address replacement
+    // (current < previous) by emitting `current` once. Crucially it
+    // then updates its own previous-mark, so the next scrape with the
+    // same `current` produces a zero delta. The earlier implementation
+    // used `IntCounter::get()` as the previous mark; that wedged each
+    // scrape into another fabricated increment because the Prometheus
+    // counter never goes backwards.
+    for (key, &current_sum) in &current_sums {
         let counter =
-            SHOW_POOLS_ERRORS_TOTAL.with_label_values(&[user.as_str(), database.as_str(), class]);
-        let prev_value = counter.get();
-        let delta = if current_sum >= prev_value {
-            current_sum - prev_value
-        } else {
-            current_sum
-        };
-        if delta > 0 {
-            counter.inc_by(delta);
-        }
+            SHOW_POOLS_ERRORS_TOTAL.with_label_values(&[key.0.as_str(), key.1.as_str(), key.2]);
+        POOL_ERRORS_PREV.observe(&counter, key.clone(), current_sum);
     }
 
     // Drop labels for triples that disappeared since the last scrape —
@@ -713,16 +816,13 @@ fn update_pool_errors_metrics() {
     // best-effort; ignoring its return is intentional.
     let current_keys: std::collections::HashSet<PoolErrorsKey> =
         current_sums.keys().cloned().collect();
-    let stale: Vec<PoolErrorsKey> = prev_keys
-        .iter()
-        .filter(|k| !current_keys.contains(*k))
-        .cloned()
-        .collect();
-    for key in &stale {
-        let _ =
-            SHOW_POOLS_ERRORS_TOTAL.remove_label_values(&[key.0.as_str(), key.1.as_str(), key.2]);
+    for stale in POOL_ERRORS_PREV.drain_stale(&current_keys) {
+        let _ = SHOW_POOLS_ERRORS_TOTAL.remove_label_values(&[
+            stale.0.as_str(),
+            stale.1.as_str(),
+            stale.2,
+        ]);
     }
-    *prev_keys = current_keys;
 }
 
 /// Called by the GC tokio task on every sweep tick. Updates the interner
@@ -975,5 +1075,70 @@ mod tests {
         let before = child.get_sample_count();
         super::observe_pool_wait_microseconds(user, database, 0);
         assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn counter_delta_tracker_emits_post_reset_delta_only_once() {
+        // Reproduces the codex review HIGH 1 / HIGH 2 scenario: a
+        // pool whose `AddressStats` was replaced by `Pool::from_config`
+        // reports a smaller cumulative value than what the Prometheus
+        // counter holds. The tracker must increment by `current` once
+        // and a follow-up scrape with the same `current` must not
+        // fabricate another delta.
+        let tracker: super::CounterDeltaTracker<&'static str> = super::CounterDeltaTracker::new();
+        let counter =
+            prometheus::IntCounter::new("pg_doorman_test_reset_counter", "test counter").unwrap();
+
+        tracker.observe(&counter, "key", 1_000);
+        assert_eq!(counter.get(), 1_000, "first observe sets the baseline");
+
+        tracker.observe(&counter, "key", 10);
+        assert_eq!(
+            counter.get(),
+            1_010,
+            "source reset emits `current` as the post-reset delta",
+        );
+
+        tracker.observe(&counter, "key", 10);
+        assert_eq!(
+            counter.get(),
+            1_010,
+            "the same source value on the next scrape must not produce more increments",
+        );
+
+        tracker.observe(&counter, "key", 15);
+        assert_eq!(
+            counter.get(),
+            1_015,
+            "subsequent growth advances by the actual delta",
+        );
+    }
+
+    #[test]
+    fn counter_delta_tracker_drain_stale_forgets_removed_keys() {
+        // After a key disappears from the active scrape (pool removed
+        // by RELOAD), the tracker must forget its previous mark so a
+        // future pool that reuses the same `(user, database)` does not
+        // inherit a non-zero baseline.
+        let tracker: super::CounterDeltaTracker<&'static str> = super::CounterDeltaTracker::new();
+        let counter =
+            prometheus::IntCounter::new("pg_doorman_test_stale_counter", "test counter").unwrap();
+
+        tracker.observe(&counter, "alive", 5);
+        tracker.observe(&counter, "stale", 7);
+
+        let mut current = std::collections::HashSet::new();
+        current.insert("alive");
+        let stale = tracker.drain_stale(&current);
+        assert_eq!(stale, vec!["stale"]);
+
+        // After drain the tracker no longer remembers `stale`; observing
+        // a fresh value treats it as a brand-new key.
+        tracker.observe(&counter, "stale", 100);
+        assert_eq!(
+            counter.get(),
+            5 + 7 + 100,
+            "drained keys are forgotten — re-observing emits from zero",
+        );
     }
 }
