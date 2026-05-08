@@ -23,10 +23,10 @@ use super::{
     COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
     SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
     SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
-    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_MAXWAIT_MICROSECONDS,
-    SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_PAUSED, SHOW_POOLS_QUERIES_COUNTER,
-    SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER,
-    SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
+    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_ERRORS_TOTAL,
+    SHOW_POOLS_MAXWAIT_MICROSECONDS, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_PAUSED,
+    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
     SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
     SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
     SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
@@ -41,6 +41,7 @@ pub fn update_metrics() {
     update_socket_metrics();
 
     update_pool_metrics();
+    update_pool_errors_metrics();
     update_server_metrics();
     update_auth_query_metrics();
     update_coordinator_metrics();
@@ -584,6 +585,98 @@ fn update_pool_scaling_metrics() {
     prev.retain(|(_, user, db), _| !stale_pairs.contains(&(user.clone(), db.clone())));
 }
 
+/// Maps a 5-character canonical SQLSTATE code to its bounded label
+/// class. The output is a `'static` string so it can flow into
+/// `IntCounterVec::with_label_values` without an allocation. Classes
+/// follow Postgres SQLSTATE chapters: `08` is connection_exception,
+/// `53` is insufficient_resources, `57` is operator_intervention.
+/// `25P02` and `26000` keep their full code because each one points at
+/// a distinct misuse pattern — a transaction-scope leak under session
+/// pooling and an evicted anonymous prepared statement, respectively.
+/// Anything else collapses into `other` so the label space stays
+/// constant regardless of what the backend returns.
+fn classify_sqlstate(code: &str) -> &'static str {
+    match code {
+        "25P02" => "25P02",
+        "26000" => "26000",
+        c if c.starts_with("08") => "08",
+        c if c.starts_with("53") => "53",
+        c if c.starts_with("57") => "57",
+        _ => "other",
+    }
+}
+
+/// (user, database, sqlstate-class) keys we exported on the previous
+/// scrape. Used to drop labels for pools that disappeared after a
+/// RELOAD so the time series do not linger in Prometheus forever.
+type PoolErrorsKey = (String, String, &'static str);
+
+static POOL_ERRORS_PREV_KEYS: Lazy<std::sync::Mutex<std::collections::HashSet<PoolErrorsKey>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+fn update_pool_errors_metrics() {
+    use crate::pool::get_all_pools;
+
+    let Ok(mut prev_keys) = POOL_ERRORS_PREV_KEYS.lock() else {
+        return;
+    };
+
+    // Aggregate per-pool snapshots into bounded sqlstate classes.
+    // `errors_by_sqlstate_snapshot` returns canonical 5-character codes
+    // (the address-side increment validates them); classify_sqlstate
+    // collapses each one into the {08, 53, 57, 25P02, 26000, other}
+    // bucket the counter exposes.
+    let mut current_sums: std::collections::HashMap<PoolErrorsKey, u64> =
+        std::collections::HashMap::new();
+
+    for (identifier, pool) in get_all_pools().iter() {
+        let user = identifier.user.as_str();
+        let database = identifier.db.as_str();
+
+        let snap = pool.address().stats.errors_by_sqlstate_snapshot();
+        for (code, count) in snap {
+            let class = classify_sqlstate(&code);
+            let key = (user.to_string(), database.to_string(), class);
+            *current_sums.entry(key).or_insert(0) += count;
+        }
+    }
+
+    // Emit deltas using the IntCounter's own value as "previously seen".
+    // If the snapshot is smaller than the counter (address replacement on
+    // pool restart drops errors_by_sqlstate to zero), we emit the current
+    // sum as the new delta so the counter still moves forward instead of
+    // silently swallowing recent errors.
+    for ((user, database, class), &current_sum) in &current_sums {
+        let counter =
+            SHOW_POOLS_ERRORS_TOTAL.with_label_values(&[user.as_str(), database.as_str(), class]);
+        let prev_value = counter.get();
+        let delta = if current_sum >= prev_value {
+            current_sum - prev_value
+        } else {
+            current_sum
+        };
+        if delta > 0 {
+            counter.inc_by(delta);
+        }
+    }
+
+    // Drop labels for triples that disappeared since the last scrape —
+    // typically a pool removed by RELOAD. `remove_label_values` is
+    // best-effort; ignoring its return is intentional.
+    let current_keys: std::collections::HashSet<PoolErrorsKey> =
+        current_sums.keys().cloned().collect();
+    let stale: Vec<PoolErrorsKey> = prev_keys
+        .iter()
+        .filter(|k| !current_keys.contains(*k))
+        .cloned()
+        .collect();
+    for key in &stale {
+        let _ =
+            SHOW_POOLS_ERRORS_TOTAL.remove_label_values(&[key.0.as_str(), key.1.as_str(), key.2]);
+    }
+    *prev_keys = current_keys;
+}
+
 /// Called by the GC tokio task on every sweep tick. Updates the interner
 /// gauges (entries, bytes per kind), increments eviction counters, and
 /// observes the sweep duration in the histogram. The byte totals come
@@ -644,4 +737,54 @@ pub fn observe_streaming_bytes(user: &str, database: &str, kind: &str, bytes: u6
     super::STREAMING_BYTES_TOTAL
         .with_label_values(&[user, database, kind])
         .inc_by(bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_sqlstate;
+
+    #[test]
+    fn class_08_collapses_connection_exception_codes() {
+        assert_eq!(classify_sqlstate("08000"), "08");
+        assert_eq!(classify_sqlstate("08003"), "08");
+        assert_eq!(classify_sqlstate("08006"), "08");
+        assert_eq!(classify_sqlstate("08P01"), "08");
+    }
+
+    #[test]
+    fn class_53_collapses_insufficient_resources_codes() {
+        assert_eq!(classify_sqlstate("53000"), "53");
+        assert_eq!(classify_sqlstate("53100"), "53");
+        assert_eq!(classify_sqlstate("53200"), "53");
+        assert_eq!(classify_sqlstate("53300"), "53");
+    }
+
+    #[test]
+    fn class_57_collapses_operator_intervention_codes() {
+        assert_eq!(classify_sqlstate("57000"), "57");
+        assert_eq!(classify_sqlstate("57014"), "57");
+        assert_eq!(classify_sqlstate("57P01"), "57");
+        assert_eq!(classify_sqlstate("57P03"), "57");
+    }
+
+    #[test]
+    fn special_codes_keep_their_full_value() {
+        assert_eq!(classify_sqlstate("25P02"), "25P02");
+        assert_eq!(classify_sqlstate("26000"), "26000");
+    }
+
+    #[test]
+    fn unknown_codes_collapse_into_other() {
+        assert_eq!(classify_sqlstate("23505"), "other");
+        assert_eq!(classify_sqlstate("42P01"), "other");
+        assert_eq!(classify_sqlstate("XX000"), "other");
+        assert_eq!(classify_sqlstate(""), "other");
+    }
+
+    #[test]
+    fn other_class_25_codes_do_not_steal_25p02_label() {
+        assert_eq!(classify_sqlstate("25000"), "other");
+        assert_eq!(classify_sqlstate("25001"), "other");
+        assert_eq!(classify_sqlstate("25P01"), "other");
+    }
 }

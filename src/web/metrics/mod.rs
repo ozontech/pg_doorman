@@ -142,6 +142,33 @@ pub(crate) static SHOW_POOLS_MAXWAIT_MICROSECONDS: Lazy<GaugeVec> = Lazy::new(||
     gauge
 });
 
+/// Per-pool error counter split by SQLSTATE class. The `sqlstate` label is
+/// constrained to a fixed whitelist — `08` (connection_exception), `53`
+/// (insufficient_resources), `57` (operator_intervention), the exact codes
+/// `25P02` (in_failed_sql_transaction) and `26000` (invalid_sql_statement_name),
+/// and `other` for everything else — so the cardinality stays at 6 ×
+/// pool count regardless of what the backend returns. The full 5-character
+/// breakdown is still available through `/api/pools` and the Web UI;
+/// Prometheus only carries the class-level rollup.
+pub(crate) static SHOW_POOLS_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_pools_errors_total",
+            "Cumulative count of backend errors observed per pool, bucketed \
+             by SQLSTATE class. The sqlstate label is one of: '08' \
+             (connection_exception), '53' (insufficient_resources), '57' \
+             (operator_intervention), '25P02' (in_failed_sql_transaction), \
+             '26000' (invalid_sql_statement_name), or 'other'. The full \
+             5-character breakdown is available through /api/pools and \
+             the Web UI; Prometheus only carries the class-level rollup.",
+        ),
+        &["user", "database", "sqlstate"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 pub(crate) static SHOW_POOLS_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
