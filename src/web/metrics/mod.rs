@@ -21,8 +21,8 @@ mod tests;
 // Re-exports
 pub(crate) use handler::write_metrics_response;
 pub use metrics::{
-    observe_anonymous_eviction, observe_streaming_bytes, observe_streaming_event,
-    record_interner_gc, record_listener_rejection, record_synthetic_miss,
+    observe_anonymous_eviction, observe_backend_create_phase, observe_streaming_bytes,
+    observe_streaming_event, record_interner_gc, record_listener_rejection, record_synthetic_miss,
 };
 
 // Define the metrics we want to expose
@@ -288,6 +288,45 @@ pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL: Lazy<IntCounte
         REGISTRY.register(Box::new(counter.clone())).unwrap();
         counter
     });
+
+/// Wall-clock duration of each phase of backend connection setup, split
+/// by phase. Phases are disjoint and additive:
+/// - `tcp_connect` — raw socket connect (TcpStream::connect or
+///   UnixStream::connect plus socket configuration).
+/// - `tls` — full TLS bring-up: SSL request roundtrip plus the TLS
+///   handshake. Skipped for plain TCP and Unix sockets.
+/// - `auth` — from `StartupMessage` send to `AuthenticationOK` receive
+///   (the credential exchange itself, including SCRAM rounds).
+/// - `startup` — from `AuthenticationOK` to `ReadyForQuery` (parameter
+///   status messages and backend key delivery).
+///
+/// Aggregated across all pools so the only dimension is the four-value
+/// `phase` label regardless of fleet size — the question this answers
+/// is "where in backend setup does pg_doorman spend its time", not
+/// "which pool is slow". Per-pool TLS handshake time is still
+/// available on `pg_doorman_server_tls_handshake_duration_seconds`.
+///
+/// Failure paths leave the affected phase silent: a TLS handshake
+/// error does not produce a `tls` sample, and an early backend
+/// `ErrorResponse` skips `auth` and `startup`. The phase you don't
+/// see is the phase that failed before completing.
+pub(crate) static BACKEND_CREATE_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_backend_create_duration_seconds",
+            "Wall-clock duration of each backend connection setup phase, \
+             split by phase: 'tcp_connect' (raw socket), 'tls' (TLS \
+             setup, only for TCP+TLS pools), 'auth' (StartupMessage to \
+             AuthenticationOK), 'startup' (AuthenticationOK to \
+             ReadyForQuery). Aggregated across pools.",
+        )
+        .buckets(vec![0.001, 0.01, 0.1, 1.0, 10.0]),
+        &["phase"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
+});
 
 /// Counter for client connections rejected before authentication completes,
 /// split by reason. The label set is fixed:

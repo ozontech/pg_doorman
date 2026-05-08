@@ -750,6 +750,17 @@ pub fn record_listener_rejection(reason: &'static str) {
         .inc();
 }
 
+/// Observes wall-clock duration of one backend connection setup phase.
+/// `phase` must be one of `tcp_connect`, `tls`, `auth`, `startup` —
+/// passing any other value still works but breaks the cardinality
+/// contract documented on `BACKEND_CREATE_DURATION_SECONDS`.
+#[inline]
+pub fn observe_backend_create_phase(phase: &'static str, seconds: f64) {
+    super::BACKEND_CREATE_DURATION_SECONDS
+        .with_label_values(&[phase])
+        .observe(seconds);
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_sqlstate;
