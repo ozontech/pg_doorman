@@ -193,7 +193,8 @@
 </div>
 <h3 id="Метрики-соединений"><a class="header" href="#Метрики-соединений">Метрики соединений</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_connection_count</code></td><td>Счётчик новых соединений по типу, обработанных pg_doorman. Типы: 'plain' (нешифрованные соединения), 'tls' (шифрованные соединения), 'cancel' (запросы на отмену соединения), 'total' (сумма всех соединений).</td></tr>
+<tr><td><code>pg_doorman_connections_total</code></td><td>Накопительный счётчик принятых клиентских соединений по типу: <code>plain</code> (без TLS), <code>tls</code>, <code>cancel</code> (запрос отмены), <code>total</code> (сумма). Для темпа подключений используйте <code>rate(pg_doorman_connections_total[5m])</code>.</td></tr>
+<tr><td><code>pg_doorman_connection_count</code></td><td>Устаревшая gauge-версия <code>pg_doorman_connections_total</code>; будет удалена в 3.10. Новые правила и панели должны использовать <code>pg_doorman_connections_total</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-сокетов-только-linux"><a class="header" href="#Метрики-сокетов-только-linux">Метрики сокетов (только Linux)</a></h3>
@@ -205,42 +206,52 @@
 <div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_pools_clients</code></td><td>Число клиентов в пулах соединений по статусу, пользователю и базе. Значения статуса: <code>idle</code> (подключён, но не выполняет запросы), <code>waiting</code> (ждёт серверного соединения), <code>active</code> (выполняет запросы).</td></tr>
 <tr><td><code>pg_doorman_pools_servers</code></td><td>Число серверов в пулах соединений по статусу, пользователю и базе. Значения статуса: <code>active</code> (обслуживает клиента) и <code>idle</code> (свободен для новых соединений).</td></tr>
-<tr><td><code>pg_doorman_pools_bytes</code></td><td>Сумма байт, переданных через пулы соединений, по направлению, пользователю и базе. Направления: <code>received</code> (от клиентов) и <code>sent</code> (клиентам).</td></tr>
+<tr><td><code>pg_doorman_pools_bytes_total</code></td><td>Накопительный счётчик байт, переданных через пулы соединений, по направлению (<code>received</code>/<code>sent</code>), пользователю и базе. Для пропускной способности используйте <code>rate(pg_doorman_pools_bytes_total[5m])</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_bytes</code></td><td>Устаревшая gauge-версия <code>pg_doorman_pools_bytes_total</code>; будет удалена в 3.10.</td></tr>
+<tr><td><code>pg_doorman_pool_size</code></td><td>Сконфигурированный максимальный размер пула на пользователя и базу. Полезен для расчёта оставшейся ёмкости пула вместе с pg_doorman_pools_servers.</td></tr>
 </tbody></table>
 </div>
-<p>| <code>pg_doorman_pool_size</code> | Сконфигурированный максимальный размер пула на пользователя и базу. Полезен для расчёта оставшейся ёмкости пула вместе с pg_doorman_pools_servers. |</p>
 <h3 id="Метрики-запросов-и-транзакций"><a class="header" href="#Метрики-запросов-и-транзакций">Метрики запросов и транзакций</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>Перцентили времени выполнения запросов по пользователю и базе. Перцентили: <code>99</code>, <code>95</code>, <code>90</code>, <code>50</code> (медиана). В миллисекундах.</td></tr>
-<tr><td><code>pg_doorman_pools_transactions_percentile</code></td><td>Перцентили времени выполнения транзакций по пользователю и базе. Перцентили: <code>99</code>, <code>95</code>, <code>90</code>, <code>50</code> (медиана). В миллисекундах.</td></tr>
-<tr><td><code>pg_doorman_pools_transactions_count</code></td><td>Счётчик транзакций, выполненных в пулах соединений, по пользователю и базе.</td></tr>
+<tr><td><code>pg_doorman_pools_query_duration_seconds</code></td><td>Гистограмма времени выполнения запросов на стороне PostgreSQL по пулу, в секундах. Квантили считайте через <code>histogram_quantile(q, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))</code>; QPS — через <code>rate(..._count[5m])</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_transaction_duration_seconds</code></td><td>Гистограмма полного времени транзакций по пулу, в секундах. Агрегируется так же, как <code>pg_doorman_pools_query_duration_seconds</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_wait_duration_seconds</code></td><td>Гистограмма времени ожидания выдачи backend-соединения клиенту, в секундах. Для p99 используйте <code>histogram_quantile(0.99, ...)</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_total</code></td><td>Накопительный счётчик транзакций по пулу. Для TPS используйте <code>rate(pg_doorman_pools_transactions_total[5m])</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>Устаревшая метрика; будет удалена в 3.10. Это заранее посчитанные перцентили, которые нельзя корректно суммировать между репликами. Используйте <code>pg_doorman_pools_query_duration_seconds_bucket</code> и <code>histogram_quantile()</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_percentile</code></td><td>Устаревшая метрика; будет удалена в 3.10. Используйте <code>pg_doorman_pools_transaction_duration_seconds</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_count</code></td><td>Устаревшая gauge-версия <code>pg_doorman_pools_transactions_total</code>; будет удалена в 3.10.</td></tr>
 <tr><td><code>pg_doorman_pools_transactions_total_time</code></td><td>Сумма времени выполнения транзакций в пулах соединений, по пользователю и базе. В миллисекундах.</td></tr>
-<tr><td><code>pg_doorman_pools_queries_count</code></td><td>Счётчик запросов, выполненных в пулах соединений, по пользователю и базе.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_total</code></td><td>Накопительный счётчик запросов по пулу. Для QPS используйте <code>rate(pg_doorman_pools_queries_total[5m])</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_count</code></td><td>Устаревшая gauge-версия <code>pg_doorman_pools_queries_total</code>; будет удалена в 3.10.</td></tr>
 <tr><td><code>pg_doorman_pools_queries_total_time</code></td><td>Сумма времени выполнения запросов в пулах соединений, по пользователю и базе. В миллисекундах.</td></tr>
-<tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>Среднее время ожидания клиентов в пулах соединений, по пользователю и базе. В миллисекундах.</td></tr>
+<tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>Устаревшая метрика; будет удалена в 3.10. Это среднее значение, которое сглаживает пики хвостовой задержки. Используйте <code>pg_doorman_pools_wait_duration_seconds_bucket</code> и <code>histogram_quantile()</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-auth_query"><a class="header" href="#Метрики-auth_query">Метрики auth_query</a></h3>
 <p>Эти метрики доступны только когда <code>auth_query</code> сконфигурирован для одного или нескольких пулов.</p>
 <div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Метрики кеша auth_query по типу и базе. Типы: <code>entries</code> (текущее число закешированных учётных данных), <code>hits</code> (попадания в кеш с найденной валидной записью), <code>misses</code> (промахи в кеше, потребовавшие запроса к PostgreSQL), <code>refetches</code> (повторные запросы, вызванные ошибкой аутентификации с устаревшими учётными данными), <code>rate_limited</code> (попытки повторного запроса, ограниченные <code>min_interval</code>).</td></tr>
-<tr><td><code>pg_doorman_auth_query_auth</code></td><td>Результаты аутентификации auth_query по результату и базе. Результаты: <code>success</code> (успешная аутентификация) и <code>failure</code> (неверный пароль или несовпадение учётных данных).</td></tr>
-<tr><td><code>pg_doorman_auth_query_executor</code></td><td>Метрики executor auth_query по типу и базе. Типы: <code>queries</code> (всего запросов, выполненных к PostgreSQL для получения учётных данных) и <code>errors</code> (запросы, завершившиеся ошибкой подключения или выполнения).</td></tr>
-<tr><td><code>pg_doorman_auth_query_dynamic_pools</code></td><td>Метрики жизненного цикла динамических пулов auth_query по типу и базе. Типы: <code>current</code> (сейчас активные динамические пулы), <code>created</code> (всего пулов создано с момента старта), <code>destroyed</code> (всего пулов, собранных garbage collection или удалённых на RELOAD). Имеет смысл только в passthrough mode.</td></tr>
+<tr><td><code>pg_doorman_auth_query_cache_total</code></td><td>Накопительные события кеша auth_query по типу (<code>hits</code>/<code>misses</code>/<code>refetches</code>/<code>rate_limited</code>) и базе. Текущее число записей остаётся в <code>pg_doorman_auth_query_cache{type="entries"}</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth_total</code></td><td>Накопительный счётчик результатов auth_query-аутентификации по <code>result</code> (<code>success</code>/<code>failure</code>) и базе.</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor_total</code></td><td>Накопительный счётчик событий исполнителя auth_query по типу (<code>queries</code>/<code>errors</code>) и базе.</td></tr>
+<tr><td><code>pg_doorman_auth_query_dynamic_pools_total</code></td><td>Накопительный счётчик событий жизненного цикла динамических пулов auth_query по типу (<code>created</code>/<code>destroyed</code>) и базе. Текущее число пулов остаётся в <code>pg_doorman_auth_query_dynamic_pools{type="current"}</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Текущее число закешированных учётных данных (<code>type="entries"</code>). Накопительные значения в этой метрике устарели; используйте <code>pg_doorman_auth_query_cache_total</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth</code></td><td>Устаревшая gauge-версия <code>pg_doorman_auth_query_auth_total</code>; будет удалена в 3.10.</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor</code></td><td>Устаревшая gauge-версия <code>pg_doorman_auth_query_executor_total</code>; будет удалена в 3.10.</td></tr>
+<tr><td><code>pg_doorman_auth_query_dynamic_pools</code></td><td>Метрики жизненного цикла динамических пулов auth_query по типу и базе. Типы: <code>current</code> (сейчас активные динамические пулы), <code>created</code> (всего создано с момента старта), <code>destroyed</code> (всего удалено сборщиком или при RELOAD). Имеет смысл только в passthrough mode.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-серверов"><a class="header" href="#Метрики-серверов">Метрики серверов</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Счётчик попаданий Prepared Statement в бэкендах баз по пользователю и базе.</td></tr>
-<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Счётчик промахов Prepared Statement в бэкендах баз по пользователю и базе.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Совокупное число попаданий в кеш prepared statements по всем бэкендам пула, с лейблами <code>user</code> и <code>database</code>. Используется вместе с <code>pg_doorman_servers_prepared_misses</code> для расчёта доли попаданий.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Совокупное число промахов prepared statements по всем бэкендам пула, с лейблами <code>user</code> и <code>database</code>. Устойчивая ненулевая скорость означает, что запросы часто готовятся заново или кеш <code>server_prepared_statement_cache_size</code> слишком мал.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-серверного-tls"><a class="header" href="#Метрики-серверного-tls">Метрики серверного TLS</a></h3>
 <p>Активны, если включён TLS к PostgreSQL (<code>server_tls_mode != "disable"</code>).</p>
 <div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Тип</th><th>Описание</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_server_tls_connections</code></td><td>gauge per pool</td><td>Число активных TLS-соединений к PostgreSQL.</td></tr>
-<tr><td><code>pg_doorman_server_tls_handshake_duration_seconds</code></td><td>histogram per pool</td><td>Распределение длительности TLS handshake.</td></tr>
-<tr><td><code>pg_doorman_server_tls_handshake_errors_total</code></td><td>counter per pool</td><td>Счётчик неуспешных handshake. Алертить при ненулевой скорости.</td></tr>
+<tr><td><code>pg_doorman_server_tls_connections</code></td><td>gauge по пулу</td><td>Число активных TLS-соединений к PostgreSQL.</td></tr>
+<tr><td><code>pg_doorman_server_tls_handshake_duration_seconds</code></td><td>histogram по пулу</td><td>Распределение длительности TLS handshake.</td></tr>
+<tr><td><code>pg_doorman_server_tls_handshake_errors_total</code></td><td>counter по пулу</td><td>Счётчик неуспешных TLS handshake. Алертить при ненулевой скорости.</td></tr>
 </tbody></table>
 </div>
 <p>Подробнее — см. <a href="../guides/tls.html#Observability">Клиентский и серверный TLS</a>.</p>
@@ -256,22 +267,22 @@
 <h2 id="Примеры-запросов"><a class="header" href="#Примеры-запросов">Примеры запросов</a></h2>
 <p>Несколько примеров запросов Prometheus, которые могут быть полезны:</p>
 <h3 id="Темп-подключений"><a class="header" href="#Темп-подключений">Темп подключений</a></h3>
-<pre><code>rate(pg_doorman_connection_count{type="total"}[5m])
+<pre><code>rate(pg_doorman_connections_total{type="total"}[5m])
 </code></pre>
 <h3 id="Загрузка-пула"><a class="header" href="#Загрузка-пула">Загрузка пула</a></h3>
 <pre><code>sum by (database) (pg_doorman_pools_clients{status="active"}) / sum by (database) (pg_doorman_pools_servers{status="active"} + pg_doorman_pools_servers{status="idle"})
 </code></pre>
-<h3 id="Медленные-запросы"><a class="header" href="#Медленные-запросы">Медленные запросы</a></h3>
-<pre><code>pg_doorman_pools_queries_percentile{percentile="99"}
+<h3 id="Медленные-запросы-p99"><a class="header" href="#Медленные-запросы-p99">Медленные запросы (p99)</a></h3>
+<pre><code>histogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))
 </code></pre>
-<h3 id="Время-ожидания-клиентов"><a class="header" href="#Время-ожидания-клиентов">Время ожидания клиентов</a></h3>
-<pre><code>pg_doorman_pools_avg_wait_time
+<h3 id="Время-ожидания-клиентов-p99"><a class="header" href="#Время-ожидания-клиентов-p99">Время ожидания клиентов (p99)</a></h3>
+<pre><code>histogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_wait_duration_seconds_bucket[5m])))
 </code></pre>
 <h3 id="hit-rate-кеша-auth_query"><a class="header" href="#hit-rate-кеша-auth_query">Hit rate кеша auth_query</a></h3>
-<pre><code>pg_doorman_auth_query_cache{type="hits"} / (pg_doorman_auth_query_cache{type="hits"} + pg_doorman_auth_query_cache{type="misses"})
+<pre><code>rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]) / clamp_min(rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]) + rate(pg_doorman_auth_query_cache_total{type="misses"}[5m]), 0.001)
 </code></pre>
 <h3 id="Темп-ошибок-auth_query"><a class="header" href="#Темп-ошибок-auth_query">Темп ошибок auth_query</a></h3>
-<pre><code>rate(pg_doorman_auth_query_auth{result="failure"}[5m])
+<pre><code>rate(pg_doorman_auth_query_auth_total{result="failure"}[5m])
 </code></pre>
 
                     </main>

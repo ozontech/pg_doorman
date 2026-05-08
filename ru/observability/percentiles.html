@@ -161,6 +161,21 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="Перцентили-задержек"><a class="header" href="#Перцентили-задержек">Перцентили задержек</a></h1>
+<blockquote>
+<p><strong>Переход на гистограммы.</strong> Метрики
+<code>pg_doorman_pools_queries_percentile</code>, <code>pg_doorman_pools_transactions_percentile</code>
+и <code>pg_doorman_pools_avg_wait_time</code> устарели и будут удалены в 3.10.
+Для новых запросов PromQL используйте гистограммы:</p>
+<ul>
+<li><code>pg_doorman_pools_query_duration_seconds</code></li>
+<li><code>pg_doorman_pools_transaction_duration_seconds</code></li>
+<li><code>pg_doorman_pools_wait_duration_seconds</code></li>
+</ul>
+<p>Перцентили считайте через
+<code>histogram_quantile(q, sum by (le, ...) (rate(_bucket[5m])))</code>.
+Такой запрос можно агрегировать между репликами; усреднение заранее
+посчитанных перцентилей корректного результата не даёт.</p>
+</blockquote>
 <p>pg_doorman измеряет задержки запросов и транзакций на пул, используя HDR Histogram. В Prometheus экспортируются четыре перцентиля: p50, p90, p95, p99.</p>
 <p>Эта страница объясняет, откуда берутся числа и как их читать.</p>
 <h2 id="Что-измеряется"><a class="header" href="#Что-измеряется">Что измеряется</a></h2>
@@ -239,7 +254,7 @@ user "report_job": queries p99=4500 xacts p99=8000
 <li><a href="admin-commands.html">Admin Commands</a> — читать перцентили напрямую через <code>SHOW POOLS_EXTENDED</code>.</li>
 <li><a href="../reference/prometheus.html">Prometheus reference</a> — полный список метрик с метками.</li>
 <li><a href="../tutorials/pool-pressure.html">Pool Pressure</a> — диагностические рецепты, когда перцентили выглядят неправильно.</li>
-<li><a href="../benchmarks.html">Benchmarks</a> — эталонные распределения перцентилей под нагрузкой.</li>
+<li><a href="../benchmarks.html">Бенчмарки</a> — эталонные распределения перцентилей под нагрузкой.</li>
 </ul>
 
                     </main>

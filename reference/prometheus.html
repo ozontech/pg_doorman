@@ -197,7 +197,8 @@
 </div>
 <h3 id="connection-metrics"><a class="header" href="#connection-metrics">Connection Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_connection_count</code></td><td>Counter of new connections by type handled by pg_doorman. Types include: 'plain' (unencrypted connections), 'tls' (encrypted connections), 'cancel' (connection cancellation requests), and 'total' (sum of all connections).</td></tr>
+<tr><td><code>pg_doorman_connections_total</code></td><td>Cumulative count of accepted client connections by type. Types include: 'plain' (unencrypted), 'tls' (encrypted), 'cancel' (cancel-query startup), and 'total' (sum of all). Counter form; use <code>rate(pg_doorman_connections_total[5m])</code> for connection rate.</td></tr>
+<tr><td><code>pg_doorman_connection_count</code></td><td>DEPRECATED, removed in 3.10. Gauge mirror of <code>pg_doorman_connections_total</code> kept for one minor release. New rules and dashboards must consume the counter form.</td></tr>
 </tbody></table>
 </div>
 <h3 id="socket-metrics-linux-only"><a class="header" href="#socket-metrics-linux-only">Socket Metrics (Linux only)</a></h3>
@@ -209,34 +210,44 @@
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_pools_clients</code></td><td>Number of clients in connection pools by status, user, and database. Status values include: 'idle' (connected but not executing queries), 'waiting' (waiting for a server connection), and 'active' (currently executing queries). Helps monitor connection pool utilization and client distribution.</td></tr>
 <tr><td><code>pg_doorman_pools_servers</code></td><td>Number of servers in connection pools by status, user, and database. Status values include: 'active' (actively serving clients) and 'idle' (available for new connections). Helps monitor server availability and load distribution.</td></tr>
-<tr><td><code>pg_doorman_pools_bytes</code></td><td>Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections.</td></tr>
+<tr><td><code>pg_doorman_pools_bytes_total</code></td><td>Cumulative bytes transferred per pool and direction. Direction values include: 'received' (data from client) and 'sent' (data to client). Counter form; use <code>rate(pg_doorman_pools_bytes_total[5m])</code> for throughput.</td></tr>
+<tr><td><code>pg_doorman_pools_bytes</code></td><td>DEPRECATED, removed in 3.10. Gauge mirror of <code>pg_doorman_pools_bytes_total</code>.</td></tr>
 </tbody></table>
 </div>
 <p>| <code>pg_doorman_pool_size</code> | Configured maximum pool size per user and database. Useful for calculating remaining pool capacity together with pg_doorman_pools_servers. |</p>
 <h3 id="query-and-transaction-metrics"><a class="header" href="#query-and-transaction-metrics">Query and Transaction Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>Query execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps identify slow queries and performance trends across different users and databases.</td></tr>
-<tr><td><code>pg_doorman_pools_transactions_percentile</code></td><td>Transaction execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps monitor transaction performance and identify long-running transactions that might impact database performance.</td></tr>
-<tr><td><code>pg_doorman_pools_transactions_count</code></td><td>Counter of transactions executed in connection pools by user and database. Helps track transaction volume and identify users or databases with high transaction rates.</td></tr>
+<tr><td><code>pg_doorman_pools_query_duration_seconds</code></td><td>Server-side query latency histogram per pool, in seconds. Use <code>histogram_quantile(q, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))</code> for quantiles; <code>rate(_count[5m])</code> for QPS.</td></tr>
+<tr><td><code>pg_doorman_pools_transaction_duration_seconds</code></td><td>End-to-end transaction latency histogram per pool, in seconds. Same composition contract as <code>pg_doorman_pools_query_duration_seconds</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_wait_duration_seconds</code></td><td>Client checkout wait latency histogram per pool, in seconds. Use <code>histogram_quantile(0.99, ...)</code> for tail wait.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_total</code></td><td>Cumulative transaction count per pool. Counter form; use <code>rate(pg_doorman_pools_transactions_total[5m])</code> for TPS.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>DEPRECATED, removed in 3.10. Pre-aggregated percentile gauge that cannot be summed across replicas. Use <code>pg_doorman_pools_query_duration_seconds_bucket</code> with <code>histogram_quantile()</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_percentile</code></td><td>DEPRECATED, removed in 3.10. See <code>pg_doorman_pools_transaction_duration_seconds</code>.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_count</code></td><td>DEPRECATED, removed in 3.10. Gauge mirror of <code>pg_doorman_pools_transactions_total</code>.</td></tr>
 <tr><td><code>pg_doorman_pools_transactions_total_time</code></td><td>Total time spent executing transactions in connection pools by user and database. Values are in milliseconds. Helps monitor overall transaction performance and identify users or databases with high transaction execution times.</td></tr>
-<tr><td><code>pg_doorman_pools_queries_count</code></td><td>Counter of queries executed in connection pools by user and database. Helps track query volume and identify users or databases with high query rates.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_total</code></td><td>Cumulative query count per pool. Counter form; use <code>rate(pg_doorman_pools_queries_total[5m])</code> for QPS.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_count</code></td><td>DEPRECATED, removed in 3.10. Gauge mirror of <code>pg_doorman_pools_queries_total</code>.</td></tr>
 <tr><td><code>pg_doorman_pools_queries_total_time</code></td><td>Total time spent executing queries in connection pools by user and database. Values are in milliseconds. Helps monitor overall query performance and identify users or databases with high query execution times.</td></tr>
-<tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks.</td></tr>
+<tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>DEPRECATED, removed in 3.10. Running mean that drowns tail wait spikes. Use <code>pg_doorman_pools_wait_duration_seconds_bucket</code> with <code>histogram_quantile()</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="auth-query-metrics"><a class="header" href="#auth-query-metrics">Auth Query Metrics</a></h3>
 <p>These metrics are only available when <code>auth_query</code> is configured for one or more pools.</p>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Auth query cache metrics by type and database. Types include: <code>entries</code> (current cached credentials), <code>hits</code> (cache lookups that found a valid entry), <code>misses</code> (cache lookups that required a PostgreSQL fetch), <code>refetches</code> (re-fetches triggered by auth failure with stale credentials), <code>rate_limited</code> (re-fetch attempts that were rate-limited by <code>min_interval</code>).</td></tr>
-<tr><td><code>pg_doorman_auth_query_auth</code></td><td>Auth query authentication outcomes by result and database. Results include: <code>success</code> (successful authentication) and <code>failure</code> (wrong password or credential mismatch).</td></tr>
-<tr><td><code>pg_doorman_auth_query_executor</code></td><td>Auth query executor metrics by type and database. Types include: <code>queries</code> (total queries executed against PostgreSQL to fetch credentials) and <code>errors</code> (queries that failed due to connection or execution errors).</td></tr>
+<tr><td><code>pg_doorman_auth_query_cache_total</code></td><td>Cumulative auth query cache events by type (<code>hits</code>/<code>misses</code>/<code>refetches</code>/<code>rate_limited</code>) and database. Counter form; the <code>entries</code> snapshot stays on <code>pg_doorman_auth_query_cache</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth_total</code></td><td>Cumulative auth query authentication outcomes by result (<code>success</code>/<code>failure</code>) and database. Counter form.</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor_total</code></td><td>Cumulative auth query executor events by type (<code>queries</code>/<code>errors</code>) and database. Counter form.</td></tr>
+<tr><td><code>pg_doorman_auth_query_dynamic_pools_total</code></td><td>Cumulative auth query dynamic pool lifecycle events by type (<code>created</code>/<code>destroyed</code>) and database. Counter form; the <code>current</code> snapshot stays on <code>pg_doorman_auth_query_dynamic_pools</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Snapshot gauge for <code>entries</code> (current cached credentials). Cumulative members are deprecated in this metric — use <code>pg_doorman_auth_query_cache_total</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth</code></td><td>DEPRECATED, removed in 3.10. Gauge mirror of <code>pg_doorman_auth_query_auth_total</code>.</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor</code></td><td>DEPRECATED, removed in 3.10. Gauge mirror of <code>pg_doorman_auth_query_executor_total</code>.</td></tr>
 <tr><td><code>pg_doorman_auth_query_dynamic_pools</code></td><td>Auth query dynamic pool lifecycle metrics by type and database. Types include: <code>current</code> (currently active dynamic pools), <code>created</code> (total pools created since startup), <code>destroyed</code> (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode.</td></tr>
 </tbody></table>
 </div>
 <h3 id="server-metrics"><a class="header" href="#server-metrics">Server Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead.</td></tr>
-<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with <code>pg_doorman_servers_prepared_misses</code> to derive hit ratio.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger <code>server_prepared_statement_cache_size</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="per-client-prepared-statement-cache-metrics"><a class="header" href="#per-client-prepared-statement-cache-metrics">Per-Client Prepared Statement Cache Metrics</a></h3>
@@ -259,22 +270,22 @@
 <h2 id="example-queries"><a class="header" href="#example-queries">Example Queries</a></h2>
 <p>Here are some example Prometheus queries that you might find useful:</p>
 <h3 id="connection-rate"><a class="header" href="#connection-rate">Connection Rate</a></h3>
-<pre><code>rate(pg_doorman_connection_count{type="total"}[5m])
+<pre><code>rate(pg_doorman_connections_total{type="total"}[5m])
 </code></pre>
 <h3 id="pool-utilization"><a class="header" href="#pool-utilization">Pool Utilization</a></h3>
 <pre><code>sum by (database) (pg_doorman_pools_clients{status="active"}) / sum by (database) (pg_doorman_pools_servers{status="active"} + pg_doorman_pools_servers{status="idle"})
 </code></pre>
-<h3 id="slow-queries"><a class="header" href="#slow-queries">Slow Queries</a></h3>
-<pre><code>pg_doorman_pools_queries_percentile{percentile="99"}
+<h3 id="slow-queries-p99"><a class="header" href="#slow-queries-p99">Slow Queries (p99)</a></h3>
+<pre><code>histogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_query_duration_seconds_bucket[5m])))
 </code></pre>
-<h3 id="client-wait-time"><a class="header" href="#client-wait-time">Client Wait Time</a></h3>
-<pre><code>pg_doorman_pools_avg_wait_time
+<h3 id="client-wait-time-p99"><a class="header" href="#client-wait-time-p99">Client Wait Time (p99)</a></h3>
+<pre><code>histogram_quantile(0.99, sum by (le, user, database) (rate(pg_doorman_pools_wait_duration_seconds_bucket[5m])))
 </code></pre>
 <h3 id="auth-query-cache-hit-rate"><a class="header" href="#auth-query-cache-hit-rate">Auth Query Cache Hit Rate</a></h3>
-<pre><code>pg_doorman_auth_query_cache{type="hits"} / (pg_doorman_auth_query_cache{type="hits"} + pg_doorman_auth_query_cache{type="misses"})
+<pre><code>rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]) / clamp_min(rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]) + rate(pg_doorman_auth_query_cache_total{type="misses"}[5m]), 0.001)
 </code></pre>
 <h3 id="auth-query-failure-rate"><a class="header" href="#auth-query-failure-rate">Auth Query Failure Rate</a></h3>
-<pre><code>rate(pg_doorman_auth_query_auth{result="failure"}[5m])
+<pre><code>rate(pg_doorman_auth_query_auth_total{result="failure"}[5m])
 </code></pre>
 
                     </main>

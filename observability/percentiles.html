@@ -161,6 +161,21 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="latency-percentiles"><a class="header" href="#latency-percentiles">Latency Percentiles</a></h1>
+<blockquote>
+<p><strong>Migrate to histograms.</strong> The pre-aggregated gauges
+<code>pg_doorman_pools_queries_percentile</code>, <code>pg_doorman_pools_transactions_percentile</code>,
+and <code>pg_doorman_pools_avg_wait_time</code> are deprecated and will be
+removed in 3.10. Use the Prometheus histograms for new PromQL:</p>
+<ul>
+<li><code>pg_doorman_pools_query_duration_seconds</code></li>
+<li><code>pg_doorman_pools_transaction_duration_seconds</code></li>
+<li><code>pg_doorman_pools_wait_duration_seconds</code></li>
+</ul>
+<p>Compute quantiles with
+<code>histogram_quantile(q, sum by (le, ...) (rate(_bucket[5m])))</code>.
+That form can be aggregated across replicas; averaging pre-computed
+percentiles does not produce a valid aggregate.</p>
+</blockquote>
 <p>PgDoorman tracks query and transaction latency per pool using HDR Histograms. Four percentiles are exposed to Prometheus: p50, p90, p95, p99.</p>
 <p>This page explains where the numbers come from and how to read them.</p>
 <h2 id="what-is-measured"><a class="header" href="#what-is-measured">What is measured</a></h2>
