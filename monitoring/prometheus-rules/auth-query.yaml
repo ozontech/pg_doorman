@@ -5,18 +5,18 @@ groups:
       - record: pg_doorman:auth_query_lookup_rate5m
         expr: |
           sum by (job, instance, database) (
-            clamp_min(rate(pg_doorman_auth_query_cache{type=~"hits|misses"}[5m]), 0)
+            clamp_min(rate(pg_doorman_auth_query_cache_total{type=~"hits|misses"}[5m]), 0)
           )
 
       - record: pg_doorman:auth_query_cache_hit:ratio
         expr: |
           sum by (job, instance, database) (
-            clamp_min(rate(pg_doorman_auth_query_cache{type="hits"}[5m]), 0)
+            clamp_min(rate(pg_doorman_auth_query_cache_total{type="hits"}[5m]), 0)
           )
           /
           clamp_min(
             sum by (job, instance, database) (
-              clamp_min(rate(pg_doorman_auth_query_cache{type=~"hits|misses"}[5m]), 0)
+              clamp_min(rate(pg_doorman_auth_query_cache_total{type=~"hits|misses"}[5m]), 0)
             ),
             0.001
           )
@@ -24,12 +24,12 @@ groups:
       - record: pg_doorman:auth_query_failure:ratio
         expr: |
           sum by (job, instance, database) (
-            clamp_min(rate(pg_doorman_auth_query_auth{result="failure"}[5m]), 0)
+            clamp_min(rate(pg_doorman_auth_query_auth_total{result="failure"}[5m]), 0)
           )
           /
           clamp_min(
             sum by (job, instance, database) (
-              clamp_min(rate(pg_doorman_auth_query_auth{result=~"success|failure"}[5m]), 0)
+              clamp_min(rate(pg_doorman_auth_query_auth_total{result=~"success|failure"}[5m]), 0)
             ),
             0.001
           )
@@ -40,7 +40,7 @@ groups:
       - alert: PgDoormanAuthQueryExecutorErrors
         expr: |
           sum by (job, instance, database) (
-            increase(pg_doorman_auth_query_executor{type="errors"}[5m])
+            increase(pg_doorman_auth_query_executor_total{type="errors"}[5m])
           ) >= 3
         for: 1m
         labels:
@@ -58,7 +58,7 @@ groups:
           pg_doorman:auth_query_failure:ratio > 0.05
           and on (job, instance, database)
           sum by (job, instance, database) (
-            clamp_min(rate(pg_doorman_auth_query_auth{result="failure"}[5m]), 0)
+            clamp_min(rate(pg_doorman_auth_query_auth_total{result="failure"}[5m]), 0)
           ) > 0.1
         for: 10m
         labels:
@@ -90,7 +90,7 @@ groups:
       - alert: PgDoormanAuthQueryRateLimitedRefetches
         expr: |
           sum by (job, instance, database) (
-            increase(pg_doorman_auth_query_cache{type="rate_limited"}[10m])
+            increase(pg_doorman_auth_query_cache_total{type="rate_limited"}[10m])
           ) >= 3
         for: 1m
         labels:

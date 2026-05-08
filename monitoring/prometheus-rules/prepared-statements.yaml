@@ -5,26 +5,26 @@ groups:
       - record: pg_doorman:prepared_lookup_rate5m
         expr: |
           sum by (job, instance, user, database) (
-            clamp_min(rate(pg_doorman_servers_prepared_hits[5m]), 0)
+            rate(pg_doorman_servers_prepared_hits_total[5m])
           )
           +
           sum by (job, instance, user, database) (
-            clamp_min(rate(pg_doorman_servers_prepared_misses[5m]), 0)
+            rate(pg_doorman_servers_prepared_misses_total[5m])
           )
 
       - record: pg_doorman:prepared_hit:ratio
         expr: |
           sum by (job, instance, user, database) (
-            clamp_min(rate(pg_doorman_servers_prepared_hits[5m]), 0)
+            rate(pg_doorman_servers_prepared_hits_total[5m])
           )
           /
           clamp_min(
             sum by (job, instance, user, database) (
-              clamp_min(rate(pg_doorman_servers_prepared_hits[5m]), 0)
+              rate(pg_doorman_servers_prepared_hits_total[5m])
             )
             +
             sum by (job, instance, user, database) (
-              clamp_min(rate(pg_doorman_servers_prepared_misses[5m]), 0)
+              rate(pg_doorman_servers_prepared_misses_total[5m])
             ),
             0.001
           )

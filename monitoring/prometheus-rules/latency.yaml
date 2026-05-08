@@ -2,55 +2,61 @@ groups:
   - name: latency_recording
     interval: 30s
     rules:
-      - record: pg_doorman:query_p99_ms:max
+      # Query/transaction p99 from the new histograms — composes
+      # correctly across replicas, unlike the deprecated
+      # pre-aggregated *_percentile gauges.
+      - record: pg_doorman:query_p99_seconds
         expr: |
-          max by (job, instance, user, database) (
-            pg_doorman_pools_queries_percentile{percentile="99"}
+          histogram_quantile(
+            0.99,
+            sum by (le, job, instance, user, database) (
+              rate(pg_doorman_pools_query_duration_seconds_bucket[5m])
+            )
           )
 
-      - record: pg_doorman:transaction_p99_ms:max
+      - record: pg_doorman:transaction_p99_seconds
         expr: |
-          max by (job, instance, user, database) (
-            pg_doorman_pools_transactions_percentile{percentile="99"}
+          histogram_quantile(
+            0.99,
+            sum by (le, job, instance, user, database) (
+              rate(pg_doorman_pools_transaction_duration_seconds_bucket[5m])
+            )
+          )
+
+      - record: pg_doorman:wait_p99_seconds
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, job, instance, user, database) (
+              rate(pg_doorman_pools_wait_duration_seconds_bucket[5m])
+            )
           )
 
       - record: pg_doorman:query_rate5m
         expr: |
           sum by (job, instance, user, database) (
-            clamp_min(rate(pg_doorman_pools_queries_count[5m]), 0)
+            rate(pg_doorman_pools_queries_total[5m])
           )
 
       - record: pg_doorman:transaction_rate5m
         expr: |
           sum by (job, instance, user, database) (
-            clamp_min(rate(pg_doorman_pools_transactions_count[5m]), 0)
+            rate(pg_doorman_pools_transactions_total[5m])
           )
 
   - name: latency_alerts
     interval: 30s
     rules:
+      # PostgreSQL latency SLO — fires on slow queries regardless of
+      # whether the pool itself is saturated. Pool pressure is a
+      # separate alert below; gating DB latency on pool saturation
+      # would mask the locking, autovacuum, and slow-plan incidents
+      # that hit a pool below 80% active utilization.
       - alert: PgDoormanQueryP99High
         expr: |
-          pg_doorman:query_p99_ms:max > 1000
+          pg_doorman:query_p99_seconds > 1
           and on (job, instance, user, database)
           pg_doorman:query_rate5m > 1
-          and on (job, instance, user, database)
-          (
-            sum by (job, instance, user, database) (
-              pg_doorman_pools_clients{status="waiting"}
-            ) > 0
-            or
-            (
-              sum by (job, instance, user, database) (
-                pg_doorman_pools_servers{status="active"}
-              )
-              /
-              clamp_min(
-                sum by (job, instance, user, database) (pg_doorman_pool_size),
-                1
-              )
-            ) > 0.8
-          )
         for: 10m
         labels:
           severity: warning
@@ -58,33 +64,18 @@ groups:
         annotations:
           summary: "pg_doorman query p99 > 1s for {{ $labels.user }}@{{ $labels.database }}"
           runbook: |
-            PostgreSQL execution latency as seen by pg_doorman is high and the
-            pool is waiting or above 80% active server usage. Check
-            pg_stat_activity and pg_stat_statements for the affected user and
-            database; pg_doorman cannot identify the SQL text from this metric.
+            Server-side query latency as seen by pg_doorman is above 1s while
+            QPS is non-trivial. Check pg_stat_activity and pg_stat_statements
+            for the affected user and database; pg_doorman cannot identify
+            the SQL text from this metric. Pool saturation is reported
+            separately by PgDoormanWaitP99High — if this alert fires alone,
+            PostgreSQL itself is degraded (locks, autovacuum, plan regression).
 
       - alert: PgDoormanTransactionP99High
         expr: |
-          pg_doorman:transaction_p99_ms:max > 5000
+          pg_doorman:transaction_p99_seconds > 5
           and on (job, instance, user, database)
           pg_doorman:transaction_rate5m > 0.1
-          and on (job, instance, user, database)
-          (
-            sum by (job, instance, user, database) (
-              pg_doorman_pools_clients{status="waiting"}
-            ) > 0
-            or
-            (
-              sum by (job, instance, user, database) (
-                pg_doorman_pools_servers{status="active"}
-              )
-              /
-              clamp_min(
-                sum by (job, instance, user, database) (pg_doorman_pool_size),
-                1
-              )
-            ) > 0.8
-          )
         for: 10m
         labels:
           severity: warning
@@ -92,7 +83,28 @@ groups:
         annotations:
           summary: "pg_doorman transaction p99 > 5s for {{ $labels.user }}@{{ $labels.database }}"
           runbook: |
-            Long transactions are keeping backend connections checked out while
-            the pool is waiting or above 80% active server usage. Check
-            PostgreSQL for long-running or idle-in-transaction sessions from
-            this pool user.
+            End-to-end transaction time is above 5s. Long-running or
+            idle-in-transaction sessions hold backend connections — check
+            PostgreSQL for hung transactions from this pool user.
+
+      # Pool saturation — fires when clients spent measurable time in
+      # pg_doorman's queue waiting for a backend. This is the
+      # "pool_size or query duration is the bottleneck" signal,
+      # independent of whether PostgreSQL itself is slow.
+      - alert: PgDoormanWaitP99High
+        expr: |
+          pg_doorman:wait_p99_seconds > 0.05
+          and on (job, instance, user, database)
+          pg_doorman:query_rate5m > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman checkout wait p99 > 50ms for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            Clients are queuing for a backend connection. Check
+            pg_doorman_pools_clients{status="waiting"} and active server
+            utilisation: raise pool_size or shorten queries. If query p99 is
+            also high, PostgreSQL is the upstream cause; otherwise it is
+            pool sizing.

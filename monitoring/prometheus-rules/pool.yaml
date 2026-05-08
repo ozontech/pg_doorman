@@ -52,16 +52,22 @@ groups:
             transactions holding server connections out of rotation.
 
       - alert: PgDoormanPoolWaitTimeHigh
+        # Wait p95 from the new histogram — replaces the running mean
+        # of pg_doorman_pools_avg_wait_time, which sandbagged tail
+        # spikes the alert is meant to catch.
         expr: |
-          max by (job, instance, user, database) (
-            pg_doorman_pools_avg_wait_time
-          ) > 250
+          histogram_quantile(
+            0.95,
+            sum by (le, job, instance, user, database) (
+              rate(pg_doorman_pools_wait_duration_seconds_bucket[5m])
+            )
+          ) > 0.25
         for: 10m
         labels:
           severity: warning
           service: pg_doorman
         annotations:
-          summary: "pg_doorman average wait time > 250ms for {{ $labels.user }}@{{ $labels.database }}"
+          summary: "pg_doorman wait p95 > 250ms for {{ $labels.user }}@{{ $labels.database }}"
           runbook: |
             Check SHOW POOLS, SHOW STATS, and slow query latency. If p99 query
             or transaction time is rising, fix the backend workload first; if

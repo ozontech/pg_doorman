@@ -5,18 +5,18 @@ groups:
       - record: pg_doorman:connection_rate5m
         expr: |
           sum by (job, instance, type) (
-            clamp_min(rate(pg_doorman_connection_count[5m]), 0)
+            rate(pg_doorman_connections_total[5m])
           )
 
       - record: pg_doorman:cancel_connection_ratio5m
         expr: |
           sum by (job, instance) (
-            clamp_min(rate(pg_doorman_connection_count{type="cancel"}[5m]), 0)
+            rate(pg_doorman_connections_total{type="cancel"}[5m])
           )
           /
           clamp_min(
             sum by (job, instance) (
-              clamp_min(rate(pg_doorman_connection_count{type="total"}[5m]), 0)
+              rate(pg_doorman_connections_total{type="total"}[5m])
             ),
             0.001
           )
@@ -29,7 +29,7 @@ groups:
           pg_doorman:cancel_connection_ratio5m > 0.10
           and on (job, instance)
           sum by (job, instance) (
-            clamp_min(rate(pg_doorman_connection_count{type="cancel"}[5m]), 0)
+            rate(pg_doorman_connections_total{type="cancel"}[5m])
           ) > 0.5
         for: 15m
         labels:
