@@ -22,7 +22,7 @@ mod tests;
 pub(crate) use handler::write_metrics_response;
 pub use metrics::{
     observe_anonymous_eviction, observe_streaming_bytes, observe_streaming_event,
-    record_interner_gc, record_synthetic_miss,
+    record_interner_gc, record_listener_rejection, record_synthetic_miss,
 };
 
 // Define the metrics we want to expose
@@ -288,6 +288,36 @@ pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL: Lazy<IntCounte
         REGISTRY.register(Box::new(counter.clone())).unwrap();
         counter
     });
+
+/// Counter for client connections rejected before authentication completes,
+/// split by reason. The label set is fixed:
+/// - `hba` — HBA configuration explicitly denied the client
+/// - `tls_required` — client tried plain text while `only_ssl_connections` is on
+/// - `tls_handshake_fail` — TLS negotiation failed (bad cert, version mismatch, ...)
+/// - `protocol_error` — unexpected sequence of startup messages
+/// - `invalid_startup` — malformed startup packet or socket error before parameters
+/// - `too_many_clients` — listener at `max_clients` capacity
+///
+/// A sustained non-zero `hba` or `tls_handshake_fail` rate is the bruteforce
+/// signal pg_doorman previously only logged.
+pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_listener_rejections_total",
+            "Cumulative count of client connections rejected before \
+             authentication, by reason. Reasons: 'hba' (HBA denied), \
+             'tls_required' (plain text rejected by only_ssl_connections), \
+             'tls_handshake_fail' (TLS negotiation failed), \
+             'protocol_error' (unexpected startup message sequence), \
+             'invalid_startup' (malformed startup or socket error), \
+             'too_many_clients' (listener at capacity).",
+        ),
+        &["reason"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
 
 /// Counter for protocol-level large-message streaming events. pg_doorman
 /// drops to byte-stream forwarding when a server message of type DataRow

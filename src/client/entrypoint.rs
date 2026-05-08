@@ -93,6 +93,7 @@ pub async fn client_entrypoint_too_many_clients_already(
     mut stream: TcpStream,
     client_server_map: ClientServerMap,
 ) -> Result<(), Error> {
+    crate::web::metrics::record_listener_rejection("too_many_clients");
     let addr = match stream.peer_addr() {
         Ok(addr) => addr,
         Err(err) => {
@@ -152,6 +153,7 @@ pub async fn client_entrypoint_too_many_clients_already_unix(
     mut stream: UnixStream,
     connection_id: u64,
 ) -> Result<(), Error> {
+    crate::web::metrics::record_listener_rejection("too_many_clients");
     match get_startup::<UnixStream>(&mut stream).await {
         Ok((ClientConnectionType::Tls, _)) => {
             // Unix sockets never negotiate TLS; mirror the main Unix entrypoint
@@ -291,11 +293,18 @@ pub async fn client_entrypoint(
 
                     // Client probably disconnected rejecting our plain text connection.
                     Ok((ClientConnectionType::Tls, _))
-                    | Ok((ClientConnectionType::CancelQuery, _)) => Err(Error::ProtocolSyncError(
-                        "Unexpected protocol message during plain-text startup negotiation".into(),
-                    )),
+                    | Ok((ClientConnectionType::CancelQuery, _)) => {
+                        crate::web::metrics::record_listener_rejection("protocol_error");
+                        Err(Error::ProtocolSyncError(
+                            "Unexpected protocol message during plain-text startup negotiation"
+                                .into(),
+                        ))
+                    }
 
-                    Err(err) => Err(err),
+                    Err(err) => {
+                        crate::web::metrics::record_listener_rejection("invalid_startup");
+                        Err(err)
+                    }
                 }
             }
         }
@@ -309,6 +318,7 @@ pub async fn client_entrypoint(
                     "28000",
                 )
                 .await?;
+                crate::web::metrics::record_listener_rejection("tls_required");
                 return Err(Error::ProtocolSyncError("ssl is required".to_string()));
             }
             PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -364,6 +374,7 @@ pub async fn client_entrypoint(
 
         // Something failed, probably the socket.
         Err(err) => {
+            crate::web::metrics::record_listener_rejection("invalid_startup");
             error!("#c{connection_id} client {addr} startup failed: {err}");
             Err(err)
         }
@@ -410,6 +421,7 @@ pub async fn client_entrypoint_unix(
                 "08P01",
             )
             .await?;
+            crate::web::metrics::record_listener_rejection("protocol_error");
             Err(Error::ProtocolSyncError(
                 "TLS requested on Unix socket".into(),
             ))
@@ -440,6 +452,7 @@ pub async fn client_entrypoint_unix(
         }
 
         Err(err) => {
+            crate::web::metrics::record_listener_rejection("invalid_startup");
             error!("#c{connection_id} unix client startup failed: {err}");
             Err(err)
         }

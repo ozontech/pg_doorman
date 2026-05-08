@@ -123,6 +123,7 @@ pub async fn startup_tls(
 
         // TLS negotiation failed.
         Err(err) => {
+            crate::web::metrics::record_listener_rejection("tls_handshake_fail");
             error!("TLS negotiation failed: {err}");
             return Err(Error::TlsError);
         }
@@ -170,10 +171,14 @@ pub async fn startup_tls(
         }
 
         Ok((ClientConnectionType::Tls, _)) => {
+            crate::web::metrics::record_listener_rejection("protocol_error");
             Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
         }
 
-        Err(err) => Err(err),
+        Err(err) => {
+            crate::web::metrics::record_listener_rejection("invalid_startup");
+            Err(err)
+        }
     }
 }
 
@@ -345,6 +350,7 @@ where
                 "28000"
             )
                 .await?;
+            crate::web::metrics::record_listener_rejection("hba");
             return Err(Error::HbaForbiddenError(format!(
                 "Connection not permitted by HBA configuration for client: {} from {}",
                 client_identifier,

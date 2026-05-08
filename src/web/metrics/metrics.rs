@@ -739,6 +739,17 @@ pub fn observe_streaming_bytes(user: &str, database: &str, kind: &str, bytes: u6
         .inc_by(bytes);
 }
 
+/// Records one client rejection at the listener / pre-auth stage.
+/// `reason` must be one of the labels documented on
+/// `LISTENER_REJECTIONS_TOTAL`; passing any other value still works but
+/// inflates the cardinality the metric was designed to bound.
+#[inline]
+pub fn record_listener_rejection(reason: &'static str) {
+    super::LISTENER_REJECTIONS_TOTAL
+        .with_label_values(&[reason])
+        .inc();
+}
+
 #[cfg(test)]
 mod tests {
     use super::classify_sqlstate;
