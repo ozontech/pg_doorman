@@ -175,7 +175,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -184,11 +184,11 @@
                 "color": "green"
               },
               {
-                "value": 5,
+                "value": 0.005,
                 "color": "yellow"
               },
               {
-                "value": 50,
+                "value": 0.05,
                 "color": "red"
               }
             ]
@@ -198,12 +198,12 @@
       },
       "targets": [
         {
-          "expr": "max(pg_doorman_pools_avg_wait_time{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_wait_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": ""
         }
       ],
-      "title": "Avg Wait Time",
-      "description": "Max across pools of average queue wait \u2014 adds directly to application latency. Above 50ms: check Pool Utilization and raise pool_size.",
+      "title": "Wait p99",
+      "description": "99th percentile client checkout wait. Above 50 ms: pool_size is the bottleneck before PostgreSQL is \u2014 raise it or shorten queries.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -231,7 +231,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -240,11 +240,11 @@
                 "color": "green"
               },
               {
-                "value": 50,
+                "value": 0.05,
                 "color": "yellow"
               },
               {
-                "value": 200,
+                "value": 0.2,
                 "color": "red"
               }
             ]
@@ -254,7 +254,7 @@
       },
       "targets": [
         {
-          "expr": "max(pg_doorman_pools_queries_percentile{percentile=\"99\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": ""
         }
       ],
@@ -413,12 +413,12 @@
       },
       "targets": [
         {
-          "expr": "pg_doorman_connection_count{type=\"total\", instance=~\"$instance\"}",
+          "expr": "pg_doorman_connections_total{type=\"total\", instance=~\"$instance\"}",
           "refId": ""
         }
       ],
       "title": "Total Connections",
-      "description": "Current client connections (all pools). Compare with pool_size for multiplexing ratio \u2014 100:1+ is normal in transaction mode.",
+      "description": "Cumulative client connections accepted (all pools). Compare with pool_size for multiplexing ratio \u2014 100:1+ is normal in transaction mode.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -553,19 +553,19 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "pg_doorman_pools_avg_wait_time{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "expr": "histogram_quantile(0.95, sum by (le, user, database) (rate(pg_doorman_pools_wait_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "{{user}}@{{database}}"
         }
       ],
-      "title": "Avg Wait Time",
-      "description": "Average queue time per pool. Pool with low wait count but high wait time has slow query turnover.",
+      "title": "Wait p95 by Pool",
+      "description": "95th percentile client checkout wait per pool. The pool with the highest line is the one that needs pool_size attention.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -764,34 +764,34 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"50\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p50"
         },
         {
-          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"90\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p90"
         },
         {
-          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"95\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p95"
         },
         {
-          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"99\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p99"
         }
       ],
       "title": "Query Latency Percentiles",
-      "description": "Server-side query time at p50/p90/p95/p99. p99 diverging from p50 \u2014 check pg_stat_activity for lock waits or long-running queries.",
+      "description": "Server-side query time at p50/p90/p95/p99 from the per-pool histogram. p99 diverging from p50 \u2014 check pg_stat_activity for lock waits or long-running queries.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -831,7 +831,7 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_pools_queries_count{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "expr": "sum by (user, database) (rate(pg_doorman_pools_queries_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
           "refId": "",
           "legendFormat": "{{user}}@{{database}}"
         }
@@ -884,34 +884,34 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"50\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p50"
         },
         {
-          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"90\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p90"
         },
         {
-          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"95\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p95"
         },
         {
-          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"99\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])))",
           "refId": "",
           "legendFormat": "p99"
         }
       ],
       "title": "Transaction Latency Percentiles",
-      "description": "End-to-end transaction time including all queries and inter-query gaps. High values with low query latency indicate application-side delays between queries.",
+      "description": "End-to-end transaction time at p50/p90/p95/p99 from the per-pool histogram. High values with low query latency indicate application-side delays between queries.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -951,7 +951,7 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_pools_transactions_count{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "expr": "sum by (user, database) (rate(pg_doorman_pools_transactions_total{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
           "refId": "",
           "legendFormat": "{{user}}@{{database}}"
         }
@@ -1010,7 +1010,7 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_pools_bytes{direction=\"received\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "expr": "sum by (user, database) (rate(pg_doorman_pools_bytes_total{direction=\"received\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
           "refId": "",
           "legendFormat": "{{user}}@{{database}}"
         }
@@ -1056,7 +1056,7 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_pools_bytes{direction=\"sent\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "expr": "sum by (user, database) (rate(pg_doorman_pools_bytes_total{direction=\"sent\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
           "refId": "",
           "legendFormat": "{{user}}@{{database}}"
         }
@@ -1371,28 +1371,30 @@
         }
       },
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "unit": "ops"
+        },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "pg_doorman_connection_count{type=\"plain\", instance=~\"$instance\"}",
+          "expr": "rate(pg_doorman_connections_total{type=\"plain\", instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "plain"
         },
         {
-          "expr": "pg_doorman_connection_count{type=\"tls\", instance=~\"$instance\"}",
+          "expr": "rate(pg_doorman_connections_total{type=\"tls\", instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "tls"
         },
         {
-          "expr": "pg_doorman_connection_count{type=\"cancel\", instance=~\"$instance\"}",
+          "expr": "rate(pg_doorman_connections_total{type=\"cancel\", instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "cancel"
         }
       ],
       "title": "Connections by Type",
-      "description": "Connections by protocol. Track TLS adoption. Elevated cancel count indicates application timeouts.",
+      "description": "Connection rate per second by protocol. Track TLS adoption. Elevated cancel rate indicates application timeouts.",
       "datasource": {
         "uid": "prometheus"
       },

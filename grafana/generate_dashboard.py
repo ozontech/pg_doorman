@@ -154,17 +154,17 @@ p_waiting = stat_panel(
     desc="Clients queued for a server connection. Sustained >0 means pool_size is insufficient — increase pool_size or reduce query duration.",
 )
 p_wait_time = stat_panel(
-    "Avg Wait Time",
-    f'max(pg_doorman_pools_avg_wait_time{{{S}}})',
-    unit="ms",
-    thresholds=[(None, "green"), (5, "yellow"), (50, "red")],
-    desc="Max across pools of average queue wait — adds directly to application latency. Above 50ms: check Pool Utilization and raise pool_size.",
+    "Wait p99",
+    f'histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_wait_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+    unit="s",
+    thresholds=[(None, "green"), (0.005, "yellow"), (0.05, "red")],
+    desc="99th percentile client checkout wait. Above 50 ms: pool_size is the bottleneck before PostgreSQL is — raise it or shorten queries.",
 )
 p_query_p99 = stat_panel(
     "Query p99",
-    f'max(pg_doorman_pools_queries_percentile{{percentile="99", {S}}})',
-    unit="ms",
-    thresholds=[(None, "green"), (50, "yellow"), (200, "red")],
+    f'histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+    unit="s",
+    thresholds=[(None, "green"), (0.05, "yellow"), (0.2, "red")],
     desc="99th percentile server-side query time (excludes queue wait). Spike without QPS increase — check pg_stat_activity for locks or vacuum.",
 )
 p_utilization = stat_panel(
@@ -183,10 +183,10 @@ p_memory = stat_panel(
 )
 p_connections = stat_panel(
     "Total Connections",
-    'pg_doorman_connection_count{type="total", instance=~"$instance"}',
+    'pg_doorman_connections_total{type="total", instance=~"$instance"}',
     thresholds=[(None, "blue")],
     color_mode="none",
-    desc="Current client connections (all pools). Compare with pool_size for multiplexing ratio — 100:1+ is normal in transaction mode.",
+    desc="Cumulative client connections accepted (all pools). Compare with pool_size for multiplexing ratio — 100:1+ is normal in transaction mode.",
 )
 
 # ---------------------------------------------------------------------------
@@ -207,10 +207,13 @@ p_waiting_ts = ts_panel(
     desc="Waiting clients by user@database. Pinpoints which pool needs pool_size increase or query optimization.",
 )
 p_wait_time_ts = ts_panel(
-    "Avg Wait Time", [
-        prom(f'pg_doorman_pools_avg_wait_time{{{S}}}', "{{user}}@{{database}}"),
-    ], unit="ms", w=8,
-    desc="Average queue time per pool. Pool with low wait count but high wait time has slow query turnover.",
+    "Wait p95 by Pool", [
+        prom(
+            f'histogram_quantile(0.95, sum by (le, user, database) (rate(pg_doorman_pools_wait_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "{{user}}@{{database}}",
+        ),
+    ], unit="s", w=8,
+    desc="95th percentile client checkout wait per pool. The pool with the highest line is the one that needs pool_size attention.",
 )
 
 # ---------------------------------------------------------------------------
@@ -245,16 +248,31 @@ row4 = expanded_row("Query Latency")
 
 p_query_lat = ts_panel(
     "Query Latency Percentiles", [
-        prom(f'max by (database) (pg_doorman_pools_queries_percentile{{percentile="50", {S}}})', "p50"),
-        prom(f'max by (database) (pg_doorman_pools_queries_percentile{{percentile="90", {S}}})', "p90"),
-        prom(f'max by (database) (pg_doorman_pools_queries_percentile{{percentile="95", {S}}})', "p95"),
-        prom(f'max by (database) (pg_doorman_pools_queries_percentile{{percentile="99", {S}}})', "p99"),
-    ], unit="ms",
-    desc="Server-side query time at p50/p90/p95/p99. p99 diverging from p50 — check pg_stat_activity for lock waits or long-running queries.",
+        prom(
+            f'histogram_quantile(0.50, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p50",
+        ),
+        prom(
+            f'histogram_quantile(0.90, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p90",
+        ),
+        prom(
+            f'histogram_quantile(0.95, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p95",
+        ),
+        prom(
+            f'histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p99",
+        ),
+    ], unit="s",
+    desc="Server-side query time at p50/p90/p95/p99 from the per-pool histogram. p99 diverging from p50 — check pg_stat_activity for lock waits or long-running queries.",
 )
 p_qps = ts_panel(
     "Queries per Second", [
-        prom(f'rate(pg_doorman_pools_queries_count{{{S}}}[$__rate_interval])', "{{user}}@{{database}}"),
+        prom(
+            f'sum by (user, database) (rate(pg_doorman_pools_queries_total{{{S}}}[$__rate_interval]))',
+            "{{user}}@{{database}}",
+        ),
     ], unit="ops",
     desc="Query throughput per pool. Flat QPS with rising latency signals PostgreSQL saturation. Rising QPS with stable latency is healthy growth.",
 )
@@ -266,16 +284,31 @@ row5 = expanded_row("Transaction Latency")
 
 p_xact_lat = ts_panel(
     "Transaction Latency Percentiles", [
-        prom(f'max by (database) (pg_doorman_pools_transactions_percentile{{percentile="50", {S}}})', "p50"),
-        prom(f'max by (database) (pg_doorman_pools_transactions_percentile{{percentile="90", {S}}})', "p90"),
-        prom(f'max by (database) (pg_doorman_pools_transactions_percentile{{percentile="95", {S}}})', "p95"),
-        prom(f'max by (database) (pg_doorman_pools_transactions_percentile{{percentile="99", {S}}})', "p99"),
-    ], unit="ms",
-    desc="End-to-end transaction time including all queries and inter-query gaps. High values with low query latency indicate application-side delays between queries.",
+        prom(
+            f'histogram_quantile(0.50, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p50",
+        ),
+        prom(
+            f'histogram_quantile(0.90, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p90",
+        ),
+        prom(
+            f'histogram_quantile(0.95, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p95",
+        ),
+        prom(
+            f'histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{{{S}}}[$__rate_interval])))',
+            "p99",
+        ),
+    ], unit="s",
+    desc="End-to-end transaction time at p50/p90/p95/p99 from the per-pool histogram. High values with low query latency indicate application-side delays between queries.",
 )
 p_tps = ts_panel(
     "Transactions per Second", [
-        prom(f'rate(pg_doorman_pools_transactions_count{{{S}}}[$__rate_interval])', "{{user}}@{{database}}"),
+        prom(
+            f'sum by (user, database) (rate(pg_doorman_pools_transactions_total{{{S}}}[$__rate_interval]))',
+            "{{user}}@{{database}}",
+        ),
     ], unit="ops",
     desc="Transaction throughput per pool. Drop with rising latency indicates lock contention or long transactions holding server connections.",
 )
@@ -287,13 +320,19 @@ row6 = collapsed_row("Traffic")
 
 p_bytes_recv = ts_panel(
     "Bytes Received", [
-        prom(f'rate(pg_doorman_pools_bytes{{direction="received", {S}}}[$__rate_interval])', "{{user}}@{{database}}"),
+        prom(
+            f'sum by (user, database) (rate(pg_doorman_pools_bytes_total{{direction="received", {S}}}[$__rate_interval]))',
+            "{{user}}@{{database}}",
+        ),
     ], unit="Bps",
     desc="Data rate from clients. Spikes correlate with bulk INSERTs/COPYs.",
 )
 p_bytes_sent = ts_panel(
     "Bytes Sent", [
-        prom(f'rate(pg_doorman_pools_bytes{{direction="sent", {S}}}[$__rate_interval])', "{{user}}@{{database}}"),
+        prom(
+            f'sum by (user, database) (rate(pg_doorman_pools_bytes_total{{direction="sent", {S}}}[$__rate_interval]))',
+            "{{user}}@{{database}}",
+        ),
     ], unit="Bps",
     desc="Data rate to clients. Large spikes indicate fat result sets — consider LIMIT if unexpected.",
 )
@@ -347,11 +386,20 @@ p_scaling_events = ts_panel(
 )
 p_conn_types = ts_panel(
     "Connections by Type", [
-        prom('pg_doorman_connection_count{type="plain", instance=~"$instance"}', "plain"),
-        prom('pg_doorman_connection_count{type="tls", instance=~"$instance"}', "tls"),
-        prom('pg_doorman_connection_count{type="cancel", instance=~"$instance"}', "cancel"),
-    ], w=8,
-    desc="Connections by protocol. Track TLS adoption. Elevated cancel count indicates application timeouts.",
+        prom(
+            'rate(pg_doorman_connections_total{type="plain", instance=~"$instance"}[$__rate_interval])',
+            "plain",
+        ),
+        prom(
+            'rate(pg_doorman_connections_total{type="tls", instance=~"$instance"}[$__rate_interval])',
+            "tls",
+        ),
+        prom(
+            'rate(pg_doorman_connections_total{type="cancel", instance=~"$instance"}[$__rate_interval])',
+            "cancel",
+        ),
+    ], unit="ops", w=8,
+    desc="Connection rate per second by protocol. Track TLS adoption. Elevated cancel rate indicates application timeouts.",
 )
 
 # ---------------------------------------------------------------------------
