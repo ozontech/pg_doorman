@@ -128,6 +128,54 @@ async fn test_prometheus_server_basic() {
 }
 
 #[test]
+fn test_streaming_counters_register_and_increment() {
+    use crate::web::metrics::{
+        observe_streaming_bytes, observe_streaming_event, STREAMING_BYTES_TOTAL,
+        STREAMING_EVENTS_TOTAL,
+    };
+
+    let user = "alice_stream";
+    let database = "shop_stream";
+
+    observe_streaming_event(user, database, "data_row", "ok");
+    observe_streaming_event(user, database, "data_row", "error");
+    observe_streaming_event(user, database, "copy_data", "ok");
+    observe_streaming_bytes(user, database, "data_row", 16_777_216);
+    observe_streaming_bytes(user, database, "copy_data", 8_388_608);
+
+    assert_eq!(
+        STREAMING_EVENTS_TOTAL
+            .with_label_values(&[user, database, "data_row", "ok"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        STREAMING_EVENTS_TOTAL
+            .with_label_values(&[user, database, "data_row", "error"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        STREAMING_EVENTS_TOTAL
+            .with_label_values(&[user, database, "copy_data", "ok"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        STREAMING_BYTES_TOTAL
+            .with_label_values(&[user, database, "data_row"])
+            .get(),
+        16_777_216
+    );
+    assert_eq!(
+        STREAMING_BYTES_TOTAL
+            .with_label_values(&[user, database, "copy_data"])
+            .get(),
+        8_388_608
+    );
+}
+
+#[test]
 fn test_pool_state_gauges_register_and_export() {
     use crate::web::metrics::{SHOW_POOLS_MAXWAIT_MICROSECONDS, SHOW_POOLS_PAUSED};
     use prometheus::core::Collector;

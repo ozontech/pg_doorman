@@ -624,3 +624,24 @@ pub fn record_interner_gc(
 pub fn record_synthetic_miss() {
     super::QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL.inc();
 }
+
+/// Records one large-message streaming event. Called from
+/// `handle_large_data_row` and `handle_large_copy_data` after the
+/// outcome is known. `kind` is "data_row" or "copy_data"; `result` is
+/// "ok" or "error".
+#[inline]
+pub fn observe_streaming_event(user: &str, database: &str, kind: &str, result: &str) {
+    super::STREAMING_EVENTS_TOTAL
+        .with_label_values(&[user, database, kind, result])
+        .inc();
+}
+
+/// Records bytes forwarded for one streaming event. Called once per
+/// event, before the result is known, so the bytes flowed during a
+/// failed stream are still counted.
+#[inline]
+pub fn observe_streaming_bytes(user: &str, database: &str, kind: &str, bytes: u64) {
+    super::STREAMING_BYTES_TOTAL
+        .with_label_values(&[user, database, kind])
+        .inc_by(bytes);
+}

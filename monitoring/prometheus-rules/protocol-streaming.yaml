@@ -1,0 +1,60 @@
+groups:
+  - name: protocol_streaming_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanProtocolStreamingErrors
+        expr: |
+          sum by (job, instance, user, database, kind) (
+            rate(pg_doorman_streaming_events_total{result="error"}[5m])
+          ) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman large-message stream broke for {{ $labels.user }}@{{ $labels.database }} ({{ $labels.kind }})"
+          runbook: |
+            A {{ $labels.kind }} message larger than max_message_size was
+            forwarded byte-for-byte from the backend, and the proxy hit an
+            error mid-stream. The client received a partial payload and
+            the backend is marked bad. Check pg_doorman logs around the
+            event for the underlying I/O or timeout error and look at the
+            offending query in pg_stat_statements on {{ $labels.database }}.
+
+      - alert: PgDoormanProtocolDataRowStreamingFrequent
+        expr: |
+          sum by (job, instance, user, database) (
+            rate(pg_doorman_streaming_events_total{kind="data_row",result="ok"}[10m])
+          ) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman streams DataRow regularly for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            DataRow messages above max_message_size are not normal OLTP
+            traffic. Sustained rate above 0.1/s usually means an
+            application returns oversized BYTEA/JSONB columns or a SELECT
+            without LIMIT. Inspect pg_stat_statements on
+            {{ $labels.database }} sorted by max_exec_time and check
+            schema for wide TOAST values.
+
+      - alert: PgDoormanProtocolStreamingThroughputHigh
+        expr: |
+          sum by (job, instance, user, database, kind) (
+            rate(pg_doorman_streaming_bytes_total[5m])
+          ) > 52428800
+        for: 10m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman streams above 50 MiB/s for {{ $labels.user }}@{{ $labels.database }} ({{ $labels.kind }})"
+          runbook: |
+            Bandwidth through the byte-stream path exceeded 50 MiB/s for
+            10m. Either an unexpectedly large COPY is running (kind=
+            copy_data — check pg_stat_progress_copy on
+            {{ $labels.database }}) or DataRow blobs are sustained
+            (kind=data_row — same drill as
+            PgDoormanProtocolDataRowStreamingFrequent).

@@ -146,20 +146,25 @@ where
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
 
+    // Wire bytes for the streaming counter: 1 type byte + message_len, since
+    // message_len already covers the 4-byte length field plus the payload.
+    // server.stats.data_received uses server.buffer.len() + message_len for
+    // historical reasons, which double-counts the length field; we keep the
+    // legacy total there to avoid changing existing dashboards.
+    let streamed_bytes = 1u64 + message_len as u64;
+
     // Stream the large message directly
-    match proxy_copy_data_with_timeout(
+    let res = proxy_copy_data_with_timeout(
         get_config().general.proxy_copy_data_timeout.as_std(),
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),
     )
-    .await
-    {
-        Ok(_) => (),
-        Err(err) => {
-            server.mark_bad(err.to_string().as_str());
-            return Err(err);
-        }
+    .await;
+    record_streaming(server, "data_row", res.is_ok(), streamed_bytes);
+    if let Err(err) = res {
+        server.mark_bad(err.to_string().as_str());
+        return Err(err);
     }
 
     if !prev_bad {
@@ -194,13 +199,19 @@ where
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
 
+    // Wire bytes for the streaming counter — see handle_large_data_row for
+    // the rationale behind diverging from server.stats.data_received.
+    let streamed_bytes = 1u64 + message_len as u64;
+
     // Stream the large message directly
-    proxy_copy_data(
+    let res = proxy_copy_data(
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),
     )
-    .await?;
+    .await;
+    record_streaming(server, "copy_data", res.is_ok(), streamed_bytes);
+    res?;
 
     server.bad = prev_bad;
     server
@@ -210,6 +221,17 @@ where
     server.buffer.clear();
     server.stats.wait_idle();
     Ok(server.buffer.clone())
+}
+
+/// Helper that bumps both streaming counters from the streaming handlers.
+/// `kind` is "data_row" or "copy_data"; the boolean carries the proxy
+/// outcome and is mapped to the "ok"/"error" label.
+fn record_streaming(server: &Server, kind: &'static str, ok: bool, total_bytes: u64) {
+    let user = server.address.username.as_str();
+    let database = server.address.database.as_str();
+    let result = if ok { "ok" } else { "error" };
+    crate::web::metrics::observe_streaming_event(user, database, kind, result);
+    crate::web::metrics::observe_streaming_bytes(user, database, kind, total_bytes);
 }
 
 /// Handles ReadyForQuery ('Z') message - indicates server is ready for a new query.

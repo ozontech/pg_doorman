@@ -20,7 +20,10 @@ mod tests;
 
 // Re-exports
 pub(crate) use handler::write_metrics_response;
-pub use metrics::{observe_anonymous_eviction, record_interner_gc, record_synthetic_miss};
+pub use metrics::{
+    observe_anonymous_eviction, observe_streaming_bytes, observe_streaming_event,
+    record_interner_gc, record_synthetic_miss,
+};
 
 // Define the metrics we want to expose
 pub(crate) static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
@@ -258,6 +261,52 @@ pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL: Lazy<IntCounte
         REGISTRY.register(Box::new(counter.clone())).unwrap();
         counter
     });
+
+/// Counter for protocol-level large-message streaming events. pg_doorman
+/// drops to byte-stream forwarding when a server message of type DataRow
+/// ('D') or CopyData ('d') exceeds max_message_size — see
+/// src/server/protocol_io.rs handle_large_data_row / handle_large_copy_data.
+/// This is invalid for healthy OLTP traffic; sustained non-zero rate
+/// signals oversized BYTEA/JSONB payloads, COPY rows with pathological
+/// content, or a misbehaving ORM. Result distinguishes a clean forward
+/// (ok) from a partially streamed payload that ended in a connection
+/// reset (error).
+pub(crate) static STREAMING_EVENTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_streaming_events_total",
+            "Cumulative count of large-message streaming events by user, \
+             database, message kind (data_row|copy_data) and result \
+             (ok|error). Each event corresponds to one message larger than \
+             max_message_size that pg_doorman forwarded byte-for-byte from \
+             the backend to the client.",
+        ),
+        &["user", "database", "kind", "result"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Counter for bytes pushed through the streaming path described above.
+/// Includes the message header (5 bytes) plus the payload. Updated even
+/// for failed events — the counter records what reached the client wire,
+/// not only fully delivered messages.
+pub(crate) static STREAMING_BYTES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_streaming_bytes_total",
+            "Bytes forwarded through the byte-stream path (header + payload), \
+             split by user, database and message kind (data_row|copy_data). \
+             Incremented before the event result is known, so bytes that \
+             flowed during a failed stream are counted as well.",
+        ),
+        &["user", "database", "kind"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
 
 /// Number of entries in the global query interner, split by kind (named or
 /// anonymous). Refreshed once per GC sweep.
