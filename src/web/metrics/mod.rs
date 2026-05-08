@@ -113,6 +113,32 @@ pub(crate) static SHOW_POOLS_OLDEST_ACTIVE_AGE_MS: Lazy<GaugeVec> = Lazy::new(||
     gauge
 });
 
+pub(crate) static SHOW_POOLS_PAUSED: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_pools_paused",
+            "Whether the pool is currently paused (1) or running (0). Reflects the PAUSE/RESUME admin command per pool. A pool stuck at 1 after incident triage drops all client traffic until manually resumed.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static SHOW_POOLS_MAXWAIT_MICROSECONDS: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pools_maxwait_microseconds",
+            "Largest single client checkout wait, taken as max(client.max_wait_time) across the alive clients of each pool. Each client tracks its own lifetime maximum (fetch_max), so a client that hit a slow checkout once keeps the pool gauge at that value until it disconnects — interpret spikes as 'someone in this pool ever waited this long', not 'someone is waiting now'.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 pub(crate) static SHOW_POOLS_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(

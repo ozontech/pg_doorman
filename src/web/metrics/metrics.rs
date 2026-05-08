@@ -23,9 +23,10 @@ use super::{
     COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
     SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
     SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
-    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS,
-    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
-    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
+    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_MAXWAIT_MICROSECONDS,
+    SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_PAUSED, SHOW_POOLS_QUERIES_COUNTER,
+    SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER,
+    SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
     SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
     SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
     SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
@@ -107,7 +108,19 @@ fn update_pool_metrics() {
         update_percentile_metrics(identifier, stats);
         update_pool_cache_metrics(identifier, stats);
         update_pool_size_metrics(identifier, stats);
+        update_pool_state_metrics(identifier, stats);
     }
+}
+
+fn update_pool_state_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
+    SHOW_POOLS_PAUSED
+        .with_label_values(&[user, database])
+        .set(if stats.paused { 1 } else { 0 });
+    SHOW_POOLS_MAXWAIT_MICROSECONDS
+        .with_label_values(&[user, database])
+        .set(stats.maxwait as f64);
 }
 
 fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
@@ -258,6 +271,8 @@ fn reset_pool_metrics() {
     SHOW_POOLS_QUERIES_COUNTER.reset();
     SHOW_POOLS_QUERIES_TOTAL_TIME.reset();
     SHOW_POOL_SIZE.reset();
+    SHOW_POOLS_PAUSED.reset();
+    SHOW_POOLS_MAXWAIT_MICROSECONDS.reset();
 }
 
 fn update_pool_size_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {

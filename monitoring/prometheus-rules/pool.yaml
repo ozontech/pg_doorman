@@ -79,3 +79,37 @@ groups:
             A server connection has been checked out for a long time. Inspect
             PostgreSQL pg_stat_activity for long transactions, idle-in-
             transaction sessions, or slow queries from the affected pool user.
+
+      - alert: PgDoormanPoolPausedStuck
+        expr: pg_doorman_pools_paused == 1
+        for: 30m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman pool paused for over 30m for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            PAUSE was issued via admin and never resumed. New client traffic
+            for this pool is rejected until RESUME. If this is intentional
+            during a maintenance window, ack the alert; otherwise run RESUME.
+
+      - alert: PgDoormanPoolMaxwaitHigh
+        expr: |
+          pg_doorman_pools_maxwait_microseconds > 1000000
+          and on (job, instance, user, database)
+          changes(pg_doorman_pools_maxwait_microseconds[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman max client checkout wait grew past 1s for {{ $labels.user }}@{{ $labels.database }}"
+          runbook: |
+            At least one client in the pool waited longer than 1s for a
+            backend within the last 10m and the maximum is still that
+            high. The gauge is a per-client lifetime maximum that resets
+            only on disconnect, so the changes() filter limits the alert
+            to fresh spikes. Look for short bursts that exhaust the pool:
+            deploy spikes, scheduled jobs, or connection storms. Correlate
+            with pg_doorman:pool_waiting_clients:sum and
+            pg_doorman:pool_active_server_utilization:ratio.

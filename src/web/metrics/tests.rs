@@ -127,6 +127,52 @@ async fn test_prometheus_server_basic() {
     TOTAL_CONNECTION_COUNTER.store(0, Ordering::SeqCst);
 }
 
+#[test]
+fn test_pool_state_gauges_register_and_export() {
+    use crate::web::metrics::{SHOW_POOLS_MAXWAIT_MICROSECONDS, SHOW_POOLS_PAUSED};
+    use prometheus::core::Collector;
+
+    SHOW_POOLS_PAUSED
+        .with_label_values(&["alice", "shop"])
+        .set(1);
+    SHOW_POOLS_MAXWAIT_MICROSECONDS
+        .with_label_values(&["alice", "shop"])
+        .set(750_000.0);
+
+    let descs: Vec<_> = SHOW_POOLS_PAUSED
+        .desc()
+        .iter()
+        .map(|d| d.fq_name.clone())
+        .collect();
+    assert!(descs.iter().any(|n| n == "pg_doorman_pools_paused"));
+    let descs: Vec<_> = SHOW_POOLS_MAXWAIT_MICROSECONDS
+        .desc()
+        .iter()
+        .map(|d| d.fq_name.clone())
+        .collect();
+    assert!(descs
+        .iter()
+        .any(|n| n == "pg_doorman_pools_maxwait_microseconds"));
+
+    assert_eq!(
+        SHOW_POOLS_PAUSED
+            .with_label_values(&["alice", "shop"])
+            .get(),
+        1
+    );
+    assert!(
+        (SHOW_POOLS_MAXWAIT_MICROSECONDS
+            .with_label_values(&["alice", "shop"])
+            .get()
+            - 750_000.0)
+            .abs()
+            < 0.5
+    );
+
+    SHOW_POOLS_PAUSED.reset();
+    SHOW_POOLS_MAXWAIT_MICROSECONDS.reset();
+}
+
 // Integration test for the full server
 // This is more complex and would start the actual server
 #[tokio::test]
