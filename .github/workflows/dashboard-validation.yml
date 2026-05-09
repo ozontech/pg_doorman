@@ -49,18 +49,22 @@ jobs:
         # builder ignores cache-from / cache-to silently.
         uses: docker/setup-buildx-action@v3
 
-      - name: Build pg_doorman:ubuntu2204-tls image
-        # The demo references a locally built image. Cache the buildkit
-        # layers across runs so re-validation of dashboard-only changes
-        # does not pay for a full release Rust compile.
+      - name: Build pg_doorman:demo image
+        # The developer-facing docker-compose.yml uses
+        # pg_doorman:ubuntu2204-tls, built from Dockerfile.ubuntu22-tls
+        # — that file is gitignored on purpose (commit 91ebd92), so CI
+        # cannot use it. Build the public Dockerfile under a separate
+        # tag and let docker-compose.ci.yml swap the service image to
+        # this one. tls-migration is a binary-upgrade feature; the
+        # smoke and ground-truth checks do not depend on it.
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.ubuntu22-tls
-          tags: pg_doorman:ubuntu2204-tls
+          file: Dockerfile
+          tags: pg_doorman:demo
           load: true
-          cache-from: type=gha,scope=pg_doorman-ubuntu2204-tls
-          cache-to: type=gha,scope=pg_doorman-ubuntu2204-tls,mode=max
+          cache-from: type=gha,scope=pg_doorman-demo
+          cache-to: type=gha,scope=pg_doorman-demo,mode=max
 
       - name: Generate provisioned dashboard JSON
         # The script reads grafana/pg_doorman.json (the artifact); the

@@ -8,6 +8,12 @@
 # first time still get the freshest UI to demo. CI prefers stability.
 
 services:
+  pg_doorman:
+    # CI does not have access to Dockerfile.ubuntu22-tls (gitignored).
+    # The workflow builds the public Dockerfile as pg_doorman:demo and
+    # this override points the service at it. Local developers keep
+    # using pg_doorman:ubuntu2204-tls from the main compose.
+    image: pg_doorman:demo
   prometheus:
     image: prom/prometheus:v3.11.3
   grafana:
