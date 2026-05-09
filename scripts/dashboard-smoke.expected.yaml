@@ -1,0 +1,109 @@
+# scripts/dashboard-smoke.expected.yaml
+#
+# Used by scripts/dashboard-smoke.py.
+#
+# Three sections drive the smoke test:
+#
+#   variables:
+#     concrete values for the dashboard's template variables ($instance,
+#     $user, $database, $__rate_interval) substituted before each
+#     Prometheus query. The regex values must match the label set
+#     produced by the demo stack.
+#
+#   bounds:
+#     additional targeted checks. Each query runs as-is (no template
+#     substitution) and the value must fall within [min, max], inclusive.
+#     Used for critical metrics where "non-empty" is not strict enough.
+#
+#   allow_empty:
+#     panel titles whose empty result on the demo stack is expected
+#     and not a defect. See per-entry justification below.
+#
+# The default `pg_doorman:9127` / `app_db` / `app_(user|user_2|session)`
+# values match grafana/demo/. For other demo stacks override via CLI.
+
+variables:
+  instance: pg_doorman:9127
+  database: app_db
+  user: 'app_user|app_user_2|app_session'
+  __rate_interval: 1m
+  __interval: 30s
+  __range: 30m
+
+# Panel titles whose empty result is expected on the demo stack and
+# should not be flagged. Every entry is justified in the comment above
+# it: the demo physically does not exercise that code path. This is not
+# a defect amnesty — adding a new entry requires explaining why the
+# demo cannot produce data for it.
+allow_empty:
+  # Patroni-assisted fallback is not configured in the demo, so every
+  # related metric stays unset.
+  - "Local backend in cooldown"
+  - "Fallback Connections"
+  - "Patroni API Errors"
+  - "Patroni API Rate"
+  - "Patroni API Duration"
+  - "Fallback Cache Hits"
+  # Streaming metrics fire only on messages above max_message_size; the
+  # demo pgbench and LISTEN/NOTIFY workloads never produce one.
+  - "Streaming Events per Second"
+  - "Streaming Bytes per Second"
+  # The synthetic SQLSTATE 26000 counter increments only when a client
+  # binds an anonymous prepared whose text is no longer in any cache.
+  # pgbench with -M prepared / -M simple never reaches that state.
+  - "Synthetic SQLSTATE 26000 Rate"
+  # Listener rejections fire on pre-auth failures (HBA, TLS handshake,
+  # protocol error). The demo workloads all authenticate cleanly.
+  - "Pre-auth Rejections per Second by Reason"
+  # Anonymous LRU evictions need a workload with > cache_size unique
+  # parameterised queries per client. pgbench --select-only holds one.
+  - "Anonymous LRU Eviction Rate"
+  # auth_query cache stays steady because pgbench/listener hold their
+  # connections longer than cache_ttl, so no re-authentications happen.
+  - "Auth Cache Hit Rate"
+  - "Auth Outcomes"
+  # Pool Utilization % divides two pool vectors; the result is empty
+  # while pool_size > 0 for pools that have no active servers right now.
+  - "Pool Utilization %"
+  # Prepared Statement Hit Ratio = clamp(rate / sum(rate)); both rates
+  # are zero on a -M simple workload so the ratio expression returns
+  # an empty vector.
+  - "Prepared Statement Hit Ratio"
+
+bounds:
+  - name: pool_size_app_user
+    query: pg_doorman_pool_size{user="app_user"}
+    min: 10
+    max: 10
+  - name: pool_size_app_user_2
+    query: pg_doorman_pool_size{user="app_user_2"}
+    min: 10
+    max: 10
+  - name: pool_size_app_session
+    query: pg_doorman_pool_size{user="app_session"}
+    min: 5
+    max: 5
+  - name: process_rss_bytes
+    query: pg_doorman_total_memory
+    min: 10485760       # 10 MiB
+    max: 2147483648     # 2 GiB
+  - name: queries_rate_app_session
+    query: rate(pg_doorman_pools_queries_total{user="app_session"}[1m])
+    min: 100
+    max: 200000
+  - name: queries_rate_app_user
+    query: rate(pg_doorman_pools_queries_total{user="app_user"}[1m])
+    min: 50
+    max: 50000
+  - name: transactions_rate_app_user
+    query: rate(pg_doorman_pools_transactions_total{user="app_user"}[1m])
+    min: 50
+    max: 50000
+  - name: query_duration_p99_app_user
+    query: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{user="app_user"}[1m])))
+    min: 0.0001         # 100 µs
+    max: 1.0            # 1 s
+  - name: clients_active_total
+    query: sum(pg_doorman_pools_clients{status="active"})
+    min: 1
+    max: 1000

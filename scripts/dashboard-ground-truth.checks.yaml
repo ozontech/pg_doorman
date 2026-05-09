@@ -1,0 +1,102 @@
+# scripts/dashboard-ground-truth.checks.yaml
+#
+# Used by scripts/dashboard-ground-truth.py. Each check defines:
+#
+#   name        — human-readable identifier (shown in the report).
+#   prometheus  — PromQL query for the dashboard-side value.
+#   truth       — independent ground-truth source (kind + params).
+#   ratio       — allowed max(prom, truth) / min(prom, truth). Defaults
+#                 to 10 — one order of magnitude. The point of the
+#                 check is to catch errors of magnitude (50K vs 5K),
+#                 not epsilon-level differences between p99 algorithms.
+#   exact       — if true, only equality is accepted. Used for static
+#                 values like pool_size taken straight from the config.
+#
+# Sources (kinds):
+#   pg_doorman_log   — parse the print_all_stats line in docker logs:
+#                      params: container, pool, field
+#                      (qps|tps|query_ms.p99|xact_ms.p99|clients.active|servers.active|...).
+#   psql_query       — run SELECT against Postgres directly, bypassing
+#                      the pooler. params: dsn (libpq env), query
+#                      (must return a single number).
+#   toml_value       — read a TOML config value:
+#                      params: file, path (dotted, supports [N] for arrays).
+#   proc_status      — read /proc/1/status from inside the pg_doorman
+#                      container. params: container, field (VmRSS,
+#                      VmSize, ...). Returned as bytes.
+
+defaults:
+  ratio: 10.0
+  pg_doorman_container: demo-pg_doorman-1
+  postgres_dsn:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres_secret
+    dbname: app_db
+  toml_file: grafana/demo/pg_doorman.toml
+
+checks:
+  - name: app_user_qps
+    prometheus: rate(pg_doorman_pools_queries_total{user="app_user", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: qps
+
+  - name: app_user_tps
+    prometheus: rate(pg_doorman_pools_transactions_total{user="app_user", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: tps
+
+  - name: app_session_qps
+    prometheus: rate(pg_doorman_pools_queries_total{user="app_session", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_session@app_db
+      field: qps
+
+  - name: app_user_query_p99
+    prometheus: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{user="app_user", database="app_db"}[1m])))
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: query_ms.p99
+      scale: 0.001    # query_ms → seconds
+
+  - name: app_user_xact_p99
+    prometheus: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{user="app_user", database="app_db"}[1m])))
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: xact_ms.p99
+      scale: 0.001
+
+  - name: app_user_active_clients
+    prometheus: pg_doorman_pools_clients{status="active",user="app_user", database="app_db"}
+    truth:
+      kind: psql_query
+      query: SELECT count(*) FROM pg_stat_activity WHERE usename='app_user' AND state='active'
+    ratio: 5.0          # tighter — minor race jitter only
+
+  - name: pool_size_app_user
+    prometheus: pg_doorman_pool_size{user="app_user", database="app_db"}
+    truth:
+      kind: toml_value
+      path: pools.app_db.users[0].pool_size
+    exact: true
+
+  - name: pool_size_app_session
+    prometheus: pg_doorman_pool_size{user="app_session", database="app_db"}
+    truth:
+      kind: toml_value
+      path: pools.app_db.users[2].pool_size
+    exact: true
+
+  - name: process_rss
+    prometheus: pg_doorman_total_memory
+    truth:
+      kind: proc_status
+      field: VmRSS
