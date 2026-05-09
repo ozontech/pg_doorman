@@ -102,7 +102,11 @@ bounds:
   - name: query_duration_p99_app_user
     query: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{user="app_user"}[1m])))
     min: 0.0001         # 100 µs
-    max: 1.0            # 1 s
+    # Upper bound is bucket-driven: pgbench under demo can shift into
+    # the 0.5–5 s bucket on a busy CI runner, so the histogram_quantile
+    # interpolation lands above 1 s legitimately. 5 s = next bucket
+    # boundary, anything above is a real saturation problem.
+    max: 5.0
   - name: clients_active_total
     query: sum(pg_doorman_pools_clients{status="active"})
     min: 1

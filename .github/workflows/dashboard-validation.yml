@@ -1,0 +1,93 @@
+name: Grafana dashboard validation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "grafana/**"
+      - "scripts/dashboard-*"
+      - "src/web/metrics/**"
+      - "Makefile"
+      - ".github/workflows/dashboard-validation.yml"
+  pull_request:
+    paths:
+      - "grafana/**"
+      - "scripts/dashboard-*"
+      - "src/web/metrics/**"
+      - "Makefile"
+      - ".github/workflows/dashboard-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: smoke + ground-truth on grafana/demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python and Postgres clients
+        run: |
+          # PyYAML drives both scripts. tomli is the 3.10 fallback for
+          # tomllib — kept even though setup-python pins 3.11, so that
+          # local runs on older Python still pass the same tests.
+          # postgresql-client gives us psql for the pg_stat_database
+          # ground-truth lookups.
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml tomli
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Set up Docker Buildx
+        # Required for the GHA cache backend below; the legacy docker
+        # builder ignores cache-from / cache-to silently.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build pg_doorman:ubuntu2204-tls image
+        # The demo references a locally built image. Cache the buildkit
+        # layers across runs so re-validation of dashboard-only changes
+        # does not pay for a full release Rust compile.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ubuntu22-tls
+          tags: pg_doorman:ubuntu2204-tls
+          load: true
+          cache-from: type=gha,scope=pg_doorman-ubuntu2204-tls
+          cache-to: type=gha,scope=pg_doorman-ubuntu2204-tls,mode=max
+
+      - name: Generate provisioned dashboard JSON
+        # The script reads grafana/pg_doorman.json (the artifact); the
+        # demo loads grafana/demo/grafana/provisioning/dashboards/...,
+        # which is regenerated with the demo's datasource UID.
+        run: |
+          python -m pip install grafana-foundation-sdk
+          GRAFANA_DS_UID=prometheus python3 grafana/generate_dashboard.py \
+              > grafana/demo/grafana/provisioning/dashboards/pg_doorman.json
+
+      - name: Run smoke + ground-truth against grafana/demo
+        run: make dashboard-validate-ci
+
+      - name: Collect demo logs on failure
+        if: failure()
+        run: |
+          mkdir -p _logs
+          cd grafana/demo
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps \
+              > ../../_logs/ps.txt || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --no-color --timestamps \
+              > ../../_logs/compose.log 2>&1 || true
+
+      - name: Upload demo logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-validation-logs
+          path: _logs/
+          retention-days: 7

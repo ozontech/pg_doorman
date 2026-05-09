@@ -34,13 +34,15 @@ generate:
 flamegraph: ## Generate CPU flamegraph (perf + pgbench load)
 	./scripts/flamegraph.sh
 
-dashboard-up: ## Bring up grafana/demo and wait for Prometheus warmup
+dashboard-up: ## Bring up grafana/demo and wait until pg_doorman emits enough scrape points
 	cd grafana/demo && docker compose up -d --wait
-	# Prometheus scrape_interval is 5s — 90s gives ~18 points so rate()
-	# over a 1m window is meaningful, and pg_doorman writes
-	# print_all_stats every 60s so the log parser has at least one line.
-	@echo "Warmup 90s for Prometheus and pg_doorman log to accumulate..."
-	@sleep 90
+	# Wait until Prometheus has at least 12 scrape points for a counter
+	# we know pg_doorman+pgbench will produce — at scrape_interval 5 s
+	# that is ~60 s of steady traffic, matching the rate(...[1m]) window
+	# the dashboard and the ground-truth checks use. Polling beats a
+	# flat sleep: a warm laptop unblocks early, a cold runner does not
+	# flake on a fixed assumption.
+	scripts/dashboard-wait-ready.sh
 
 dashboard-smoke: dashboard-up ## Run Grafana dashboard smoke test against grafana/demo
 	python3 scripts/dashboard-smoke.py
@@ -56,8 +58,11 @@ dashboard-validate: dashboard-up ## Run smoke + ground-truth against grafana/dem
 dashboard-down: ## Tear down grafana/demo and remove its volumes
 	cd grafana/demo && docker compose down -v
 
-dashboard-validate-ci: ## Up + validate + down. Fails fast and always tears down.
-	@$(MAKE) dashboard-validate; \
-	rc=$$?; \
-	$(MAKE) dashboard-down; \
-	exit $$rc
+dashboard-validate-ci: ## Up + validate + down with pinned image tags. Cleanup runs on SIGINT/SIGTERM.
+	@set -eu; \
+	compose='docker compose -f grafana/demo/docker-compose.yml -f grafana/demo/docker-compose.ci.yml'; \
+	trap "$$compose down -v" EXIT; \
+	$$compose up -d --wait; \
+	scripts/dashboard-wait-ready.sh; \
+	python3 scripts/dashboard-smoke.py; \
+	python3 scripts/dashboard-ground-truth.py

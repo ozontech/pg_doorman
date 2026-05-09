@@ -89,3 +89,26 @@ docker compose down -v
 ```
 
 removes the volumes too.
+
+## Validation
+
+Two scripts under `scripts/` exercise the demo and report panel
+health. Both are run by `make` targets so a CI job and a developer
+laptop hit the same flow.
+
+```bash
+make dashboard-smoke           # parse pg_doorman.json, query Prometheus
+make dashboard-ground-truth    # compare PromQL with logs / pg_stat / TOML / /proc
+make dashboard-validate        # both layers in one warmup
+make dashboard-validate-ci     # validate + always tear down (used by CI)
+```
+
+`scripts/dashboard-smoke.expected.yaml` documents bounds and the
+`allow_empty` list (panels for which empty data on the demo is
+expected — Patroni-fallback not configured, streaming events not
+produced, etc.). `scripts/dashboard-ground-truth.checks.yaml` lists
+14 checks: throughput against `pg_stat_database`, latency p99 against
+HDR percentiles in the log, active-server counts against
+`pg_stat_activity`, RSS against `/proc/1/status`, pool sizes against
+the TOML config. The full plan is in
+`.github/workflows/dashboard-validation.yml`.

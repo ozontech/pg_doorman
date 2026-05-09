@@ -1,5 +1,33 @@
 //! System metrics utilities for Prometheus exporter.
 
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
+
+/// Returns the kernel page size in bytes.
+///
+/// `/proc/self/statm` reports memory in pages, and the page size is
+/// architecture-specific: 4 KiB on x86_64, 16 KiB on ARM64 with a
+/// non-default kernel build, configurable on PowerPC. Querying
+/// `sysconf(_SC_PAGESIZE)` once at startup gives the correct value
+/// instead of hard-coding 4096 — the latter under-reports RSS by 4×
+/// on a 16 KiB-page kernel.
+#[cfg(target_os = "linux")]
+fn page_size_bytes() -> u64 {
+    static PAGE_SIZE: OnceLock<u64> = OnceLock::new();
+    *PAGE_SIZE.get_or_init(|| {
+        // SAFETY: sysconf is async-signal-safe and `_SC_PAGESIZE` is
+        // defined on every Linux ABI we ship to. A non-positive return
+        // would indicate an out-of-spec kernel; fall back to 4096 in
+        // that case to keep the metric meaningful instead of zeroed.
+        let raw = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if raw > 0 {
+            raw as u64
+        } else {
+            4096
+        }
+    })
+}
+
 /// Gets the current resident memory (RSS) of the process in bytes.
 ///
 /// `/proc/self/statm` columns are documented in `man 5 proc`:
@@ -16,8 +44,7 @@ pub fn get_process_memory_usage() -> u64 {
                 let values: Vec<&str> = statm.split_whitespace().collect();
                 if values.len() >= 2 {
                     if let Ok(pages) = values[1].parse::<u64>() {
-                        // Convert pages to bytes (page size is typically 4KB).
-                        return pages * 4096;
+                        return pages * page_size_bytes();
                     }
                 }
                 0

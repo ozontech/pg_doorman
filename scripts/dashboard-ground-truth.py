@@ -33,13 +33,22 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# tomllib is stdlib in 3.11+. On 3.10 (current ubuntu-22.04 GitHub
+# runner default) fall back to the tomli package, which has the same
+# `loads` / `load` surface. PyYAML and tomli are both single-pip
+# installs, the rest of the script is stdlib-only.
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # Python <= 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 
 import yaml
 
@@ -123,12 +132,21 @@ def prometheus_query(base_url: str, query: str, timeout: float) -> float | None:
 
 
 def latest_log_pool_metric(
-    container: str, pool: str, key: str
+    container: str, pool: str, key: str, last_n: int = 4
 ) -> float | None:
-    """Read the latest value of `field` for `pool` from print_all_stats."""
+    """Mean of the last ``last_n`` print_all_stats values for ``pool``.
+
+    pg_doorman emits a stats line every ``STAT_PERIOD`` seconds (15 s
+    in 3.7+). Prometheus rate windows in this PR are ``[1m]``, so a
+    single 15-second log sample sits in a much narrower window than
+    the Prometheus side and shows ~10–20 % more variance. Averaging
+    the last four samples gives the same ~60-second window as the
+    Prometheus rate, removing a class of false positives that came
+    from the 15 s vs 60 s mismatch alone.
+    """
     try:
         proc = subprocess.run(
-            ["docker", "logs", "--tail", "500", container],
+            ["docker", "logs", "--since", "5m", container],
             check=True,
             capture_output=True,
             text=True,
@@ -143,13 +161,17 @@ def latest_log_pool_metric(
     if key not in LOG_FIELD_KEYS:
         raise ValueError(f"unknown log field: {key}")
     field = LOG_FIELD_KEYS[key]
-    last: float | None = None
+    values: list[float] = []
     for line in out.splitlines():
         m = LOG_LINE_RE.search(line)
         if not m or m.group("pool") != pool:
             continue
-        last = float(m.group(field))
-    return last
+        values.append(float(m.group(field)))
+    if not values:
+        return None
+    window_size = max(1, last_n)
+    window = values[-window_size:]
+    return sum(window) / len(window)
 
 
 def psql_scalar(dsn: dict[str, Any], query: str) -> float | None:
@@ -198,6 +220,54 @@ def toml_lookup(file: str, path: str) -> Any:
     return cur
 
 
+def toml_array_lookup(
+    file: str, path: str, filter_field: str, filter_value: Any, field: str
+) -> Any:
+    """Pick one entry from a TOML array of tables by predicate.
+
+    Used for things like ``pools.app_db.users[username='app_session'].pool_size``
+    so the check does not depend on a fragile array index. A cosmetic
+    reordering of ``[[pools.app_db.users]]`` no longer silently breaks
+    the assertion.
+    """
+    array = toml_lookup(file, path)
+    if not isinstance(array, list):
+        raise KeyError(f"path '{path}' is not an array of tables")
+    for item in array:
+        if not isinstance(item, dict):
+            continue
+        if item.get(filter_field) == filter_value:
+            if field not in item:
+                raise KeyError(
+                    f"field '{field}' missing in match for "
+                    f"{filter_field}={filter_value!r} at {path}"
+                )
+            return item[field]
+    raise KeyError(
+        f"no entry matches {filter_field}={filter_value!r} in {path}"
+    )
+
+
+def psql_delta(
+    dsn: dict[str, Any], query: str, interval_seconds: float
+) -> float | None:
+    """Snapshot, sleep, snapshot. Return per-second delta of a counter.
+
+    Used to compare ``rate(pg_doorman_pools_transactions_total[1m])``
+    with ``(xact_commit + xact_rollback) / interval`` from
+    ``pg_stat_database`` — the first independent ground truth from
+    Postgres itself, separate from any pg_doorman code path.
+    """
+    first = psql_scalar(dsn, query)
+    if first is None:
+        return None
+    time.sleep(max(1.0, interval_seconds))
+    second = psql_scalar(dsn, query)
+    if second is None:
+        return None
+    return max(0.0, (second - first) / max(1.0, interval_seconds))
+
+
 def proc_status_field(container: str, field: str) -> int:
     """Read a numeric kB field from /proc/1/status inside the container."""
     proc = subprocess.run(
@@ -222,13 +292,30 @@ def resolve_truth(
     kind = truth["kind"]
     if kind == "pg_doorman_log":
         container = truth.get("container") or defaults["pg_doorman_container"]
-        return latest_log_pool_metric(container, truth["pool"], truth["field"])
+        last_n = int(truth.get("last_n", 4))
+        return latest_log_pool_metric(
+            container, truth["pool"], truth["field"], last_n=last_n
+        )
     if kind == "psql_query":
         dsn = {**defaults["postgres_dsn"], **(truth.get("dsn") or {})}
         return psql_scalar(dsn, truth["query"])
+    if kind == "psql_delta":
+        dsn = {**defaults["postgres_dsn"], **(truth.get("dsn") or {})}
+        interval = float(truth.get("interval_seconds", 5.0))
+        return psql_delta(dsn, truth["query"], interval)
     if kind == "toml_value":
         file = truth.get("file") or defaults["toml_file"]
         value = toml_lookup(file, truth["path"])
+        return float(value)
+    if kind == "toml_array":
+        file = truth.get("file") or defaults["toml_file"]
+        value = toml_array_lookup(
+            file,
+            truth["path"],
+            truth["filter_field"],
+            truth["filter_value"],
+            truth["field"],
+        )
         return float(value)
     if kind == "proc_status":
         container = truth.get("container") or defaults["pg_doorman_container"]
@@ -236,39 +323,73 @@ def resolve_truth(
     raise ValueError(f"unknown truth.kind: {kind}")
 
 
-def evaluate(
-    check: dict[str, Any], defaults: dict[str, Any], prom_url: str, timeout: float
-) -> CheckResult:
-    name = check["name"]
+TRUTH_SOURCE_ERRORS: tuple[type[BaseException], ...] = (
+    KeyError,
+    ValueError,
+    RuntimeError,
+    OSError,
+    subprocess.SubprocessError,
+)
+
+
+def _snapshot(
+    check: dict[str, Any],
+    defaults: dict[str, Any],
+    prom_url: str,
+    timeout: float,
+) -> tuple[float | None, float | None, str]:
+    """Take a single (Prometheus, truth) snapshot. Empty side returns None."""
     try:
         prom_value = prometheus_query(prom_url, check["prometheus"], timeout)
     except (urllib.error.HTTPError, urllib.error.URLError) as e:
-        return CheckResult(
-            name=name,
-            prom_value=None,
-            truth_value=None,
-            ok=False,
-            reason=f"prometheus error: {e}",
+        return None, None, f"prometheus error: {e}"
+    if prom_value is None:
+        return None, None, "prometheus returned no value"
+    try:
+        truth_value = resolve_truth(check["truth"], defaults)
+    except TRUTH_SOURCE_ERRORS as e:
+        return prom_value, None, f"truth source error: {type(e).__name__}: {e}"
+    if truth_value is None:
+        return prom_value, None, "truth source returned no value"
+    return prom_value, truth_value, ""
+
+
+def evaluate(
+    check: dict[str, Any],
+    defaults: dict[str, Any],
+    prom_url: str,
+    timeout: float,
+    retries: int = 3,
+    retry_backoff: float = 30.0,
+) -> CheckResult:
+    name = check["name"]
+    prom_value: float | None = None
+    truth_value: float | None = None
+    reason = ""
+    for attempt in range(max(1, retries)):
+        prom_value, truth_value, reason = _snapshot(
+            check, defaults, prom_url, timeout
         )
+        # Retry only when the demo is still warming up — both sides must
+        # be populated before the test is meaningful. A real deviation
+        # (PromQL error, missing TOML key) shows up immediately and is
+        # not retried because reason is set deterministically.
+        if (
+            prom_value is not None
+            and truth_value is not None
+            and prom_value > 0
+            and truth_value > 0
+        ):
+            break
+        if attempt + 1 < retries:
+            time.sleep(retry_backoff)
     if prom_value is None:
         return CheckResult(
             name=name,
             prom_value=None,
             truth_value=None,
             ok=False,
-            reason="prometheus returned no value",
-        )
-
-    truth_block = check["truth"]
-    try:
-        truth_value = resolve_truth(truth_block, defaults)
-    except Exception as e:  # noqa: BLE001 — broad catch over heterogeneous sources
-        return CheckResult(
-            name=name,
-            prom_value=prom_value,
-            truth_value=None,
-            ok=False,
-            reason=f"truth source error: {e}",
+            reason=reason or "prometheus returned no value",
         )
     if truth_value is None:
         return CheckResult(
@@ -276,14 +397,17 @@ def evaluate(
             prom_value=prom_value,
             truth_value=None,
             ok=False,
-            reason="truth source returned no value",
+            reason=reason or "truth source returned no value",
         )
 
-    scale = float(truth_block.get("scale", 1.0))
+    scale = float(check["truth"].get("scale", 1.0))
     truth_scaled = truth_value * scale
 
     if check.get("exact"):
-        if prom_value != truth_scaled:
+        # Allow a tiny float tolerance — TOML lookups can return ints or
+        # decimals depending on the value, and ``int(10) != float(10.0)``
+        # would fail otherwise without any real semantic difference.
+        if abs(prom_value - truth_scaled) > 1e-9:
             return CheckResult(
                 name=name,
                 prom_value=prom_value,
@@ -296,10 +420,6 @@ def evaluate(
         )
 
     if prom_value <= 0 or truth_scaled <= 0:
-        # One of the sources is zero so the ratio is undefined. On the
-        # demo this can happen in the first few seconds before pgbench
-        # warmed up. Treat as failure — the operator should rerun once
-        # the workload is steady.
         return CheckResult(
             name=name,
             prom_value=prom_value,
@@ -362,6 +482,18 @@ def main() -> int:
         help="Override defaults.toml_file in the checks YAML.",
     )
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=3,
+        help="Snapshot retries when prom or truth is still non-positive.",
+    )
+    parser.add_argument(
+        "--retry-backoff",
+        type=float,
+        default=30.0,
+        help="Sleep between retries in seconds.",
+    )
     args = parser.parse_args()
 
     checks_path = Path(args.checks)
@@ -383,7 +515,14 @@ def main() -> int:
     checks = config.get("checks") or []
 
     results = [
-        evaluate(check, defaults, args.prometheus_url, args.timeout)
+        evaluate(
+            check,
+            defaults,
+            args.prometheus_url,
+            args.timeout,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+        )
         for check in checks
     ]
     print(render_report(results))

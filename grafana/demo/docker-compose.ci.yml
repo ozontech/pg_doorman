@@ -1,0 +1,14 @@
+# Override for `make dashboard-validate-ci`. Pins the floating tags
+# in docker-compose.yml so a Prometheus or Grafana release does not
+# silently change the behaviour we assert against. Compose:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+#
+# The reason latest stays in the main file: developers pulling for the
+# first time still get the freshest UI to demo. CI prefers stability.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.11.3
+  grafana:
+    image: grafana/grafana:13.0.1

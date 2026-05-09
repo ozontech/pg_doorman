@@ -132,7 +132,14 @@ def iter_panels(panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def collect_panel_targets(
     dashboard: dict[str, Any],
 ) -> list[tuple[str, str]]:
-    """Collect (panel_title, expr) pairs for every target in the dashboard."""
+    """Collect (panel_title, expr) pairs for every target in the dashboard.
+
+    Titles are not unique in pg_doorman.json — at minimum "Waiting Clients"
+    appears twice. The smoke test still keys on the title because that
+    is what the operator reads in Grafana, but ``validate_allow_empty``
+    refuses to start when allow_empty references an ambiguous title,
+    so a future duplicate cannot silently widen the amnesty list.
+    """
     pairs: list[tuple[str, str]] = []
     for panel in iter_panels(dashboard.get("panels", [])):
         title = panel.get("title", "<untitled>")
@@ -142,6 +149,32 @@ def collect_panel_targets(
                 continue
             pairs.append((title, expr))
     return pairs
+
+
+def validate_allow_empty(
+    dashboard: dict[str, Any], allow_empty: set[str]
+) -> list[str]:
+    """Check every allow_empty entry resolves to a single panel.
+
+    Returns a list of error strings: missing titles or duplicated ones.
+    Run before the actual checks so the operator sees the configuration
+    error at the top of the report instead of after 60+ panel results.
+    """
+    title_counts: dict[str, int] = {}
+    for panel in iter_panels(dashboard.get("panels", [])):
+        title = panel.get("title", "<untitled>")
+        title_counts[title] = title_counts.get(title, 0) + 1
+    errors: list[str] = []
+    for title in allow_empty:
+        count = title_counts.get(title, 0)
+        if count == 0:
+            errors.append(f"allow_empty: title not found in dashboard: {title!r}")
+        elif count > 1:
+            errors.append(
+                f"allow_empty: title is ambiguous "
+                f"({count} panels): {title!r}"
+            )
+    return errors
 
 
 def prometheus_query(base_url: str, query: str, timeout: float) -> dict[str, Any]:
@@ -341,6 +374,12 @@ def main() -> int:
     with dashboard_path.open(encoding="utf-8") as f:
         dashboard = json.load(f)
     vars_, bounds, allow_empty = parse_expected(expected_path)
+
+    config_errors = validate_allow_empty(dashboard, allow_empty)
+    if config_errors:
+        for err in config_errors:
+            print(err, file=sys.stderr)
+        return 2
 
     report = Report()
     for panel, expr in collect_panel_targets(dashboard):
