@@ -399,19 +399,23 @@ impl AuthQueryExecutor {
         username: &str,
         pool_name: &str,
     ) -> std::collections::HashMap<String, String> {
-        let has_column = row
+        let column = row
             .columns()
             .iter()
-            .any(|c| c.name() == "startup_parameters");
-        if !has_column {
+            .find(|c| c.name() == "startup_parameters");
+        let Some(column) = column else {
             return std::collections::HashMap::new();
-        }
+        };
         let raw: Option<String> = match row.try_get::<_, Option<String>>("startup_parameters") {
             Ok(v) => v,
             Err(e) => {
                 warn!(
-                    "[{username}@{pool_name}] auth_query startup_parameters: column present but \
-                     not readable as text: {e}; parameters ignored"
+                    "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                     `{ty}` but pg_doorman reads it as `text`: {e}. If the SELECT returns \
+                     json or jsonb, add `::text` (for example: \
+                     `jsonb_build_object(...)::text AS startup_parameters`); per-user \
+                     parameters are ignored for this row.",
+                    ty = column.type_().name()
                 );
                 return std::collections::HashMap::new();
             }
