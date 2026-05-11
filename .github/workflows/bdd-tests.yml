@@ -245,6 +245,7 @@ jobs:
           - { name: "Patroni-assisted fallback",         cargo: "test --test bdd -- --tags @patroni_fallback" }
           - { name: "Server TLS",                        cargo: "test --test bdd -- --tags @server-tls" }
           - { name: "TLS migration (vendored OpenSSL)",  cargo: "test --features tls-migration --test bdd -- --tags @tls-migration" }
+          - { name: "Startup parameters",                cargo: "test --test bdd -- --tags @startup-parameters" }
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
