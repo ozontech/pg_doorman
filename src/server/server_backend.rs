@@ -926,62 +926,64 @@ impl Server {
                     }
                 }
 
-                // ErrorResponse. Read the message body, parse it, and -
-                // when the SQLSTATE belongs to the startup-parameter family
-                // and the operator-supplied map was non-empty - feed the
-                // failing parameter name into the per-pool quarantine. We
-                // intentionally bypass `handle_startup_error` here because
-                // that helper consumes the body internally and we need to
-                // inspect the M-field for the parameter name; the existing
-                // error pathway (`Error::ServerStartupError`) is preserved
-                // so callers see the same outward behavior.
+                // ErrorResponse. Read the message body and parse it. When the
+                // SQLSTATE belongs to the startup-parameter family and the
+                // operator-supplied map was non-empty, feed the failing
+                // parameter name into the per-pool quarantine. Finally,
+                // preserve the pre-quarantine error classification so the
+                // Patroni-assisted fallback path still treats transient PG
+                // unavailability (SQLSTATE class `57P`) as a route-elsewhere
+                // signal rather than a startup misconfiguration.
                 'E' => {
                     let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
                     let _ = bytes.get_u8();
                     let _ = bytes.get_i32();
-                    let parsed = PgErrorMsg::parse(&bytes).ok();
+                    let Ok(msg) = PgErrorMsg::parse(&bytes) else {
+                        return Err(Error::ServerStartupError(
+                            "startup ErrorResponse".to_string(),
+                            server_identifier.clone(),
+                        ));
+                    };
 
-                    if let Some(ref msg) = parsed {
-                        let is_startup_parameter_sqlstate =
-                            matches!(msg.code.as_str(), "22023" | "42704" | "42501");
-                        if is_startup_parameter_sqlstate && !startup_parameters_sent.is_empty() {
-                            if let Some(param_name) =
-                                crate::server::startup_error::extract_parameter_name(&msg.message)
-                            {
-                                let outcome = quarantine.record_rejection(&param_name, &msg.code);
-                                warn!(
-                                    "[{}@{}] backend startup rejected: parameter=\"{}\" \
-                                     sqlstate={} message=\"{}\" outcome={:?}",
-                                    address.username,
-                                    address.pool_name,
-                                    param_name,
-                                    msg.code,
-                                    msg.message,
-                                    outcome,
-                                );
-                                crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
-                                    .with_label_values(&[
-                                        &address.pool_name,
-                                        &param_name,
-                                        &msg.code,
-                                    ])
-                                    .inc();
-                                if matches!(
-                                    outcome,
-                                    crate::server::quarantine::RecordOutcome::JustQuarantined
-                                ) {
-                                    crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
-                                        .with_label_values(&[&address.pool_name, &param_name])
-                                        .set(1);
-                                }
+                    let is_startup_parameter_sqlstate =
+                        matches!(msg.code.as_str(), "22023" | "42704" | "42501");
+                    if is_startup_parameter_sqlstate && !startup_parameters_sent.is_empty() {
+                        if let Some(param_name) =
+                            crate::server::startup_error::extract_parameter_name(&msg.message)
+                        {
+                            let outcome = quarantine.record_rejection(&param_name, &msg.code);
+                            warn!(
+                                "[{}@{}] backend startup rejected: parameter=\"{}\" \
+                                 sqlstate={} message=\"{}\" outcome={:?}",
+                                address.username,
+                                address.pool_name,
+                                param_name,
+                                msg.code,
+                                msg.message,
+                                outcome,
+                            );
+                            crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
+                                .with_label_values(&[&address.pool_name, &param_name, &msg.code])
+                                .inc();
+                            if matches!(
+                                outcome,
+                                crate::server::quarantine::RecordOutcome::JustQuarantined
+                            ) {
+                                crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
+                                    .with_label_values(&[&address.pool_name, &param_name])
+                                    .set(1);
                             }
                         }
                     }
 
+                    if msg.code.starts_with("57P") {
+                        return Err(Error::ServerUnavailableError(
+                            msg.message,
+                            server_identifier.clone(),
+                        ));
+                    }
                     return Err(Error::ServerStartupError(
-                        parsed
-                            .map(|m| format!("{}: {}", m.code, m.message))
-                            .unwrap_or_else(|| "startup ErrorResponse".to_string()),
+                        format!("{}: {}", msg.code, msg.message),
                         server_identifier.clone(),
                     ));
                 }
