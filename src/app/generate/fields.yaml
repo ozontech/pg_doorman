@@ -1152,25 +1152,25 @@ fields:
     startup_parameters:
       config:
         en: |
-          Operator-supplied PostgreSQL startup parameters (GUCs) injected
-          into every backend's StartupMessage as session defaults.
-          They become pg_settings.reset_val and survive RESET ALL / DISCARD ALL.
-          Per-pool startup_parameters override matching keys from general.
-          Reserved keys (user, database, replication, options, _pq_.*) are rejected.
+          Operator-supplied PostgreSQL configuration parameters.
+          Reserved keys (user, database, replication, options, _pq_.*)
+          and the StartupMessage budget are validated at config load.
+          Wire injection ships in a later commit on the
+          feat/startup-parameters branch.
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
-          PostgreSQL startup-параметры (GUC), задаваемые оператором.
-          Передаются в StartupMessage каждого backend как session defaults,
-          становятся pg_settings.reset_val и переживают RESET ALL / DISCARD ALL.
-          Параметры на уровне пула перекрывают совпадающие ключи из general.
-          Зарезервированные ключи (user, database, replication, options, _pq_.*) отклоняются.
+          Конфигурационные параметры PostgreSQL, заданные оператором.
+          Зарезервированные ключи (user, database, replication, options,
+          _pq_.*) и бюджет StartupMessage проверяются на этапе загрузки
+          конфига. Передача параметров в backend появится в одном из
+          следующих коммитов ветки feat/startup-parameters.
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        A map of PostgreSQL GUC names to string values, applied as session defaults at backend startup via the protocol-level `StartupMessage`. Because they enter the session at the same precedence level as `-c`/`PGOPTIONS`, the values become each parameter's `reset_val` in `pg_settings` and are restored automatically after a client `RESET ALL` or `DISCARD ALL`.
+        A map of PostgreSQL configuration parameter names to string values, intended as session defaults for every backend pg_doorman opens for this pool's clients.
 
-        Common use cases: `plan_cache_mode`, `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, namespaced GUCs like `auto_explain.log_min_duration`.
+        Validation enforced at config load: reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`) are refused; keys must match PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`); values must not contain null bytes; the serialised map must fit within the operator budget carved out of PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
 
-        Validation refuses reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), keys that violate PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`), values containing null bytes, and maps whose serialised size would exceed the 15 KiB operator budget within PG's 16 KiB `StartupMessage` cap.
+        Wire-level injection into the backend `StartupMessage` and the `general` → `pool` → `auth_query` cascade resolution ship in subsequent commits on the `feat/startup-parameters` branch. The current commit only validates this map at config load.
       default: "{} (empty)"
 
   pool:
@@ -1475,17 +1475,26 @@ fields:
     startup_parameters:
       config:
         en: |
-          Operator-supplied PostgreSQL startup parameters (GUCs) injected
-          into every backend's StartupMessage for this pool. Overrides
-          matching keys from general.startup_parameters.
+          Operator-supplied PostgreSQL configuration parameters for this
+          pool. Reserved keys (user, database, replication, options,
+          _pq_.*) and the StartupMessage budget are validated at config
+          load. Per-pool overlay; the eventual cascade
+          (general → pool → auth_query) is not yet active. Wire injection
+          ships in a later commit on the feat/startup-parameters branch.
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
-          PostgreSQL startup-параметры (GUC) для этого пула, передаются
-          каждому backend через StartupMessage. Перекрывают совпадающие
-          ключи из general.startup_parameters.
+          Конфигурационные параметры PostgreSQL для этого пула, заданные
+          оператором. Зарезервированные ключи (user, database,
+          replication, options, _pq_.*) и бюджет StartupMessage
+          проверяются на этапе загрузки конфига. Перекрытие на уровне
+          пула; каскад general → pool → auth_query пока не активен.
+          Передача параметров в backend появится в одном из следующих
+          коммитов ветки feat/startup-parameters.
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        Per-pool override of [`general.startup_parameters`](#startup-parameters). Keys present in both maps take the per-pool value; keys present only in `general` still apply. See the general-level docs for validation rules and wire-level semantics.
+        Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the operator budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
+
+        Per-pool overlay semantics — the cascade `general` → `pool` → `auth_query` that selects the effective value for each key — and wire injection into the backend `StartupMessage` ship in subsequent commits on the `feat/startup-parameters` branch. The current commit only validates this map at config load.
       default: "{} (empty)"
 
   user:

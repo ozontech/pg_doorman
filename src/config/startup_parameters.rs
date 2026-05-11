@@ -2,19 +2,22 @@
 //!
 //! Used by [`crate::config::General`] and [`crate::config::Pool`] to refuse
 //! configs that try to inject reserved protocol keys (user, database,
-//! replication, options, `_pq_.*`), or that would exceed PG's 16 KiB
-//! StartupMessage budget once concatenated with `user`+`database`+`application_name`.
+//! replication, options, `_pq_.*`), or that would exceed PG's
+//! `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes) StartupMessage body cap once
+//! concatenated with `user`+`database`+`application_name`.
 
 use std::collections::BTreeMap;
 
 use crate::errors::Error;
 
-/// PG `StartupMessage` length budget (length prefix + body). We reserve a
-/// generous slice (1 KiB) for `user`/`database`/`application_name` to keep
-/// validation predictable even when long usernames or database names are in
-/// play; the remainder is available to operator-supplied parameters.
-pub const MAX_STARTUP_PACKET_SIZE: usize = 16 * 1024;
-pub const RESERVED_HEADROOM: usize = 1024;
+/// PostgreSQL caps the StartupMessage body at 10 000 bytes
+/// (`MAX_STARTUP_PACKET_LENGTH` in `src/include/libpq/pqcomm.h`) to prevent
+/// memory-exhaustion attacks via oversize packets. pg_doorman reserves a
+/// modest slice for its own `user`/`database`/`application_name` triple
+/// and the protocol's per-pair NUL terminators; the rest is the budget
+/// available to operator-supplied parameters.
+pub const MAX_STARTUP_PACKET_SIZE: usize = 10_000;
+pub const RESERVED_HEADROOM: usize = 512;
 pub const MAX_OPERATOR_BUDGET: usize = MAX_STARTUP_PACKET_SIZE - RESERVED_HEADROOM;
 
 /// Keys pg_doorman manages itself or that PG treats specially in the startup
@@ -73,7 +76,7 @@ fn validate_key(key: &str, scope: &str) -> Result<(), Error> {
 }
 
 fn validate_value(key: &str, value: &str, scope: &str) -> Result<(), Error> {
-    if value.as_bytes().contains(&0) {
+    if value.as_bytes().contains(&b'\0') {
         return Err(Error::BadConfig(format!(
             "{scope}: value for '{key}' contains a null byte"
         )));
@@ -82,12 +85,13 @@ fn validate_value(key: &str, value: &str, scope: &str) -> Result<(), Error> {
 }
 
 fn validate_total_size(map: &BTreeMap<String, String>, scope: &str) -> Result<(), Error> {
-    // PG wire layout for each parameter: key\0value\0 — two trailing NULs per pair.
+    // Per the PG wire layout each pair contributes key, NUL, value, NUL.
     let total: usize = map.iter().map(|(k, v)| k.len() + 1 + v.len() + 1).sum();
     if total > MAX_OPERATOR_BUDGET {
         return Err(Error::BadConfig(format!(
             "{scope}: serialized size {total} bytes exceeds operator budget {MAX_OPERATOR_BUDGET} \
-             (StartupMessage cap is {MAX_STARTUP_PACKET_SIZE}, {RESERVED_HEADROOM} reserved for \
+             (PG StartupMessage cap is {MAX_STARTUP_PACKET_SIZE} bytes per \
+             MAX_STARTUP_PACKET_LENGTH; {RESERVED_HEADROOM} reserved for \
              pg_doorman-managed keys)"
         )));
     }
@@ -163,7 +167,7 @@ mod tests {
 
     #[test]
     fn oversize_rejected() {
-        // 16 keys × 1 KiB value > 15 KiB operator budget.
+        // 16 keys × 1 KiB value still overruns the 9 488-byte operator budget.
         let big: BTreeMap<String, String> = (0..16)
             .map(|i| (format!("key{i}"), "a".repeat(1024)))
             .collect();
@@ -177,5 +181,21 @@ mod tests {
         // happen in the wire layer, not validation.
         let map = m(&[("application_name", "my_app")]);
         assert!(validate(&map, "scope").is_ok());
+    }
+
+    #[test]
+    fn budget_matches_pg_startup_packet_cap() {
+        // Locks the constants in place — PG's MAX_STARTUP_PACKET_LENGTH
+        // (src/include/libpq/pqcomm.h) is 10 000; pg_doorman reserves
+        // 512 bytes for its own keys, leaving 9 488 for the operator.
+        // A future careless edit that drifts back to a 16 KiB ceiling
+        // would re-introduce silently-rejected configs on every backend
+        // startup; this assertion is the trip-wire.
+        assert_eq!(MAX_STARTUP_PACKET_SIZE, 10_000);
+        assert_eq!(RESERVED_HEADROOM, 512);
+        assert_eq!(
+            MAX_OPERATOR_BUDGET,
+            MAX_STARTUP_PACKET_SIZE - RESERVED_HEADROOM
+        );
     }
 }

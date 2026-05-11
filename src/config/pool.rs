@@ -176,10 +176,12 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
-    /// Operator-supplied PostgreSQL startup parameters injected into every
-    /// backend's `StartupMessage`. Becomes `pg_settings.reset_val` and
-    /// survives `RESET ALL`/`DISCARD ALL`. Overrides matching keys from
-    /// `general.startup_parameters`.
+    /// Operator-supplied PostgreSQL configuration parameters. Reserved
+    /// keys (`user`, `database`, `replication`, `options`, `_pq_.*`) and
+    /// the StartupMessage budget are validated at config load. Wire
+    /// injection into backend `StartupMessage` and the
+    /// general → pool → auth_query cascade resolution ship in subsequent
+    /// commits on the feat/startup-parameters branch.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub startup_parameters: std::collections::BTreeMap<String, String>,
 

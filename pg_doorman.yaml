@@ -450,11 +450,11 @@ general:
   # PostgreSQL Startup Parameters (operator-defined GUCs)
   # --------------------------------------------------------------------------
 
-  # Operator-supplied PostgreSQL startup parameters (GUCs) injected
-  # into every backend's StartupMessage as session defaults.
-  # They become pg_settings.reset_val and survive RESET ALL / DISCARD ALL.
-  # Per-pool startup_parameters override matching keys from general.
-  # Reserved keys (user, database, replication, options, _pq_.*) are rejected.
+  # Operator-supplied PostgreSQL configuration parameters.
+  # Reserved keys (user, database, replication, options, _pq_.*)
+  # and the StartupMessage budget are validated at config load.
+  # Wire injection ships in a later commit on the
+  # feat/startup-parameters branch.
   # Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
   # Default: {} (empty)
   # startup_parameters:
@@ -660,9 +660,12 @@ pools:
     # Default: false
     log_client_parameter_status_changes: false
 
-    # Operator-supplied PostgreSQL startup parameters (GUCs) injected
-    # into every backend's StartupMessage for this pool. Overrides
-    # matching keys from general.startup_parameters.
+    # Operator-supplied PostgreSQL configuration parameters for this
+    # pool. Reserved keys (user, database, replication, options,
+    # _pq_.*) and the StartupMessage budget are validated at config
+    # load. Per-pool overlay; the eventual cascade
+    # (general → pool → auth_query) is not yet active. Wire injection
+    # ships in a later commit on the feat/startup-parameters branch.
     # Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
     # Default: {} (empty)
     # startup_parameters:
