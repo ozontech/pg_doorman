@@ -419,9 +419,18 @@ jobs:
             echo "Skipping :latest: ${GITHUB_REF_NAME} is not a stable semver tag"
             exit 0
           fi
+          # `|| true` shields the substitution from `set -euo pipefail`
+          # when grep finds no matching tag (it would exit 1 and abort
+          # the whole step). That state only happens on a brand-new
+          # repository before its first stable tag — defensive, not
+          # something pg_doorman hits today.
           MAX_STABLE=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | head -1)
+            | head -1 || true)
+          if [[ -z "${MAX_STABLE}" ]]; then
+            echo "Skipping :latest: no stable semver tag in the repository"
+            exit 0
+          fi
           if [[ "${MAX_STABLE}" != "${GITHUB_REF_NAME}" ]]; then
             echo "Skipping :latest: highest stable tag is ${MAX_STABLE}, not ${GITHUB_REF_NAME}"
             exit 0
