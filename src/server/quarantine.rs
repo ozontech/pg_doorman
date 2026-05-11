@@ -123,6 +123,30 @@ impl QuarantineState {
             })
             .collect()
     }
+
+    /// Reset the partial-rejection counters for keys that pg_doorman just
+    /// successfully sent in a backend StartupMessage (the backend reached
+    /// `ReadyForQuery`). This keeps the threshold model honest: only N
+    /// *consecutive* rejections of the same key arm quarantine, not N
+    /// rejections spread across a sea of healthy startups.
+    ///
+    /// Keys currently quarantined (`quarantined_until = Some(_)`) are not
+    /// touched; their TTL is the only release path. By definition such keys
+    /// were not in the sent map at all, so a successful startup says nothing
+    /// about whether the underlying problem with them was fixed.
+    pub fn record_success(&self, sent_keys: &std::collections::BTreeMap<String, String>) {
+        if sent_keys.is_empty() {
+            return;
+        }
+        let mut entries = self.entries.lock().expect("quarantine mutex");
+        for k in sent_keys.keys() {
+            if let Some(entry) = entries.get_mut(k) {
+                if entry.quarantined_until.is_none() {
+                    entry.reject_count = 0;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +235,50 @@ mod tests {
         assert_eq!(
             q.record_rejection("foo", "42704"),
             RecordOutcome::JustQuarantined
+        );
+    }
+
+    #[test]
+    fn record_success_resets_counter_for_non_quarantined_key() {
+        let q = QuarantineState::new(3, Duration::from_secs(60));
+        // counter = 1, not yet quarantined.
+        let _ = q.record_rejection("a", "42704");
+        let sent: BTreeMap<String, String> =
+            [("a".to_string(), "x".to_string())].into_iter().collect();
+        q.record_success(&sent);
+        // Next rejection counts from 1 again, not 2 (counter was reset).
+        assert_eq!(
+            q.record_rejection("a", "42704"),
+            RecordOutcome::Counting { reject_count: 1 }
+        );
+    }
+
+    #[test]
+    fn record_success_preserves_quarantine_state() {
+        let q = QuarantineState::new(1, Duration::from_secs(60));
+        // threshold=1 -> already quarantined.
+        let _ = q.record_rejection("a", "42704");
+        let sent: BTreeMap<String, String> =
+            [("a".to_string(), "x".to_string())].into_iter().collect();
+        // Success on the same key (e.g., somebody else removed the bad value).
+        // record_success must not touch the quarantine deadline because the
+        // key was never actually sent in this successful startup.
+        q.record_success(&sent);
+        assert_eq!(q.snapshot_quarantined(), vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn record_success_ignores_unknown_keys() {
+        let q = QuarantineState::new(3, Duration::from_secs(60));
+        let _ = q.record_rejection("known", "42704");
+        let sent: BTreeMap<String, String> = [("never_seen".to_string(), "x".to_string())]
+            .into_iter()
+            .collect();
+        q.record_success(&sent);
+        // "known" counter untouched: next rejection counts to 2.
+        assert_eq!(
+            q.record_rejection("known", "42704"),
+            RecordOutcome::Counting { reject_count: 2 }
         );
     }
 }

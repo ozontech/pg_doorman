@@ -1073,6 +1073,12 @@ impl Server {
                         phase_started.elapsed().as_secs_f64(),
                     );
 
+                    // PG accepted every operator-supplied parameter we sent.
+                    // Reset partial-rejection counters for those keys so that
+                    // the threshold model stays "N consecutive rejections",
+                    // not "N rejections ever".
+                    quarantine.record_success(&startup_parameters_sent);
+
                     let server = Server {
                         address: address.to_owned(),
                         stream: BufStream::new(stream),
