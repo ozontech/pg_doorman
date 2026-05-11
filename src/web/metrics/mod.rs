@@ -459,10 +459,13 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 
 /// Counter for every backend startup attempt that PostgreSQL rejected
 /// because of an operator-supplied `startup_parameters` entry. Tracked
-/// per pool/user/parameter so dashboards can spot a single bad knob in a
+/// per pool/parameter so dashboards can spot a single bad knob in a
 /// large fleet, and split by `sqlstate` (`22023` invalid_value, `42704`
 /// undefined_object, `42501` insufficient_privilege) so the alerting
-/// rule can distinguish a typo from a permission denial. Increments
+/// rule can distinguish a typo from a permission denial. The failing
+/// username is on the corresponding warn log line; it is intentionally
+/// left out of the label set so dynamic auth_query pools cannot blow up
+/// the series count when many roles share a broken config. Increments
 /// once per failed StartupMessage, regardless of whether this rejection
 /// happens to be the one that crosses the quarantine threshold.
 pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
