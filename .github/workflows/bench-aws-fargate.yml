@@ -107,24 +107,22 @@ jobs:
 
           GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }}"
           echo "Using base image from GHCR: ${GHCR_IMAGE}"
-          
-          # Create a Dockerfile that includes the source code.
-          # The base image (test-runner) contains the environment but not the code.
-          cat > Dockerfile.bench <<EOF
-          FROM ${GHCR_IMAGE}
-          WORKDIR /workspace
-          COPY . .
-          RUN chmod +x benches/*.sh
-          EOF
-          
+
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
           ECR_IMAGE="${REPO_URL}:bench-${TIMESTAMP}"
           ECR_LATEST="${REPO_URL}:latest"
-          
+
           echo "Building benchmark image: ${ECR_IMAGE}"
-          docker build -t "${ECR_IMAGE}" -t "${ECR_LATEST}" -f Dockerfile.bench .
-          
+          # Dockerfile lives at pkg/Dockerfile.bench so it is grep-able
+          # in-repo and developers can build the same image locally with
+          # `docker build --build-arg BASE_IMAGE=<test-runner-tag> \
+          #   -f pkg/Dockerfile.bench .`. Previously this Dockerfile was
+          # generated inline via heredoc, which made it invisible to
+          # repo search and impossible to reproduce outside the runner.
+          docker build -t "${ECR_IMAGE}" -t "${ECR_LATEST}" \
+            --build-arg BASE_IMAGE="${GHCR_IMAGE}" \
+            -f pkg/Dockerfile.bench .
+
           echo "Pushing to ECR..."
           docker push "${ECR_IMAGE}"
           docker push "${ECR_LATEST}"
