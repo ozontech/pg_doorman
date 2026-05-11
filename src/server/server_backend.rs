@@ -951,27 +951,49 @@ impl Server {
                         if let Some(param_name) =
                             crate::server::startup_error::extract_parameter_name(&msg.message)
                         {
-                            let outcome = quarantine.record_rejection(&param_name, &msg.code);
-                            warn!(
-                                "[{}@{}] backend startup rejected: parameter=\"{}\" \
-                                 sqlstate={} message=\"{}\" outcome={:?}",
-                                address.username,
-                                address.pool_name,
-                                param_name,
-                                msg.code,
-                                msg.message,
-                                outcome,
-                            );
-                            crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
-                                .with_label_values(&[&address.pool_name, &param_name, &msg.code])
-                                .inc();
-                            if matches!(
-                                outcome,
-                                crate::server::quarantine::RecordOutcome::JustQuarantined
-                            ) {
-                                crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
-                                    .with_label_values(&[&address.pool_name, &param_name])
-                                    .set(1);
+                            // PG can report the same SQLSTATE family for a parameter pg_doorman
+                            // did not send (for example, an ALTER ROLE/DATABASE SET running on
+                            // login or a server-side default that the role is not allowed to
+                            // apply). Without this check the quarantine and metrics would record
+                            // a rejection for a key the operator never asked us to send.
+                            if startup_parameters_sent.contains_key(&param_name) {
+                                let outcome = quarantine.record_rejection(&param_name, &msg.code);
+                                warn!(
+                                    "[{}@{}] backend startup rejected: parameter=\"{}\" \
+                                     sqlstate={} message=\"{}\" outcome={:?}",
+                                    address.username,
+                                    address.pool_name,
+                                    param_name,
+                                    msg.code,
+                                    msg.message,
+                                    outcome,
+                                );
+                                crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
+                                    .with_label_values(&[
+                                        &address.pool_name,
+                                        &param_name,
+                                        &msg.code,
+                                    ])
+                                    .inc();
+                                if matches!(
+                                    outcome,
+                                    crate::server::quarantine::RecordOutcome::JustQuarantined
+                                ) {
+                                    crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
+                                        .with_label_values(&[&address.pool_name, &param_name])
+                                        .set(1);
+                                }
+                            } else {
+                                info!(
+                                    "[{}@{}] backend startup rejected by an unrelated PG \
+                                     startup parameter \"{}\" (pg_doorman did not send this \
+                                     key); sqlstate={} message=\"{}\"",
+                                    address.username,
+                                    address.pool_name,
+                                    param_name,
+                                    msg.code,
+                                    msg.message,
+                                );
                             }
                         }
                     }
