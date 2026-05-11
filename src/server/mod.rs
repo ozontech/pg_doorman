@@ -5,6 +5,7 @@ pub(crate) mod cleanup;
 pub(crate) mod parameters;
 pub(crate) mod prepared_statements;
 pub(crate) mod protocol_io;
+pub mod quarantine;
 pub(crate) mod startup_cancel;
 pub(crate) mod startup_error;
 pub(crate) mod stream;

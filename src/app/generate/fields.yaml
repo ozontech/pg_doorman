@@ -1149,6 +1149,39 @@ fields:
         - For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.
         - For Talos/JWT/PAM flows configured at the pool/user level, `trust` still bypasses the client password prompt; however, those modes may be used when `trust` does not match.
 
+    startup_parameter_quarantine_threshold:
+      config:
+        en: |
+          Consecutive backend startup rejections for the same parameter
+          before pg_doorman stops including it in the StartupMessage for
+          this pool. Paired with startup_parameter_quarantine_ttl.
+        ru: |
+          Сколько подряд отказов backend startup'а по одному и тому же
+          параметру до того, как pg_doorman перестанет включать его в
+          StartupMessage для этого пула. Связан с
+          startup_parameter_quarantine_ttl.
+      doc: |
+        Counts consecutive `ErrorResponse`s from PG during backend startup that name the same `startup_parameters` key. Once the counter reaches this threshold, the key is quarantined and excluded from subsequent StartupMessages for this pool until `startup_parameter_quarantine_ttl` elapses.
+
+        A value of `0` is clamped to `1` at runtime (quarantine on the first rejection). The intent of this knob is to absorb transient configuration errors without blackholing a key after a single backend hiccup; raise it for pools where startup errors are expected to recover on their own, lower it (down to 1) when an operator misconfiguration should drop the offending key immediately.
+      default: "3"
+
+    startup_parameter_quarantine_ttl:
+      config:
+        en: |
+          TTL (milliseconds) for a quarantined parameter. On expiry the
+          key is re-included in the next backend StartupMessage and the
+          rejection counter is reset.
+        ru: |
+          TTL (миллисекунды) для параметра в карантине. По истечении ключ
+          снова включается в StartupMessage следующего backend'а, счётчик
+          отказов сбрасывается.
+      doc: |
+        Quarantine release is **TTL-only**: pg_doorman stops sending the key while it is quarantined, so a subsequent successful backend startup carries no information about whether the operator-supplied value was actually fixed. Releasing on success would oscillate between "quarantined" and "rejected again" as soon as the operator hadn't updated the config.
+
+        On expiry the bookkeeping for the key is dropped: the next rejection starts counting from zero. Lower this knob to retry sooner after operator config changes; raise it to give the operator more time to react before pg_doorman tries again.
+      default: "300000"
+
     startup_parameters:
       config:
         en: |

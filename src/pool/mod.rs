@@ -35,6 +35,7 @@ pub mod gc;
 pub mod pool_coordinator;
 pub mod retain;
 mod server_pool;
+pub mod startup_resolver;
 
 pub mod fallback;
 
