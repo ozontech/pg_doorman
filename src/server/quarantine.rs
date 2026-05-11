@@ -147,6 +147,33 @@ impl QuarantineState {
             .collect()
     }
 
+    /// Drop bookkeeping for entries whose quarantine TTL has expired and
+    /// return their names. Used by the SHOW POOLS / metrics-collection path
+    /// so the Prometheus quarantine gauge clears for an idle pool that no
+    /// longer sees backend spawns; without this hook the gauge would stay
+    /// stuck at 1 until the next backend creation triggered
+    /// `filter_active_keys`.
+    pub fn reconcile_expired(&self) -> Vec<String> {
+        let now = Instant::now();
+        let mut entries = self.entries.lock().expect("quarantine mutex");
+        let mut released: Vec<String> = Vec::new();
+        let mut to_drop: Vec<String> = Vec::new();
+        for (key, entry) in entries.iter_mut() {
+            if let Some(deadline) = entry.quarantined_until {
+                if deadline <= now {
+                    entry.quarantined_until = None;
+                    entry.reject_count = 0;
+                    to_drop.push(key.clone());
+                    released.push(key.clone());
+                }
+            }
+        }
+        for k in &to_drop {
+            entries.remove(k);
+        }
+        released
+    }
+
     /// Reset the partial-rejection counters for keys that pg_doorman just
     /// successfully sent in a backend StartupMessage (the backend reached
     /// `ReadyForQuery`). This keeps the threshold model honest: only N

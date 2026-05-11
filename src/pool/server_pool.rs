@@ -379,6 +379,19 @@ impl ServerPool {
             .update_knobs(threshold, ttl);
     }
 
+    /// Drop bookkeeping for quarantined keys whose TTL has elapsed and clear
+    /// the matching Prometheus gauge series. Called from the SHOW POOLS /
+    /// metrics-collection path so an idle pool with no backend churn does
+    /// not leave a stale `pg_doorman_backend_startup_parameter_quarantined`
+    /// at 1 long after the underlying TTL expired.
+    pub fn reconcile_quarantine_gauges(&self) {
+        for key in self.startup_parameter_quarantine.reconcile_expired() {
+            crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
+                .with_label_values(&[&self.address.pool_name, &key])
+                .set(0);
+        }
+    }
+
     /// Resolve the operator-supplied startup_parameters map that this pool
     /// will hand to `Server::startup` for one backend spawn. The cascade is
     /// `general` -> pool -> (optional) auth_query per-user entry, with the

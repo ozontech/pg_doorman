@@ -1561,6 +1561,14 @@ impl Pool {
             .update_quarantine_knobs(threshold, ttl);
     }
 
+    /// Drop expired quarantine bookkeeping and clear the matching gauges so
+    /// that an idle pool does not strand the Prometheus
+    /// `pg_doorman_backend_startup_parameter_quarantined` series at 1 long
+    /// after TTL elapsed.
+    pub fn reconcile_quarantine_gauges(&self) {
+        self.inner.server_pool.reconcile_quarantine_gauges();
+    }
+
     /// Bumps reconnect epoch and drains all idle connections.
     /// Returns the new epoch value.
     pub fn reconnect(&self) -> u32 {

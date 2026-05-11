@@ -630,6 +630,12 @@ impl PoolStats {
                 current.prepared_statements_bytes = cache.memory_usage() as u64;
             }
 
+            // Reconcile expired quarantine bookkeeping and clear the
+            // corresponding Prometheus gauges before snapshotting. Pools
+            // that never see another backend spawn would otherwise leave
+            // stale series at 1 indefinitely, since the regular release
+            // path only fires inside `Server::startup`.
+            pool.database.reconcile_quarantine_gauges();
             // Snapshot the currently-parked startup_parameters so SHOW
             // POOLS reflects the same set of parameters the Prometheus
             // gauge already exposes through the metrics endpoint.
