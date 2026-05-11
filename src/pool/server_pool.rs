@@ -217,6 +217,15 @@ impl ServerPool {
 
         stats.register(stats.clone());
 
+        // Phase 4 placeholder: per-call construction defeats sharing across
+        // backend spawns. Phase 6 will lift this onto the pool-owned Arc so
+        // rejection counters are actually shared.
+        let cfg = crate::config::get_config();
+        let quarantine = Arc::new(crate::server::quarantine::QuarantineState::new(
+            cfg.general.startup_parameter_quarantine_threshold,
+            Duration::from_millis(cfg.general.startup_parameter_quarantine_ttl),
+        ));
+
         let result = startup_with_timeout(
             self.connect_timeout,
             &self.address.host,
@@ -232,6 +241,8 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
+                std::collections::BTreeMap::new(),
+                quarantine.clone(),
             ),
         )
         .await;
@@ -287,6 +298,8 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
+                    std::collections::BTreeMap::new(),
+                    quarantine.clone(),
                 ),
             )
             .await;
@@ -650,6 +663,14 @@ impl ServerPool {
         ));
         stats.register(stats.clone());
 
+        // Phase 4 placeholder: see the matching note in `create`. Phase 6
+        // replaces this with the pool-owned shared quarantine Arc.
+        let cfg = crate::config::get_config();
+        let quarantine = Arc::new(crate::server::quarantine::QuarantineState::new(
+            cfg.general.startup_parameter_quarantine_threshold,
+            Duration::from_millis(cfg.general.startup_parameter_quarantine_ttl),
+        ));
+
         let result = startup_with_timeout(
             fallback_timeout,
             &fallback_address.host,
@@ -665,6 +686,8 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
+                std::collections::BTreeMap::new(),
+                quarantine.clone(),
             ),
         )
         .await;
@@ -713,6 +736,8 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
+                    std::collections::BTreeMap::new(),
+                    quarantine.clone(),
                 ),
             )
             .await;

@@ -27,7 +27,6 @@ use crate::stats::ServerStats;
 use super::authentication::handle_authentication;
 use super::cleanup::CleanupState;
 use super::parameters::ServerParameters;
-use super::startup_error::handle_startup_error;
 use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
 use super::{prepared_statements, protocol_io, startup_cancel};
 
@@ -741,6 +740,14 @@ impl Server {
 
     /// Pretend to be the Postgres client and connect to the server given host, port and credentials.
     /// Perform the authentication and return the server in a ready for query state.
+    ///
+    /// `startup_parameters` is the cascade-resolved operator-supplied map
+    /// (general → pool → auth_query, more specific wins). Keys currently held
+    /// in `quarantine` are stripped before the StartupMessage is sent; any
+    /// PG ErrorResponse with a startup-parameter SQLSTATE
+    /// (`22023` / `42704` / `42501`) is fed back into the quarantine so a
+    /// persistently-failing key is dropped from subsequent backend spawns
+    /// for the configured TTL.
     #[allow(clippy::too_many_arguments)]
     pub async fn startup(
         address: &Address,
@@ -753,6 +760,8 @@ impl Server {
         server_prepared_statement_cache_size: usize,
         application_name: String,
         session_mode: bool,
+        startup_parameters: std::collections::BTreeMap<String, String>,
+        quarantine: std::sync::Arc<crate::server::quarantine::QuarantineState>,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -797,12 +806,19 @@ impl Server {
         // code 0); see the `'R'` branch below.
         let auth_started = Instant::now();
         let mut startup_started: Option<Instant> = None;
+
+        // Strip currently-quarantined keys from the operator-supplied set
+        // right before we serialize the StartupMessage. The released set is
+        // currently unused; Phase 7 will wire Prometheus gauges from it.
+        let mut startup_parameters_sent = startup_parameters;
+        let _released_keys = quarantine.filter_active_keys(&mut startup_parameters_sent);
+
         startup(
             &mut stream,
             username.clone(),
             database,
             application_name.clone(),
-            &std::collections::BTreeMap::new(),
+            &startup_parameters_sent,
         )
         .await?;
 
@@ -903,11 +919,50 @@ impl Server {
                     }
                 }
 
-                // ErrorResponse
+                // ErrorResponse. Read the message body, parse it, and -
+                // when the SQLSTATE belongs to the startup-parameter family
+                // and the operator-supplied map was non-empty - feed the
+                // failing parameter name into the per-pool quarantine. We
+                // intentionally bypass `handle_startup_error` here because
+                // that helper consumes the body internally and we need to
+                // inspect the M-field for the parameter name; the existing
+                // error pathway (`Error::ServerStartupError`) is preserved
+                // so callers see the same outward behavior.
                 'E' => {
-                    return handle_startup_error(&mut stream, len, &server_identifier)
-                        .await
-                        .map(|_| unreachable!());
+                    let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
+                    let _ = bytes.get_u8();
+                    let _ = bytes.get_i32();
+                    let parsed = PgErrorMsg::parse(&bytes).ok();
+
+                    if let Some(ref msg) = parsed {
+                        let is_startup_parameter_sqlstate =
+                            matches!(msg.code.as_str(), "22023" | "42704" | "42501");
+                        if is_startup_parameter_sqlstate && !startup_parameters_sent.is_empty() {
+                            if let Some(param_name) =
+                                crate::server::startup_error::extract_parameter_name(&msg.message)
+                            {
+                                let outcome = quarantine.record_rejection(&param_name, &msg.code);
+                                warn!(
+                                    "[{}@{}] backend startup rejected: parameter=\"{}\" \
+                                     sqlstate={} message=\"{}\" outcome={:?}",
+                                    address.username,
+                                    address.pool_name,
+                                    param_name,
+                                    msg.code,
+                                    msg.message,
+                                    outcome,
+                                );
+                                // Phase 7 will wire real Prometheus vectors here.
+                            }
+                        }
+                    }
+
+                    return Err(Error::ServerStartupError(
+                        parsed
+                            .map(|m| format!("{}: {}", m.code, m.message))
+                            .unwrap_or_else(|| "startup ErrorResponse".to_string()),
+                        server_identifier.clone(),
+                    ));
                 }
 
                 // Notice
