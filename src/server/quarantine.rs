@@ -11,7 +11,7 @@
 //! 4. [`QuarantineState::filter_active_keys`] is called on every subsequent
 //!    backend spawn and skips quarantined keys.
 //! 5. TTL only releases keys (never a "success": we skipped them, so success
-//!    is meaningless evidence). See D8.
+//!    is meaningless evidence).
 
 use std::collections::HashMap;
 use std::sync::Mutex;

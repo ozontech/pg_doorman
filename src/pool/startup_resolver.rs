@@ -9,8 +9,9 @@ use std::collections::{BTreeMap, HashMap};
 /// Merge cascade and return the map pg_doorman will put on the wire.
 ///
 /// `auth_query_params` is `None` for connections that don't go through
-/// `auth_query` (static user) or for dedicated-mode auth_query pools where
-/// per-user parameters are intentionally ignored (D7).
+/// `auth_query` (static user), and also for dedicated-mode auth_query pools
+/// where one shared backend serves multiple dynamic users so per-user
+/// parameters cannot be honoured.
 pub fn resolve(
     general: &BTreeMap<String, String>,
     pool: &BTreeMap<String, String>,
@@ -83,8 +84,8 @@ mod tests {
 
     #[test]
     fn application_name_can_cascade_too() {
-        // operator-wins on application_name (D5/B2): pool can override general's
-        // baseline; auth_query in turn overrides pool.
+        // operator-wins on application_name extends through the cascade:
+        // pool overrides general's baseline; auth_query overrides pool.
         let g = b(&[("application_name", "tier-default")]);
         let p = b(&[("application_name", "checkout-pool")]);
         let a = h(&[("application_name", "vip-user-app")]);

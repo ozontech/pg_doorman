@@ -177,8 +177,9 @@ mod tests {
 
     #[test]
     fn application_name_is_not_reserved() {
-        // Operator-wins (B2): explicitly allowed; pg_doorman default merges
-        // happen in the wire layer, not validation.
+        // application_name is explicitly allowed in startup_parameters; the
+        // operator-wins merge against pg_doorman's default happens at the
+        // wire layer, not here.
         let map = m(&[("application_name", "my_app")]);
         assert!(validate(&map, "scope").is_ok());
     }

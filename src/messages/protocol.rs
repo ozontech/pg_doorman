@@ -166,7 +166,8 @@ pub fn simple_query(query: &str) -> BytesMut {
 /// `extra_params` is empty. Operator-supplied values from `extra_params` are
 /// appended in the map's iteration order (BTreeMap → lexicographic). If
 /// `extra_params` contains an `application_name` key, it overrides the
-/// `application_name` argument per the design (D5/B2: operator-wins).
+/// `application_name` argument so an operator-supplied value wins over the
+/// pg_doorman-managed default.
 pub async fn startup<S>(
     stream: &mut S,
     user: String,
@@ -188,7 +189,7 @@ where
     bytes.put_u8(0);
 
     // Application name. Operator-supplied value in `extra_params` wins over
-    // the pg_doorman-managed default per design D5/B2.
+    // the pg_doorman-managed default.
     let effective_app_name = extra_params
         .get("application_name")
         .map(String::as_str)
