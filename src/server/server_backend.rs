@@ -802,6 +802,7 @@ impl Server {
             username.clone(),
             database,
             application_name.clone(),
+            &std::collections::BTreeMap::new(),
         )
         .await?;
 

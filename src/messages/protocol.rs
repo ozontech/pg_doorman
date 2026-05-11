@@ -160,11 +160,19 @@ pub fn simple_query(query: &str) -> BytesMut {
 }
 
 /// Send startup message to the server.
+///
+/// Required parameters (`user`, `application_name`, `database`) are written
+/// first in their historical wire order, so the byte stream is unchanged when
+/// `extra_params` is empty. Operator-supplied values from `extra_params` are
+/// appended in the map's iteration order (BTreeMap → lexicographic). If
+/// `extra_params` contains an `application_name` key, it overrides the
+/// `application_name` argument per the design (D5/B2: operator-wins).
 pub async fn startup<S>(
     stream: &mut S,
     user: String,
     database: &str,
     application_name: String,
+    extra_params: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), Error>
 where
     S: tokio::io::AsyncWrite + std::marker::Unpin,
@@ -179,16 +187,33 @@ where
     bytes.put_slice(user.as_bytes());
     bytes.put_u8(0);
 
-    // Application name
+    // Application name. Operator-supplied value in `extra_params` wins over
+    // the pg_doorman-managed default per design D5/B2.
+    let effective_app_name = extra_params
+        .get("application_name")
+        .map(String::as_str)
+        .unwrap_or(application_name.as_str());
     bytes.put(&b"application_name\0"[..]);
-    bytes.put_slice(application_name.as_bytes());
+    bytes.put_slice(effective_app_name.as_bytes());
     bytes.put_u8(0);
 
     // Database
     bytes.put(&b"database\0"[..]);
     bytes.put_slice(database.as_bytes());
     bytes.put_u8(0);
-    bytes.put_u8(0); // Null terminator
+
+    // Operator-supplied extras (already-handled application_name is skipped).
+    for (key, value) in extra_params {
+        if key == "application_name" {
+            continue;
+        }
+        bytes.put_slice(key.as_bytes());
+        bytes.put_u8(0);
+        bytes.put_slice(value.as_bytes());
+        bytes.put_u8(0);
+    }
+
+    bytes.put_u8(0); // Parameter list terminator
 
     let len = bytes.len() as i32 + 4i32;
 
@@ -936,5 +961,108 @@ pub fn insert_close_complete_before_ready_for_query(mut buffer: BytesMut, count:
             buffer.extend_from_slice(&CLOSE_COMPLETE_MSG);
         }
         buffer
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[tokio::test]
+    async fn startup_with_extra_params_includes_them_in_order() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut params = BTreeMap::new();
+        params.insert(
+            "plan_cache_mode".to_string(),
+            "force_custom_plan".to_string(),
+        );
+        params.insert("work_mem".to_string(), "64MB".to_string());
+
+        startup(&mut buf, "alice".into(), "appdb", "myapp".into(), &params)
+            .await
+            .expect("startup");
+
+        // Skip the 4-byte length prefix and 4-byte protocol version.
+        let body = &buf[8..];
+        let body_str = String::from_utf8_lossy(body);
+        assert!(
+            body_str.contains("user\0alice"),
+            "user pair not on wire: {body_str:?}"
+        );
+        assert!(
+            body_str.contains("database\0appdb"),
+            "database pair not on wire: {body_str:?}"
+        );
+        assert!(
+            body_str.contains("application_name\0myapp"),
+            "default application_name not on wire: {body_str:?}"
+        );
+        assert!(body_str.contains("plan_cache_mode\0force_custom_plan"));
+        // `\x00` (explicit hex) instead of `\0` here because the following
+        // digits `64` would otherwise look like an octal escape to clippy.
+        assert!(body_str.contains("work_mem\x0064MB"));
+        // The parameter list terminates with a single NUL byte right before the
+        // end of the packet body. Buffer always ends with that terminator.
+        assert_eq!(*buf.last().expect("non-empty buffer"), 0);
+    }
+
+    #[tokio::test]
+    async fn startup_with_empty_params_keeps_pre_feature_format() {
+        let mut buf: Vec<u8> = Vec::new();
+        startup(
+            &mut buf,
+            "alice".into(),
+            "appdb",
+            "myapp".into(),
+            &BTreeMap::new(),
+        )
+        .await
+        .expect("startup");
+        let body = &buf[8..];
+        let s = String::from_utf8_lossy(body);
+        assert!(s.contains("user\0alice"));
+        assert!(s.contains("database\0appdb"));
+        assert!(s.contains("application_name\0myapp"));
+    }
+
+    #[tokio::test]
+    async fn startup_application_name_operator_override_wins() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut params = BTreeMap::new();
+        params.insert("application_name".to_string(), "operator_app".to_string());
+
+        startup(&mut buf, "alice".into(), "appdb", "ignored".into(), &params)
+            .await
+            .expect("startup");
+
+        let body = &buf[8..];
+        let s = String::from_utf8_lossy(body);
+        // Operator-supplied wins over the pg_doorman-managed default.
+        assert!(s.contains("application_name\0operator_app"));
+        // pg_doorman's own application_name argument value must not be on the wire.
+        assert!(!s.contains("application_name\0ignored"));
+    }
+
+    /// Belt-and-suspenders: ensure the length prefix matches the byte count
+    /// PG reads — anything off here breaks every connection.
+    #[tokio::test]
+    async fn startup_length_prefix_matches_body() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut params = BTreeMap::new();
+        params.insert("k1".to_string(), "v1".to_string());
+        params.insert("k2".to_string(), "v2".to_string());
+
+        startup(&mut buf, "u".into(), "d", "a".into(), &params)
+            .await
+            .expect("startup");
+
+        let claimed_len = i32::from_be_bytes(buf[0..4].try_into().expect("4 bytes"));
+        assert_eq!(
+            claimed_len as usize,
+            buf.len(),
+            "claimed length {claimed_len} != actual {} bytes",
+            buf.len()
+        );
     }
 }
