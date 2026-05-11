@@ -369,6 +369,16 @@ impl ServerPool {
         self.startup_parameter_quarantine.snapshot_quarantined()
     }
 
+    /// Live-update the quarantine threshold and TTL so a SIGHUP that only
+    /// touches `general.startup_parameter_quarantine_*` takes effect on the
+    /// reused pool. The pool hash does not include these general-level
+    /// knobs, so without this hook a reload would silently leave the pool
+    /// running with the previous values.
+    pub fn update_quarantine_knobs(&self, threshold: u32, ttl: std::time::Duration) {
+        self.startup_parameter_quarantine
+            .update_knobs(threshold, ttl);
+    }
+
     /// Resolve the operator-supplied startup_parameters map that this pool
     /// will hand to `Server::startup` for one backend spawn. The cascade is
     /// `general` -> pool -> (optional) auth_query per-user entry, with the

@@ -335,6 +335,18 @@ impl ConnectionPool {
                         && pool.address.server_tls.as_ref() == server_tls_config.as_ref()
                     {
                         info!("[{}@{}] config unchanged", user.username, pool_name);
+                        // Quarantine threshold and TTL live in `general` and
+                        // therefore do not influence the pool hash. A SIGHUP
+                        // that only retunes those knobs would otherwise leave
+                        // every kept pool running with stale values, so push
+                        // the new numbers into the shared QuarantineState
+                        // here while the pool is still being reused.
+                        pool.database.update_quarantine_knobs(
+                            config.general.startup_parameter_quarantine_threshold,
+                            std::time::Duration::from_millis(
+                                config.general.startup_parameter_quarantine_ttl,
+                            ),
+                        );
                         new_pools.insert(identifier.clone(), pool.clone());
                         continue;
                     }

@@ -1552,6 +1552,15 @@ impl Pool {
         self.inner.server_pool.quarantined_startup_parameters()
     }
 
+    /// Forward a live update of quarantine threshold/TTL to the shared
+    /// `QuarantineState`. The pool hash does not include these
+    /// general-level knobs, so reload calls this on every pool it kept.
+    pub fn update_quarantine_knobs(&self, threshold: u32, ttl: std::time::Duration) {
+        self.inner
+            .server_pool
+            .update_quarantine_knobs(threshold, ttl);
+    }
+
     /// Bumps reconnect epoch and drains all idle connections.
     /// Returns the new epoch value.
     pub fn reconnect(&self) -> u32 {

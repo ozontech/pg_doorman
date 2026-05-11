@@ -14,6 +14,7 @@
 //!    is meaningless evidence).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -26,8 +27,12 @@ pub struct QuarantineEntry {
 
 #[derive(Debug)]
 pub struct QuarantineState {
-    threshold: u32,
-    ttl: Duration,
+    // Hot-reloadable: a SIGHUP that changes
+    // general.startup_parameter_quarantine_{threshold,ttl} takes effect on
+    // the next call without recreating the pool. Reads use Relaxed since the
+    // values are advisory observability knobs, not safety invariants.
+    threshold: AtomicU32,
+    ttl_ms: AtomicU64,
     entries: Mutex<HashMap<String, QuarantineEntry>>,
 }
 
@@ -44,16 +49,34 @@ pub enum RecordOutcome {
 impl QuarantineState {
     pub fn new(threshold: u32, ttl: Duration) -> Self {
         Self {
-            threshold: threshold.max(1),
-            ttl,
+            threshold: AtomicU32::new(threshold.max(1)),
+            ttl_ms: AtomicU64::new(ttl.as_millis() as u64),
             entries: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Update the threshold/TTL knobs without recreating the pool. Called
+    /// from the SIGHUP reload path when only the general-level knobs change
+    /// and pool hash would not otherwise force a rebuild.
+    pub fn update_knobs(&self, threshold: u32, ttl: Duration) {
+        self.threshold.store(threshold.max(1), Ordering::Relaxed);
+        self.ttl_ms.store(ttl.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn threshold(&self) -> u32 {
+        self.threshold.load(Ordering::Relaxed)
+    }
+
+    fn ttl(&self) -> Duration {
+        Duration::from_millis(self.ttl_ms.load(Ordering::Relaxed))
     }
 
     /// Record a backend-startup rejection for `key`. Returns the resulting
     /// outcome for caller-side logging and metrics.
     pub fn record_rejection(&self, key: &str, sqlstate: &str) -> RecordOutcome {
         let now = Instant::now();
+        let ttl = self.ttl();
+        let threshold = self.threshold();
         let mut entries = self.entries.lock().expect("quarantine mutex");
         let entry = entries
             .entry(key.to_owned())
@@ -64,12 +87,12 @@ impl QuarantineState {
             });
         entry.last_sqlstate = sqlstate.to_owned();
         if entry.quarantined_until.map(|d| d > now).unwrap_or(false) {
-            entry.quarantined_until = Some(now + self.ttl);
+            entry.quarantined_until = Some(now + ttl);
             return RecordOutcome::AlreadyQuarantined;
         }
         entry.reject_count = entry.reject_count.saturating_add(1);
-        if entry.reject_count >= self.threshold {
-            entry.quarantined_until = Some(now + self.ttl);
+        if entry.reject_count >= threshold {
+            entry.quarantined_until = Some(now + ttl);
             return RecordOutcome::JustQuarantined;
         }
         RecordOutcome::Counting {
