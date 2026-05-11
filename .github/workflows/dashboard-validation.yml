@@ -68,6 +68,15 @@ jobs:
           cache-from: type=gha,scope=pg_doorman-demo
           cache-to: type=gha,scope=pg_doorman-demo,mode=max
 
+      - name: Smoke pg_doorman:demo end-to-end
+        # PR-stage smoke: same script the release pipeline runs against
+        # the published image (build-packages.yaml docker-image-smoke).
+        # Catches a broken Dockerfile, broken generate, and broken
+        # startup before they reach a release tag. amd64 only here;
+        # arm64 stays in the release smoke because QEMU is expensive
+        # for the full E2E flow.
+        run: scripts/docker-smoke.sh pg_doorman:demo
+
       - name: Generate provisioned dashboard JSON
         # The script reads grafana/pg_doorman.json (the artifact); the
         # demo loads grafana/demo/grafana/provisioning/dashboards/...,
