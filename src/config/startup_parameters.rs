@@ -85,8 +85,7 @@ fn validate_value(key: &str, value: &str, scope: &str) -> Result<(), Error> {
 }
 
 fn validate_total_size(map: &BTreeMap<String, String>, scope: &str) -> Result<(), Error> {
-    // Per the PG wire layout each pair contributes key, NUL, value, NUL.
-    let total: usize = map.iter().map(|(k, v)| k.len() + 1 + v.len() + 1).sum();
+    let total = serialized_bytes(map);
     if total > MAX_OPERATOR_BUDGET {
         return Err(Error::BadConfig(format!(
             "{scope}: serialized size {total} bytes exceeds operator budget {MAX_OPERATOR_BUDGET} \
@@ -96,6 +95,12 @@ fn validate_total_size(map: &BTreeMap<String, String>, scope: &str) -> Result<()
         )));
     }
     Ok(())
+}
+
+/// Bytes the operator-supplied map will occupy on the StartupMessage wire,
+/// per the PG layout where each pair contributes `key\0value\0`.
+pub fn serialized_bytes(map: &BTreeMap<String, String>) -> usize {
+    map.iter().map(|(k, v)| k.len() + 1 + v.len() + 1).sum()
 }
 
 #[cfg(test)]
@@ -198,5 +203,44 @@ mod tests {
             MAX_OPERATOR_BUDGET,
             MAX_STARTUP_PACKET_SIZE - RESERVED_HEADROOM
         );
+    }
+
+    #[test]
+    fn serialized_bytes_counts_per_pair_nuls() {
+        let map = m(&[("k1", "v1"), ("plan_cache_mode", "force_custom_plan")]);
+        // "k1\0v1\0" = 2 + 1 + 2 + 1 = 6 bytes
+        // "plan_cache_mode\0force_custom_plan\0" = 15 + 1 + 17 + 1 = 34 bytes
+        assert_eq!(serialized_bytes(&map), 6 + 34);
+    }
+
+    #[test]
+    fn serialized_bytes_empty_map_is_zero() {
+        assert_eq!(serialized_bytes(&BTreeMap::new()), 0);
+    }
+
+    #[test]
+    fn cascade_overflow_detectable_after_merge() {
+        // Each level fits the per-level budget on its own (every map below is
+        // ~3 KiB), but the union of all three pushes past 9 488 bytes and
+        // would trip the post-resolve guard in `server_pool.rs`.
+        let general: BTreeMap<String, String> = (0..32)
+            .map(|i| (format!("g_key_{i}"), "a".repeat(100)))
+            .collect();
+        let pool: BTreeMap<String, String> = (0..32)
+            .map(|i| (format!("p_key_{i}"), "b".repeat(100)))
+            .collect();
+        let auth: BTreeMap<String, String> = (0..32)
+            .map(|i| (format!("a_key_{i}"), "c".repeat(100)))
+            .collect();
+        // Each map ~ 32 * (8 + 1 + 100 + 1) = 32 * 110 = 3 520 bytes < 9 488.
+        assert!(serialized_bytes(&general) < MAX_OPERATOR_BUDGET);
+        assert!(serialized_bytes(&pool) < MAX_OPERATOR_BUDGET);
+        assert!(serialized_bytes(&auth) < MAX_OPERATOR_BUDGET);
+
+        let mut merged: BTreeMap<String, String> = BTreeMap::new();
+        merged.extend(general.iter().map(|(k, v)| (k.clone(), v.clone())));
+        merged.extend(pool.iter().map(|(k, v)| (k.clone(), v.clone())));
+        merged.extend(auth.iter().map(|(k, v)| (k.clone(), v.clone())));
+        assert!(serialized_bytes(&merged) > MAX_OPERATOR_BUDGET);
     }
 }

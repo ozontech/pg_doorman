@@ -403,11 +403,34 @@ impl ServerPool {
             _ => None,
         };
 
-        super::startup_resolver::resolve(
+        let merged = super::startup_resolver::resolve(
             &cfg.general.startup_parameters,
             &pool_params,
             auth_query_params.as_ref(),
-        )
+        );
+
+        // Per-level validation in `Config::validate` does not see the merged
+        // cascade. Two levels that each fit individually can together push the
+        // StartupMessage past PG's `MAX_STARTUP_PACKET_LENGTH`. If the merged
+        // body would not fit, drop all operator-supplied keys for this spawn
+        // and log; the backend connects with server defaults rather than
+        // failing every time. The static per-level cap already prevents any
+        // single level from saturating the budget on its own.
+        let body_bytes = crate::config::startup_parameters::serialized_bytes(&merged);
+        if body_bytes > crate::config::startup_parameters::MAX_OPERATOR_BUDGET {
+            warn!(
+                "[{}@{}] effective startup_parameters serialize to {} bytes, exceeding \
+                 operator budget {} (PG cap {}); all operator-supplied parameters dropped \
+                 for this backend spawn",
+                self.user.username,
+                self.address.pool_name,
+                body_bytes,
+                crate::config::startup_parameters::MAX_OPERATOR_BUDGET,
+                crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE,
+            );
+            return std::collections::BTreeMap::new();
+        }
+        merged
     }
 
     /// Establish a fallback connection by iterating through Patroni-discovered
