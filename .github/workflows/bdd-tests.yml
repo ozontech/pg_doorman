@@ -157,10 +157,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
+        # Only the hash-tagged manifest is published. The image is
+        # addressed exclusively by the flake hash everywhere it is
+        # consumed (prepare-tests passes the tag through to bdd-tests
+        # via outputs.image-tag), so a `:latest` floating tag would
+        # exist only as a footgun: any out-of-band `docker pull
+        # ghcr.io/.../test-runner` would land on an arbitrary version
+        # without warning. Pinning to the hash is the contract.
         run: |
           IMAGE_TAG="${{ needs.check-image.outputs.image-tag }}"
           BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          # Create manifest combining both architectures
           docker manifest create ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
             ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux
@@ -169,15 +175,6 @@ jobs:
           docker manifest annotate ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux --os linux --arch arm64
           docker manifest push ${BASE_IMAGE}:${IMAGE_TAG}
-          # Also tag as latest
-          docker manifest create ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
-            ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux
-          docker manifest annotate ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux --os linux --arch amd64
-          docker manifest annotate ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux --os linux --arch arm64
-          docker manifest push ${BASE_IMAGE}:latest
           echo "✅ Multi-arch manifest created and pushed"
           echo "Image: ${BASE_IMAGE}:${IMAGE_TAG}" >> $GITHUB_STEP_SUMMARY
           echo "Architectures: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
