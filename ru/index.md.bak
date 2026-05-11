@@ -105,12 +105,28 @@ AWS Fargate (16 vCPU), pool size 40, `pgbench` 30 с на тест:
 
 ## Быстрый старт
 
-Запуск через Docker:
+Установите пакет через ваш дистрибутив:
+
+```bash
+# Ubuntu / Debian
+sudo add-apt-repository ppa:vadv/pg-doorman
+sudo apt update
+sudo apt install pg-doorman
+
+# Fedora / RHEL family
+sudo dnf copr enable @pg-doorman/pg-doorman
+sudo dnf install pg_doorman
+```
+
+Дистрибутивные пакеты и Docker-образ собраны без фич `tls-migration` и `pam`. Матрица TLS-фич и инструкции по сборке — в [Установке](tutorials/installation.md).
+
+Либо запустите через Docker:
 
 ```bash
 docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
 Минимальный конфиг (`pg_doorman.yaml`):

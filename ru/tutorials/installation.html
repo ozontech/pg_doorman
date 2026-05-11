@@ -200,7 +200,7 @@ OPENSSL_SOURCE_TARBALL=$(pwd)/openssl-3.5.5.tar.gz \
   cargo build --release --features tls-migration
 </code></pre>
 <p>Старый и новый процесс должны использовать одни и те же <code>tls_certificate</code> и <code>tls_private_key</code>. Полное описание процесса обновления, мониторинг и диагностика — в <a href="./binary-upgrade.html#%D0%9C%D0%B8%D0%B3%D1%80%D0%B0%D1%86%D0%B8%D1%8F-TLS-%D1%81%D0%B5%D1%81%D1%81%D0%B8%D0%B9">плавном обновлении бинаря</a>.</p>
-<p>Для упаковки в deb/rpm смотрите каталоги <code>debian/</code> и <code>pkg/</code> в репозитории. Пример <code>Dockerfile.ubuntu22-tls</code> собирает образ с поддержкой TLS migration на Ubuntu 22.04.</p>
+<p>Для упаковки в deb/rpm смотрите каталоги <code>debian/</code> и <code>pkg/</code> в репозитории.</p>
 <h2 id="Пакеты-из-репозиториев"><a class="header" href="#Пакеты-из-репозиториев">Пакеты из репозиториев</a></h2>
 <p>Готовые deb- и rpm-пакеты публикуются с теми же релизными тегами. Используйте их, когда сборка из исходников нежелательна.</p>
 <div id="admonition-В-пакетах-нет-поддержки-tls" class="admonition admonish-warning" role="note" aria-labelledby="admonition-В-пакетах-нет-поддержки-tls-title">
@@ -242,8 +242,13 @@ sudo mv pg_doorman /usr/local/bin/
 <p>Docker поддерживается для разработки, CI и быстрых демо. Для промышленной эксплуатации не рекомендуется — упаковка и управление жизненным циклом проще через пакеты из репозиториев выше.</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
+<p><code>CMD</code> образа по умолчанию запускает <code>pg_doorman</code> без аргументов. При <code>WORKDIR /etc/pg_doorman</code> это означает конфиг <code>/etc/pg_doorman/pg_doorman.toml</code>. Если монтируете YAML, передайте путь явно, как в примере выше.</p>
+<p>Пробрасывайте <code>6432</code> для PostgreSQL-протокола. Если в конфиге включён <code>web.enabled</code>, дополнительно пробросьте <code>9127</code> для <code>/metrics</code> и веб-консоли; без этого флага listener не поднимается. Путь к конфигу можно задать позиционным аргументом или переменной <code>CONFIG_FILE</code>; также доступны <code>LOG_LEVEL</code> (по умолчанию <code>info</code>), <code>LOG_FORMAT</code> (<code>text</code>, <code>structured</code> или <code>debug</code>) и <code>NO_COLOR</code>.</p>
+<p>В Dockerfile задан <code>STOPSIGNAL SIGTERM</code>, поэтому <code>docker stop</code> отправляет <code>pg_doorman</code> обычный сигнал остановки контейнера. Не используйте <code>SIGINT</code> для остановки контейнера: вне TTY этот сигнал запускает binary upgrade, что для контейнерного запуска обычно приводит к завершению PID 1.</p>
+<p>Публичный образ собран без фич <code>tls-migration</code> и <code>pam</code>. Обычный TLS для клиентских и серверных соединений не зависит от <code>tls-migration</code>; эта фича нужна только для переноса TLS-сессий при обновлении бинарника. Для TLS migration или PAM соберите свой образ из публичного <code>Dockerfile</code>, добавив <code>--features tls-migration</code> и/или <code>pam</code> в шаг <code>cargo build --release</code>.</p>
 <p><code>docker-compose.yaml</code> с PostgreSQL в качестве sidecar лежит в <a href="https://github.com/ozontech/pg_doorman/tree/master/example"><code>example/</code></a> — для smoke-тестов.</p>
 <h2 id="Проверка-установки"><a class="header" href="#Проверка-установки">Проверка установки</a></h2>
 <pre><code class="language-bash">pg_doorman --version

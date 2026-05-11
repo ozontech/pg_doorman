@@ -278,10 +278,22 @@
 </div>
 <p><a href="benchmarks.html">Полные результаты →</a></p>
 <h2 id="Быстрый-старт"><a class="header" href="#Быстрый-старт">Быстрый старт</a></h2>
-<p>Запуск через Docker:</p>
+<p>Установите пакет через ваш дистрибутив:</p>
+<pre><code class="language-bash"># Ubuntu / Debian
+sudo add-apt-repository ppa:vadv/pg-doorman
+sudo apt update
+sudo apt install pg-doorman
+
+# Fedora / RHEL family
+sudo dnf copr enable @pg-doorman/pg-doorman
+sudo dnf install pg_doorman
+</code></pre>
+<p>Дистрибутивные пакеты и Docker-образ собраны без фич <code>tls-migration</code> и <code>pam</code>. Матрица TLS-фич и инструкции по сборке — в <a href="tutorials/installation.html">Установке</a>.</p>
+<p>Либо запустите через Docker:</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
 <p>Минимальный конфиг (<code>pg_doorman.yaml</code>):</p>
 <pre><code class="language-yaml">general:

@@ -277,10 +277,22 @@
 </div>
 <p><a href="benchmarks.html">Full results →</a></p>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
-<p>Run via Docker:</p>
+<p>Install via your distro package manager:</p>
+<pre><code class="language-bash"># Ubuntu / Debian
+sudo add-apt-repository ppa:vadv/pg-doorman
+sudo apt update
+sudo apt install pg-doorman
+
+# Fedora / RHEL family
+sudo dnf copr enable @pg-doorman/pg-doorman
+sudo dnf install pg_doorman
+</code></pre>
+<p>Distro packages and the Docker image are built without the <code>tls-migration</code> and <code>pam</code> features. See <a href="tutorials/installation.html">Installation</a> for the TLS feature matrix and how to build with them.</p>
+<p>Or run via Docker:</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
 <p>Minimal config (<code>pg_doorman.yaml</code>):</p>
 <pre><code class="language-yaml">general:

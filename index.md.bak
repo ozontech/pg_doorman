@@ -104,12 +104,28 @@ AWS Fargate (16 vCPU), pool size 40, `pgbench` 30 s per test:
 
 ## Quick start
 
-Run via Docker:
+Install via your distro package manager:
+
+```bash
+# Ubuntu / Debian
+sudo add-apt-repository ppa:vadv/pg-doorman
+sudo apt update
+sudo apt install pg-doorman
+
+# Fedora / RHEL family
+sudo dnf copr enable @pg-doorman/pg-doorman
+sudo dnf install pg_doorman
+```
+
+Distro packages and the Docker image are built without the `tls-migration` and `pam` features. See [Installation](tutorials/installation.md) for the TLS feature matrix and how to build with them.
+
+Or run via Docker:
 
 ```bash
 docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
 Minimal config (`pg_doorman.yaml`):
