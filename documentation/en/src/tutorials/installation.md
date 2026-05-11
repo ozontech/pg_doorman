@@ -116,6 +116,10 @@ docker run -p 6432:6432 \
 
 The image's default `CMD` runs `pg_doorman` without arguments, which reads `/etc/pg_doorman/pg_doorman.toml`. Pass the YAML path explicitly so `pg_doorman` reads the mounted file instead.
 
+The image listens on `6432` for PostgreSQL traffic and `9127` for the metrics endpoint and the optional admin/web UI. The `WORKDIR` is `/etc/pg_doorman/`, and the config path can be overridden with the `CONFIG_FILE` environment variable. The other environment overrides are `LOG_LEVEL` (default `info`), `LOG_FORMAT` (`text` or `structured`), and `NO_COLOR`. The container's `STOPSIGNAL` is `SIGTERM`, so `docker stop` and Kubernetes pod termination cause `pg_doorman` to drain idle clients and exit cleanly. Do not send `SIGINT` to a containerised pg_doorman: that signal triggers a binary upgrade, and in a non-TTY context this kills PID 1, so the container exits.
+
+The public image is built without the `tls-migration` and `pam` Cargo features. For TLS on client or backend connections, or for PAM authentication, build your own image from the public `Dockerfile` with `--features tls-migration` (and/or `pam`) added to the `cargo build --release` step.
+
 A `docker-compose.yaml` with a sidecar PostgreSQL is in [`example/`](https://github.com/ozontech/pg_doorman/tree/master/example) for end-to-end smoke tests.
 
 ## Verifying the installation
