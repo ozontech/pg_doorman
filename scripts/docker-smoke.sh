@@ -116,11 +116,26 @@ docker run -d --name "$PG_NAME" --network "$NET_NAME" \
 # Wait for postgres to accept connections. 90s ceiling: typical fresh
 # postgres:17 boot is <5s; the headroom covers cold-cache image pulls
 # and slow runners (Ubicloud cold VM, congested GHA pool).
+#
+# The official postgres image cycles through an init listener and then
+# restarts before the final listener comes up. `pg_isready` answers YES
+# on the init listener too, so a single success is not enough: the very
+# next query can hit "FATAL: the database system is shutting down" and
+# the smoke fails for a reason that has nothing to do with pg_doorman.
+# Require two consecutive successful `psql SELECT 1` runs to ride past
+# the restart window.
 echo "waiting for postgres readiness..."
+prev_ok=0
 for i in $(seq 1 90); do
-  if docker exec "$PG_NAME" pg_isready -U "$PG_USER" >/dev/null 2>&1; then
-    echo "postgres ready after ${i}s"
-    break
+  if docker exec -e "PGPASSWORD=$PG_PASSWORD" "$PG_NAME" \
+       psql -U "$PG_USER" -d "$PG_DB" -At -c "SELECT 1" >/dev/null 2>&1; then
+    if [ "$prev_ok" -eq 1 ]; then
+      echo "postgres ready after ~${i}s"
+      break
+    fi
+    prev_ok=1
+  else
+    prev_ok=0
   fi
   if [ "$i" -eq 90 ]; then
     echo "::error::postgres did not become ready in 90s"
