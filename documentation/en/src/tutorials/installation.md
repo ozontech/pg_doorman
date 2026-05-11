@@ -55,7 +55,7 @@ OPENSSL_SOURCE_TARBALL=$(pwd)/openssl-3.5.5.tar.gz \
 
 Both the old and the new process must use identical `tls_certificate` and `tls_private_key` files. For the full upgrade flow, monitoring, and troubleshooting, see [Binary Upgrade → TLS migration](./binary-upgrade.md#tls-migration).
 
-For deb/rpm packaging see `debian/` and `pkg/` in the repository. The supplied `Dockerfile.ubuntu22-tls` builds a TLS-migration-capable image on Ubuntu 22.04.
+For deb/rpm packaging see `debian/` and `pkg/` in the repository.
 
 ## Distribution packages
 
@@ -110,8 +110,17 @@ Docker is supported for development, CI, and quick demos. We do not recommend it
 ```bash
 docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
+
+The image's default `CMD` runs `pg_doorman` without arguments. With `WORKDIR /etc/pg_doorman`, that means `/etc/pg_doorman/pg_doorman.toml`. If you mount a YAML config, pass the path explicitly as shown above.
+
+Publish `6432` for PostgreSQL protocol traffic. If your config enables `web.enabled`, also publish `9127` for `/metrics` and the web console; without that flag the listener is not started. The config path can be passed as a positional argument or through `CONFIG_FILE`; the image also accepts `LOG_LEVEL` (default `info`), `LOG_FORMAT` (`text`, `structured`, or `debug`), and `NO_COLOR`.
+
+The Dockerfile sets `STOPSIGNAL SIGTERM`, so `docker stop` sends `pg_doorman` the normal container stop signal. Do not use `SIGINT` to stop the container: outside a TTY, that signal starts binary upgrade, which normally exits PID 1 in a container run.
+
+The public image is built without the `tls-migration` and `pam` features. Regular TLS for client and backend connections does not depend on `tls-migration`; that feature is only needed to migrate TLS sessions across a binary upgrade. For TLS migration or PAM, build your own image from the public `Dockerfile` and add `--features tls-migration` and/or `pam` to the `cargo build --release` step.
 
 A `docker-compose.yaml` with a sidecar PostgreSQL is in [`example/`](https://github.com/ozontech/pg_doorman/tree/master/example) for end-to-end smoke tests.
 

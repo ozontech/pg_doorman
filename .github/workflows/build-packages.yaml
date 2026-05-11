@@ -244,18 +244,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.TOKEN }}
 
+  # Release pipeline for the public docker image is split into three
+  # jobs so the public :latest / :vX.Y.Z tags only move after smoke
+  # validates the artefact:
+  #
+  #   docker-image          push immutable :sha-<commit> (amd64+arm64)
+  #   docker-image-smoke    pull :sha-<commit>, run end-to-end smoke
+  #   docker-image-promote  retag digest to :vX.Y.Z and :latest
+  #
+  # Previously docker-image pushed both :latest and :ref_name immediately
+  # and smoke ran after; a broken multi-arch build would publish before
+  # the runtime check failed.
   docker-image:
-    name: Build docker image and push to registry
+    name: Build docker image (push immutable sha tag)
     needs: [verify-version]
     runs-on: ubuntu-latest
     permissions:
       packages: write
       contents: read
-    strategy:
-      fail-fast: false
-
+    outputs:
+      digest: ${{ steps.docker-build.outputs.digest }}
+      sha_tag: ${{ steps.tags.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up QEMU for cross-arch build
+        # buildx needs binfmt for arm64 emulation. Without an explicit
+        # setup the runner falls back to whatever binfmt state the host
+        # happens to have, which makes arm64 builds flaky.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -267,13 +286,156 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.TOKEN }}
 
-      - name: Build and push
+      - name: Compute image tags
+        id: tags
+        run: |
+          IMAGE_BASE="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          SHA_TAG="${IMAGE_BASE}:sha-${{ github.sha }}"
+          echo "image_base=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Will push to ${SHA_TAG}"
+
+      - name: Build and push (sha tag only)
         id: docker-build
         uses: docker/build-push-action@v6
         with:
           push: true
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
-          tags: | 
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.ref_name }}
+          tags: ${{ steps.tags.outputs.sha_tag }}
+
+  docker-image-smoke:
+    name: Smoke-test pushed image (amd64 E2E + arm64 --version)
+    needs: [verify-version, docker-image]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU for arm64 execution
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.TOKEN }}
+
+      - name: Pull pushed image (amd64)
+        # GHCR manifest visibility is eventually consistent after a fresh
+        # push; one retry round covers the most common 1-2 second lag
+        # without masking a real outage.
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 5
+          retry_wait_seconds: 15
+          command: docker pull --platform linux/amd64 "${{ needs.docker-image.outputs.sha_tag }}"
+
+      - name: End-to-end smoke (amd64)
+        # Same script developers run locally via `make docker-smoke`.
+        # Brings up a postgres:17 sidecar, runs `pg_doorman generate`,
+        # starts pg_doorman on the generated config, and verifies SELECT 1
+        # plus a non-superuser current_user/current_database round-trip.
+        run: scripts/docker-smoke.sh "${{ needs.docker-image.outputs.sha_tag }}"
+
+      - name: Pull pushed image (arm64)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 5
+          retry_wait_seconds: 15
+          command: docker pull --platform linux/arm64 "${{ needs.docker-image.outputs.sha_tag }}"
+
+      - name: 'arm64: pg_doorman --version matches tag'
+        # Full E2E under QEMU is slow; --version is enough to catch a
+        # broken arm64 build (linker mismatch, missing dynamic library,
+        # wrong target triple). Without this check the arm64 manifest
+        # entry can exist with a broken binary inside.
+        run: |
+          EXPECTED=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          ACTUAL=$(docker run --rm --platform linux/arm64 \
+            "${{ needs.docker-image.outputs.sha_tag }}" pg_doorman --version | awk '{print $NF}')
+          echo "Cargo.toml: ${EXPECTED}"
+          echo "arm64 bin:  ${ACTUAL}"
+          if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+            echo "::error::arm64 pg_doorman version (${ACTUAL}) does not match Cargo.toml (${EXPECTED})"
+            exit 1
+          fi
+
+      - name: 'arm64: patroni_proxy --version'
+        run: |
+          docker run --rm --platform linux/arm64 \
+            "${{ needs.docker-image.outputs.sha_tag }}" patroni_proxy --version
+
+  docker-image-promote:
+    name: Promote sha tag to release tags (only after smoke)
+    needs: [verify-version, docker-image, docker-image-smoke]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the full tag list so we can check whether this tag is
+          # the highest stable semver before promoting :latest. Default
+          # checkout fetches only HEAD.
+          fetch-depth: 0
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.TOKEN }}
+
+      - name: Retag image digest to release tags
+        env:
+          DIGEST: ${{ needs.docker-image.outputs.digest }}
+          IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Always retag the smoked digest under the release tag.
+          # buildx imagetools touches only the registry manifest list,
+          # so this is a metadata operation, not a re-push.
+          docker buildx imagetools create \
+            --tag "${IMAGE_BASE}:${GITHUB_REF_NAME}" \
+            "${IMAGE_BASE}@${DIGEST}"
+          echo "Promoted ${GITHUB_REF_NAME} -> ${DIGEST}"
+
+          # :latest moves only for plain stable semver tags vX.Y.Z and
+          # only when this tag is currently the highest such tag. That
+          # keeps reruns of older releases and prerelease tags from
+          # silently rolling :latest back.
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Skipping :latest: ${GITHUB_REF_NAME} is not a stable semver tag"
+            exit 0
+          fi
+          # `|| true` shields the substitution from `set -euo pipefail`
+          # when grep finds no matching tag (it would exit 1 and abort
+          # the whole step). That state only happens on a brand-new
+          # repository before its first stable tag — defensive, not
+          # something pg_doorman hits today.
+          MAX_STABLE=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -1 || true)
+          if [[ -z "${MAX_STABLE}" ]]; then
+            echo "Skipping :latest: no stable semver tag in the repository"
+            exit 0
+          fi
+          if [[ "${MAX_STABLE}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Skipping :latest: highest stable tag is ${MAX_STABLE}, not ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag "${IMAGE_BASE}:latest" \
+            "${IMAGE_BASE}@${DIGEST}"
+          echo "Promoted :latest -> ${GITHUB_REF_NAME}"

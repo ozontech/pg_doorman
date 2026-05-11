@@ -34,6 +34,22 @@ generate:
 flamegraph: ## Generate CPU flamegraph (perf + pgbench load)
 	./scripts/flamegraph.sh
 
+# Build the public Dockerfile as pg_doorman:demo. Same tag the
+# dashboard-validation CI workflow uses. Run this once before
+# `make docker-smoke` on a fresh machine, or pass a different
+# IMAGE= to smoke an already-built or pulled image.
+docker-build-demo: ## Build public Dockerfile as pg_doorman:demo
+	docker build -t pg_doorman:demo -f Dockerfile .
+
+# Default image is pg_doorman:demo. Build it with `make docker-build-demo`
+# (or have dashboard-validation CI run beforehand). Override with
+# `make docker-smoke IMAGE=ghcr.io/ozontech/pg_doorman:v3.8.5` when
+# validating an already-published image.
+IMAGE ?= pg_doorman:demo
+
+docker-smoke: ## End-to-end smoke (postgres sidecar + generate + SELECT 1 + non-superuser routing) against $(IMAGE)
+	./scripts/docker-smoke.sh $(IMAGE)
+
 dashboard-up: ## Bring up grafana/demo and wait until pg_doorman emits enough scrape points
 	cd grafana/demo && docker compose up -d --wait
 	# Wait until Prometheus has at least 12 scrape points for a counter
