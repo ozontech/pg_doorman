@@ -6,14 +6,18 @@ CREATE USER doorman_auth WITH PASSWORD 'auth_secret';
 CREATE USER app_session WITH PASSWORD 'session_pass';
 CREATE DATABASE app_db OWNER app_user;
 
--- Auth query function
+-- Auth query function. SECURITY DEFINER + a pinned search_path is the
+-- shape recommended by documentation/en/src/authentication/auth-query.md
+-- — without `SET search_path` the function would resolve unqualified
+-- names from the caller's path and could be hijacked by a writable
+-- schema. Demo follows the same pattern operators are expected to copy.
 \c app_db
 CREATE OR REPLACE FUNCTION pg_doorman_auth(p_username TEXT)
 RETURNS TABLE(username TEXT, password TEXT) AS $$
 BEGIN
     RETURN QUERY SELECT usename::TEXT, passwd::TEXT FROM pg_shadow WHERE usename = p_username;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp;
 GRANT EXECUTE ON FUNCTION pg_doorman_auth(TEXT) TO doorman_auth;
 
 -- Notification table + trigger for the session-mode listener sidecar.

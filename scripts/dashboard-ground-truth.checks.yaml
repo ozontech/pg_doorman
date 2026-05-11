@@ -1,0 +1,220 @@
+# scripts/dashboard-ground-truth.checks.yaml
+#
+# Used by scripts/dashboard-ground-truth.py. Each check defines:
+#
+#   name        — human-readable identifier (shown in the report).
+#   prometheus  — PromQL query for the dashboard-side value.
+#   truth       — independent ground-truth source (kind + params).
+#   ratio       — allowed max(prom, truth) / min(prom, truth). Picked
+#                 per metric class:
+#                   * counters that share a code path with the log
+#                     side (qps, tps): ratio 3 — same atomic source,
+#                     the gap is scrape skew plus a short warmup
+#                     transient on a cold demo, anything wider is
+#                     a bug.
+#                   * histogram percentiles vs HDR percentiles: ratio
+#                     7 — bucket layout in src/web/metrics/mod.rs is
+#                     coarse (0.5/5/50/500 ms), and on a session-mode
+#                     workload (sub-millisecond queries) the linear
+#                     interpolation lands one bucket above the HDR
+#                     median; anything wider means the workload
+#                     shifted out of the configured bucket range.
+#                   * cross-binary memory metrics: ratio 10 — earlier
+#                     versions of pg_doorman had total_memory off by
+#                     ~22× from VmRSS, this catches that class.
+#   exact       — strict equality (with 1e-9 epsilon for float/int
+#                 rounding). Used for static values from the config.
+#
+# Sources (kinds):
+#   pg_doorman_log   — parse the print_all_stats line in docker logs.
+#                      params: container, pool, field
+#                      (qps|tps|query_ms.p99|xact_ms.p99|...).
+#                      Optional: last_n (default 4) — number of
+#                      print_all_stats samples averaged together to
+#                      match the Prometheus 1m rate window. With
+#                      STAT_PERIOD=15s, last_n=4 ≈ 60s.
+#   psql_query       — run SELECT against Postgres directly, bypassing
+#                      the pooler. params: dsn, query (single number).
+#   psql_delta       — snapshot, sleep, snapshot. Returns per-second
+#                      delta of a counter. params: dsn, query,
+#                      interval_seconds (default 5). Used so the
+#                      dashboard's transactions_total rate has a
+#                      Postgres-side reference (pg_stat_database)
+#                      that does not share any code path with
+#                      pg_doorman.
+#   toml_value       — read a TOML config value via dotted path.
+#                      params: file, path. Path supports [N] indexes
+#                      but those are fragile — prefer toml_array.
+#   toml_array       — pick one entry from a TOML array of tables by
+#                      filter. params: file, path, filter_field,
+#                      filter_value, field. Stays correct if
+#                      [[pools.X.users]] entries are reordered.
+#   proc_status      — read /proc/1/status from inside the pg_doorman
+#                      container. params: container, field (VmRSS).
+#                      Returned as bytes.
+
+defaults:
+  ratio: 10.0
+  pg_doorman_container: demo-pg_doorman-1
+  postgres_dsn:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres_secret
+    dbname: app_db
+  toml_file: grafana/demo/pg_doorman.toml
+
+checks:
+  # ---------------------------------------------------------------------------
+  # Throughput: rate(...total) on the dashboard side, log-averaged
+  # qps/tps on pg_doorman side. Same code path, so ratio 3 — scrape
+  # skew plus a short cold-demo warmup transient. Anything wider
+  # means the scrape window versus log window mismatch is no longer
+  # absorbed by the 60 s averaging.
+  # ---------------------------------------------------------------------------
+  - name: app_user_qps
+    prometheus: rate(pg_doorman_pools_queries_total{user="app_user", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: qps
+    ratio: 3.0
+
+  - name: app_user_tps
+    prometheus: rate(pg_doorman_pools_transactions_total{user="app_user", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: tps
+    ratio: 3.0
+
+  - name: app_session_qps
+    prometheus: rate(pg_doorman_pools_queries_total{user="app_session", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_session@app_db
+      field: qps
+    ratio: 3.0
+
+  - name: app_session_tps
+    prometheus: rate(pg_doorman_pools_transactions_total{user="app_session", database="app_db"}[1m])
+    truth:
+      kind: pg_doorman_log
+      pool: app_session@app_db
+      field: tps
+    ratio: 3.0
+
+  # Cross-source: pg_stat_database is independent of pg_doorman code
+  # paths. (xact_commit + xact_rollback) per second on the database
+  # should match the pooler's transactions_total rate within 2× —
+  # Postgres counts every committed and aborted transaction whether
+  # the pooler tracked it or not.
+  - name: app_db_xact_rate_pg_stat_database
+    prometheus: sum(rate(pg_doorman_pools_transactions_total{database="app_db"}[1m]))
+    truth:
+      kind: psql_delta
+      query: SELECT xact_commit + xact_rollback FROM pg_stat_database WHERE datname='app_db'
+      interval_seconds: 5
+    ratio: 3.0
+
+  # ---------------------------------------------------------------------------
+  # Latency: histogram_quantile vs HDR percentile. Different algorithms,
+  # ratio 7. Bucket layout in src/web/metrics/mod.rs covers
+  # 0.5/5/50/500/5000 ms — pgbench loop typically sits at 1-50 ms,
+  # but the session pool runs sub-millisecond queries that interpolate
+  # one bucket above the HDR median, so 7× absorbs that drift while
+  # still flagging "workload moved out of the configured buckets".
+  # ---------------------------------------------------------------------------
+  - name: app_user_query_p99
+    prometheus: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{user="app_user", database="app_db"}[1m])))
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: query_ms.p99
+      scale: 0.001    # query_ms → seconds
+    ratio: 7.0
+
+  - name: app_user_xact_p99
+    prometheus: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_transaction_duration_seconds_bucket{user="app_user", database="app_db"}[1m])))
+    truth:
+      kind: pg_doorman_log
+      pool: app_user@app_db
+      field: xact_ms.p99
+      scale: 0.001
+    ratio: 7.0
+
+  - name: app_session_query_p99
+    prometheus: histogram_quantile(0.99, sum by (le) (rate(pg_doorman_pools_query_duration_seconds_bucket{user="app_session", database="app_db"}[1m])))
+    truth:
+      kind: pg_doorman_log
+      pool: app_session@app_db
+      field: query_ms.p99
+      scale: 0.001
+    ratio: 7.0
+
+  # ---------------------------------------------------------------------------
+  # Pool sizing and active-server count: independent ground truth.
+  # ---------------------------------------------------------------------------
+  - name: app_user_active_servers
+    # Backend connections that pg_doorman opened to Postgres for the
+    # app_user pool. Compare to pg_stat_activity, filtered by the user
+    # the pooler authenticates as. backend_type='client backend'
+    # excludes walsender / autovacuum / parallel workers — pg_doorman
+    # only opens regular client connections.
+    prometheus: sum(pg_doorman_pools_servers{user="app_user", database="app_db"})
+    truth:
+      kind: psql_query
+      query: SELECT count(*) FROM pg_stat_activity WHERE usename='app_user' AND backend_type='client backend'
+    ratio: 3.0          # pool_size jitter on idle reaper / coordinator
+
+  - name: app_session_active_servers
+    prometheus: sum(pg_doorman_pools_servers{user="app_session", database="app_db"})
+    truth:
+      kind: psql_query
+      query: SELECT count(*) FROM pg_stat_activity WHERE usename='app_session' AND backend_type='client backend'
+    ratio: 3.0
+
+  - name: pool_size_app_user
+    prometheus: pg_doorman_pool_size{user="app_user", database="app_db"}
+    truth:
+      kind: toml_array
+      path: pools.app_db.users
+      filter_field: username
+      filter_value: app_user
+      field: pool_size
+    exact: true
+
+  - name: pool_size_app_session
+    prometheus: pg_doorman_pool_size{user="app_session", database="app_db"}
+    truth:
+      kind: toml_array
+      path: pools.app_db.users
+      filter_field: username
+      filter_value: app_session
+      field: pool_size
+    exact: true
+
+  # ---------------------------------------------------------------------------
+  # Process memory: catches "metric exists but counts the wrong thing".
+  # On 3.6.2 pg_doorman_total_memory disagreed with /proc/1/status
+  # VmRSS by 22.5×. ratio 10 keeps that detection in scope while
+  # forgiving 1-2× drift between scrape and snapshot.
+  # ---------------------------------------------------------------------------
+  - name: process_rss
+    prometheus: pg_doorman_total_memory
+    truth:
+      kind: proc_status
+      field: VmRSS
+    ratio: 10.0
+
+  # ---------------------------------------------------------------------------
+  # Sanity: paused gauge should be zero on a healthy demo. exact match
+  # because the only valid steady state is 0 — any non-zero is a bug
+  # in the demo (not the dashboard) or a missed PAUSE/RESUME.
+  # ---------------------------------------------------------------------------
+  - name: pools_paused_zero
+    prometheus: max(pg_doorman_pools_paused)
+    truth:
+      kind: psql_query
+      query: SELECT 0
+    exact: true

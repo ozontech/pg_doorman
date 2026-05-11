@@ -33,3 +33,36 @@ generate:
 
 flamegraph: ## Generate CPU flamegraph (perf + pgbench load)
 	./scripts/flamegraph.sh
+
+dashboard-up: ## Bring up grafana/demo and wait until pg_doorman emits enough scrape points
+	cd grafana/demo && docker compose up -d --wait
+	# Wait until Prometheus has at least 12 scrape points for a counter
+	# we know pg_doorman+pgbench will produce — at scrape_interval 5 s
+	# that is ~60 s of steady traffic, matching the rate(...[1m]) window
+	# the dashboard and the ground-truth checks use. Polling beats a
+	# flat sleep: a warm laptop unblocks early, a cold runner does not
+	# flake on a fixed assumption.
+	scripts/dashboard-wait-ready.sh
+
+dashboard-smoke: dashboard-up ## Run Grafana dashboard smoke test against grafana/demo
+	python3 scripts/dashboard-smoke.py
+
+dashboard-ground-truth: dashboard-up ## Correlate dashboard values with logs/pg_stat/toml/proc on grafana/demo
+	python3 scripts/dashboard-ground-truth.py
+
+dashboard-validate: dashboard-up ## Run smoke + ground-truth against grafana/demo (single warmup)
+	python3 scripts/dashboard-smoke.py
+	python3 scripts/dashboard-ground-truth.py
+	@echo "Both layers passed. Run 'make dashboard-down' to tear down."
+
+dashboard-down: ## Tear down grafana/demo and remove its volumes
+	cd grafana/demo && docker compose down -v
+
+dashboard-validate-ci: ## Up + validate + down with pinned image tags. Cleanup runs on SIGINT/SIGTERM.
+	@set -eu; \
+	compose='docker compose -f grafana/demo/docker-compose.yml -f grafana/demo/docker-compose.ci.yml'; \
+	trap "$$compose down -v" EXIT; \
+	$$compose up -d --wait; \
+	scripts/dashboard-wait-ready.sh; \
+	python3 scripts/dashboard-smoke.py; \
+	python3 scripts/dashboard-ground-truth.py
