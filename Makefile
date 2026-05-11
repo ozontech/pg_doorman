@@ -34,6 +34,14 @@ generate:
 flamegraph: ## Generate CPU flamegraph (perf + pgbench load)
 	./scripts/flamegraph.sh
 
+# Default to the local demo image so `make docker-smoke` runs after a
+# `dashboard-up` build. Override with `make docker-smoke IMAGE=...`
+# when validating a freshly built or pulled image.
+IMAGE ?= pg_doorman:demo
+
+docker-smoke: ## End-to-end smoke (postgres sidecar + generate + SELECT 1) against $(IMAGE)
+	./scripts/docker-smoke.sh $(IMAGE)
+
 dashboard-up: ## Bring up grafana/demo and wait until pg_doorman emits enough scrape points
 	cd grafana/demo && docker compose up -d --wait
 	# Wait until Prometheus has at least 12 scrape points for a counter

@@ -8,6 +8,7 @@ on:
       - "scripts/dashboard-*"
       - "src/web/metrics/**"
       - "Makefile"
+      - "Dockerfile"
       - ".github/workflows/dashboard-validation.yml"
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - "scripts/dashboard-*"
       - "src/web/metrics/**"
       - "Makefile"
+      - "Dockerfile"
       - ".github/workflows/dashboard-validation.yml"
 
 permissions:
