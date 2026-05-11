@@ -2034,3 +2034,43 @@ sso_allowed_users = ["alice", "bob"]
         vec!["alice".to_string(), "bob".to_string()]
     );
 }
+
+#[tokio::test]
+async fn reject_reserved_in_general_startup_parameters() {
+    let mut cfg = Config::default();
+    cfg.general
+        .startup_parameters
+        .insert("user".to_string(), "x".to_string());
+    let err = cfg.validate().await.unwrap_err();
+    match err {
+        Error::BadConfig(msg) => assert!(
+            msg.contains("general.startup_parameters") && msg.contains("reserved"),
+            "unexpected message: {msg}"
+        ),
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn reject_reserved_in_pool_startup_parameters() {
+    let mut cfg = Config::default();
+    cfg.general.tls_rate_limit_per_second = 0;
+    let mut pool = Pool::default();
+    pool.startup_parameters
+        .insert("database".to_string(), "x".to_string());
+    pool.users.push(User {
+        username: "u".to_string(),
+        password: "p".to_string(),
+        pool_size: 1,
+        ..User::default()
+    });
+    cfg.pools.insert("p".to_string(), pool);
+    let err = cfg.validate().await.unwrap_err();
+    match err {
+        Error::BadConfig(msg) => assert!(
+            msg.contains("pool.startup_parameters") && msg.contains("reserved"),
+            "unexpected message: {msg}"
+        ),
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}

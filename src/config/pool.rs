@@ -176,6 +176,13 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
+    /// Operator-supplied PostgreSQL startup parameters injected into every
+    /// backend's `StartupMessage`. Becomes `pg_settings.reset_val` and
+    /// survives `RESET ALL`/`DISCARD ALL`. Overrides matching keys from
+    /// `general.startup_parameters`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub startup_parameters: std::collections::BTreeMap<String, String>,
+
     #[serde(
         default = "Pool::default_users",
         deserialize_with = "deserialize_users"
@@ -232,6 +239,11 @@ impl Pool {
     }
 
     pub async fn validate(&mut self) -> Result<(), Error> {
+        crate::config::startup_parameters::validate(
+            &self.startup_parameters,
+            "pool.startup_parameters",
+        )?;
+
         // Validate scaling_warm_pool_ratio
         if let Some(ratio) = self.scaling_warm_pool_ratio {
             if ratio > 100 {
@@ -457,6 +469,7 @@ impl Default for Pool {
             server_tls_certificate: None,
             server_tls_private_key: None,
             auth_query: None,
+            startup_parameters: std::collections::BTreeMap::new(),
         }
     }
 }

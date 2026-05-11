@@ -175,6 +175,7 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         server_tls_certificate: None,
         server_tls_private_key: None,
         auth_query: None,
+        startup_parameters: std::collections::BTreeMap::new(),
         users: vec![User {
             username: "app_user".to_string(),
             password: "md5dd9a0f26a4302744db881776a09bbfad".to_string(),
@@ -1027,6 +1028,26 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     w.comment(fi, "");
     write_pg_hba_rule_examples(w, fi);
     w.blank();
+
+    // --- PostgreSQL Startup Parameters (operator-defined GUCs) ---
+    w.separator(fi, f.section_title("startup_parameters").get(w.russian));
+    w.blank();
+
+    write_field_comment(w, fi, "general", "startup_parameters");
+    match w.format {
+        ConfigFormat::Toml => {
+            w.comment(
+                fi,
+                "startup_parameters = { plan_cache_mode = \"force_custom_plan\", work_mem = \"64MB\" }",
+            );
+        }
+        ConfigFormat::Yaml => {
+            w.comment(fi, "startup_parameters:");
+            w.comment(fi, "  plan_cache_mode: force_custom_plan");
+            w.comment(fi, "  work_mem: 64MB");
+        }
+    }
+    w.blank();
 }
 
 fn write_pg_hba_examples(w: &mut ConfigWriter, fi: usize) {
@@ -1485,6 +1506,22 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
         "log_client_parameter_status_changes",
         &w.bool_val(pool.log_client_parameter_status_changes),
     );
+    w.blank();
+
+    // --- Per-pool Startup Parameters ---
+    write_field_comment(w, fi, "pool", "startup_parameters");
+    match w.format {
+        ConfigFormat::Toml => {
+            w.comment(
+                fi,
+                "startup_parameters = { plan_cache_mode = \"force_custom_plan\" }",
+            );
+        }
+        ConfigFormat::Yaml => {
+            w.comment(fi, "startup_parameters:");
+            w.comment(fi, "  plan_cache_mode: force_custom_plan");
+        }
+    }
     w.blank();
 
     write_pool_users(w, pool_name, &pool.users);

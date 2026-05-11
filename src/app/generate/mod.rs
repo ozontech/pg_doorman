@@ -168,6 +168,7 @@ pub fn generate_config_with_client(
                     server_tls_certificate: None,
                     server_tls_private_key: None,
                     auth_query: None,
+                    startup_parameters: std::collections::BTreeMap::new(),
                     users: users.clone(),
                 },
             );

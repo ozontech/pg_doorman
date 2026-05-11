@@ -53,6 +53,9 @@ sections:
   hba:
     en: "Access Control (pg_hba - Recommended)"
     ru: "Контроль доступа (pg_hba — рекомендуется)"
+  startup_parameters:
+    en: "PostgreSQL Startup Parameters (operator-defined GUCs)"
+    ru: "PostgreSQL Startup-параметры (операторские GUC)"
   pool_server:
     en: "Server Connection Settings"
     ru: "Настройки подключения к серверу"
@@ -1146,6 +1149,30 @@ fields:
         - For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.
         - For Talos/JWT/PAM flows configured at the pool/user level, `trust` still bypasses the client password prompt; however, those modes may be used when `trust` does not match.
 
+    startup_parameters:
+      config:
+        en: |
+          Operator-supplied PostgreSQL startup parameters (GUCs) injected
+          into every backend's StartupMessage as session defaults.
+          They become pg_settings.reset_val and survive RESET ALL / DISCARD ALL.
+          Per-pool startup_parameters override matching keys from general.
+          Reserved keys (user, database, replication, options, _pq_.*) are rejected.
+          Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+        ru: |
+          PostgreSQL startup-параметры (GUC), задаваемые оператором.
+          Передаются в StartupMessage каждого backend как session defaults,
+          становятся pg_settings.reset_val и переживают RESET ALL / DISCARD ALL.
+          Параметры на уровне пула перекрывают совпадающие ключи из general.
+          Зарезервированные ключи (user, database, replication, options, _pq_.*) отклоняются.
+          Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+      doc: |
+        A map of PostgreSQL GUC names to string values, applied as session defaults at backend startup via the protocol-level `StartupMessage`. Because they enter the session at the same precedence level as `-c`/`PGOPTIONS`, the values become each parameter's `reset_val` in `pg_settings` and are restored automatically after a client `RESET ALL` or `DISCARD ALL`.
+
+        Common use cases: `plan_cache_mode`, `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, namespaced GUCs like `auto_explain.log_min_duration`.
+
+        Validation refuses reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), keys that violate PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`), values containing null bytes, and maps whose serialised size would exceed the 15 KiB operator budget within PG's 16 KiB `StartupMessage` cap.
+      default: "{} (empty)"
+
   pool:
     server_host:
       config:
@@ -1444,6 +1471,22 @@ fields:
         ru: "Переопределить путь к приватному ключу TLS-клиента для этого пула."
       doc: "Per-pool override of `server_tls_private_key`."
       default: "None (uses global setting)"
+
+    startup_parameters:
+      config:
+        en: |
+          Operator-supplied PostgreSQL startup parameters (GUCs) injected
+          into every backend's StartupMessage for this pool. Overrides
+          matching keys from general.startup_parameters.
+          Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+        ru: |
+          PostgreSQL startup-параметры (GUC) для этого пула, передаются
+          каждому backend через StartupMessage. Перекрывают совпадающие
+          ключи из general.startup_parameters.
+          Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+      doc: |
+        Per-pool override of [`general.startup_parameters`](#startup-parameters). Keys present in both maps take the per-pool value; keys present only in `general` still apply. See the general-level docs for validation rules and wire-level semantics.
+      default: "{} (empty)"
 
   user:
     username:

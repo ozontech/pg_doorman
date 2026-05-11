@@ -406,6 +406,19 @@ hba = []
 # host all all 0.0.0.0/0 reject
 # """
 
+# --------------------------------------------------------------------------
+# PostgreSQL Startup Parameters (operator-defined GUCs)
+# --------------------------------------------------------------------------
+
+# Operator-supplied PostgreSQL startup parameters (GUCs) injected
+# into every backend's StartupMessage as session defaults.
+# They become pg_settings.reset_val and survive RESET ALL / DISCARD ALL.
+# Per-pool startup_parameters override matching keys from general.
+# Reserved keys (user, database, replication, options, _pq_.*) are rejected.
+# Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+# Default: {} (empty)
+# startup_parameters = { plan_cache_mode = "force_custom_plan", work_mem = "64MB" }
+
 # ############################################################################
 # WEB UI / METRICS
 # ############################################################################
@@ -600,6 +613,13 @@ cleanup_server_connections = true
 # Log SET commands from clients.
 # Default: false
 log_client_parameter_status_changes = false
+
+# Operator-supplied PostgreSQL startup parameters (GUCs) injected
+# into every backend's StartupMessage for this pool. Overrides
+# matching keys from general.startup_parameters.
+# Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+# Default: {} (empty)
+# startup_parameters = { plan_cache_mode = "force_custom_plan" }
 
 # --------------------------------------------------------------------------
 # Users Configuration (TOML uses indexed format)

@@ -268,6 +268,13 @@ pub struct General {
     // New pg_hba rules: either inline content or a file path (see `PgHba` deserialization).
     #[serde(default, skip_serializing)]
     pub pg_hba: Option<PgHba>,
+
+    /// Operator-supplied PostgreSQL startup parameters injected into every
+    /// backend's `StartupMessage`. Becomes `pg_settings.reset_val` and
+    /// survives `RESET ALL`/`DISCARD ALL`. Cascade: `general` -> `pool` ->
+    /// `auth_query` (per-key override, more specific wins).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub startup_parameters: std::collections::BTreeMap<String, String>,
 }
 
 impl General {
@@ -585,6 +592,7 @@ impl Default for General {
                 Self::default_query_interner_anon_idle_ttl_seconds(),
             hba: Self::default_hba(),
             pg_hba: None,
+            startup_parameters: std::collections::BTreeMap::new(),
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
             pooler_check_query: Self::default_pooler_check_query(),
