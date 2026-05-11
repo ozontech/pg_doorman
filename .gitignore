@@ -57,6 +57,9 @@ flamegraph-output/
 # Superpowers brainstorm session workdir (VC mockups, server state)
 .superpowers/
 
+# Superpowers spec drafts (private session artifacts)
+/docs/superpowers/
+
 # Per-session agent handoff scratchpads — not part of public history.
 .local/
 
