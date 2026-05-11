@@ -1,21 +1,36 @@
 #!/usr/bin/env bash
 # End-to-end smoke for a pg_doorman docker image:
 #   1. pg_doorman --version inside image matches Cargo.toml
+#      (skipped when CHECK_VERSION=0)
 #   2. patroni_proxy --version inside image runs
 #   3. pg_doorman generate produces a config against a real postgres
+#      (with a non-superuser role + custom database created beforehand)
 #   4. pg_doorman starts on the generated config
 #   5. psql SELECT 1 routed through pg_doorman returns 1
+#   6. psql via a non-superuser role into a non-default database returns
+#      the expected current_user/current_database — exercises routing
+#      and non-superuser auth, not just the postgres/postgres happy path
 #
-# Both CI (build-packages.yaml docker-image-smoke job) and developers
-# (make docker-smoke) call this script, so CI and local stay in sync.
+# Both CI (build-packages.yaml docker-image-smoke job + the dashboard
+# validation workflow) and developers (`make docker-smoke`) call this
+# script, so CI and local stay in sync.
 #
 # Usage:
 #   scripts/docker-smoke.sh <image-ref>
 #
-# Requires: docker, internet access to pull postgres:17 once.
+# Environment overrides:
+#   POSTGRES_IMAGE    sidecar/psql client image (default postgres:17)
+#   CHECK_VERSION     1 to enforce Cargo.toml version match, 0 to skip
+#                     (useful when smoking an already-published image
+#                     against an unrelated checkout)
+#
+# Requires: docker, internet access to pull $POSTGRES_IMAGE once.
 set -euo pipefail
 
 IMAGE="${1:?usage: $0 <image-ref>}"
+
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:17}"
+CHECK_VERSION="${CHECK_VERSION:-1}"
 
 # Repo root so the Cargo.toml lookup works regardless of cwd.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,10 +42,17 @@ PG_NAME="pg-${RUN_ID}"
 DOORMAN_NAME="doorman-${RUN_ID}"
 CONFIG_DIR="$(mktemp -d -t pg-doorman-smoke.XXXXXX)"
 
-# Postgres credentials used both for the sidecar and for pg_doorman generate.
+# Superuser credentials for the sidecar and for pg_doorman generate.
 PG_USER="postgres"
 PG_PASSWORD="postgres"
 PG_DB="postgres"
+
+# Non-superuser fixture created before generate so the generated config
+# contains a pool for it, and the routing/auth round-trip below has a
+# realistic non-postgres user to exercise.
+SMOKE_USER="smoke_user"
+SMOKE_PASSWORD="smoke_pw"
+SMOKE_DB="smoke_db"
 
 cleanup() {
   local rc=$?
@@ -53,33 +75,39 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== smoke: image = $IMAGE ==="
+echo "=== sidecar image = $POSTGRES_IMAGE ==="
 echo
 
-# 1. Version inside the image matches Cargo.toml.
-echo "--- pg_doorman --version vs Cargo.toml ---"
-EXPECTED_VERSION=$(grep -m1 '^version = ' "$REPO_ROOT/Cargo.toml" | cut -d'"' -f2)
-# `pg_doorman --version` emits "pg_doorman <version>".
-ACTUAL_VERSION=$(docker run --rm "$IMAGE" pg_doorman --version | awk '{print $NF}')
-echo "Cargo.toml: $EXPECTED_VERSION"
-echo "image:      $ACTUAL_VERSION"
-if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
-  echo "::error::pg_doorman version in image ($ACTUAL_VERSION) does not match Cargo.toml ($EXPECTED_VERSION)"
-  exit 1
+# 1. Version inside the image matches Cargo.toml (unless explicitly skipped).
+if [ "$CHECK_VERSION" = "1" ]; then
+  echo "--- pg_doorman --version vs Cargo.toml ---"
+  EXPECTED_VERSION=$(grep -m1 '^version = ' "$REPO_ROOT/Cargo.toml" | cut -d'"' -f2)
+  # `pg_doorman --version` emits "pg_doorman <version>".
+  ACTUAL_VERSION=$(docker run --rm "$IMAGE" pg_doorman --version | awk '{print $NF}')
+  echo "Cargo.toml: $EXPECTED_VERSION"
+  echo "image:      $ACTUAL_VERSION"
+  if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+    echo "::error::pg_doorman version in image ($ACTUAL_VERSION) does not match Cargo.toml ($EXPECTED_VERSION)"
+    exit 1
+  fi
+else
+  echo "--- pg_doorman --version (Cargo.toml comparison skipped via CHECK_VERSION=0) ---"
+  docker run --rm "$IMAGE" pg_doorman --version
 fi
 
 echo
 echo "--- patroni_proxy --version ---"
 docker run --rm "$IMAGE" patroni_proxy --version
 
-# 2. Bring up an isolated network and a postgres:17 sidecar.
+# 2. Bring up an isolated network and a postgres sidecar.
 echo
-echo "--- starting postgres:17 ---"
+echo "--- starting $POSTGRES_IMAGE ---"
 docker network create "$NET_NAME" >/dev/null
 docker run -d --name "$PG_NAME" --network "$NET_NAME" \
   -e "POSTGRES_USER=$PG_USER" \
   -e "POSTGRES_PASSWORD=$PG_PASSWORD" \
   -e "POSTGRES_DB=$PG_DB" \
-  postgres:17 >/dev/null
+  "$POSTGRES_IMAGE" >/dev/null
 
 # Wait for postgres to accept connections. 60s ceiling: a pulled image
 # from cache is typically ready in <5s; the ceiling covers a cold cache.
@@ -96,7 +124,18 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# 3. Generate a pg_doorman config against the real postgres.
+# 3. Create non-superuser fixture before generate so pg_doorman generate
+#    enumerates both users in pg_shadow and both databases when emitting
+#    pools/auth_query stanzas.
+echo
+echo "--- creating non-superuser fixture: ${SMOKE_USER}/${SMOKE_DB} ---"
+docker exec -i -e "PGPASSWORD=$PG_PASSWORD" "$PG_NAME" \
+  psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 <<SQL
+CREATE ROLE ${SMOKE_USER} LOGIN PASSWORD '${SMOKE_PASSWORD}';
+CREATE DATABASE ${SMOKE_DB} OWNER ${SMOKE_USER};
+SQL
+
+# 4. Generate a pg_doorman config against the real postgres.
 echo
 echo "--- pg_doorman generate ---"
 docker run --rm --network "$NET_NAME" \
@@ -113,7 +152,7 @@ if [ ! -s "$CONFIG_DIR/pg_doorman.toml" ]; then
 fi
 echo "generated $(wc -l < "$CONFIG_DIR/pg_doorman.toml") lines"
 
-# 4. Start pg_doorman on the generated config.
+# 5. Start pg_doorman on the generated config.
 echo
 echo "--- starting pg_doorman ---"
 docker run -d --name "$DOORMAN_NAME" --network "$NET_NAME" \
@@ -127,7 +166,7 @@ docker run -d --name "$DOORMAN_NAME" --network "$NET_NAME" \
 # and a slow first run on a cold runner.
 echo "waiting for pg_doorman listener on 6432..."
 for i in $(seq 1 60); do
-  if docker run --rm --network "$NET_NAME" postgres:17 \
+  if docker run --rm --network "$NET_NAME" "$POSTGRES_IMAGE" \
        pg_isready -h "$DOORMAN_NAME" -p 6432 -U "$PG_USER" >/dev/null 2>&1; then
     echo "pg_doorman ready after ${i}s"
     break
@@ -139,17 +178,36 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# 5. Route SELECT 1 through pg_doorman.
+# 6. Route SELECT 1 through pg_doorman as the superuser/default database.
 echo
-echo "--- psql SELECT 1 via pg_doorman ---"
+echo "--- psql SELECT 1 via pg_doorman (superuser path) ---"
 RESULT=$(docker run --rm --network "$NET_NAME" \
   -e "PGPASSWORD=$PG_PASSWORD" \
-  postgres:17 \
+  "$POSTGRES_IMAGE" \
   psql -h "$DOORMAN_NAME" -p 6432 -U "$PG_USER" -d "$PG_DB" \
        -At -c "SELECT 1")
 echo "result: '$RESULT'"
 if [ "$RESULT" != "1" ]; then
   echo "::error::SELECT 1 through pg_doorman returned '$RESULT', expected '1'"
+  exit 1
+fi
+
+# 7. Round-trip via the non-superuser role into the dedicated database.
+#    Asserts current_user and current_database() so a regression in
+#    pool routing, generated auth_query, or password forwarding gets
+#    caught — not just the superuser SELECT 1 happy path.
+echo
+echo "--- psql current_user/current_database via pg_doorman (non-superuser path) ---"
+RESULT=$(docker run --rm --network "$NET_NAME" \
+  -e "PGPASSWORD=$SMOKE_PASSWORD" \
+  "$POSTGRES_IMAGE" \
+  psql -h "$DOORMAN_NAME" -p 6432 -U "$SMOKE_USER" -d "$SMOKE_DB" \
+       -At -c "SELECT current_user || '|' || current_database()")
+EXPECTED="${SMOKE_USER}|${SMOKE_DB}"
+echo "result:   '$RESULT'"
+echo "expected: '$EXPECTED'"
+if [ "$RESULT" != "$EXPECTED" ]; then
+  echo "::error::non-superuser routing returned '$RESULT', expected '$EXPECTED'"
   exit 1
 fi
 
