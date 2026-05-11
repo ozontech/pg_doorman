@@ -1185,25 +1185,30 @@ fields:
     startup_parameters:
       config:
         en: |
-          Operator-supplied PostgreSQL configuration parameters.
-          Reserved keys (user, database, replication, options, _pq_.*)
-          and the StartupMessage budget are validated at config load.
-          Wire injection ships in a later commit on the
-          feat/startup-parameters branch.
+          Baseline of PostgreSQL configuration parameters that pg_doorman
+          injects into every backend StartupMessage. Each pool can override
+          per key, and an auth_query in passthrough mode can override per
+          user. Reserved keys (user, database, replication, options,
+          _pq_.*) are rejected at config load, as is anything that pushes
+          the cascade past PG's MAX_STARTUP_PACKET_LENGTH (10000 bytes).
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
-          Конфигурационные параметры PostgreSQL, заданные оператором.
-          Зарезервированные ключи (user, database, replication, options,
-          _pq_.*) и бюджет StartupMessage проверяются на этапе загрузки
-          конфига. Передача параметров в backend появится в одном из
-          следующих коммитов ветки feat/startup-parameters.
+          Базовый набор параметров PostgreSQL, которые pg_doorman
+          передаёт в StartupMessage каждого открываемого бэкенда. Любой
+          пул может перекрыть значение по ключу, а auth_query в режиме
+          passthrough — на уровне пользователя. Зарезервированные ключи
+          (user, database, replication, options, _pq_.*) и слишком
+          большой суммарный набор (PG limit MAX_STARTUP_PACKET_LENGTH =
+          10000 байт) отклоняются на этапе загрузки конфига.
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        A map of PostgreSQL configuration parameter names to string values, intended as session defaults for every backend pg_doorman opens for this pool's clients.
+        Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into the `StartupMessage` of every backend it opens, which means they become `pg_settings.reset_val` for that session and survive any `RESET ALL` / `DISCARD ALL` the client issues.
 
-        Validation enforced at config load: reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`) are refused; keys must match PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`); values must not contain null bytes; the serialised map must fit within the operator budget carved out of PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
+        Cascade of overrides (more specific wins per key): `general.startup_parameters` is the baseline; `pools.<name>.startup_parameters` overrides per pool; an `auth_query` row in passthrough mode can carry a `startup_parameters` JSON column that overrides per user. Dedicated-mode `auth_query` pools intentionally ignore the per-user column because one shared backend serves multiple roles.
 
-        Wire-level injection into the backend `StartupMessage` and the `general` → `pool` → `auth_query` cascade resolution ship in subsequent commits on the `feat/startup-parameters` branch. The current commit only validates this map at config load.
+        Validation enforced at config load: reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`) are refused; keys must match PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`); values must not contain null bytes; per-level size must fit the operator budget. The full merged cascade is re-checked at every backend spawn against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) cap; when the merge would not fit, pg_doorman drops all operator-supplied keys for that spawn and logs.
+
+        If PG keeps rejecting a particular operator-supplied key at backend startup (sqlstate `22023` / `42704` / `42501`), pg_doorman quarantines that key for the pool. See `startup_parameter_quarantine_threshold` and `startup_parameter_quarantine_ttl` for tuning, `SHOW POOLS`' `quarantined_params` column for visibility, and the `pg_doorman_backend_startup_parameter_errors_total` / `pg_doorman_backend_startup_parameter_quarantined` metrics for alerting.
       default: "{} (empty)"
 
   pool:
@@ -1508,26 +1513,26 @@ fields:
     startup_parameters:
       config:
         en: |
-          Operator-supplied PostgreSQL configuration parameters for this
-          pool. Reserved keys (user, database, replication, options,
-          _pq_.*) and the StartupMessage budget are validated at config
-          load. Per-pool overlay; the eventual cascade
-          (general → pool → auth_query) is not yet active. Wire injection
-          ships in a later commit on the feat/startup-parameters branch.
+          Per-pool overrides for PostgreSQL configuration parameters in
+          backend StartupMessage. Wins over general.startup_parameters
+          per key; auth_query in passthrough mode wins over this.
+          Validated for reserved keys and size at config load; the full
+          merged cascade is re-checked at every backend spawn against
+          PG's MAX_STARTUP_PACKET_LENGTH (10000 bytes).
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
-          Конфигурационные параметры PostgreSQL для этого пула, заданные
-          оператором. Зарезервированные ключи (user, database,
-          replication, options, _pq_.*) и бюджет StartupMessage
-          проверяются на этапе загрузки конфига. Перекрытие на уровне
-          пула; каскад general → pool → auth_query пока не активен.
-          Передача параметров в backend появится в одном из следующих
-          коммитов ветки feat/startup-parameters.
+          Перекрытия параметров PostgreSQL для этого пула, передаваемые
+          в StartupMessage бэкенда. Имеют приоритет над
+          general.startup_parameters по ключу; auth_query в режиме
+          passthrough перекрывает per-pool. На этапе загрузки конфига
+          проверяются зарезервированные ключи и размер; общий каскад
+          re-checking на каждом спавне бэкенда против PG-лимита
+          MAX_STARTUP_PACKET_LENGTH (10000 байт).
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
         Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the operator budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
 
-        Per-pool overlay semantics — the cascade `general` → `pool` → `auth_query` that selects the effective value for each key — and wire injection into the backend `StartupMessage` ship in subsequent commits on the `feat/startup-parameters` branch. The current commit only validates this map at config load.
+        In the cascade `general` → `pool` → `auth_query`, this layer overrides general per key, and an auth_query passthrough entry overrides this. Dedicated-mode `auth_query` pools ignore the per-user column on purpose. See [`general.startup_parameters`](#startup-parameters) for the full behaviour description, quarantine knobs, and observability.
       default: "{} (empty)"
 
   user:
