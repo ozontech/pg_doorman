@@ -113,6 +113,10 @@ docker run -p 6432:6432 \
   ghcr.io/ozontech/pg_doorman
 ```
 
+Образ слушает `6432` для трафика PostgreSQL и `9127` для эндпоинта метрик и опциональной admin/web-консоли. `WORKDIR` равен `/etc/pg_doorman/`, конфиг по умолчанию ищется в `pg_doorman.toml`; путь переопределяется переменной окружения `CONFIG_FILE`. Прочие env-переменные: `LOG_LEVEL` (значение по умолчанию `info`), `LOG_FORMAT` (`text` или `structured`), `NO_COLOR`. `STOPSIGNAL` контейнера равен `SIGTERM`, поэтому `docker stop` и остановка pod в Kubernetes позволяют `pg_doorman` штатно слить ожидающих клиентов и выйти. Не посылайте `SIGINT` в контейнер с pg_doorman: этот сигнал запускает миграцию бинарника, а в non-TTY контексте после этого pid 1 завершается, и контейнер падает.
+
+Публичный образ собран без cargo-фич `tls-migration` и `pam`. Если нужен TLS для клиентских или серверных соединений либо PAM-аутентификация, соберите свой образ из публичного `Dockerfile`, добавив `--features tls-migration` (и/или `pam`) в шаг `cargo build --release`.
+
 `docker-compose.yaml` с PostgreSQL в качестве sidecar лежит в [`example/`](https://github.com/ozontech/pg_doorman/tree/master/example) — для smoke-тестов.
 
 ## Проверка установки
