@@ -274,6 +274,69 @@ jobs:
           push: true
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
-          tags: | 
+          tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.ref_name }}
+
+  docker-image-smoke:
+    name: Smoke-test pushed docker image (amd64 E2E + arm64 --version)
+    needs: [verify-version, docker-image]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU for arm64 execution
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.TOKEN }}
+
+      - name: Resolve image reference
+        id: image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.ref_name }}"
+          echo "ref=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Smoking ${IMAGE}"
+
+      - name: Pull pushed image (amd64)
+        run: docker pull --platform linux/amd64 "${{ steps.image.outputs.ref }}"
+
+      - name: End-to-end smoke (amd64)
+        # Runs the same script developers run locally via `make docker-smoke`.
+        # Brings up a postgres:17 sidecar, drives `pg_doorman generate`,
+        # starts pg_doorman on the generated config, and routes SELECT 1
+        # through it via psql.
+        run: scripts/docker-smoke.sh "${{ steps.image.outputs.ref }}"
+
+      - name: Pull pushed image (arm64)
+        run: docker pull --platform linux/arm64 "${{ steps.image.outputs.ref }}"
+
+      - name: 'arm64: pg_doorman --version matches tag'
+        # Full E2E under QEMU is slow; --version is enough to catch a
+        # broken arm64 build (linker mismatch, missing dynamic library,
+        # wrong target triple). Without this check the arm64 manifest
+        # entry can exist with a broken binary inside.
+        run: |
+          EXPECTED=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          ACTUAL=$(docker run --rm --platform linux/arm64 \
+            "${{ steps.image.outputs.ref }}" pg_doorman --version | awk '{print $NF}')
+          echo "Cargo.toml: ${EXPECTED}"
+          echo "arm64 bin:  ${ACTUAL}"
+          if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+            echo "::error::arm64 pg_doorman version (${ACTUAL}) does not match Cargo.toml (${EXPECTED})"
+            exit 1
+          fi
+
+      - name: 'arm64: patroni_proxy --version'
+        run: |
+          docker run --rm --platform linux/arm64 \
+            "${{ steps.image.outputs.ref }}" patroni_proxy --version
