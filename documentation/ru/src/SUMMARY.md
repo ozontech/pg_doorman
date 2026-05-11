@@ -30,7 +30,7 @@
 - [Режимы пула](concepts/pool-modes.md)
 - [Координатор пулов](concepts/pool-coordinator.md)
 - [Кеш Parse для анонимных prepared statements](tutorials/prepared-statements.md)
-- [Startup-параметры PostgreSQL](tutorials/startup-parameters.md)
+- [Параметры запуска PostgreSQL](tutorials/startup-parameters.md)
 - [Пул под нагрузкой (продвинутое)](tutorials/pool-pressure.md)
 
 # Высокая доступность

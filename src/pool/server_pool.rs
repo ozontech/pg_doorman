@@ -392,6 +392,41 @@ impl ServerPool {
         }
     }
 
+    /// Inspect the operator-supplied cascade with the source layer kept for
+    /// each key. Used by the admin `SHOW STARTUP_PARAMETERS` command and the
+    /// `/api/pools` JSON so operators can answer "where did `work_mem=64MB`
+    /// come from for this pool" without reading the live config plus the
+    /// auth_query cache by hand.
+    ///
+    /// Unlike [`Self::resolved_startup_parameters`], this method does **not**
+    /// apply the runtime budget-overflow drop: it reports the cascade as
+    /// configured even when the merged body would not fit in PG's startup
+    /// packet, so the operator sees the misconfiguration through this view
+    /// instead of an empty result.
+    pub fn effective_startup_parameters_with_sources(
+        &self,
+    ) -> std::collections::BTreeMap<String, (String, super::startup_resolver::ParameterSource)>
+    {
+        let cfg = crate::config::config_arc();
+        let pool_params = cfg
+            .pools
+            .get(&self.address.pool_name)
+            .map(|p| &p.startup_parameters)
+            .cloned()
+            .unwrap_or_default();
+        let auth_query_params = match super::get_auth_query_state(&self.address.pool_name) {
+            Some(state) if !state.config.is_dedicated_mode() => {
+                state.peek_startup_parameters(&self.user.username)
+            }
+            _ => None,
+        };
+        super::startup_resolver::resolve_with_sources(
+            &cfg.general.startup_parameters,
+            &pool_params,
+            auth_query_params.as_ref(),
+        )
+    }
+
     /// Resolve the operator-supplied startup_parameters map that this pool
     /// will hand to `Server::startup` for one backend spawn. The cascade is
     /// `general` -> pool -> (optional) auth_query per-user entry, with the
@@ -433,12 +468,23 @@ impl ServerPool {
         );
 
         // Per-level validation in `Config::validate` does not see the merged
-        // cascade. Two levels that each fit individually can together push the
-        // StartupMessage past PG's `MAX_STARTUP_PACKET_LENGTH`. If the merged
-        // body would not fit, drop all operator-supplied keys for this spawn
-        // and log; the backend connects with server defaults rather than
-        // failing every time. The static per-level cap already prevents any
-        // single level from saturating the budget on its own.
+        // cascade, and the per-level guard does not see the user/database/
+        // application_name fields the wire layer always adds. Two cheap
+        // checks, in order:
+        //
+        // 1. Fast path: just the operator-supplied pairs against the
+        //    `MAX_OPERATOR_BUDGET`. This catches cascade overflows without
+        //    knowing the username/database length.
+        // 2. Exact-length check: the full StartupMessage pg_doorman is about
+        //    to put on the wire, against PG's `MAX_STARTUP_PACKET_LENGTH`.
+        //    Mirrors the layout in `crate::messages::protocol::startup` and
+        //    includes the length prefix, version, `user`, effective
+        //    `application_name` and `database` so a long `application_name`
+        //    cannot slip a near-budget operator set over the cap.
+        //
+        // On overflow drop all operator-supplied keys for this spawn and log;
+        // the backend connects with server defaults rather than failing on
+        // every retry.
         let body_bytes = crate::config::startup_parameters::serialized_bytes(&merged);
         if body_bytes > crate::config::startup_parameters::MAX_OPERATOR_BUDGET {
             warn!(
@@ -449,6 +495,29 @@ impl ServerPool {
                 self.address.pool_name,
                 body_bytes,
                 crate::config::startup_parameters::MAX_OPERATOR_BUDGET,
+                crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE,
+            );
+            return std::collections::BTreeMap::new();
+        }
+        let username_for_wire = self
+            .user
+            .server_username
+            .as_deref()
+            .unwrap_or(self.user.username.as_str());
+        let packet_bytes = crate::config::startup_parameters::full_packet_bytes(
+            username_for_wire,
+            &self.database,
+            &self.application_name,
+            &merged,
+        );
+        if packet_bytes > crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE {
+            warn!(
+                "[{}@{}] effective StartupMessage size {} bytes exceeds PG cap {} once \
+                 user/database/application_name are included; all operator-supplied \
+                 parameters dropped for this backend spawn",
+                self.user.username,
+                self.address.pool_name,
+                packet_bytes,
                 crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE,
             );
             return std::collections::BTreeMap::new();

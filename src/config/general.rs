@@ -280,12 +280,12 @@ pub struct General {
     #[serde(default = "General::default_startup_parameter_quarantine_ttl")]
     pub startup_parameter_quarantine_ttl: u64,
 
-    /// Operator-supplied PostgreSQL configuration parameters. Reserved
-    /// keys (`user`, `database`, `replication`, `options`, `_pq_.*`) and
-    /// the StartupMessage budget are validated at config load. Wire
-    /// injection into backend `StartupMessage` and the
-    /// general → pool → auth_query cascade resolution ship in subsequent
-    /// commits on the feat/startup-parameters branch.
+    /// Operator-supplied PostgreSQL configuration parameters added to
+    /// backend `StartupMessage`s. The general map is the baseline;
+    /// pool-level settings override per key, and passthrough `auth_query`
+    /// rows can override per user. Config load validates reserved keys,
+    /// GUC names, null bytes, and this level's size; the merged cascade is
+    /// checked again before each backend startup.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub startup_parameters: std::collections::BTreeMap<String, String>,
 }

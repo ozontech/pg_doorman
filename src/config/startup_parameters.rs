@@ -103,6 +103,45 @@ pub fn serialized_bytes(map: &BTreeMap<String, String>) -> usize {
     map.iter().map(|(k, v)| k.len() + 1 + v.len() + 1).sum()
 }
 
+/// Exact byte length of the full StartupMessage pg_doorman will put on the
+/// wire for one backend spawn, *including* the 4-byte length prefix. The
+/// layout mirrors `crate::messages::protocol::startup`:
+///
+/// * 4 bytes - length prefix (the wire field itself)
+/// * 4 bytes - protocol version
+/// * `"user\0<user>\0"`, `"application_name\0<app>\0"`, `"database\0<database>\0"`
+///   (`application_name` from `extras` wins over the pg_doorman default)
+/// * each remaining `(key, value)` pair as `key\0value\0`
+/// * 1 byte - parameter-list terminator (`\0`)
+///
+/// The per-level config validation only sees `extras`; this helper is what
+/// the runtime path uses to ensure the *full* packet still fits under PG's
+/// `MAX_STARTUP_PACKET_LENGTH` cap once user / database / application_name
+/// are included.
+pub fn full_packet_bytes(
+    user: &str,
+    database: &str,
+    application_name: &str,
+    extras: &BTreeMap<String, String>,
+) -> usize {
+    let mut total = 4usize + 4; // length prefix + protocol version
+    total += b"user\0".len() + user.len() + 1;
+    total += b"database\0".len() + database.len() + 1;
+    let effective_app_name = extras
+        .get("application_name")
+        .map(String::as_str)
+        .unwrap_or(application_name);
+    total += b"application_name\0".len() + effective_app_name.len() + 1;
+    for (key, value) in extras {
+        if key == "application_name" {
+            continue;
+        }
+        total += key.len() + 1 + value.len() + 1;
+    }
+    total += 1; // parameter-list terminator
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +255,32 @@ mod tests {
     #[test]
     fn serialized_bytes_empty_map_is_zero() {
         assert_eq!(serialized_bytes(&BTreeMap::new()), 0);
+    }
+
+    #[test]
+    fn full_packet_bytes_matches_pg_layout() {
+        let extras = m(&[]);
+        // 4 + 4 + ("user\0"=5 + 4 + 1) + ("database\0"=9 + 4 + 1) +
+        // ("application_name\0"=17 + 10 + 1) + 1 = 61
+        let n = full_packet_bytes("usr1", "db01", "pg_doorman", &extras);
+        assert_eq!(n, 4 + 4 + (5 + 4 + 1) + (9 + 4 + 1) + (17 + 10 + 1) + 1);
+    }
+
+    #[test]
+    fn full_packet_bytes_overrides_application_name_from_extras() {
+        let extras = m(&[("application_name", "checkout_pool")]);
+        let n = full_packet_bytes("usr1", "db01", "pg_doorman", &extras);
+        // Same as above but with "checkout_pool" (13 bytes) instead of
+        // "pg_doorman" (10 bytes): 61 + 3 = 64.
+        assert_eq!(n, 4 + 4 + (5 + 4 + 1) + (9 + 4 + 1) + (17 + 13 + 1) + 1);
+    }
+
+    #[test]
+    fn full_packet_bytes_counts_each_extra_pair() {
+        let extras = m(&[("plan_cache_mode", "force_custom_plan")]);
+        // Base 61 + key("plan_cache_mode"=15 + 1) + value("force_custom_plan"=17 + 1) = 95.
+        let n = full_packet_bytes("usr1", "db01", "pg_doorman", &extras);
+        assert_eq!(n, 61 + (15 + 1) + (17 + 1));
     }
 
     #[test]

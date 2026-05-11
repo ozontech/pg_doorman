@@ -86,6 +86,21 @@ export interface PoolDto {
   tls_handshake_errors_total: number;
   // Live TLS-encrypted backend connections held by the pool.
   tls_backend_connections: number;
+  // Operator-supplied PostgreSQL startup parameters this pool injects into
+  // each new backend StartupMessage. Backend omits this field when the
+  // cascade is empty for the pool's user.
+  startup_parameters?: StartupParameter[];
+  // Subset of `startup_parameters` parameter names parked in the per-pool
+  // quarantine. Backend omits this field when nothing is quarantined.
+  quarantined_params?: string[];
+}
+
+export interface StartupParameter {
+  parameter: string;
+  value: string;
+  // "general" | "pool" | "auth_query" — cascade layer that contributed the
+  // winning value.
+  source: string;
 }
 
 export interface PoolsDto {

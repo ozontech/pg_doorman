@@ -7,7 +7,7 @@
 //! tests are a candidate follow-up.
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct VersionDto {
@@ -148,6 +148,47 @@ pub(crate) struct PoolDto {
     /// Live TLS-encrypted backend connections held by the pool. Mirrors
     /// `pg_doorman_server_tls_connections`.
     pub tls_backend_connections: u64,
+
+    /// Operator-supplied PostgreSQL startup parameters this pool injects into
+    /// each new backend `StartupMessage`, in the order produced by the
+    /// `general` -> pool -> auth_query cascade. Each entry carries the layer
+    /// that contributed the winning value. Omitted from JSON when the pool
+    /// has no operator overrides for this user.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub startup_parameters: Vec<StartupParameterDto>,
+    /// Subset of startup parameter names currently parked by the per-pool
+    /// quarantine. Backends spawn without these keys while the entry lives;
+    /// PG `RESET ALL` / `DISCARD ALL` therefore restore PG defaults rather
+    /// than the operator-configured values for the duration of the quarantine.
+    /// Mirrors `SHOW POOLS.quarantined_params` and the
+    /// `pg_doorman_backend_startup_parameter_quarantined` gauge.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub quarantined_params: Vec<String>,
+}
+
+/// One entry in `PoolDto.startup_parameters`. The `source` field tells the
+/// operator which cascade layer contributed the value — `"general"`, `"pool"`
+/// or `"auth_query"`.
+#[derive(Debug, Serialize)]
+pub(crate) struct StartupParameterDto {
+    pub parameter: String,
+    pub value: String,
+    pub source: &'static str,
+}
+
+impl StartupParameterDto {
+    pub fn from_resolved(
+        merged: BTreeMap<String, (String, crate::pool::startup_resolver::ParameterSource)>,
+    ) -> Vec<Self> {
+        merged
+            .into_iter()
+            .map(|(parameter, (value, source))| StartupParameterDto {
+                parameter,
+                value,
+                source: source.as_str(),
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Serialize)]

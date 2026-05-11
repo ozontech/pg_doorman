@@ -1552,6 +1552,19 @@ impl Pool {
         self.inner.server_pool.quarantined_startup_parameters()
     }
 
+    /// Effective merged startup_parameters cascade keyed by parameter, with
+    /// the layer that contributed each winning value. Delegates to
+    /// `ServerPool` so admin `SHOW STARTUP_PARAMETERS` and the
+    /// `/api/pools` JSON share one resolver.
+    pub fn effective_startup_parameters_with_sources(
+        &self,
+    ) -> std::collections::BTreeMap<String, (String, super::startup_resolver::ParameterSource)>
+    {
+        self.inner
+            .server_pool
+            .effective_startup_parameters_with_sources()
+    }
+
     /// Forward a live update of quarantine threshold/TTL to the shared
     /// `QuarantineState`. The pool hash does not include these
     /// general-level knobs, so reload calls this on every pool it kept.

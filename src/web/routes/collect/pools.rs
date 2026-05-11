@@ -2,7 +2,7 @@ use crate::pool::get_all_pools;
 use crate::web::metrics::{
     FALLBACK_ACTIVE, SHOW_SERVER_TLS_CONNECTIONS, SHOW_SERVER_TLS_HANDSHAKE_ERRORS,
 };
-use crate::web::routes::dto::{PoolDto, PoolsDto};
+use crate::web::routes::dto::{PoolDto, PoolsDto, StartupParameterDto};
 
 use super::{now_unix_ms, snapshot};
 
@@ -70,6 +70,10 @@ pub(crate) fn collect_pools() -> PoolsDto {
             fallback_active,
             tls_handshake_errors_total,
             tls_backend_connections,
+            startup_parameters: StartupParameterDto::from_resolved(
+                pool.database.effective_startup_parameters_with_sources(),
+            ),
+            quarantined_params: pool.database.quarantined_startup_parameters(),
         };
         pools.push(dto);
     }

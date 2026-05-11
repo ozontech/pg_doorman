@@ -2,21 +2,20 @@
 
 ### 3.9.0
 
-Per-pool injection of arbitrary PostgreSQL configuration parameters
-(GUCs) into the backend `StartupMessage`. The map cascades over three
+Per-pool PostgreSQL configuration parameters (GUCs) in backend
+`StartupMessage`. The map cascades over three
 levels — `general.startup_parameters`, per-pool overrides, and an
 optional `auth_query` JSON column for per-user values in passthrough
 mode — and the resulting values are written to `pg_settings.reset_val`,
 so they survive client-side `RESET ALL` and `DISCARD ALL`. Among
-mainstream poolers this is unique to pg_doorman: PgBouncer only carries
-`client_encoding` / `datestyle` / `timezone` per database via the
-connection string, Odyssey's `maintain_params` preserves client-side
-parameters but offers no operator-side injection, and PgCat exposes no
-equivalent.
+mainstream poolers, the full cascade/reset contract is specific to
+pg_doorman: PgBouncer can track or ignore selected client startup
+parameters, Odyssey's `maintain_params` preserves client-side
+parameters across rebind, and PgCat exposes no equivalent.
 
 The most common use case is forcing `plan_cache_mode = "force_custom_plan"`
-on a hot OLTP pool that keeps getting bitten by a sticky generic plan;
-the same mechanism pins `statement_timeout`, `work_mem`,
+on a hot OLTP pool affected by a sticky generic plan. The same mechanism
+pins `statement_timeout`, `work_mem`,
 `idle_in_transaction_session_timeout`, or any other GUC that a single
 application needs without touching `postgresql.conf`, `ALTER ROLE`, or
 `ALTER DATABASE`.
@@ -76,14 +75,13 @@ application needs without touching `postgresql.conf`, `ALTER ROLE`, or
 - `pg_doorman_backend_startup_parameter_quarantined{pool,parameter}`
   goes to 1 the moment a key is parked and back to 0 when the TTL
   expires, including on idle pools where the metrics collector
-  reconciles the gauge without waiting for the next backend spawn.
+  reconciles the gauge without waiting for the next backend startup.
 - `SHOW POOLS` exposes a `quarantined_params` text column so operators
   can see at a glance which keys a pool is currently dropping.
 
 See [PostgreSQL startup parameters](tutorials/startup-parameters.md)
-for the operator walkthrough and the
-[reference entry](reference/configuration.md) for the full parameter
-list.
+for the operator walkthrough, plus [General Settings](reference/general.md)
+and [Pool Settings](reference/pool.md) for the full parameter list.
 
 ### 3.8.5
 

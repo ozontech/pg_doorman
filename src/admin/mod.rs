@@ -41,6 +41,7 @@ pub(crate) const SHOW_SUBCOMMANDS: &[&str] = &[
     "version",
     "users",
     "auth_query",
+    "startup_parameters",
     "log_level",
     "lists",
     #[cfg(target_os = "linux")]
@@ -56,7 +57,8 @@ use show::{
     reset_interner, show_auth_query, show_clients, show_config, show_connections, show_databases,
     show_help, show_interner, show_interner_top, show_lists, show_log_level, show_pool_coordinator,
     show_pool_scaling, show_pools, show_pools_extended, show_pools_memory,
-    show_prepared_statements, show_servers, show_stats, show_users, show_version,
+    show_prepared_statements, show_servers, show_startup_parameters, show_stats, show_users,
+    show_version,
 };
 
 /// Handle admin client.
@@ -136,6 +138,7 @@ where
                     "VERSION" => show_version(stream).await,
                     "USERS" => show_users(stream).await,
                     "AUTH_QUERY" => show_auth_query(stream).await,
+                    "STARTUP_PARAMETERS" => show_startup_parameters(stream).await,
                     "POOL_COORDINATOR" => show_pool_coordinator(stream).await,
                     "POOL_SCALING" => show_pool_scaling(stream).await,
                     "LOG_LEVEL" => show_log_level(stream).await,
@@ -268,5 +271,24 @@ where
             )
             .await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_subcommands_contains_startup_parameters() {
+        // Tab completion on `SHOW <TAB>` returns SHOW_SUBCOMMANDS, and the
+        // dispatch above routes `SHOW STARTUP_PARAMETERS` to
+        // `show_startup_parameters`. The entry has to exist in this constant
+        // for psql's autocomplete to surface the command, since the
+        // canonical list is the single source of truth shared between
+        // dispatch, `SHOW HELP`, and `handle_tab_completion`.
+        assert!(
+            SHOW_SUBCOMMANDS.contains(&"startup_parameters"),
+            "SHOW_SUBCOMMANDS missing startup_parameters: {SHOW_SUBCOMMANDS:?}"
+        );
     }
 }

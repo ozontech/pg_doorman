@@ -1,6 +1,6 @@
 @startup-parameters
-Feature: Per-pool startup_parameters injection
-  pg_doorman injects operator-supplied PostgreSQL run-time parameters into
+Feature: Per-pool startup_parameters
+  pg_doorman sends operator-supplied PostgreSQL run-time parameters in
   every backend StartupMessage on a three-level cascade: general defaults,
   per-pool overrides, and (in auth_query passthrough mode) per-user
   overrides from an optional JSON column.
@@ -205,7 +205,7 @@ Feature: Per-pool startup_parameters injection
     And I run shell command "${DOORMAN_BINARY} -t ${DOORMAN_CONFIG_FILE}"
     Then the command should fail
 
-  Scenario: invalid GUC name produces a backend startup error with warn log
+  Scenario: unknown GUC produces a backend startup error with warn log
     Given pg_doorman log capture enabled
     And PostgreSQL started with pg_hba.conf:
       """
@@ -470,10 +470,10 @@ Feature: Per-pool startup_parameters injection
       server_user = "postgres"
       server_password = ""
       """
-    # Authentication still succeeds; the JSON-column value is dropped silently
-    # at the cache layer in dedicated mode because every dynamic user shares
-    # a single backend identity. The warning surfaces the dropped key for the
-    # operator instead of leaving it unobservable.
+    # Authentication still succeeds. Dedicated mode ignores the per-user
+    # JSON-column value because every dynamic user shares one backend
+    # identity, and the warning makes that ignored value visible to the
+    # operator.
     Then psql connection to pg_doorman as user "sp_tuned_user" to database "postgres" with password "tuned_pass" succeeds
     And pg_doorman log contains "per-user startup_parameters ignored in dedicated"
 
@@ -511,3 +511,47 @@ Feature: Per-pool startup_parameters injection
       min_interval = "0s"
       """
     Then psql connection to pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" succeeds
+
+  Scenario: admin SHOW STARTUP_PARAMETERS lists the merged cascade per pool
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all             all                                     trust
+      host    all             all             127.0.0.1/32            trust
+      host    all             all             ::1/128                 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 md5"
+
+      [general.startup_parameters]
+      statement_timeout = "10s"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [pools.example_db.startup_parameters]
+      plan_cache_mode = "force_custom_plan"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = "md58a67a0c805a5ee0384ea28e0dea557b6"
+      pool_size = 2
+      """
+    When I run shell command:
+      """
+      PGPASSWORD=admin PGSSLMODE=disable psql -h 127.0.0.1 -p ${DOORMAN_PORT} \
+        -U admin -d pgdoorman -A -t -c 'SHOW STARTUP_PARAMETERS'
+      """
+    Then the command should succeed
+    # Default psql -A -t output is pipe-delimited: user|database|parameter|value|source|quarantined.
+    # The general baseline shows up as source=general; the pool override as source=pool.
+    And the command output should contain "statement_timeout|10s|general|no"
+    And the command output should contain "plan_cache_mode|force_custom_plan|pool|no"

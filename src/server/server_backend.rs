@@ -945,17 +945,37 @@ impl Server {
                         ));
                     };
 
-                    let is_startup_parameter_sqlstate =
-                        matches!(msg.code.as_str(), "22023" | "42704" | "42501");
-                    if is_startup_parameter_sqlstate && !startup_parameters_sent.is_empty() {
+                    // SQLSTATE class 57P (`57P*`) signals transient PG
+                    // unavailability — the Patroni-assisted fallback path
+                    // needs the original classification to route around it,
+                    // and a transient outage on the local backend is not a
+                    // startup-parameter misconfiguration. Surface it first
+                    // so the quarantine logic below cannot misclassify a
+                    // node-down event as a bad GUC.
+                    if msg.code.starts_with("57P") {
+                        return Err(Error::ServerUnavailableError(
+                            msg.message,
+                            server_identifier.clone(),
+                        ));
+                    }
+
+                    // PG-side `ErrorResponse` on every other SQLSTATE. The
+                    // "matched a sent key" heuristic is stronger than an
+                    // SQLSTATE allowlist: PG covers startup-time GUC failures
+                    // under at least `22023` (invalid_parameter_value),
+                    // `42704` (undefined_object), `42501` (insufficient_
+                    // privilege) and `55P02` (cant_change_runtime_param),
+                    // and the list drifts across versions and extensions.
+                    // If `extract_parameter_name` returned a key pg_doorman
+                    // actually sent, treat it as a startup-parameter failure
+                    // regardless of the code; otherwise leave the error
+                    // alone — `ALTER ROLE … SET` and similar paths fail on
+                    // parameters pg_doorman never touched and must not
+                    // quarantine an operator key on our side.
+                    if !startup_parameters_sent.is_empty() {
                         if let Some(param_name) =
                             crate::server::startup_error::extract_parameter_name(&msg.message)
                         {
-                            // PG can report the same SQLSTATE family for a parameter pg_doorman
-                            // did not send (for example, an ALTER ROLE/DATABASE SET running on
-                            // login or a server-side default that the role is not allowed to
-                            // apply). Without this check the quarantine and metrics would record
-                            // a rejection for a key the operator never asked us to send.
                             if startup_parameters_sent.contains_key(&param_name) {
                                 let outcome = quarantine.record_rejection(&param_name, &msg.code);
                                 warn!(
@@ -998,12 +1018,6 @@ impl Server {
                         }
                     }
 
-                    if msg.code.starts_with("57P") {
-                        return Err(Error::ServerUnavailableError(
-                            msg.message,
-                            server_identifier.clone(),
-                        ));
-                    }
                     return Err(Error::ServerStartupError(
                         format!("{}: {}", msg.code, msg.message),
                         server_identifier.clone(),

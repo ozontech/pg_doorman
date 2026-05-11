@@ -4,7 +4,7 @@ Some operators need a few PostgreSQL configuration parameters to apply
 to every backend pg_doorman opens, without touching `postgresql.conf`,
 `ALTER ROLE`, or `ALTER DATABASE`. Three cases recur in practice:
 
-- A hot OLTP pool gets bitten by a sticky generic plan after the
+- A hot OLTP pool is affected by a sticky generic plan after the
   `plan_cache_mode = auto` heuristic flips. Switching the whole role
   to `force_custom_plan` would affect every workload using that role;
   scoping the change to one pool is what you want.
@@ -128,7 +128,7 @@ consecutive.
 Both knobs are hot-reloaded on `SIGHUP`. Releasing a quarantined
 parameter is **TTL-only**: pg_doorman cannot tell whether the
 operator has fixed the underlying problem until the TTL expires and
-the next backend spawn tries the parameter again.
+the next backend startup tries the parameter again.
 
 ## Observability
 
@@ -150,10 +150,10 @@ The same state is on the Prometheus surface:
   log line so dynamic `auth_query` pools cannot blow up the series
   count.
 - `pg_doorman_backend_startup_parameter_quarantined{pool, parameter}`
-  is `1` while a parameter is parked and flips back to `0` exactly
-  once when its TTL expires. The gauge does not clear on its own
-  even after the operator fixes the underlying issue; the next
-  spawn after TTL expiry is what re-arms it.
+  is `1` while a parameter is parked. After the TTL expires, the
+  quarantine state can be reconciled on the next metrics scrape or
+  `SHOW POOLS`; the next backend startup will try the parameter
+  again.
 
 A reasonable starting alert is "any non-zero quarantine gauge for
 longer than the TTL". If the gauge is set for `2 × ttl`, the

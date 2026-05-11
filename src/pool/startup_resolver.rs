@@ -26,6 +26,48 @@ pub fn resolve(
     merged
 }
 
+/// Layer in the cascade that contributed the winning value for a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterSource {
+    General,
+    Pool,
+    AuthQuery,
+}
+
+impl ParameterSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ParameterSource::General => "general",
+            ParameterSource::Pool => "pool",
+            ParameterSource::AuthQuery => "auth_query",
+        }
+    }
+}
+
+/// Same cascade as [`resolve`], but carries the layer that contributed each
+/// winning value. Used by `SHOW STARTUP_PARAMETERS` and `/api/pools` so an
+/// operator can see "this `work_mem` came from the pool, that `lock_timeout`
+/// from auth_query" without re-reading config plus the auth_query cache.
+pub fn resolve_with_sources(
+    general: &BTreeMap<String, String>,
+    pool: &BTreeMap<String, String>,
+    auth_query_params: Option<&HashMap<String, String>>,
+) -> BTreeMap<String, (String, ParameterSource)> {
+    let mut out: BTreeMap<String, (String, ParameterSource)> = BTreeMap::new();
+    for (k, v) in general {
+        out.insert(k.clone(), (v.clone(), ParameterSource::General));
+    }
+    for (k, v) in pool {
+        out.insert(k.clone(), (v.clone(), ParameterSource::Pool));
+    }
+    if let Some(extra) = auth_query_params {
+        for (k, v) in extra {
+            out.insert(k.clone(), (v.clone(), ParameterSource::AuthQuery));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +122,33 @@ mod tests {
         let r = resolve(&BTreeMap::new(), &p, None);
         assert_eq!(r.get("work_mem").unwrap(), "64MB");
         assert!(!r.contains_key("lock_timeout"));
+    }
+
+    #[test]
+    fn resolve_with_sources_attributes_each_layer() {
+        let g = b(&[("statement_timeout", "10s"), ("plan_cache_mode", "auto")]);
+        let p = b(&[
+            ("plan_cache_mode", "force_custom_plan"),
+            ("work_mem", "64MB"),
+        ]);
+        let a = h(&[("work_mem", "256MB"), ("lock_timeout", "5s")]);
+        let r = resolve_with_sources(&g, &p, Some(&a));
+        assert_eq!(
+            r.get("statement_timeout"),
+            Some(&("10s".to_string(), ParameterSource::General))
+        );
+        assert_eq!(
+            r.get("plan_cache_mode"),
+            Some(&("force_custom_plan".to_string(), ParameterSource::Pool))
+        );
+        assert_eq!(
+            r.get("work_mem"),
+            Some(&("256MB".to_string(), ParameterSource::AuthQuery))
+        );
+        assert_eq!(
+            r.get("lock_timeout"),
+            Some(&("5s".to_string(), ParameterSource::AuthQuery))
+        );
     }
 
     #[test]
