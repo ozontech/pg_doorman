@@ -110,7 +110,8 @@ AWS Fargate (16 vCPU), pool size 40, `pgbench` 30 с на тест:
 ```bash
 docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
 Минимальный конфиг (`pg_doorman.yaml`):

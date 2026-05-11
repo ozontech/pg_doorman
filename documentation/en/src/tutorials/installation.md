@@ -55,7 +55,7 @@ OPENSSL_SOURCE_TARBALL=$(pwd)/openssl-3.5.5.tar.gz \
 
 Both the old and the new process must use identical `tls_certificate` and `tls_private_key` files. For the full upgrade flow, monitoring, and troubleshooting, see [Binary Upgrade → TLS migration](./binary-upgrade.md#tls-migration).
 
-For deb/rpm packaging see `debian/` and `pkg/` in the repository. The supplied `Dockerfile.ubuntu22-tls` builds a TLS-migration-capable image on Ubuntu 22.04.
+For deb/rpm packaging see `debian/` and `pkg/` in the repository.
 
 ## Distribution packages
 
@@ -110,8 +110,11 @@ Docker is supported for development, CI, and quick demos. We do not recommend it
 ```bash
 docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
+
+The image's default `CMD` runs `pg_doorman` without arguments, which reads `/etc/pg_doorman/pg_doorman.toml`. Pass the YAML path explicitly so `pg_doorman` reads the mounted file instead.
 
 A `docker-compose.yaml` with a sidecar PostgreSQL is in [`example/`](https://github.com/ozontech/pg_doorman/tree/master/example) for end-to-end smoke tests.
 

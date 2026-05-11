@@ -109,7 +109,8 @@ Run via Docker:
 ```bash
 docker run -p 6432:6432 \
   -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  ghcr.io/ozontech/pg_doorman
+  ghcr.io/ozontech/pg_doorman \
+  pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
 Minimal config (`pg_doorman.yaml`):
