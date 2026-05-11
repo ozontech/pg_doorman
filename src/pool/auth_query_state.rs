@@ -100,4 +100,17 @@ impl AuthQueryState {
     pub fn cache_len(&self) -> usize {
         self.cache_cell.get().map_or(0, |c| c.len())
     }
+
+    /// Sync, non-fetching peek of the per-user startup_parameters map.
+    /// Returns `None` if the auth_query executor was never initialized
+    /// (no client has authenticated through this pool yet) or if the
+    /// username has no cached entry. Used on the backend-spawn hot path
+    /// where blocking on a PG roundtrip would defeat the point of the
+    /// cache; cold lookups intentionally surface as "no per-user override".
+    pub fn peek_startup_parameters(
+        &self,
+        username: &str,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        self.cache_cell.get()?.peek_startup_parameters(username)
+    }
 }

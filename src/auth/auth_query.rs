@@ -804,6 +804,23 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             .and_then(|e| e.client_key.clone())
     }
 
+    /// Cheap, sync, non-fetching lookup of the per-user startup_parameters
+    /// map. Returns `None` when the username has no cached entry yet (e.g.
+    /// pool prewarm fires before any client has authenticated) or when the
+    /// cached entry is negative. Never triggers a PG fetch and never
+    /// initializes the executor; intended for the backend-spawn hot path
+    /// where blocking on auth_query I/O would be unacceptable.
+    pub fn peek_startup_parameters(
+        &self,
+        username: &str,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        let entry = self.entries.get(username)?;
+        if entry.is_negative {
+            return None;
+        }
+        Some(entry.startup_parameters.clone())
+    }
+
     /// Number of cached entries (for metrics/admin).
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -1327,5 +1344,65 @@ mod tests {
             entry.startup_parameters.get("work_mem").map(String::as_str),
             Some("64MB")
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // peek_startup_parameters: sync, non-fetching lookup used by backend spawn
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn peek_startup_parameters_missing_user_returns_none() {
+        let fetcher = Arc::new(MockFetcher::new());
+        let config = test_config();
+        let cache = make_cache(fetcher, &config);
+        assert!(cache.peek_startup_parameters("alice").is_none());
+    }
+
+    #[tokio::test]
+    async fn peek_startup_parameters_negative_entry_returns_none() {
+        let fetcher = Arc::new(MockFetcher::new());
+        // No user added; first lookup populates a negative cache entry.
+        let config = test_config();
+        let cache = make_cache(fetcher, &config);
+        assert!(cache.get_or_fetch("ghost").await.unwrap().is_none());
+        assert!(cache.peek_startup_parameters("ghost").is_none());
+    }
+
+    #[tokio::test]
+    async fn peek_startup_parameters_positive_entry_returns_map() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user_with_params(
+            "alice",
+            "md5abc123",
+            &[("work_mem", "64MB"), ("statement_timeout", "10s")],
+        );
+        let config = test_config();
+        let cache = make_cache(fetcher, &config);
+        cache.get_or_fetch("alice").await.unwrap().unwrap();
+
+        let params = cache.peek_startup_parameters("alice").unwrap();
+        assert_eq!(params.get("work_mem").map(String::as_str), Some("64MB"));
+        assert_eq!(
+            params.get("statement_timeout").map(String::as_str),
+            Some("10s")
+        );
+    }
+
+    #[tokio::test]
+    async fn peek_startup_parameters_dedicated_mode_returns_empty() {
+        // Dedicated mode filters cached entries to drop per-user params.
+        // peek must surface the filtered state: a present-but-empty map,
+        // not None, because the user is still cached.
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user_with_params("alice", "md5abc123", &[("work_mem", "64MB")]);
+        let mut config = test_config();
+        config.server_user = Some("shared".to_string());
+        config.server_password = Some("secret".to_string());
+
+        let cache = make_cache(fetcher, &config);
+        cache.get_or_fetch("alice").await.unwrap().unwrap();
+
+        let params = cache.peek_startup_parameters("alice").unwrap();
+        assert!(params.is_empty());
     }
 }

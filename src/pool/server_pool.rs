@@ -83,6 +83,12 @@ pub struct ServerPool {
 
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
+
+    /// Shared quarantine state for operator-supplied startup_parameters.
+    /// One instance per pool so the rejection counter accumulates across
+    /// every backend spawn this pool issues; per-call construction would
+    /// reset the counter on each spawn and never trip the threshold.
+    startup_parameter_quarantine: Arc<crate::server::quarantine::QuarantineState>,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -104,6 +110,10 @@ impl std::fmt::Debug for ServerPool {
             .field(
                 "connection_counter",
                 &self.connection_counter.load(Ordering::Relaxed),
+            )
+            .field(
+                "startup_parameter_quarantine",
+                &self.startup_parameter_quarantine,
             )
             .finish()
     }
@@ -129,6 +139,17 @@ impl ServerPool {
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
     ) -> ServerPool {
+        // The quarantine knobs are global (general.*) so we read them at
+        // construction time; subsequent RELOADs that touch only the knobs
+        // do not redirect the existing pool's quarantine because RELOAD
+        // builds a new ServerPool whenever a pool's hash changes.
+        let cfg = crate::config::config_arc();
+        let startup_parameter_quarantine =
+            Arc::new(crate::server::quarantine::QuarantineState::new(
+                cfg.general.startup_parameter_quarantine_threshold,
+                Duration::from_millis(cfg.general.startup_parameter_quarantine_ttl),
+            ));
+
         ServerPool {
             address,
             user: user.clone(),
@@ -149,6 +170,7 @@ impl ServerPool {
             resume_notify: Notify::new(),
             session_mode,
             fallback_state,
+            startup_parameter_quarantine,
         }
     }
 
@@ -217,14 +239,11 @@ impl ServerPool {
 
         stats.register(stats.clone());
 
-        // Phase 4 placeholder: per-call construction defeats sharing across
-        // backend spawns. Phase 6 will lift this onto the pool-owned Arc so
-        // rejection counters are actually shared.
-        let cfg = crate::config::get_config();
-        let quarantine = Arc::new(crate::server::quarantine::QuarantineState::new(
-            cfg.general.startup_parameter_quarantine_threshold,
-            Duration::from_millis(cfg.general.startup_parameter_quarantine_ttl),
-        ));
+        // Resolve once for this spawn attempt: the plain attempt and the
+        // optional sslmode=allow TLS retry must see the same parameter set,
+        // otherwise a config RELOAD landing between the two would silently
+        // ship different StartupMessages for the same client request.
+        let startup_parameters = self.resolved_startup_parameters();
 
         let result = startup_with_timeout(
             self.connect_timeout,
@@ -241,8 +260,8 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
-                std::collections::BTreeMap::new(),
-                quarantine.clone(),
+                startup_parameters.clone(),
+                self.startup_parameter_quarantine.clone(),
             ),
         )
         .await;
@@ -298,8 +317,8 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
-                    std::collections::BTreeMap::new(),
-                    quarantine.clone(),
+                    startup_parameters,
+                    self.startup_parameter_quarantine.clone(),
                 ),
             )
             .await;
@@ -340,6 +359,47 @@ impl ServerPool {
     /// Returns the address of this pool.
     pub fn address(&self) -> &Address {
         &self.address
+    }
+
+    /// Resolve the operator-supplied startup_parameters map that this pool
+    /// will hand to `Server::startup` for one backend spawn. The cascade is
+    /// `general` -> pool -> (optional) auth_query per-user entry, with the
+    /// more specific level winning per key.
+    ///
+    /// The general and pool maps are read live from the current config
+    /// snapshot, so a RELOAD that only changes operator-supplied parameters
+    /// can take effect on the next backend spawn without rebuilding the
+    /// pool. The auth_query layer is consulted only when this pool has a
+    /// passthrough auth_query state and a cached entry for the pool's
+    /// username already exists; dedicated mode pools never consult the
+    /// cache here, even though the cache write path already clears the map
+    /// in that mode, because the safety net is cheaper than another bug
+    /// hunt.
+    fn resolved_startup_parameters(&self) -> std::collections::BTreeMap<String, String> {
+        let cfg = crate::config::config_arc();
+        let pool_cfg = cfg.pools.get(&self.address.pool_name);
+
+        let pool_params = pool_cfg
+            .map(|p| &p.startup_parameters)
+            .cloned()
+            .unwrap_or_default();
+
+        // Look up the per-user auth_query entry only when the pool runs in
+        // passthrough auth_query mode (no shared server_user). In dedicated
+        // mode the shared backend serves multiple dynamic users, so no
+        // single per-user override could be honoured.
+        let auth_query_params = match super::get_auth_query_state(&self.address.pool_name) {
+            Some(state) if !state.config.is_dedicated_mode() => {
+                state.peek_startup_parameters(&self.user.username)
+            }
+            _ => None,
+        };
+
+        super::startup_resolver::resolve(
+            &cfg.general.startup_parameters,
+            &pool_params,
+            auth_query_params.as_ref(),
+        )
     }
 
     /// Establish a fallback connection by iterating through Patroni-discovered
@@ -663,13 +723,12 @@ impl ServerPool {
         ));
         stats.register(stats.clone());
 
-        // Phase 4 placeholder: see the matching note in `create`. Phase 6
-        // replaces this with the pool-owned shared quarantine Arc.
-        let cfg = crate::config::get_config();
-        let quarantine = Arc::new(crate::server::quarantine::QuarantineState::new(
-            cfg.general.startup_parameter_quarantine_threshold,
-            Duration::from_millis(cfg.general.startup_parameter_quarantine_ttl),
-        ));
+        // Resolve once: the optional sslmode=allow retry below must see the
+        // same map as the plain attempt for the same reasons noted in
+        // `create()`. The fallback target's pool name matches `self`, so
+        // the per-pool cascade still applies even though we are talking
+        // to a different physical host than `self.address.host`.
+        let startup_parameters = self.resolved_startup_parameters();
 
         let result = startup_with_timeout(
             fallback_timeout,
@@ -686,8 +745,8 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
-                std::collections::BTreeMap::new(),
-                quarantine.clone(),
+                startup_parameters.clone(),
+                self.startup_parameter_quarantine.clone(),
             ),
         )
         .await;
@@ -736,8 +795,8 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
-                    std::collections::BTreeMap::new(),
-                    quarantine.clone(),
+                    startup_parameters,
+                    self.startup_parameter_quarantine.clone(),
                 ),
             )
             .await;
