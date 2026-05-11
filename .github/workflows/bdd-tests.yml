@@ -157,10 +157,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
+        # Only the hash-tagged manifest is published. The image is
+        # addressed exclusively by the flake hash everywhere it is
+        # consumed (prepare-tests passes the tag through to bdd-tests
+        # via outputs.image-tag), so a `:latest` floating tag would
+        # exist only as a footgun: any out-of-band `docker pull
+        # ghcr.io/.../test-runner` would land on an arbitrary version
+        # without warning. Pinning to the hash is the contract.
         run: |
           IMAGE_TAG="${{ needs.check-image.outputs.image-tag }}"
           BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          # Create manifest combining both architectures
           docker manifest create ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
             ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux
@@ -169,15 +175,6 @@ jobs:
           docker manifest annotate ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux --os linux --arch arm64
           docker manifest push ${BASE_IMAGE}:${IMAGE_TAG}
-          # Also tag as latest
-          docker manifest create ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
-            ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux
-          docker manifest annotate ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux --os linux --arch amd64
-          docker manifest annotate ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux --os linux --arch arm64
-          docker manifest push ${BASE_IMAGE}:latest
           echo "✅ Multi-arch manifest created and pushed"
           echo "Image: ${BASE_IMAGE}:${IMAGE_TAG}" >> $GITHUB_STEP_SUMMARY
           echo "Architectures: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
@@ -205,544 +202,76 @@ jobs:
             echo "✅ Using freshly built image: ${{ needs.check-image.outputs.image-tag }}"
           fi
 
-  # Job 4: Run BDD tests with Go client
-  go-tests:
-    name: Go BDD Tests
+  # Single matrixed job replaces the 21 nearly-identical per-language /
+  # per-suite jobs that used to live here. Each suite differs only in
+  # the cargo command it runs; share everything else.
+  #
+  # Why no `nick-fields/retry` around the cargo step: the legacy jobs
+  # wrapped `cargo test` in max_attempts: 2, which masks intermittent
+  # BDD failures rather than surfaces them. Retry stays on the network
+  # `docker pull` step, where it covers GHCR manifest visibility lag
+  # right after a fresh push (the typical real-world flake).
+  bdd-tests:
+    name: 'BDD: ${{ matrix.suite.name }}'
     needs: prepare-tests
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - { name: "Go",                                cargo: "test --test bdd -- --tags @go" }
+          - { name: "Python",                            cargo: "test --test bdd -- --tags @python" }
+          - { name: "Node.js",                           cargo: "test --test bdd -- --tags @nodejs" }
+          - { name: ".NET",                              cargo: "test --test bdd -- --tags @dotnet" }
+          - { name: "Java",                              cargo: "test --test bdd -- --tags @java" }
+          - { name: "PHP",                               cargo: "test --test bdd -- --tags @php" }
+          - { name: "Rust part 1",                       cargo: "test --test bdd -- --tags @rust-1" }
+          - { name: "Rust part 2",                       cargo: "test --test bdd -- --tags @rust-2" }
+          - { name: "Rust part 3",                       cargo: "test --test bdd -- --tags @rust-3" }
+          - { name: "Rust part 4 (sleep-heavy lifecycle)", cargo: "test --test bdd -- --tags @rust-4" }
+          - { name: "Binary upgrade graceful shutdown",  cargo: "test --test bdd -- --tags @binary-upgrade-grac-shutdown" }
+          - { name: "Fuzz",                              cargo: "test --test bdd -- --tags @fuzz" }
+          - { name: "Generate",                          cargo: "test --test bdd -- --tags @generate" }
+          - { name: "Patroni proxy",                     cargo: "test --test patroni_proxy_bdd" }
+          - { name: "Rollback",                          cargo: "test --test bdd -- --tags @rollback" }
+          - { name: "Auth query",                        cargo: "test --test bdd -- --tags @auth-query" }
+          - { name: "Static passthrough",                cargo: "test --test bdd -- --tags @static-passthrough" }
+          - { name: "Client migration (plain TCP)",      cargo: 'test --test bdd -- --tags "@client-migration and not @tls-migration"' }
+          - { name: "Patroni-assisted fallback",         cargo: "test --test bdd -- --tags @patroni_fallback" }
+          - { name: "Server TLS",                        cargo: "test --test bdd -- --tags @server-tls" }
+          - { name: "TLS migration (vendored OpenSSL)",  cargo: "test --features tls-migration --test bdd -- --tags @tls-migration" }
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+      - name: Log in to Container Registry
+        # Even when test-runner is currently a public package, the BDD
+        # jobs depend on `docker pull` succeeding. Without explicit
+        # login they would silently break if the package visibility
+        # ever flips to private.
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run BDD tests for Go
+      - name: Pull test image from GHCR
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @go
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
-  # Job 5: Run BDD tests with Python client
-  python-tests:
-    name: Python BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Python
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @python
-
-  # Job 6: Run BDD tests with Node.js client
-  nodejs-tests:
-    name: Node.js BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Node.js
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @nodejs
-
-  # Job 7: Run BDD tests with .NET client
-  dotnet-tests:
-    name: .NET BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for .NET
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @dotnet
-
-  # Job 8: Run BDD tests with Java client
-  java-tests:
-    name: Java BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Java
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @java
-
-  # Job 9: Run BDD tests with PHP PDO client
-  php-tests:
-    name: PHP BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for PHP
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @php
-
-  # Job 10: Run BDD tests with Rust client (split into 3 parallel jobs)
-  rust-tests-1:
-    name: Rust BDD Tests (Part 1)
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Rust (Part 1)
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @rust-1
-
-  # Job 8b: Run BDD tests with Rust client (Part 2)
-  rust-tests-2:
-    name: Rust BDD Tests (Part 2)
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Rust (Part 2)
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @rust-2
-
-  # Job 8c: Run BDD tests with Rust client (Part 3)
-  rust-tests-3:
-    name: Rust BDD Tests (Part 3)
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Rust (Part 3)
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @rust-3
-
-  # Job 8d: Run BDD tests with Rust client (Part 4) — sleep-heavy pool lifecycle tests
-  rust-tests-4:
-    name: Rust BDD Tests (Part 4)
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Rust (Part 4)
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @rust-4
-
-  # Job 9: Run Binary Upgrade Graceful Shutdown BDD tests
-  binary-upgrade-grac-shutdown-tests:
-    name: Binary Upgrade Graceful Shutdown BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for Binary Upgrade Graceful Shutdown
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @binary-upgrade-grac-shutdown
-
-  # Job 10: Run Fuzz BDD tests (no retries - fuzz tests should not be flaky)
-  fuzz-tests:
-    name: Fuzz BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Fuzz BDD tests
+      - name: Run BDD suite (${{ matrix.suite.name }})
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @fuzz
-
-  # Job: Run Generate BDD tests
-  generate-tests:
-    name: Generate BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Generate BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @generate
-
-  # Job 10: Run BDD tests for patroni_proxy
-  patroni-proxy-tests:
-    name: Patroni Proxy BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run BDD tests for patroni_proxy
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test patroni_proxy_bdd
-
-  # Job 11: Run Rollback BDD tests
-  rollback-tests:
-    name: Rollback BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Rollback BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @rollback
-
-  # Job 12: Run Auth Query BDD tests
-  auth-query-tests:
-    name: Auth Query BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Auth Query BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @auth-query
-
-  # Job 13: Run Static Passthrough BDD tests
-  static-passthrough-tests:
-    name: Static Passthrough BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Static Passthrough BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @static-passthrough
-
-  # Job: Run Client Migration BDD tests (plain TCP)
-  client-migration-tests:
-    name: Client Migration BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Client Migration BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags "@client-migration and not @tls-migration"
-
-  # Job: Run Patroni-assisted fallback BDD tests
-  patroni-fallback-tests:
-    name: Patroni-assisted fallback BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Patroni-assisted fallback BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @patroni_fallback
-
-  # Job: Run Server-side TLS BDD tests
-  server-tls-tests:
-    name: Server TLS BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run Server TLS BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --test bdd -- --tags @server-tls
-
-  # Job: Run TLS Migration BDD tests (requires vendored OpenSSL)
-  tls-migration-tests:
-    name: TLS Migration BDD Tests
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Pull test image from GHCR
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
-
-      - name: Run TLS Migration BDD tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 2
-          command: |
-            docker run --rm \
-              -v ${{ github.workspace }}:/workspace \
-              -w /workspace \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-              cargo test --features tls-migration --test bdd -- --tags @tls-migration
+            cargo ${{ matrix.suite.cargo }}
