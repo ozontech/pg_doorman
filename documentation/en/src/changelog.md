@@ -1,5 +1,90 @@
 # Changelog
 
+### 3.9.0
+
+Per-pool injection of arbitrary PostgreSQL configuration parameters
+(GUCs) into the backend `StartupMessage`. The map cascades over three
+levels — `general.startup_parameters`, per-pool overrides, and an
+optional `auth_query` JSON column for per-user values in passthrough
+mode — and the resulting values are written to `pg_settings.reset_val`,
+so they survive client-side `RESET ALL` and `DISCARD ALL`. Among
+mainstream poolers this is unique to pg_doorman: PgBouncer only carries
+`client_encoding` / `datestyle` / `timezone` per database via the
+connection string, Odyssey's `maintain_params` preserves client-side
+parameters but offers no operator-side injection, and PgCat exposes no
+equivalent.
+
+The most common use case is forcing `plan_cache_mode = "force_custom_plan"`
+on a hot OLTP pool that keeps getting bitten by a sticky generic plan;
+the same mechanism pins `statement_timeout`, `work_mem`,
+`idle_in_transaction_session_timeout`, or any other GUC that a single
+application needs without touching `postgresql.conf`, `ALTER ROLE`, or
+`ALTER DATABASE`.
+
+#### Cascade resolution
+
+- `general.startup_parameters`, `pools.<name>.startup_parameters`, and
+  the optional `startup_parameters` text column on an `auth_query` row
+  merge per key, with the more specific level winning. Auth_query in
+  dedicated mode (a shared `server_user`) intentionally ignores the
+  per-user column and logs a one-time warning per pool and username.
+- The merged cascade is resolved lazily on every backend spawn from
+  the live config snapshot, so a `RELOAD` that only changes
+  `general.startup_parameters` takes effect on the next backend
+  without recycling the pool.
+
+#### Validation and protocol safety
+
+- Reserved protocol keys (`user`, `database`, `replication`,
+  `options`, the `_pq_.*` extension prefix) are refused at config load.
+- Keys must match the PG GUC naming shape `[A-Za-z_][A-Za-z0-9_.]*`,
+  values must not contain null bytes, and each level fits the operator
+  budget of `MAX_STARTUP_PACKET_LENGTH - 512` bytes.
+- The full cascade is rechecked at every spawn against PG's 10 000-byte
+  `MAX_STARTUP_PACKET_LENGTH`; if the union would overflow, all
+  operator-supplied keys are dropped for that spawn and the event is
+  logged, so the connection still completes with PG defaults instead
+  of failing every client request.
+
+#### Quarantine for keys PG keeps rejecting
+
+- After
+  `general.startup_parameter_quarantine_threshold` consecutive
+  rejections of the same key (default `3`), pg_doorman parks the key
+  for `general.startup_parameter_quarantine_ttl` (default 5 minutes)
+  and stops sending it on subsequent backend startups.
+- Both knobs are hot-reloadable: a SIGHUP that touches only the
+  threshold or TTL takes effect on every pool without rebuild.
+- A successful backend startup resets partial-rejection counters for
+  every key it accepted, keeping the threshold model "N consecutive
+  rejections" rather than "N rejections ever".
+- The quarantine record is keyed on the failing parameter name parsed
+  from PG's error message and cross-checked against the map pg_doorman
+  actually sent, so a server-side `ALTER ROLE SET` rejection for an
+  unrelated key cannot poison the operator's quarantine.
+- SQLSTATE class `57P` keeps mapping to `ServerUnavailableError` and
+  drives the Patroni-assisted fallback path; the quarantine
+  observability runs alongside that mapping, not in place of it.
+
+#### Observability
+
+- `pg_doorman_backend_startup_parameter_errors_total{pool,parameter,sqlstate}`
+  counts every rejection. The failing username is in the corresponding
+  warn log line; it is deliberately not a label, so a dynamic
+  `auth_query` pool that mints many roles cannot blow up the series
+  count.
+- `pg_doorman_backend_startup_parameter_quarantined{pool,parameter}`
+  goes to 1 the moment a key is parked and back to 0 when the TTL
+  expires, including on idle pools where the metrics collector
+  reconciles the gauge without waiting for the next backend spawn.
+- `SHOW POOLS` exposes a `quarantined_params` text column so operators
+  can see at a glance which keys a pool is currently dropping.
+
+See [PostgreSQL startup parameters](tutorials/startup-parameters.md)
+for the operator walkthrough and the
+[reference entry](reference/configuration.md) for the full parameter
+list.
+
 ### 3.8.5
 
 The web console now accepts JWTs issued by an external SSO proxy

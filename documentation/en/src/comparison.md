@@ -77,6 +77,7 @@ See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md), [`patro
 | LISTEN / NOTIFY pinning in transaction mode | No | No | Experimental |
 | Cross-rule connection cap (`shared_pool`) | No | No | Yes (since 1.5.1) |
 | `PAUSE` / `RESUME` / `RECONNECT` admin commands | Yes | Yes | Yes (since 1.4.1) |
+| Operator-supplied PostgreSQL GUCs injected into backend `StartupMessage` per pool | Yes (`startup_parameters`, three-level cascade `general` → pool → `auth_query` passthrough, survives client `RESET ALL` / `DISCARD ALL`, with per-pool quarantine for keys PG keeps rejecting) | No (only `client_encoding` / `datestyle` / `timezone` per-database in the connection string) | No (`maintain_params` preserves client-side parameters across rebind; no operator-side injection) |
 
 See [Pool Coordinator](concepts/pool-coordinator.md), [Pool pressure](tutorials/pool-pressure.md).
 

@@ -77,6 +77,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | LISTEN / NOTIFY pinning в transaction mode | Нет | Нет | Экспериментально |
 | Cross-rule connection cap (`shared_pool`) | Нет | Нет | Да (с 1.5.1) |
 | Команды администратора `PAUSE` / `RESUME` / `RECONNECT` | Да | Да | Да (с 1.4.1) |
+| Внедрение операторских GUC PostgreSQL в `StartupMessage` бэкенда на уровне пула | Да (`startup_parameters`, трёхуровневый каскад `general` → пул → `auth_query` passthrough, значения переживают клиентские `RESET ALL` / `DISCARD ALL`, карантин на ключи, которые PG раз за разом отклоняет) | Нет (только `client_encoding` / `datestyle` / `timezone` в строке подключения на уровне базы) | Нет (`maintain_params` сохраняет параметры клиента при rebind, операторской инжекции нет) |
 
 См. [Координатор пулов](concepts/pool-coordinator.md), [Пул под нагрузкой](tutorials/pool-pressure.md).
 
