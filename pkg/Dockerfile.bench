@@ -2,9 +2,9 @@
 # test-runner image so the Fargate task has both the test environment
 # (postgres, odyssey, pgbench, etc.) and the code under test.
 #
-# Driven by .github/workflows/bench-aws-fargate.yml — that workflow
-# resolves BASE_IMAGE to the published test-runner manifest digest /
-# tag from GHCR and pushes the result to ECR.
+# Driven by .github/workflows/bench-aws-fargate.yml, which resolves
+# BASE_IMAGE to the published test-runner manifest digest or tag from
+# GHCR and pushes the result to ECR.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 WORKDIR /workspace

@@ -109,7 +109,11 @@ jobs:
           echo "Using base image from GHCR: ${GHCR_IMAGE}"
 
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          ECR_IMAGE="${REPO_URL}:bench-${TIMESTAMP}"
+          # Tag carries both timestamp (chronological listing) and the
+          # short git SHA (traceability: any bench result in Bencher or
+          # the workflow summary can be tied back to a commit).
+          GIT_SHA_SHORT="${GITHUB_SHA:0:12}"
+          ECR_IMAGE="${REPO_URL}:bench-${TIMESTAMP}-${GIT_SHA_SHORT}"
           ECR_LATEST="${REPO_URL}:latest"
 
           echo "Building benchmark image: ${ECR_IMAGE}"
@@ -127,8 +131,8 @@ jobs:
           docker push "${ECR_IMAGE}"
           docker push "${ECR_LATEST}"
 
-          # Output only the tag part (timestamp), not full URI with secret
-          echo "image-tag=bench-${TIMESTAMP}" >> $GITHUB_OUTPUT
+          # Output only the tag part (timestamp + git sha), not full URI with secret
+          echo "image-tag=bench-${TIMESTAMP}-${GIT_SHA_SHORT}" >> $GITHUB_OUTPUT
           echo "✅ Successfully built and pushed to ECR: ${ECR_IMAGE}"
 
   # Job 3: Register ECS task definition
