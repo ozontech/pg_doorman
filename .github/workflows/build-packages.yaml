@@ -333,8 +333,8 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
-          max_attempts: 3
-          retry_wait_seconds: 10
+          max_attempts: 5
+          retry_wait_seconds: 15
           command: docker pull --platform linux/amd64 "${{ needs.docker-image.outputs.sha_tag }}"
 
       - name: End-to-end smoke (amd64)
@@ -348,8 +348,8 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
-          max_attempts: 3
-          retry_wait_seconds: 10
+          max_attempts: 5
+          retry_wait_seconds: 15
           command: docker pull --platform linux/arm64 "${{ needs.docker-image.outputs.sha_tag }}"
 
       - name: 'arm64: pg_doorman --version matches tag'

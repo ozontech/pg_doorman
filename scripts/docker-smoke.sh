@@ -72,7 +72,11 @@ cleanup() {
   rm -rf "$CONFIG_DIR"
   return "$rc"
 }
-trap cleanup EXIT
+# EXIT covers normal exit and `set -e` failures. INT/TERM cover ^C
+# and `docker stop` of the parent container or a CI runner shutdown.
+# SIGKILL can't be trapped by design; the residual cleanup that
+# leaves behind is taken care of by GHA's ephemeral runner.
+trap cleanup EXIT INT TERM
 
 echo "=== smoke: image = $IMAGE ==="
 echo "=== sidecar image = $POSTGRES_IMAGE ==="
@@ -109,16 +113,17 @@ docker run -d --name "$PG_NAME" --network "$NET_NAME" \
   -e "POSTGRES_DB=$PG_DB" \
   "$POSTGRES_IMAGE" >/dev/null
 
-# Wait for postgres to accept connections. 60s ceiling: a pulled image
-# from cache is typically ready in <5s; the ceiling covers a cold cache.
+# Wait for postgres to accept connections. 90s ceiling: typical fresh
+# postgres:17 boot is <5s; the headroom covers cold-cache image pulls
+# and slow runners (Ubicloud cold VM, congested GHA pool).
 echo "waiting for postgres readiness..."
-for i in $(seq 1 60); do
+for i in $(seq 1 90); do
   if docker exec "$PG_NAME" pg_isready -U "$PG_USER" >/dev/null 2>&1; then
     echo "postgres ready after ${i}s"
     break
   fi
-  if [ "$i" -eq 60 ]; then
-    echo "::error::postgres did not become ready in 60s"
+  if [ "$i" -eq 90 ]; then
+    echo "::error::postgres did not become ready in 90s"
     exit 1
   fi
   sleep 1
@@ -129,10 +134,20 @@ done
 #    pools/auth_query stanzas.
 echo
 echo "--- creating non-superuser fixture: ${SMOKE_USER}/${SMOKE_DB} ---"
+# Heredoc is single-quoted (<<'SQL'), so no shell expansion happens
+# inside the SQL block. psql does the substitution at parse time
+# via `-v name=value`, with `:"ident"` for safely quoted identifiers
+# and `:'literal'` for safely quoted string literals. That way the
+# SMOKE_USER / SMOKE_PASSWORD / SMOKE_DB names cannot be turned into
+# SQL injection by an unexpected shell-meaningful character, today
+# or after future edits.
 docker exec -i -e "PGPASSWORD=$PG_PASSWORD" "$PG_NAME" \
-  psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 <<SQL
-CREATE ROLE ${SMOKE_USER} LOGIN PASSWORD '${SMOKE_PASSWORD}';
-CREATE DATABASE ${SMOKE_DB} OWNER ${SMOKE_USER};
+  psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 \
+       -v "smoke_user=${SMOKE_USER}" \
+       -v "smoke_password=${SMOKE_PASSWORD}" \
+       -v "smoke_db=${SMOKE_DB}" <<'SQL'
+CREATE ROLE :"smoke_user" LOGIN PASSWORD :'smoke_password';
+CREATE DATABASE :"smoke_db" OWNER :"smoke_user";
 SQL
 
 # 4. Generate a pg_doorman config against the real postgres.
@@ -160,19 +175,19 @@ docker run -d --name "$DOORMAN_NAME" --network "$NET_NAME" \
   "$IMAGE" \
   pg_doorman /etc/pg_doorman/pg_doorman.toml >/dev/null
 
-# Same 60s ceiling as postgres above. pg_doorman binds the listener
+# Same 90s ceiling as postgres above. pg_doorman binds the listener
 # before opening backend connections, so on a working image it answers
 # pg_isready within ~1s. The ceiling covers QEMU emulation on arm64
 # and a slow first run on a cold runner.
 echo "waiting for pg_doorman listener on 6432..."
-for i in $(seq 1 60); do
+for i in $(seq 1 90); do
   if docker run --rm --network "$NET_NAME" "$POSTGRES_IMAGE" \
        pg_isready -h "$DOORMAN_NAME" -p 6432 -U "$PG_USER" >/dev/null 2>&1; then
     echo "pg_doorman ready after ${i}s"
     break
   fi
-  if [ "$i" -eq 60 ]; then
-    echo "::error::pg_doorman did not start listening on 6432 in 60s"
+  if [ "$i" -eq 90 ]; then
+    echo "::error::pg_doorman did not start listening on 6432 in 90s"
     exit 1
   fi
   sleep 1
@@ -194,8 +209,8 @@ fi
 
 # 7. Round-trip via the non-superuser role into the dedicated database.
 #    Asserts current_user and current_database() so a regression in
-#    pool routing, generated auth_query, or password forwarding gets
-#    caught — not just the superuser SELECT 1 happy path.
+#    pool routing or password forwarding gets caught, not just the
+#    superuser SELECT 1 happy path.
 echo
 echo "--- psql current_user/current_database via pg_doorman (non-superuser path) ---"
 RESULT=$(docker run --rm --network "$NET_NAME" \
@@ -208,6 +223,32 @@ echo "result:   '$RESULT'"
 echo "expected: '$EXPECTED'"
 if [ "$RESULT" != "$EXPECTED" ]; then
   echo "::error::non-superuser routing returned '$RESULT', expected '$EXPECTED'"
+  exit 1
+fi
+
+# 8. Prepared-statement round-trip in transaction pool mode (the
+#    default that `pg_doorman generate` emits). All three statements
+#    arrive in one psql `-c` invocation so they land in a single
+#    transaction on a single backend; in transaction pooling each
+#    psql command-line statement would otherwise be free to land on
+#    a different backend, and EXECUTE would not find the PREPAREd
+#    smoke_p. A regression that breaks pg_doorman routing of
+#    PREPARE/EXECUTE drops the `42` line below.
+#
+#    `-At` keeps the output unaligned and tuples-only; psql still
+#    prints command tags (PREPARE / DEALLOCATE) on their own lines
+#    in this mode, so we grep for the single numeric line.
+echo
+echo "--- psql PREPARE / EXECUTE / DEALLOCATE via pg_doorman ---"
+RESULT=$(docker run --rm --network "$NET_NAME" \
+  -e "PGPASSWORD=$SMOKE_PASSWORD" \
+  "$POSTGRES_IMAGE" \
+  psql -h "$DOORMAN_NAME" -p 6432 -U "$SMOKE_USER" -d "$SMOKE_DB" \
+       -At -c 'PREPARE smoke_p (int) AS SELECT $1 + 1; EXECUTE smoke_p(41); DEALLOCATE smoke_p;' \
+  | grep -E '^[0-9]+$' | head -1)
+echo "result: '$RESULT'"
+if [ "$RESULT" != "42" ]; then
+  echo "::error::PREPARE/EXECUTE through pg_doorman returned '$RESULT', expected '42'"
   exit 1
 fi
 
