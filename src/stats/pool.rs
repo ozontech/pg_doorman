@@ -203,6 +203,15 @@ pub struct PoolStats {
 
     /// Configured maximum pool size (from user config or default)
     pub pool_size: u32,
+
+    /// Names of operator-supplied startup parameters that are currently
+    /// parked in the per-pool quarantine. Snapshot taken at pool-stats
+    /// build time; rendered as a comma-separated text column in SHOW
+    /// POOLS so an operator at `psql` can see at a glance which knobs a
+    /// pool is dropping from StartupMessage without leaving the prompt.
+    /// Empty for pools whose `startup_parameters` map is empty or where
+    /// no parameter has crossed the quarantine threshold.
+    pub quarantined_params: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -298,6 +307,7 @@ impl PoolStats {
             fallback_active: false,
             source_generation: 0,
             pool_size: 0,
+            quarantined_params: Vec::new(),
         }
     }
 
@@ -371,6 +381,7 @@ impl PoolStats {
             ("paused", DataType::Text),
             ("fallback_active", DataType::Text),
             ("oldest_active_age_ms", DataType::Numeric),
+            ("quarantined_params", DataType::Text),
         ]
     }
 
@@ -445,6 +456,7 @@ impl PoolStats {
             Cow::Borrowed(if self.paused { "1" } else { "0" }),
             Cow::Borrowed(if self.fallback_active { "1" } else { "0" }),
             Cow::Owned(self.oldest_active_age_ms.to_string()),
+            Cow::Owned(self.quarantined_params.join(",")),
         ]
     }
 
@@ -617,6 +629,11 @@ impl PoolStats {
                 current.prepared_statements_count = cache.len() as u64;
                 current.prepared_statements_bytes = cache.memory_usage() as u64;
             }
+
+            // Snapshot the currently-parked startup_parameters so SHOW
+            // POOLS reflects the same set of parameters the Prometheus
+            // gauge already exposes through the metrics endpoint.
+            current.quarantined_params = pool.database.quarantined_startup_parameters();
 
             // Load statistics for SHOW STATS command
             current.total_xact_count = address.total.xact_count.load(Ordering::Relaxed);
@@ -826,6 +843,52 @@ mod tests {
         let row = stats.generate_show_stats_row();
         assert_eq!(row[9].as_ref(), "100", "column 9 should be total_errors");
         assert_eq!(row[14].as_ref(), "5", "column 14 should be avg_errors");
+    }
+
+    /// SHOW POOLS header advertises a `quarantined_params` column so the
+    /// admin console reflects the same state that
+    /// `pg_doorman_backend_startup_parameter_quarantined` exposes through
+    /// the metrics endpoint. A missing column there means operators have
+    /// to leave `psql` to triage a quarantined parameter.
+    #[test]
+    fn show_pools_header_advertises_quarantined_params_column() {
+        let header = PoolStats::generate_show_pools_header();
+        let names: Vec<&str> = header.iter().map(|(n, _)| *n).collect();
+        assert!(
+            names.contains(&"quarantined_params"),
+            "SHOW POOLS header missing quarantined_params column: {names:?}"
+        );
+    }
+
+    /// SHOW POOLS row width must match the header width on every config,
+    /// otherwise the admin console renders misaligned columns. The risk
+    /// shows up when only one of header or row is touched when a new
+    /// column is added.
+    #[test]
+    fn show_pools_row_and_header_have_same_width() {
+        let percentile = Percentile {
+            p99: 0,
+            p95: 0,
+            p90: 0,
+            p50: 0,
+        };
+        let mut stats = PoolStats::new_with_percentiles(
+            PoolIdentifier::new("shop", "alice"),
+            PoolMode::Transaction,
+            percentile.clone(),
+            percentile.clone(),
+            percentile,
+        );
+        stats.quarantined_params = vec!["search_path".to_string(), "work_mem".to_string()];
+
+        let header = PoolStats::generate_show_pools_header();
+        let row = stats.generate_show_pools_row();
+        assert_eq!(header.len(), row.len(), "header/row width mismatch");
+        let idx = header
+            .iter()
+            .position(|(n, _)| *n == "quarantined_params")
+            .expect("quarantined_params column registered");
+        assert_eq!(row[idx].as_ref(), "search_path,work_mem");
     }
 
     /// Both entry points must agree on shape when fed the same global

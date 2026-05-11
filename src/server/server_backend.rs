@@ -808,10 +808,17 @@ impl Server {
         let mut startup_started: Option<Instant> = None;
 
         // Strip currently-quarantined keys from the operator-supplied set
-        // right before we serialize the StartupMessage. The released set is
-        // currently unused; Phase 7 will wire Prometheus gauges from it.
+        // right before we serialize the StartupMessage. Any keys whose TTL
+        // expired during this call are reported back so we can flip their
+        // Prometheus gauge series back to 0 (the alert rule fires on the
+        // gauge, not on log scraping).
         let mut startup_parameters_sent = startup_parameters;
-        let _released_keys = quarantine.filter_active_keys(&mut startup_parameters_sent);
+        let released_keys = quarantine.filter_active_keys(&mut startup_parameters_sent);
+        for k in &released_keys {
+            crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
+                .with_label_values(&[&address.pool_name, k])
+                .set(0);
+        }
 
         startup(
             &mut stream,
@@ -952,7 +959,21 @@ impl Server {
                                     msg.message,
                                     outcome,
                                 );
-                                // Phase 7 will wire real Prometheus vectors here.
+                                crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
+                                    .with_label_values(&[
+                                        &address.pool_name,
+                                        &param_name,
+                                        &msg.code,
+                                    ])
+                                    .inc();
+                                if matches!(
+                                    outcome,
+                                    crate::server::quarantine::RecordOutcome::JustQuarantined
+                                ) {
+                                    crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
+                                        .with_label_values(&[&address.pool_name, &param_name])
+                                        .set(1);
+                                }
                             }
                         }
                     }

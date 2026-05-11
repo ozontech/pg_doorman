@@ -457,6 +457,57 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
     counter
 });
 
+/// Counter for every backend startup attempt that PostgreSQL rejected
+/// because of an operator-supplied `startup_parameters` entry. Tracked
+/// per pool/user/parameter so dashboards can spot a single bad knob in a
+/// large fleet, and split by `sqlstate` (`22023` invalid_value, `42704`
+/// undefined_object, `42501` insufficient_privilege) so the alerting
+/// rule can distinguish a typo from a permission denial. Increments
+/// once per failed StartupMessage, regardless of whether this rejection
+/// happens to be the one that crosses the quarantine threshold.
+pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_backend_startup_parameter_errors_total",
+            "Cumulative count of backend startup attempts rejected by \
+             PostgreSQL because of an operator-supplied startup_parameters \
+             entry. Labels: pool, parameter, sqlstate (22023 invalid_value \
+             / 42704 undefined_object / 42501 insufficient_privilege). \
+             Counts every rejection, not just the one that crossed the \
+             quarantine threshold. The failing username is available in the \
+             corresponding warn log line.",
+        ),
+        &["pool", "parameter", "sqlstate"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// One series per `(pool, parameter)` pair that pg_doorman currently
+/// strips from the StartupMessage because its consecutive-rejection
+/// counter crossed `general.startup_parameter_quarantine_threshold`.
+/// Value is `1` while the entry is parked and flips back to `0` exactly
+/// once when its TTL expires (the next backend spawn attempts the
+/// parameter again from scratch). No mid-flight clearing on its own:
+/// even if the operator fixes the underlying issue, the gauge stays at
+/// `1` until `general.startup_parameter_quarantine_ttl` elapses.
+pub(crate) static BACKEND_STARTUP_PARAMETER_QUARANTINED: Lazy<IntGaugeVec> = Lazy::new(|| {
+    let gauge = IntGaugeVec::new(
+        Opts::new(
+            "pg_doorman_backend_startup_parameter_quarantined",
+            "1 while pg_doorman has quarantined an operator-supplied \
+             startup_parameter for a pool (consecutive rejections crossed \
+             general.startup_parameter_quarantine_threshold). Cleared to 0 \
+             only when the quarantine TTL expires.",
+        ),
+        &["pool", "parameter"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 /// Counter for protocol-level large-message streaming events. pg_doorman
 /// drops to byte-stream forwarding when a server message of type DataRow
 /// ('D') or CopyData ('d') exceeds max_message_size — see

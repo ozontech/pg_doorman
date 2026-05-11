@@ -361,6 +361,14 @@ impl ServerPool {
         &self.address
     }
 
+    /// Snapshot of operator-supplied startup_parameter names that this
+    /// pool currently strips from `StartupMessage`. Used by SHOW POOLS
+    /// (admin console) so operators can see which knobs a pool is
+    /// parking without correlating logs to Prometheus.
+    pub fn quarantined_startup_parameters(&self) -> Vec<String> {
+        self.startup_parameter_quarantine.snapshot_quarantined()
+    }
+
     /// Resolve the operator-supplied startup_parameters map that this pool
     /// will hand to `Server::startup` for one backend spawn. The cascade is
     /// `general` -> pool -> (optional) auth_query per-user entry, with the

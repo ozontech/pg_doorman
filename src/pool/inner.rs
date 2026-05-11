@@ -1545,6 +1545,13 @@ impl Pool {
         self.inner.server_pool.is_paused()
     }
 
+    /// Operator-supplied startup_parameters currently parked in the
+    /// per-pool quarantine. Delegates to the `ServerPool` snapshot so
+    /// SHOW POOLS can render the same set the Prometheus gauge exposes.
+    pub fn quarantined_startup_parameters(&self) -> Vec<String> {
+        self.inner.server_pool.quarantined_startup_parameters()
+    }
+
     /// Bumps reconnect epoch and drains all idle connections.
     /// Returns the new epoch value.
     pub fn reconnect(&self) -> u32 {
