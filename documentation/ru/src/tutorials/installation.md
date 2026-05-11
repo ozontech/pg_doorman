@@ -114,11 +114,13 @@ docker run -p 6432:6432 \
   pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
-По умолчанию `CMD` образа запускает `pg_doorman` без аргументов, и тот читает `/etc/pg_doorman/pg_doorman.toml`. Передайте путь к YAML явно, чтобы `pg_doorman` прочитал смонтированный файл.
+`CMD` образа по умолчанию запускает `pg_doorman` без аргументов. При `WORKDIR /etc/pg_doorman` это означает конфиг `/etc/pg_doorman/pg_doorman.toml`. Если монтируете YAML, передайте путь явно, как в примере выше.
 
-Образ слушает `6432` для трафика PostgreSQL и `9127` для эндпоинта метрик и опциональной admin/web-консоли. `WORKDIR` равен `/etc/pg_doorman/`, путь к конфигу переопределяется переменной окружения `CONFIG_FILE`. Прочие env-переменные: `LOG_LEVEL` (значение по умолчанию `info`), `LOG_FORMAT` (`text` или `structured`), `NO_COLOR`. `STOPSIGNAL` контейнера равен `SIGTERM`, поэтому `docker stop` и остановка pod в Kubernetes позволяют `pg_doorman` штатно слить ожидающих клиентов и выйти. Не посылайте `SIGINT` в контейнер с pg_doorman: этот сигнал запускает миграцию бинарника, а в non-TTY контексте после этого pid 1 завершается, и контейнер падает.
+Пробрасывайте `6432` для PostgreSQL-протокола. Если в конфиге включён `web.enabled`, дополнительно пробросьте `9127` для `/metrics` и веб-консоли; без этого флага listener не поднимается. Путь к конфигу можно задать позиционным аргументом или переменной `CONFIG_FILE`; также доступны `LOG_LEVEL` (по умолчанию `info`), `LOG_FORMAT` (`text`, `structured` или `debug`) и `NO_COLOR`.
 
-Публичный образ собран без cargo-фич `tls-migration` и `pam`. Если нужен TLS для клиентских или серверных соединений либо PAM-аутентификация, соберите свой образ из публичного `Dockerfile`, добавив `--features tls-migration` (и/или `pam`) в шаг `cargo build --release`.
+В Dockerfile задан `STOPSIGNAL SIGTERM`, поэтому `docker stop` отправляет `pg_doorman` обычный сигнал остановки контейнера. Не используйте `SIGINT` для остановки контейнера: вне TTY этот сигнал запускает binary upgrade, что для контейнерного запуска обычно приводит к завершению PID 1.
+
+Публичный образ собран без фич `tls-migration` и `pam`. Обычный TLS для клиентских и серверных соединений не зависит от `tls-migration`; эта фича нужна только для переноса TLS-сессий при обновлении бинарника. Для TLS migration или PAM соберите свой образ из публичного `Dockerfile`, добавив `--features tls-migration` и/или `pam` в шаг `cargo build --release`.
 
 `docker-compose.yaml` с PostgreSQL в качестве sidecar лежит в [`example/`](https://github.com/ozontech/pg_doorman/tree/master/example) — для smoke-тестов.
 

@@ -117,6 +117,8 @@ sudo dnf copr enable @pg-doorman/pg-doorman
 sudo dnf install pg_doorman
 ```
 
+Distro packages and the Docker image are built without the `tls-migration` and `pam` features. See [Installation](tutorials/installation.md) for the TLS feature matrix and how to build with them.
+
 Or run via Docker:
 
 ```bash

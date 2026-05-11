@@ -118,6 +118,8 @@ sudo dnf copr enable @pg-doorman/pg-doorman
 sudo dnf install pg_doorman
 ```
 
+Дистрибутивные пакеты и Docker-образ собраны без фич `tls-migration` и `pam`. Матрица TLS-фич и инструкции по сборке — в [Установке](tutorials/installation.md).
+
 Либо запустите через Docker:
 
 ```bash
