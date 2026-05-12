@@ -197,7 +197,7 @@ export default function Wall() {
           <span className="font-mono text-sm font-medium leading-none text-text">
             pg_doorman
           </span>
-          <span className="text-[10px] uppercase tracking-[0.3em] text-text-dim">
+          <span className="text-[10px] uppercase tracking-wider text-text-dim">
             war room
           </span>
           <span className="ml-2 font-mono text-base font-semibold tabular text-text">
@@ -226,7 +226,7 @@ export default function Wall() {
 
         {events.length > 0 && (
           <div className="border border-border bg-surface px-4 py-3">
-            <div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-text-dim">
+            <div className="mb-2 text-[10px] uppercase tracking-wider text-text-dim">
               Recent admin events
             </div>
             <ul className="grid gap-1 font-mono text-xs sm:grid-cols-2 lg:grid-cols-3">
@@ -418,7 +418,7 @@ function KpiTile({
     <div
       className={`flex flex-col gap-2 border border-border bg-surface px-4 py-3 border-l-4 ${isAlert ? "border-l-danger" : "border-l-accent"}`}
     >
-      <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-text-muted">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
         {label}
       </div>
       <div className={`font-mono text-4xl font-extrabold leading-none tabular ${tone}`}>

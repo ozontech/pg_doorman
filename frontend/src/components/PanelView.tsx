@@ -300,7 +300,7 @@ export function PanelView({
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">panel</div>
+            <div className="text-[10px] uppercase tracking-wide text-text-dim">panel</div>
             <h2 className="font-mono text-base font-semibold text-text">{title}</h2>
           </div>
           <div className="flex items-center gap-2">
@@ -350,7 +350,7 @@ export function PanelView({
         </div>
 
         <div className="border-t border-border px-4 py-3">
-          <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-text-dim">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-text-dim">
             summary over the visible window
           </div>
           <table className="w-full text-xs tabular">

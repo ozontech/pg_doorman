@@ -48,7 +48,7 @@ export function HelpTip({ title, children }: HelpTipProps) {
       {open && (
         <div className="absolute left-0 top-7 z-30">
           <div className="max-h-[60vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border border-border-strong bg-surface-3 p-4 shadow-xl">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent">
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-accent">
               {title}
             </div>
             <div className="space-y-2 text-sm leading-relaxed text-text">{children}</div>

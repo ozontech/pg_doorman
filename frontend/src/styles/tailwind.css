@@ -59,12 +59,12 @@
      failure never strands the operator on an unstyled page. */
   --font-sans: "Geist Sans", "JetBrains Mono", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-size-xs:   11px;
-  --font-size-sm:   13px;
-  --font-size-base: 14px;
-  --font-size-md:   16px;
-  --font-size-lg:   20px;
-  --font-size-xl:   28px;
+  --font-size-xs:   12px;
+  --font-size-sm:   14px;
+  --font-size-base: 15px;
+  --font-size-md:   17px;
+  --font-size-lg:   22px;
+  --font-size-xl:   30px;
 
   /* Geometry. Modern SaaS uses 6-8 px on cards and 4 px on chips. The
      full Tailwind radius scale is restored from the Bloomberg zero. */

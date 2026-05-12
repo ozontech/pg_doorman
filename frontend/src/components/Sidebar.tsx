@@ -216,7 +216,7 @@ export function Sidebar() {
   if (location.pathname === "/wall") return null;
 
   return (
-    <nav className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface">
+    <nav className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-border bg-surface">
       <div className="border-b border-border px-4 py-3">
         <Link
           to="/overview"
@@ -247,14 +247,14 @@ export function Sidebar() {
                 <NavLink
                   to={item.to}
                   className={({ isActive }) =>
-                    `flex items-center gap-2.5 border-l-2 px-4 py-2 text-sm font-medium transition-colors ${
+                    `flex items-center gap-3 border-l-2 px-4 py-2.5 text-sm font-medium transition-colors ${
                       isActive
                         ? "border-accent bg-accent/10 text-text"
                         : "border-transparent text-text-muted hover:border-border-strong hover:text-text"
                     }`
                   }
                 >
-                  <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
                   <span>{item.label}</span>
                 </NavLink>
               </li>
@@ -264,7 +264,7 @@ export function Sidebar() {
       </ul>
 
       {proc && (
-        <div className="space-y-1 border-t border-border px-4 py-3 font-mono text-[11px] text-text-dim">
+        <div className="space-y-1 border-t border-border px-4 py-3 font-mono text-xs text-text-dim">
           <div className="truncate" title={proc.hostname}>
             {proc.hostname || "host"}
           </div>
@@ -274,7 +274,7 @@ export function Sidebar() {
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-text-dim">
+      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 text-sm text-text-dim">
         {(basic || ssoToken) ? (
           <button
             type="button"
@@ -282,7 +282,7 @@ export function Sidebar() {
               setBasic(null, false);
               setSsoToken(null);
             }}
-            className="truncate text-text-muted hover:text-accent"
+            className="min-w-0 flex-1 truncate text-left text-text-muted hover:text-accent"
             title="Click to clear stored credentials and re-prompt."
           >
             sign out · {signedInLabel(basic, ssoToken)}

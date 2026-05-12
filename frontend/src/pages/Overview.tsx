@@ -666,14 +666,14 @@ function Card({
             onTitleClick();
           }
         }}
-        className="cursor-pointer rounded-md border border-border bg-surface transition-colors hover:border-border-strong"
+        className="cursor-pointer rounded-md border border-border bg-surface shadow-card transition-all duration-150 hover:-translate-y-px hover:border-border-strong hover:shadow-md"
         title="Open in panel view (1h history, p50/p95/p99 table)."
       >
         {inner}
       </section>
     );
   }
-  return <section className="rounded-md border border-border bg-surface">{inner}</section>;
+  return <section className="rounded-md border border-border bg-surface shadow-card">{inner}</section>;
 }
 
 // Wrapper that turns a Sparkline card into a button-like region: any click
@@ -977,7 +977,7 @@ function ResourceCard({
 }) {
   return (
     <div className="border border-border bg-surface">
-      <div className="border-b border-border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted">
+      <div className="border-b border-border px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
         {title}
       </div>
       <div className="p-4">
@@ -1144,7 +1144,7 @@ function ProcessBar({
   return (
     <div className="border border-border bg-surface px-4 py-3">
       <div className="mb-2 flex items-baseline justify-between">
-        <span className="text-[10px] uppercase tracking-[0.2em] text-text-dim">Process</span>
+        <span className="text-[10px] uppercase tracking-wide text-text-dim">Process</span>
         <span className="font-mono text-xs text-text-dim">
           {process.hostname || "host"} · pid {process.pid}
         </span>
@@ -1225,7 +1225,7 @@ function ProcStat({
   const cls = `border border-border bg-surface-2 px-3 py-2 ${onClick ? "cursor-pointer hover:border-border-strong" : ""}`;
   return (
     <div title={hint} className={cls} onClick={onClick} role={onClick ? "button" : undefined}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className="text-[10px] uppercase tracking-wide text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{value}</div>
     </div>
   );
@@ -1249,7 +1249,7 @@ function ProcStatTwoLine({
   const cls = `border border-border bg-surface-2 px-3 py-2 ${onClick ? "cursor-pointer hover:border-border-strong" : ""}`;
   return (
     <div title={hint} className={cls} onClick={onClick} role={onClick ? "button" : undefined}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className="text-[10px] uppercase tracking-wide text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{primary}</div>
       {secondary && <div className="text-[10px] text-text-dim">{secondary}</div>}
     </div>

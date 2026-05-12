@@ -29,13 +29,13 @@ export function ThemeToggle() {
             aria-checked={active}
             aria-label={label}
             onClick={() => setPref(value)}
-            className={`rounded p-1 transition-colors ${
+            className={`rounded p-1.5 transition-colors ${
               active
                 ? "bg-accent text-accent-fg"
                 : "text-text-muted hover:text-text"
             }`}
           >
-            <Icon size={14} strokeWidth={1.75} />
+            <Icon size={16} strokeWidth={1.75} />
           </button>
         );
       })}

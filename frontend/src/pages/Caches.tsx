@@ -400,7 +400,7 @@ function PreparedTab() {
                       )}
                       {cell.text && (
                         <div className="space-y-2">
-                          <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-text-dim">
+                          <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-text-dim">
                             <span>SQL · {key}</span>
                             <button
                               type="button"

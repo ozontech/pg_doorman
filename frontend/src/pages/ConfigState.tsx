@@ -362,7 +362,7 @@ function SocketsPanel() {
 function SocketGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-dim">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-text-dim">
         {title}
       </div>
       <dl className="space-y-1 text-sm tabular">{children}</dl>

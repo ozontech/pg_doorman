@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { Toaster } from "sonner";
 import { AuthGate } from "./components/AuthGate";
 import { CommandPalette } from "./components/CommandPalette";
+import { HelpModal } from "./components/HelpModal";
 import { Sidebar } from "./components/Sidebar";
 import { SilentCallback } from "./components/SilentCallback";
 import { AdminAuthProvider } from "./hooks/useAdminAuth";
@@ -68,6 +69,7 @@ function AppMain() {
             <RoutedShell />
           </div>
           <CommandPalette />
+          <HelpModal />
           <AppToaster />
         </BrowserRouter>
       </AdminAuthProvider>

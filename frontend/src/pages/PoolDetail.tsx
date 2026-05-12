@@ -555,7 +555,7 @@ function Tile({
     tone === "danger" ? "text-danger" : tone === "warning" ? "text-warning" : "text-text";
   return (
     <div className="border border-border bg-surface px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className="text-[10px] uppercase tracking-wide text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-lg font-semibold tabular ${valueClass}`}>{value}</div>
       {spark.length > 0 && (
         <div className="mt-1">
@@ -588,7 +588,7 @@ function Section({
 }) {
   return (
     <section className={wide ? "md:col-span-2" : undefined}>
-      <h2 className="mb-2 text-xs uppercase tracking-[0.2em] text-text-dim">{title}</h2>
+      <h2 className="mb-2 text-xs uppercase tracking-wide text-text-dim">{title}</h2>
       <div className="border border-border bg-surface p-4">{children}</div>
     </section>
   );
