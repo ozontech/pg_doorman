@@ -79,7 +79,7 @@ fn route_api(req: &ParsedRequest<'_>, role: Role) -> Response {
         "/api/stats" => routes::stats::handle_stats(),
         "/api/users" => routes::users::handle_users(),
         "/api/auth_query" => routes::auth_query::handle_auth_query(),
-        "/api/config" => routes::config::handle_config(),
+        "/api/config" => routes::config::handle_config(role),
         "/api/log_level" => routes::log_level::handle_log_level(),
         "/api/pool_coordinator" => routes::pool_coordinator::handle_pool_coordinator(),
         "/api/pool_scaling" => routes::pool_scaling::handle_pool_scaling(),

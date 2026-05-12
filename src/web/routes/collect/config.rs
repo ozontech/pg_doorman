@@ -21,6 +21,16 @@ fn is_secret_key(key: &str) -> bool {
         || last_segment.ends_with("_key")
 }
 
+/// Returns `true` for keys that live inside a `startup_parameters`
+/// cascade (`general.startup_parameters.<param>` or
+/// `pools.<name>.startup_parameters.<param>`). These values are
+/// operator-supplied and may carry tenant identifiers, audit routing
+/// tags, or accidental secrets - the same redaction contract that
+/// applies to `/api/pools` for anonymous viewers also applies here.
+fn is_startup_parameter_key(key: &str) -> bool {
+    key.contains(".startup_parameters.") || key.starts_with("startup_parameters.")
+}
+
 /// Bind-address fields require a restart; everything else takes effect on
 /// the next backend or `RELOAD`. Listed precisely so the UI can render
 /// the right "restart_required" pill instead of marking everything
@@ -78,7 +88,7 @@ fn json_leaf_to_string(value: &serde_json::Value) -> String {
     }
 }
 
-pub(crate) fn collect_config() -> ConfigDto {
+pub(crate) fn collect_config(reveal_startup_values: bool) -> ConfigDto {
     let config = get_config();
 
     let mut flat: HashMap<String, String> = HashMap::new();
@@ -100,10 +110,12 @@ pub(crate) fn collect_config() -> ConfigDto {
         .into_iter()
         .map(|(key, value)| {
             let secret = is_secret_key(&key);
-            let value = if secret { "***".to_string() } else { value };
+            let startup_redact = !reveal_startup_values && is_startup_parameter_key(&key);
+            let mask = secret || startup_redact;
+            let value = if mask { "***".to_string() } else { value };
             let default = defaults
                 .get(&key)
-                .map(|d| if secret { "***".to_string() } else { d.clone() })
+                .map(|d| if mask { "***".to_string() } else { d.clone() })
                 .unwrap_or_else(|| "-".to_string());
             let changeable = if IMMUTABLES.iter().any(|c| *c == key) {
                 "no"
@@ -227,7 +239,7 @@ mod tests {
     /// refactor that quietly trims keys gets caught.
     #[test]
     fn collect_config_exposes_operationally_relevant_fields() {
-        let dto = super::collect_config();
+        let dto = super::collect_config(true);
         let keys: std::collections::HashSet<&str> =
             dto.config.iter().map(|e| e.key.as_str()).collect();
         // Spot-check four orthogonal areas DBA P3#7 called out:
@@ -241,7 +253,7 @@ mod tests {
 
     #[test]
     fn collect_config_drops_internal_keys() {
-        let dto = super::collect_config();
+        let dto = super::collect_config(true);
         for entry in &dto.config {
             assert!(
                 !super::is_internal_key(&entry.key),
