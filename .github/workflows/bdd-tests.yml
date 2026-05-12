@@ -222,6 +222,12 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
+      # GitHub-hosted runners share CPU under heavy matrix fan-out, and
+      # the timing-sensitive scenarios (sleep-based retain/lifetime
+      # waits, SCRAM passthrough reconnect) lose their margin when 20+
+      # BDD jobs run in parallel. Cap concurrency so each suite gets a
+      # less contested runner.
+      max-parallel: 4
       matrix:
         suite:
           - { name: "Go",                                cargo: "test --test bdd -- --tags @go" }
