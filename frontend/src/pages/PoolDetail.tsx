@@ -9,6 +9,7 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { toast } from "sonner";
 import { apiGet, apiPost } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { MiniSparkline } from "../components/MiniSparkline";
@@ -363,7 +364,9 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           : `/api/admin/${action}`;
       const res = await apiPost<AdminActionResponse>(url, authHeader);
       if (res.error) {
-        setFeedback({ tone: "err", text: `${action} failed: ${res.error}` });
+        const msg = `${action} failed: ${res.error}`;
+        setFeedback({ tone: "err", text: msg });
+        toast.error(msg);
       } else {
         const ids = res.affected ?? [];
         const label =
@@ -371,9 +374,12 @@ function PoolActions({ pool }: { pool: PoolDto }) {
             ? `${action} done · ${ids.join(", ")}`
             : `${action} done · 0 pools touched`;
         setFeedback({ tone: "ok", text: label });
+        toast.success(label);
       }
     } catch (e) {
-      setFeedback({ tone: "err", text: `${action} failed: ${e instanceof Error ? e.message : String(e)}` });
+      const msg = `${action} failed: ${e instanceof Error ? e.message : String(e)}`;
+      setFeedback({ tone: "err", text: msg });
+      toast.error(msg);
     } finally {
       setPending(null);
       setConfirm(null);

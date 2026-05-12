@@ -122,6 +122,16 @@ html {
   background: var(--color-border-strong);
 }
 
+/* Page-transition fade. Applied to the keyed route container so the
+   freshly mounted page eases in over 150 ms instead of snapping. The
+   reduced-motion media query below already disables it for users who
+   asked the browser to keep things still. */
+@keyframes page-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-page-in { animation: page-fade-in 150ms ease-out; }
+
 /* Tick-flash animation. Live cells (numbers retickering each poll cycle)
    wear this for ~160ms after each update so the dashboard feels like a
    tickertape without any actual motion of content. */
@@ -138,7 +148,8 @@ html {
 
 @media (prefers-reduced-motion: reduce) {
   .tick-up,
-  .tick-down {
+  .tick-down,
+  .animate-page-in {
     animation: none;
   }
 }

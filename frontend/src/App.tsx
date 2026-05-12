@@ -1,5 +1,7 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Toaster } from "sonner";
 import { AuthGate } from "./components/AuthGate";
+import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { SilentCallback } from "./components/SilentCallback";
 import { AdminAuthProvider } from "./hooks/useAdminAuth";
@@ -26,30 +28,58 @@ export default function App() {
   return <AppMain />;
 }
 
+function RoutedShell() {
+  const location = useLocation();
+  return (
+    <main className="flex-1 min-w-0">
+      <AuthGate>
+        {/* Re-keying the wrapper on pathname change replays the fade-in
+            animation; the page mounts as usual but the operator sees a
+            short ease-in instead of a snap. Children are unmounted by
+            the route switch above us either way, so no extra remount. */}
+        <div key={location.pathname} className="animate-page-in">
+          <Routes>
+            <Route path="/" element={<Navigate to="/overview" replace />} />
+            <Route path="/overview" element={<Overview />} />
+            <Route path="/pools" element={<Pools />} />
+            <Route path="/pools/:poolId" element={<PoolDetail />} />
+            <Route path="/clients" element={<Clients />} />
+            <Route path="/apps" element={<Apps />} />
+            <Route path="/caches" element={<Caches />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/config" element={<ConfigState />} />
+            <Route path="/wall" element={<Wall />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </div>
+      </AuthGate>
+    </main>
+  );
+}
+
 function AppMain() {
   return (
     <AdminAuthProvider>
       <BrowserRouter>
         <div className="flex min-h-screen bg-bg text-text">
           <Sidebar />
-          <main className="flex-1 min-w-0">
-            <AuthGate>
-              <Routes>
-                <Route path="/" element={<Navigate to="/overview" replace />} />
-                <Route path="/overview" element={<Overview />} />
-                <Route path="/pools" element={<Pools />} />
-                <Route path="/pools/:poolId" element={<PoolDetail />} />
-                <Route path="/clients" element={<Clients />} />
-                <Route path="/apps" element={<Apps />} />
-                <Route path="/caches" element={<Caches />} />
-                <Route path="/logs" element={<Logs />} />
-                <Route path="/config" element={<ConfigState />} />
-                <Route path="/wall" element={<Wall />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </AuthGate>
-          </main>
+          <RoutedShell />
         </div>
+        <CommandPalette />
+        <Toaster
+          position="top-right"
+          theme="dark"
+          duration={4000}
+          toastOptions={{
+            classNames: {
+              toast: "border border-border-strong bg-surface-2 text-text",
+              title: "font-medium",
+              description: "text-text-muted",
+              success: "border-success/40",
+              error: "border-danger/40",
+            },
+          }}
+        />
       </BrowserRouter>
     </AdminAuthProvider>
   );

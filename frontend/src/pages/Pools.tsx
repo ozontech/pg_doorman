@@ -201,23 +201,44 @@ export default function Pools() {
         title="Pools"
         description="Find the pool that hurts. Sort by Saturation, p95 ms, or Errors — default order is most saturated first. State = degraded when one threshold trips, critical when two stack. Filter substring + severity are URL-persisted, paste a link to share. Click a row for SQLSTATE breakdown and pause/reconnect controls."
       />
-      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input
           placeholder="filter by id…"
           value={filters.query}
           onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
           className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
         />
-        <select
-          value={filters.severity}
-          onChange={(e) => setFilters((f) => ({ ...f, severity: e.target.value as Filters["severity"] }))}
-          className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        >
-          <option value="all">all severities</option>
-          <option value="ok">ok</option>
-          <option value="degraded">degraded</option>
-          <option value="critical">critical</option>
-        </select>
+        <div className="flex items-center gap-1" role="radiogroup" aria-label="filter by severity">
+          {(["all", "ok", "degraded", "critical"] as const).map((s) => {
+            const active = filters.severity === s;
+            const activeTone =
+              s === "critical"
+                ? "border-danger bg-danger/15 text-danger"
+                : s === "degraded"
+                  ? "border-warning bg-warning/15 text-warning"
+                  : s === "ok"
+                    ? "border-success bg-success/15 text-success"
+                    : "border-accent bg-accent/15 text-accent";
+            return (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() =>
+                  setFilters((f) => ({ ...f, severity: s as Filters["severity"] }))
+                }
+                className={`border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  active
+                    ? activeTone
+                    : "border-border-strong bg-surface-2 text-text-muted hover:text-text"
+                }`}
+              >
+                {s}
+              </button>
+            );
+          })}
+        </div>
         <span className="ml-auto text-xs text-text-dim tabular">
           {filtered.length} of {evaluated.length} pools
         </span>
