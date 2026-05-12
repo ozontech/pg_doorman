@@ -204,13 +204,10 @@ jobs:
 
   # Single matrixed job replaces the 21 nearly-identical per-language /
   # per-suite jobs that used to live here. Each suite differs only in
-  # the cargo command it runs; share everything else.
-  #
-  # Why no `nick-fields/retry` around the cargo step: the legacy jobs
-  # wrapped `cargo test` in max_attempts: 2, which masks intermittent
-  # BDD failures rather than surfaces them. Retry stays on the network
-  # `docker pull` step, where it covers GHCR manifest visibility lag
-  # right after a fresh push (the typical real-world flake).
+  # the cargo command it runs; share everything else. See the cargo
+  # step below for the retry policy and why three attempts beat two
+  # on the dominant GHA flake families (DNS to crates.io, timing-
+  # sensitive lifecycle scenarios).
   bdd-tests:
     name: 'BDD: ${{ matrix.suite.name }}'
     needs: prepare-tests
@@ -276,18 +273,28 @@ jobs:
           command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD suite (${{ matrix.suite.name }})
-        # Retry once on failure. Timing-sensitive scenarios (SCRAM
-        # passthrough reconnect after retain, sleep-based lifecycle
-        # waits) occasionally lose their margin under cross-job
-        # contention on GitHub-hosted runners — a second attempt on
-        # the same image with the same workspace is cheaper than
-        # bisecting a phantom regression. Each attempt builds and
-        # runs ~1-3 min, so retry caps wall-clock at ~6 min worst case.
+        # Three attempts cover two distinct flake families that hit BDD
+        # jobs on GitHub-hosted runners:
+        #
+        #   1. Timing-sensitive scenarios (SCRAM passthrough reconnect
+        #      after retain, sleep-based lifecycle waits) occasionally
+        #      lose their margin under cross-job contention.
+        #   2. Transient DNS resolution failures on `index.crates.io`
+        #      can take both attempts to clear when only two were
+        #      allowed — cargo's own three-retry network loop runs over
+        #      ~25 seconds, so an outage longer than that drains both
+        #      attempts (see run #25734696524, Patroni proxy job).
+        #
+        # A 30-second wait between attempts gives the DNS flake time to
+        # settle without doubling the wall-clock for the timing-flake
+        # case (the third attempt only runs when the first two failed).
+        # Each attempt builds and runs ~1-3 min, so worst-case wall is
+        # still inside the 30-minute timeout.
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
-          max_attempts: 2
-          retry_wait_seconds: 5
+          max_attempts: 3
+          retry_wait_seconds: 30
           command: |
             docker run --rm \
               -v ${{ github.workspace }}:/workspace \
