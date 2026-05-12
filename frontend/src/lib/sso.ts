@@ -59,10 +59,12 @@ export function captureTokenFromUrl(): string | null {
 
 /**
  * Send the user agent to the SSO proxy with the current href as
- * redirect target. Validates the proxy URL: must parse, must use https
- * (or be localhost for development). A bad URL logs to the console
- * and aborts the redirect, so a typo in `pg_doorman.toml` shows in
- * devtools instead of leaving the SPA stuck on a half-redirect.
+ * redirect target. Validates that the URL parses; protocol choice is
+ * left to the operator (an internal HTTPS-terminating proxy reaching
+ * pg_doorman over a private HTTP leg is a supported deployment, see
+ * [web].sso_require_https). A non-parseable URL logs to the console
+ * and aborts so a typo in `pg_doorman.toml` shows in devtools
+ * instead of leaving the SPA stuck on a half-redirect.
  *
  * Returns `true` when navigation was scheduled, `false` when the URL
  * was rejected — the caller can use this to clear a "Redirecting…"
@@ -77,25 +79,12 @@ export function redirectToSso(proxyUrl: string): boolean {
 }
 
 function safeProxyUrl(proxyUrl: string): URL | null {
-  let url: URL;
   try {
-    url = new URL(proxyUrl);
+    return new URL(proxyUrl);
   } catch {
     console.error("sso_proxy_url is not a valid URL:", proxyUrl);
     return null;
   }
-  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol !== "https:" && !isLocal) {
-    console.error(
-      "sso_proxy_url must use https (got",
-      url.protocol,
-      "for",
-      url.hostname,
-      ")",
-    );
-    return null;
-  }
-  return url;
 }
 
 interface SsoTokenMessage {
