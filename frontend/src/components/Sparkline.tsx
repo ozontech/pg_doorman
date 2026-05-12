@@ -146,17 +146,23 @@ export function Sparkline({
     [width, warn, crit, logY, syncKey, events],
   );
 
-  // Create plot only after width is known.
+  // Create plot only after width is known and the series has enough
+  // samples to drive a sensible time axis. Before that we render a
+  // "collecting samples" placeholder; uPlot on empty data picks an
+  // arbitrary X range and the operator sees years like 2026-2029 on
+  // the axis.
+  const dataReady = series[0].length >= 2;
   useEffect(() => {
     if (!containerRef.current) return;
     if (width === 0) return;
+    if (!dataReady) return;
     plotRef.current = new uPlot(options, series, containerRef.current);
     return () => {
       plotRef.current?.destroy();
       plotRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options]);
+  }, [options, dataReady]);
 
   useEffect(() => {
     plotRef.current?.setData(series);
@@ -198,7 +204,16 @@ export function Sparkline({
           {valueText}
         </span>
       </div>
-      <div ref={containerRef} className="w-full" />
+      {series[0].length >= 2 ? (
+        <div ref={containerRef} className="w-full" />
+      ) : (
+        <div
+          style={{ height: HEIGHT_PX }}
+          className="flex items-center justify-center text-[10px] text-text-dim"
+        >
+          collecting samples · {series[0].length}/120
+        </div>
+      )}
       {/*
         Fixed-height single-line footer. Idle and hover states use the
         same h/leading so swapping content cannot bump the card by a

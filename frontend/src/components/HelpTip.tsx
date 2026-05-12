@@ -46,8 +46,8 @@ export function HelpTip({ title, children }: HelpTipProps) {
         i
       </button>
       {open && (
-        <div className="absolute left-7 top-1/2 z-30 -translate-y-1/2">
-          <div className="w-80 rounded-md border border-border-strong bg-surface-3 p-4 shadow-xl">
+        <div className="absolute left-0 top-7 z-30">
+          <div className="max-h-[60vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border border-border-strong bg-surface-3 p-4 shadow-xl">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent">
               {title}
             </div>

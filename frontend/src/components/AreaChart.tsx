@@ -146,7 +146,16 @@ export function AreaChart({
           </span>
         ))}
       </div>
-      <Chart data={stacked} options={options} />
+      {data[0].length >= 2 ? (
+        <Chart data={stacked} options={options} />
+      ) : (
+        <div
+          style={{ height }}
+          className="flex items-center justify-center text-xs text-text-dim"
+        >
+          collecting samples · {data[0].length}/120
+        </div>
+      )}
       <div className="mt-1 px-2 text-xs text-text-dim tabular">
         {hover ? (
           <span className="flex flex-wrap gap-x-4">

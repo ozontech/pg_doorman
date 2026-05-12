@@ -163,7 +163,16 @@ export function DualAxisChart({
           <span className="text-danger">crit ≥ {rightCrit}</span>
         )}
       </div>
-      <Chart data={data} options={options} />
+      {data[0].length >= 2 ? (
+        <Chart data={data} options={options} />
+      ) : (
+        <div
+          style={{ height }}
+          className="flex items-center justify-center text-xs text-text-dim"
+        >
+          collecting samples · {data[0].length}/120
+        </div>
+      )}
       <div className="mt-1 px-2 text-xs text-text-dim tabular">
         {hover ? (
           <span className="flex flex-wrap gap-x-4">
