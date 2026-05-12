@@ -483,8 +483,7 @@ impl ServerPool {
             .as_deref()
             .unwrap_or(self.user.username.as_str());
 
-        let body_bytes = sp::serialized_bytes(&merged);
-        let packet_bytes = sp::full_packet_bytes(
+        let (packet_bytes, body_bytes) = sp::packet_and_body_bytes(
             username_for_wire,
             &self.database,
             &self.application_name,
@@ -502,8 +501,7 @@ impl ServerPool {
         let has_overlay = !self.per_user_startup_overlay.is_empty();
         if has_overlay {
             let baseline = &*self.base_startup_parameters;
-            let baseline_body = sp::serialized_bytes(baseline);
-            let baseline_packet = sp::full_packet_bytes(
+            let (baseline_packet, baseline_body) = sp::packet_and_body_bytes(
                 username_for_wire,
                 &self.database,
                 &self.application_name,

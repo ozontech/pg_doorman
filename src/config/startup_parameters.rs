@@ -124,22 +124,40 @@ pub fn full_packet_bytes(
     application_name: &str,
     extras: &BTreeMap<String, String>,
 ) -> usize {
-    let mut total = 4usize + 4; // length prefix + protocol version
-    total += b"user\0".len() + user.len() + 1;
-    total += b"database\0".len() + database.len() + 1;
+    packet_and_body_bytes(user, database, application_name, extras).0
+}
+
+/// Single-pass variant that returns both the full StartupMessage byte
+/// length and the body-only byte count (what `serialized_bytes` reports
+/// for the operator-supplied map). Used by the runtime budget/packet
+/// guard to avoid walking the map three times per backend spawn.
+pub fn packet_and_body_bytes(
+    user: &str,
+    database: &str,
+    application_name: &str,
+    extras: &BTreeMap<String, String>,
+) -> (usize, usize) {
+    let mut packet = 4usize + 4; // length prefix + protocol version
+    packet += b"user\0".len() + user.len() + 1;
+    packet += b"database\0".len() + database.len() + 1;
     let effective_app_name = extras
         .get("application_name")
         .map(String::as_str)
         .unwrap_or(application_name);
-    total += b"application_name\0".len() + effective_app_name.len() + 1;
+    packet += b"application_name\0".len() + effective_app_name.len() + 1;
+    let mut body = 0usize;
     for (key, value) in extras {
+        // `serialized_bytes` counts every operator-supplied pair,
+        // including `application_name` — keep the same accounting so
+        // the budget check stays comparable across callers.
+        body += key.len() + 1 + value.len() + 1;
         if key == "application_name" {
             continue;
         }
-        total += key.len() + 1 + value.len() + 1;
+        packet += key.len() + 1 + value.len() + 1;
     }
-    total += 1; // parameter-list terminator
-    total
+    packet += 1; // parameter-list terminator
+    (packet, body)
 }
 
 #[cfg(test)]

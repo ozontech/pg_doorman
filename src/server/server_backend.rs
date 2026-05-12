@@ -168,7 +168,18 @@ pub struct Server {
     /// for this backend. They become `pg_settings.reset_val` for the
     /// session, so `sync_parameters` must not push a client-side value over
     /// them on checkout — the operator decision wins over the client.
-    operator_managed_startup_keys: HashSet<String>,
+    /// `Arc` because every spawn from the same pool sees the same set;
+    /// without the share each backend allocated its own `HashSet<String>`.
+    operator_managed_startup_keys: Arc<HashSet<String>>,
+}
+
+/// Shared empty key set so pools that don't use `startup_parameters`
+/// hand every backend the same `Arc<HashSet>` instead of allocating a
+/// new empty `HashSet` per spawn.
+fn empty_operator_keys() -> Arc<HashSet<String>> {
+    static EMPTY: once_cell::sync::Lazy<Arc<HashSet<String>>> =
+        once_cell::sync::Lazy::new(|| Arc::new(HashSet::new()));
+    EMPTY.clone()
 }
 
 impl std::fmt::Display for Server {
@@ -1047,15 +1058,18 @@ impl Server {
                         phase_started.elapsed().as_secs_f64(),
                     );
 
-                    // No backing-table allocation for pools that don't use
-                    // the feature: HashSet::new() is empty until the first
-                    // insert. Operators on the typical zero-param path pay
-                    // no per-spawn HashSet cost.
-                    let operator_managed_startup_keys: HashSet<String> =
+                    // The empty case is a shared `Arc<HashSet>` static, so
+                    // pools that don't use the feature pay zero allocation
+                    // per spawn. The non-empty case still allocates once per
+                    // spawn — the caller in pool/server_pool.rs knows the
+                    // map shape but does not currently pass an already-Arc'd
+                    // HashSet through, and lifting the construction up there
+                    // is a larger refactor than this commit warrants.
+                    let operator_managed_startup_keys: Arc<HashSet<String>> =
                         if startup_parameters.is_empty() {
-                            HashSet::new()
+                            empty_operator_keys()
                         } else {
-                            startup_parameters.keys().cloned().collect()
+                            Arc::new(startup_parameters.keys().cloned().collect())
                         };
 
                     let server = Server {
