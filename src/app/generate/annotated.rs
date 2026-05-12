@@ -1033,22 +1033,6 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     w.separator(fi, f.section_title("startup_parameters").get(w.russian));
     w.blank();
 
-    write_field_comment(w, fi, "general", "startup_parameter_quarantine_threshold");
-    w.kv(
-        fi,
-        "startup_parameter_quarantine_threshold",
-        &w.num_val(g.startup_parameter_quarantine_threshold),
-    );
-    w.blank();
-
-    write_field_comment(w, fi, "general", "startup_parameter_quarantine_ttl");
-    w.kv(
-        fi,
-        "startup_parameter_quarantine_ttl",
-        &w.num_val(g.startup_parameter_quarantine_ttl),
-    );
-    w.blank();
-
     write_field_comment(w, fi, "general", "startup_parameters");
     match w.format {
         ConfigFormat::Toml => {

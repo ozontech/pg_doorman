@@ -109,56 +109,49 @@ pg_doorman drops every operator-supplied key for that one spawn,
 logs the byte counts, and lets the backend connect with PG's own
 defaults rather than failing every connection attempt.
 
-## Quarantine
+## What happens when PG rejects a parameter
 
-PG can reject an operator-supplied parameter at backend startup with
-sqlstate `22023` (invalid value), `42704` (undefined object: typo
-in the parameter name), or `42501` (insufficient privilege: the
-parameter requires a higher role than the backend has). pg_doorman
-counts consecutive rejections per `(pool, parameter)`; once the
-count reaches `general.startup_parameter_quarantine_threshold`
-(default 3), pg_doorman stops sending that key for
-`general.startup_parameter_quarantine_ttl` (default 5 minutes).
+If PostgreSQL rejects an operator-supplied parameter at backend
+startup, pg_doorman forwards the PG `ErrorResponse` to the client
+unchanged. The client sees the same sqlstate (`22023`,
+`42704`, `42501`, `55P02`, or any other code under the startup family)
+and the same message it would have seen connecting to PG directly.
 
-A successful backend startup resets the counter for every key it
-just sent. Three transient rejections do not trigger quarantine if a
-successful spawn lands between them; "consecutive" really means
-consecutive.
-
-Both knobs are hot-reloaded on `SIGHUP`. Releasing a quarantined
-parameter is **TTL-only**: pg_doorman cannot tell whether the
-operator has fixed the underlying problem until the TTL expires and
-the next backend startup tries the parameter again.
+pg_doorman does not retry the connection without the parameter, does
+not silently strip the key, and does not keep a per-pool quarantine.
+The next client connect runs the same `StartupMessage` and either
+succeeds or fails the same way — fixing the parameter is on the
+operator, not on the pooler.
 
 ## Observability
 
-`SHOW POOLS` carries a `quarantined_params` column listing the
-currently parked parameters per pool, comma-separated:
+The admin SQL console exposes the per-pool effective cascade:
 
 ```text
- database | user  | ... | quarantined_params
-----------+-------+-----+--------------------
- checkout | shop  | ... | work_mem,search_path
- reports  | shop  | ... |
+admin> SHOW STARTUP_PARAMETERS;
+ user  | database | parameter        | value             | source
+-------+----------+------------------+-------------------+-----------
+ shop  | checkout | plan_cache_mode  | force_custom_plan | pool
+ shop  | reports  | statement_timeout| 10s               | general
 ```
 
-The same state is on the Prometheus surface:
+The Web UI's pool detail page renders the same view in the "Startup
+parameters (operator-injected)" section.
 
-- `pg_doorman_backend_startup_parameter_errors_total{pool, parameter, sqlstate}`
-  counts every rejection from PG. Increments once per failed
-  StartupMessage; the failing username is on the corresponding warn
-  log line so dynamic `auth_query` pools cannot blow up the series
-  count.
-- `pg_doorman_backend_startup_parameter_quarantined{pool, parameter}`
-  is `1` while a parameter is parked. After the TTL expires, the
-  quarantine state can be reconciled on the next metrics scrape or
-  `SHOW POOLS`; the next backend startup will try the parameter
-  again.
+On the Prometheus surface:
 
-A reasonable starting alert is "any non-zero quarantine gauge for
-longer than the TTL". If the gauge is set for `2 × ttl`, the
-operator-supplied value is still wrong after one retry window and
-deserves a look.
+- `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`
+  counts every backend startup PostgreSQL rejected because of an
+  operator-supplied parameter. The failing parameter name and
+  username are on the corresponding warn log line; they are kept out
+  of the labels so dynamic `auth_query` pools cannot blow up the
+  series count.
+
+A reasonable starting alert is "non-zero
+`pg_doorman_backend_startup_parameter_errors_total` rate for the
+same pool over a few minutes" — that means every client connect to
+that pool is failing on the same operator GUC and the config needs
+to be fixed.
 
 ## When not to use this
 
@@ -175,9 +168,7 @@ deserves a look.
 
 ## Reference
 
-- [General Settings](../reference/general.md): `startup_parameters`,
-  `startup_parameter_quarantine_threshold`,
-  `startup_parameter_quarantine_ttl`.
+- [General Settings](../reference/general.md): `startup_parameters`.
 - [Pool Settings](../reference/pool.md):
   `pools.<name>.startup_parameters`.
 - [auth_query](../authentication/auth-query.md): passthrough vs

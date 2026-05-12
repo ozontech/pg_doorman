@@ -156,14 +156,6 @@ pub(crate) struct PoolDto {
     /// has no operator overrides for this user.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub startup_parameters: Vec<StartupParameterDto>,
-    /// Subset of startup parameter names currently parked by the per-pool
-    /// quarantine. Backends spawn without these keys while the entry lives;
-    /// PG `RESET ALL` / `DISCARD ALL` therefore restore PG defaults rather
-    /// than the operator-configured values for the duration of the quarantine.
-    /// Mirrors `SHOW POOLS.quarantined_params` and the
-    /// `pg_doorman_backend_startup_parameter_quarantined` gauge.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub quarantined_params: Vec<String>,
 }
 
 /// One entry in `PoolDto.startup_parameters`. The `source` field tells the

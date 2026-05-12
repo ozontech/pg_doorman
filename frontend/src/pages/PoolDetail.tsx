@@ -313,12 +313,9 @@ export default function PoolDetail() {
           <SqlstateBreakdown errors={pool.errors_by_sqlstate} />
         </Section>
 
-        {(pool.startup_parameters?.length || pool.quarantined_params?.length) && (
+        {pool.startup_parameters && pool.startup_parameters.length > 0 && (
           <Section title="Startup parameters (operator-injected)" wide>
-            <StartupParametersBlock
-              parameters={pool.startup_parameters}
-              quarantined={pool.quarantined_params}
-            />
+            <StartupParametersBlock parameters={pool.startup_parameters} />
           </Section>
         )}
 
@@ -686,29 +683,16 @@ function ScalingBlock({ row }: { row: PoolScalingRowDto | null }) {
 
 // Operator-supplied PostgreSQL GUCs that pg_doorman injects into each new
 // backend's StartupMessage. Source is the cascade layer (`general`, `pool`,
-// `auth_query`) that contributed the winning value. Quarantined entries are
-// keys pg_doorman is currently NOT sending — PG rejected them on previous
-// startup attempts, and pg_doorman parks them for `quarantine_ttl` before
-// retrying. While a key is quarantined, `RESET ALL` / `DISCARD ALL` on a
-// client session restores PG's built-in default rather than the operator
-// configured value.
+// `auth_query`) that contributed the winning value. If PG rejects one of
+// these at backend startup, the client sees the PG error directly —
+// pg_doorman does not retry or silently strip the key.
 function StartupParametersBlock({
   parameters,
-  quarantined,
 }: {
   parameters?: StartupParameter[];
-  quarantined?: string[];
 }) {
-  const quarantinedSet = new Set(quarantined ?? []);
   const rows = parameters ?? [];
-  // A pool can have an empty effective cascade while still parking keys that
-  // every level used to inject and the operator since removed; surface those
-  // as separate rows so the operator can correlate the gauge to the actual
-  // configuration source.
-  const quarantinedOnly = (quarantined ?? []).filter(
-    (k) => !rows.some((r) => r.parameter === k),
-  );
-  if (rows.length === 0 && quarantinedOnly.length === 0) {
+  if (rows.length === 0) {
     return (
       <p className="text-sm text-text-dim">
         No operator-supplied startup parameters configured for this pool.
@@ -726,30 +710,7 @@ function StartupParametersBlock({
             <span className="font-mono text-text">
               {p.parameter} = {p.value}
             </span>
-            <span className="text-xs text-text-dim">
-              source: {p.source}
-              {quarantinedSet.has(p.parameter) && (
-                <span className="ml-2 inline-block bg-warning/20 px-2 py-0.5 text-warning">
-                  QUARANTINED — not sent to backend
-                </span>
-              )}
-            </span>
-          </span>
-        </li>
-      ))}
-      {quarantinedOnly.map((key) => (
-        <li
-          key={`q:${key}`}
-          className="flex items-baseline justify-between gap-3 border-b border-border/50 py-1 last:border-b-0"
-        >
-          <span className="flex flex-col">
-            <span className="font-mono text-text">{key}</span>
-            <span className="text-xs text-text-dim">
-              source: -
-              <span className="ml-2 inline-block bg-warning/20 px-2 py-0.5 text-warning">
-                QUARANTINED — config no longer carries this key
-              </span>
-            </span>
+            <span className="text-xs text-text-dim">source: {p.source}</span>
           </span>
         </li>
       ))}

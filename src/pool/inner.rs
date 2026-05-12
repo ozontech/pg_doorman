@@ -1545,13 +1545,6 @@ impl Pool {
         self.inner.server_pool.is_paused()
     }
 
-    /// Operator-supplied startup_parameters currently parked in the
-    /// per-pool quarantine. Delegates to the `ServerPool` snapshot so
-    /// SHOW POOLS can render the same set the Prometheus gauge exposes.
-    pub fn quarantined_startup_parameters(&self) -> Vec<String> {
-        self.inner.server_pool.quarantined_startup_parameters()
-    }
-
     /// Effective merged startup_parameters cascade keyed by parameter, with
     /// the layer that contributed each winning value. Delegates to
     /// `ServerPool` so admin `SHOW STARTUP_PARAMETERS` and the
@@ -1563,23 +1556,6 @@ impl Pool {
         self.inner
             .server_pool
             .effective_startup_parameters_with_sources()
-    }
-
-    /// Forward a live update of quarantine threshold/TTL to the shared
-    /// `QuarantineState`. The pool hash does not include these
-    /// general-level knobs, so reload calls this on every pool it kept.
-    pub fn update_quarantine_knobs(&self, threshold: u32, ttl: std::time::Duration) {
-        self.inner
-            .server_pool
-            .update_quarantine_knobs(threshold, ttl);
-    }
-
-    /// Drop expired quarantine bookkeeping and clear the matching gauges so
-    /// that an idle pool does not strand the Prometheus
-    /// `pg_doorman_backend_startup_parameter_quarantined` series at 1 long
-    /// after TTL elapsed.
-    pub fn reconcile_quarantine_gauges(&self) {
-        self.inner.server_pool.reconcile_quarantine_gauges();
     }
 
     /// Bumps reconnect epoch and drains all idle connections.

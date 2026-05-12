@@ -73,7 +73,6 @@ pub(crate) fn collect_pools() -> PoolsDto {
             startup_parameters: StartupParameterDto::from_resolved(
                 pool.database.effective_startup_parameters_with_sources(),
             ),
-            quarantined_params: pool.database.quarantined_startup_parameters(),
         };
         pools.push(dto);
     }

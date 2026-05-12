@@ -824,9 +824,7 @@ where
 /// resolved per pool through the `general` -> pool -> auth_query cascade.
 ///
 /// Each row lists one parameter for one pool, with the layer that contributed
-/// the winning value (`general`, `pool`, `auth_query`) and a flag telling
-/// whether the key is currently in the per-pool quarantine — backends spawn
-/// without that key while it is.
+/// the winning value (`general`, `pool`, `auth_query`).
 pub async fn show_startup_parameters<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
@@ -837,7 +835,6 @@ where
         ("parameter", DataType::Text),
         ("value", DataType::Text),
         ("source", DataType::Text),
-        ("quarantined", DataType::Text),
     ];
 
     let mut res = BytesMut::new();
@@ -848,25 +845,14 @@ where
     entries.sort_by(|a, b| (&a.0.db, &a.0.user).cmp(&(&b.0.db, &b.0.user)));
 
     for (identifier, pool) in entries {
-        let quarantined: std::collections::HashSet<String> = pool
-            .database
-            .quarantined_startup_parameters()
-            .into_iter()
-            .collect();
         let effective = pool.database.effective_startup_parameters_with_sources();
         for (parameter, (value, source)) in effective {
-            let is_quarantined = if quarantined.contains(&parameter) {
-                "yes"
-            } else {
-                "no"
-            };
             res.put(data_row(&[
                 identifier.user.clone(),
                 identifier.db.clone(),
                 parameter,
                 value,
                 source.as_str().to_string(),
-                is_quarantined.to_string(),
             ]));
         }
     }

@@ -1,7 +1,7 @@
 // Implementation of the PostgreSQL server (database) protocol.
 
 // Standard library imports
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
@@ -163,6 +163,12 @@ pub struct Server {
     /// Per-connection lifetime override (ms). Set on fallback connections so
     /// they expire before the local backend recovers.
     pub(crate) override_lifetime_ms: Option<u64>,
+
+    /// Names of GUCs that pg_doorman injected through `startup_parameters`
+    /// for this backend. They become `pg_settings.reset_val` for the
+    /// session, so `sync_parameters` must not push a client-side value over
+    /// them on checkout — the operator decision wins over the client.
+    operator_managed_startup_keys: HashSet<String>,
 }
 
 impl std::fmt::Display for Server {
@@ -691,7 +697,16 @@ impl Server {
     }
 
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
-        let parameter_diff = self.server_parameters.compare_params(parameters);
+        let mut parameter_diff = self.server_parameters.compare_params(parameters);
+
+        // Keys the operator injected through `startup_parameters` are
+        // authoritative for the session: they are pg_settings.reset_val on
+        // the backend and the operator chose them on purpose. The client
+        // may still issue an explicit SET later, but the per-checkout sync
+        // from `client.server_parameters` must not silently overwrite an
+        // operator-supplied default with a client-side value (e.g. an
+        // application_name baked into a connection string).
+        parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
 
         if parameter_diff.is_empty() {
             return Ok(());
@@ -742,12 +757,12 @@ impl Server {
     /// Perform the authentication and return the server in a ready for query state.
     ///
     /// `startup_parameters` is the cascade-resolved operator-supplied map
-    /// (general → pool → auth_query, more specific wins). Keys currently held
-    /// in `quarantine` are stripped before the StartupMessage is sent; any
-    /// PG ErrorResponse with a startup-parameter SQLSTATE
-    /// (`22023` / `42704` / `42501`) is fed back into the quarantine so a
-    /// persistently-failing key is dropped from subsequent backend spawns
-    /// for the configured TTL.
+    /// (general → pool → auth_query, more specific wins). It goes onto the
+    /// wire as part of `StartupMessage` exactly as the operator configured
+    /// it. If PG rejects any of those parameters, the resulting
+    /// `ErrorResponse` is surfaced to the client unchanged — pg_doorman
+    /// behaves like the PostgreSQL backend itself rather than masking the
+    /// failure with retries or per-key quarantine.
     #[allow(clippy::too_many_arguments)]
     pub async fn startup(
         address: &Address,
@@ -761,7 +776,6 @@ impl Server {
         application_name: String,
         session_mode: bool,
         startup_parameters: std::collections::BTreeMap<String, String>,
-        quarantine: std::sync::Arc<crate::server::quarantine::QuarantineState>,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -807,18 +821,7 @@ impl Server {
         let auth_started = Instant::now();
         let mut startup_started: Option<Instant> = None;
 
-        // Strip currently-quarantined keys from the operator-supplied set
-        // right before we serialize the StartupMessage. Any keys whose TTL
-        // expired during this call are reported back so we can flip their
-        // Prometheus gauge series back to 0 (the alert rule fires on the
-        // gauge, not on log scraping).
-        let mut startup_parameters_sent = startup_parameters;
-        let released_keys = quarantine.filter_active_keys(&mut startup_parameters_sent);
-        for k in &released_keys {
-            crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
-                .with_label_values(&[&address.pool_name, k])
-                .set(0);
-        }
+        let startup_parameters_sent = startup_parameters;
 
         startup(
             &mut stream,
@@ -926,14 +929,14 @@ impl Server {
                     }
                 }
 
-                // ErrorResponse. Read the message body and parse it. When the
-                // SQLSTATE belongs to the startup-parameter family and the
-                // operator-supplied map was non-empty, feed the failing
-                // parameter name into the per-pool quarantine. Finally,
-                // preserve the pre-quarantine error classification so the
-                // Patroni-assisted fallback path still treats transient PG
-                // unavailability (SQLSTATE class `57P`) as a route-elsewhere
-                // signal rather than a startup misconfiguration.
+                // ErrorResponse. Read the message body and parse it. PG's
+                // verdict is the operator's verdict — we surface the
+                // sqlstate and message to the client unchanged. The one
+                // exception is the Patroni-assisted fallback path: SQLSTATE
+                // class `57P*` (server unavailable) needs its dedicated
+                // `ServerUnavailableError` classification so the fallback
+                // discovery can route around the failed node instead of
+                // returning a startup error to the client.
                 'E' => {
                     let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
                     let _ = bytes.get_u8();
@@ -945,13 +948,6 @@ impl Server {
                         ));
                     };
 
-                    // SQLSTATE class 57P (`57P*`) signals transient PG
-                    // unavailability — the Patroni-assisted fallback path
-                    // needs the original classification to route around it,
-                    // and a transient outage on the local backend is not a
-                    // startup-parameter misconfiguration. Surface it first
-                    // so the quarantine logic below cannot misclassify a
-                    // node-down event as a bad GUC.
                     if msg.code.starts_with("57P") {
                         return Err(Error::ServerUnavailableError(
                             msg.message,
@@ -959,61 +955,32 @@ impl Server {
                         ));
                     }
 
-                    // PG-side `ErrorResponse` on every other SQLSTATE. The
-                    // "matched a sent key" heuristic is stronger than an
-                    // SQLSTATE allowlist: PG covers startup-time GUC failures
-                    // under at least `22023` (invalid_parameter_value),
-                    // `42704` (undefined_object), `42501` (insufficient_
-                    // privilege) and `55P02` (cant_change_runtime_param),
-                    // and the list drifts across versions and extensions.
-                    // If `extract_parameter_name` returned a key pg_doorman
-                    // actually sent, treat it as a startup-parameter failure
-                    // regardless of the code; otherwise leave the error
-                    // alone — `ALTER ROLE … SET` and similar paths fail on
-                    // parameters pg_doorman never touched and must not
-                    // quarantine an operator key on our side.
+                    // Warn the operator when PG rejected a parameter we
+                    // actually sent — this is the signal that
+                    // general/pool/auth_query has a typo or a value the
+                    // PG instance does not accept. We do not change the
+                    // error path; the client still receives the PG
+                    // sqlstate so the operator sees the same failure
+                    // their application would see talking to PG directly.
                     if !startup_parameters_sent.is_empty() {
                         if let Some(param_name) =
                             crate::server::startup_error::extract_parameter_name(&msg.message)
                         {
                             if startup_parameters_sent.contains_key(&param_name) {
-                                let outcome = quarantine.record_rejection(&param_name, &msg.code);
                                 warn!(
-                                    "[{}@{}] backend startup rejected: parameter=\"{}\" \
-                                     sqlstate={} message=\"{}\" outcome={:?}",
+                                    "[{}@{}] PG rejected operator-supplied startup \
+                                     parameter=\"{}\" sqlstate={} message=\"{}\"; the \
+                                     error is being forwarded to the client. Fix the \
+                                     parameter in general/pool/auth_query.",
                                     address.username,
                                     address.pool_name,
                                     param_name,
                                     msg.code,
                                     msg.message,
-                                    outcome,
                                 );
                                 crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
-                                    .with_label_values(&[
-                                        &address.pool_name,
-                                        &param_name,
-                                        &msg.code,
-                                    ])
+                                    .with_label_values(&[&address.pool_name, &msg.code])
                                     .inc();
-                                if matches!(
-                                    outcome,
-                                    crate::server::quarantine::RecordOutcome::JustQuarantined
-                                ) {
-                                    crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
-                                        .with_label_values(&[&address.pool_name, &param_name])
-                                        .set(1);
-                                }
-                            } else {
-                                info!(
-                                    "[{}@{}] backend startup rejected by an unrelated PG \
-                                     startup parameter \"{}\" (pg_doorman did not send this \
-                                     key); sqlstate={} message=\"{}\"",
-                                    address.username,
-                                    address.pool_name,
-                                    param_name,
-                                    msg.code,
-                                    msg.message,
-                                );
                             }
                         }
                     }
@@ -1087,11 +1054,8 @@ impl Server {
                         phase_started.elapsed().as_secs_f64(),
                     );
 
-                    // PG accepted every operator-supplied parameter we sent.
-                    // Reset partial-rejection counters for those keys so that
-                    // the threshold model stays "N consecutive rejections",
-                    // not "N rejections ever".
-                    quarantine.record_success(&startup_parameters_sent);
+                    let operator_managed_startup_keys: HashSet<String> =
+                        startup_parameters_sent.keys().cloned().collect();
 
                     let server = Server {
                         address: address.to_owned(),
@@ -1131,6 +1095,7 @@ impl Server {
                         pending_large_message: None,
                         close_reason: None,
                         override_lifetime_ms: None,
+                        operator_managed_startup_keys,
                     };
                     server.stats.update_process_id(process_id);
                     server.stats.set_tls(connected_with_tls);

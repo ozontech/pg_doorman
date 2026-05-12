@@ -1149,41 +1149,6 @@ fields:
         - For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.
         - For Talos/JWT/PAM flows configured at the pool/user level, `trust` still bypasses the client password prompt; however, those modes may be used when `trust` does not match.
 
-    startup_parameter_quarantine_threshold:
-      config:
-        en: |
-          Consecutive PostgreSQL startup rejections for the same
-          parameter before pg_doorman stops including it in the
-          StartupMessage for this pool. Paired with
-          startup_parameter_quarantine_ttl.
-        ru: |
-          Сколько подряд отказов PostgreSQL по одному и тому же
-          параметру нужно получить, прежде чем pg_doorman временно
-          перестанет включать его в StartupMessage для этого пула.
-          Связан с startup_parameter_quarantine_ttl.
-      doc: |
-        Counts consecutive `ErrorResponse`s from PG during backend startup that name the same `startup_parameters` key. Once the counter reaches this threshold, the key is quarantined and excluded from subsequent StartupMessages for this pool until `startup_parameter_quarantine_ttl` elapses.
-
-        A value of `0` is clamped to `1` at runtime (quarantine on the first rejection). The intent of this knob is to absorb transient configuration errors without blackholing a key after a single backend hiccup; raise it for pools where startup errors are expected to recover on their own, lower it (down to 1) when an operator misconfiguration should drop the offending key immediately.
-      default: "3"
-
-    startup_parameter_quarantine_ttl:
-      config:
-        en: |
-          TTL (milliseconds) for a quarantined parameter. On expiry
-          pg_doorman retries the key in the next backend StartupMessage
-          and resets the rejection counter.
-        ru: |
-          На сколько миллисекунд параметр помещается в карантин. После
-          истечения TTL pg_doorman снова попробует отправить его в
-          StartupMessage при следующем запуске бэкенда; счётчик отказов
-          сбрасывается.
-      doc: |
-        Quarantine release is **TTL-only**: pg_doorman stops sending the key while it is quarantined, so a subsequent successful backend startup carries no information about whether the operator-supplied value was actually fixed. Releasing on success would oscillate between "quarantined" and "rejected again" as soon as the operator hadn't updated the config.
-
-        On expiry the bookkeeping for the key is dropped: the next rejection starts counting from zero. Lower this knob to retry sooner after operator config changes; raise it to give the operator more time to react before pg_doorman tries again.
-      default: "300000"
-
     startup_parameters:
       config:
         en: |
@@ -1214,7 +1179,9 @@ fields:
 
         Validation enforced at config load: reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`) are refused; keys must match PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`); values must not contain null bytes; per-level size must fit the operator budget. The full merged cascade is re-checked at every backend spawn against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) cap; when the merge would not fit, pg_doorman drops all operator-supplied keys for that spawn and logs.
 
-        If PG keeps rejecting a particular operator-supplied key at backend startup (sqlstate `22023` / `42704` / `42501`), pg_doorman quarantines that key for the pool. See `startup_parameter_quarantine_threshold` and `startup_parameter_quarantine_ttl` for tuning, `SHOW POOLS`' `quarantined_params` column for visibility, and the `pg_doorman_backend_startup_parameter_errors_total` / `pg_doorman_backend_startup_parameter_quarantined` metrics for alerting.
+        If PostgreSQL rejects a parameter at backend startup, pg_doorman returns the PG `ErrorResponse` to the client unchanged — there is no retry, no per-key quarantine, no silent fallback. The client sees the same SQLSTATE and message it would have seen connecting to PG directly. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are on the corresponding warn log line.
+
+        Effective per-pool cascade can be inspected through the admin SQL console (`SHOW STARTUP_PARAMETERS` returns one row per `(pool, key)` with the contributing layer) and through the `/api/pools` REST endpoint that the Web UI consumes.
       default: "{} (empty)"
 
   pool:
@@ -1539,7 +1506,7 @@ fields:
       doc: |
         Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the operator budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
 
-        In the cascade `general` → `pool` → `auth_query`, this layer overrides general per key, and an auth_query passthrough entry overrides this. Dedicated-mode `auth_query` pools ignore the per-user column on purpose. See [`general.startup_parameters`](#startup-parameters) for the full behaviour description, quarantine knobs, and observability.
+        In the cascade `general` → `pool` → `auth_query`, this layer overrides general per key, and an auth_query passthrough entry overrides this. Dedicated-mode `auth_query` pools ignore the per-user column on purpose. See [`general.startup_parameters`](#startup-parameters) for the full behaviour description and observability surface.
       default: "{} (empty)"
 
   user:

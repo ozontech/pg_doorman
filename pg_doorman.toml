@@ -410,19 +410,6 @@ hba = []
 # PostgreSQL Startup Parameters (operator-defined GUCs)
 # --------------------------------------------------------------------------
 
-# Consecutive PostgreSQL startup rejections for the same
-# parameter before pg_doorman stops including it in the
-# StartupMessage for this pool. Paired with
-# startup_parameter_quarantine_ttl.
-# Default: 3
-startup_parameter_quarantine_threshold = 3
-
-# TTL (milliseconds) for a quarantined parameter. On expiry
-# pg_doorman retries the key in the next backend StartupMessage
-# and resets the rejection counter.
-# Default: 300000
-startup_parameter_quarantine_ttl = 300000
-
 # Baseline PostgreSQL GUCs that pg_doorman adds to every backend
 # StartupMessage. Pools override values per key; auth_query in
 # passthrough mode can override them per user. Config load

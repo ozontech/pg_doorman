@@ -269,23 +269,15 @@ pub struct General {
     #[serde(default, skip_serializing)]
     pub pg_hba: Option<PgHba>,
 
-    /// Consecutive backend startup rejections for the same parameter before
-    /// pg_doorman quarantines it for this pool. See
-    /// `startup_parameter_quarantine_ttl`. Default `3`.
-    #[serde(default = "General::default_startup_parameter_quarantine_threshold")]
-    pub startup_parameter_quarantine_threshold: u32,
-
-    /// TTL (milliseconds) for a quarantined parameter; on expiry pg_doorman
-    /// retries including it in the StartupMessage. Default `300000` (5 min).
-    #[serde(default = "General::default_startup_parameter_quarantine_ttl")]
-    pub startup_parameter_quarantine_ttl: u64,
-
     /// Operator-supplied PostgreSQL configuration parameters added to
     /// backend `StartupMessage`s. The general map is the baseline;
     /// pool-level settings override per key, and passthrough `auth_query`
     /// rows can override per user. Config load validates reserved keys,
     /// GUC names, null bytes, and this level's size; the merged cascade is
-    /// checked again before each backend startup.
+    /// checked again before each backend startup. If PostgreSQL rejects an
+    /// operator-supplied parameter at backend startup, the client receives
+    /// the PG error unchanged — pg_doorman never substitutes its own
+    /// retry, fallback, or per-key quarantine for the backend's verdict.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub startup_parameters: std::collections::BTreeMap<String, String>,
 }
@@ -478,14 +470,6 @@ impl General {
         "/tmp/pg_doorman.pid".to_string()
     }
 
-    pub fn default_startup_parameter_quarantine_threshold() -> u32 {
-        3
-    }
-
-    pub fn default_startup_parameter_quarantine_ttl() -> u64 {
-        300_000
-    }
-
     /// Test-only builder that produces a `General` with the two
     /// prepared-cache knobs explicitly set and everything else at
     /// defaults. Lets tests outside this module exercise resolution
@@ -613,9 +597,6 @@ impl Default for General {
                 Self::default_query_interner_anon_idle_ttl_seconds(),
             hba: Self::default_hba(),
             pg_hba: None,
-            startup_parameter_quarantine_threshold:
-                Self::default_startup_parameter_quarantine_threshold(),
-            startup_parameter_quarantine_ttl: Self::default_startup_parameter_quarantine_ttl(),
             startup_parameters: std::collections::BTreeMap::new(),
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
@@ -795,12 +776,5 @@ client_prepared_statements_cache_size = 2048
             parsed.unwrap().client_anonymous_prepared_cache_size,
             Some(2048),
         );
-    }
-
-    #[test]
-    fn startup_parameter_quarantine_defaults_are_sane() {
-        let g = General::default();
-        assert_eq!(g.startup_parameter_quarantine_threshold, 3);
-        assert_eq!(g.startup_parameter_quarantine_ttl, 300_000);
     }
 }

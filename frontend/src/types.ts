@@ -90,9 +90,6 @@ export interface PoolDto {
   // each new backend StartupMessage. Backend omits this field when the
   // cascade is empty for the pool's user.
   startup_parameters?: StartupParameter[];
-  // Subset of `startup_parameters` parameter names parked in the per-pool
-  // quarantine. Backend omits this field when nothing is quarantined.
-  quarantined_params?: string[];
 }
 
 export interface StartupParameter {

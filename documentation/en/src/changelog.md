@@ -45,39 +45,50 @@ application needs without touching `postgresql.conf`, `ALTER ROLE`, or
   logged, so the connection still completes with PG defaults instead
   of failing every client request.
 
-#### Quarantine for keys PG keeps rejecting
+#### Behaviour on PG-side rejection
 
-- After
-  `general.startup_parameter_quarantine_threshold` consecutive
-  rejections of the same key (default `3`), pg_doorman parks the key
-  for `general.startup_parameter_quarantine_ttl` (default 5 minutes)
-  and stops sending it on subsequent backend startups.
-- Both knobs are hot-reloadable: a SIGHUP that touches only the
-  threshold or TTL takes effect on every pool without rebuild.
-- A successful backend startup resets partial-rejection counters for
-  every key it accepted, keeping the threshold model "N consecutive
-  rejections" rather than "N rejections ever".
-- The quarantine record is keyed on the failing parameter name parsed
-  from PG's error message and cross-checked against the map pg_doorman
-  actually sent, so a server-side `ALTER ROLE SET` rejection for an
-  unrelated key cannot poison the operator's quarantine.
-- SQLSTATE class `57P` keeps mapping to `ServerUnavailableError` and
-  drives the Patroni-assisted fallback path; the quarantine
-  observability runs alongside that mapping, not in place of it.
+- If PostgreSQL rejects an operator-supplied startup parameter at
+  backend startup, pg_doorman forwards the `ErrorResponse` to the
+  client unchanged. The client receives the same sqlstate and message
+  it would have seen connecting to PG directly — no silent retry, no
+  per-key quarantine, no buffering layer. Operator fixes the
+  parameter in the config; until then every connection through that
+  pool fails the same way.
+- SQLSTATE class `57P` (server unavailable) keeps mapping to
+  `ServerUnavailableError` first so the Patroni-assisted fallback
+  path can route around the failed node before the startup-parameter
+  log line fires.
+- The operator-supplied parameter wins over the client sync path:
+  even if the client connect string carries an `application_name`
+  (or another tracked GUC like `TimeZone`), the per-checkout
+  `sync_parameters` call no longer overrides the operator value on
+  the backend. The operator-configured default stands until an
+  explicit `SET` statement on the client session changes it.
+
+#### RELOAD coherence
+
+- A SIGHUP that changes `general.startup_parameters` now drains every
+  pool that depends on the baseline: the effective per-pool config
+  hash folds in the baseline, and dynamic `auth_query` pools that
+  carry over the reload are also recycled. Idle backends with the
+  previous `reset_val` no longer stay around to serve `RESET ALL` /
+  `DISCARD ALL` with stale operator defaults.
 
 #### Observability
 
-- `pg_doorman_backend_startup_parameter_errors_total{pool,parameter,sqlstate}`
-  counts every rejection. The failing username is in the corresponding
-  warn log line; it is deliberately not a label, so a dynamic
-  `auth_query` pool that mints many roles cannot blow up the series
-  count.
-- `pg_doorman_backend_startup_parameter_quarantined{pool,parameter}`
-  goes to 1 the moment a key is parked and back to 0 when the TTL
-  expires, including on idle pools where the metrics collector
-  reconciles the gauge without waiting for the next backend startup.
-- `SHOW POOLS` exposes a `quarantined_params` text column so operators
-  can see at a glance which keys a pool is currently dropping.
+- `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`
+  counts every backend startup rejected by PostgreSQL because of an
+  operator-supplied parameter. The failing parameter name and
+  username are on the corresponding warn log line; they are
+  deliberately kept out of the labels so a dynamic `auth_query` pool
+  that mints many roles cannot blow up the series count.
+- `SHOW STARTUP_PARAMETERS` (admin SQL console) lists the per-pool
+  effective merged cascade with the layer that contributed each
+  value. `psql` tab completion on `SHOW <TAB>` now offers the new
+  command.
+- The Web UI pool detail page renders the same view in a
+  "Startup parameters (operator-injected)" section, driven by the
+  new `startup_parameters[]` field on `/api/pools`.
 
 See [PostgreSQL startup parameters](tutorials/startup-parameters.md)
 for the operator walkthrough, plus [General Settings](reference/general.md)

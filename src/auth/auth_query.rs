@@ -441,6 +441,22 @@ impl AuthQueryExecutor {
         if text.is_empty() {
             return std::collections::HashMap::new();
         }
+        // Reject oversize input before serde_json walks the whole row. The
+        // operator budget covers the merged cascade pg_doorman ships in
+        // StartupMessage, so a single auth_query row that already exceeds
+        // that budget on its own can never produce a sendable map. Capping
+        // here keeps a misbehaving DB row from forcing pg_doorman to
+        // allocate megabytes of serde_json::Value tree on every auth_query
+        // refresh.
+        let max_bytes = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
+        if text.len() > max_bytes {
+            warn!(
+                "[{username}@{pool_name}] auth_query startup_parameters: raw column is {} bytes, \
+                 exceeding operator budget {max_bytes}; parameters ignored",
+                text.len()
+            );
+            return std::collections::HashMap::new();
+        }
         let parsed: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
             Err(e) => {
@@ -810,16 +826,25 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
 
     /// Cheap, sync, non-fetching lookup of the per-user startup_parameters
     /// map. Returns `None` when the username has no cached entry yet (e.g.
-    /// pool prewarm fires before any client has authenticated) or when the
-    /// cached entry is negative. Never triggers a PG fetch and never
-    /// initializes the executor; intended for the backend-spawn hot path
-    /// where blocking on auth_query I/O would be unacceptable.
+    /// pool prewarm fires before any client has authenticated), when the
+    /// cached entry is negative, or when the cached entry has lived past
+    /// `cache_ttl` / `cache_failure_ttl`. Never triggers a PG fetch and
+    /// never initializes the executor; intended for the backend-spawn hot
+    /// path where blocking on auth_query I/O would be unacceptable.
+    ///
+    /// The TTL check exists so that a backend spawned by the replenishment
+    /// loop or anticipation path does not pin stale per-user GUCs after
+    /// the operator changed the `auth_query` row and the operator-visible
+    /// cache rotation moment has already passed.
     pub fn peek_startup_parameters(
         &self,
         username: &str,
     ) -> Option<std::collections::HashMap<String, String>> {
         let entry = self.entries.get(username)?;
         if entry.is_negative {
+            return None;
+        }
+        if entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
             return None;
         }
         Some(entry.startup_parameters.clone())
@@ -1278,6 +1303,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_startup_parameters_oversize_text_returns_empty() {
+        // HIGH #9 regression guard: pathological auth_query row should not
+        // make serde_json walk megabytes of JSON. The raw text cap matches
+        // `MAX_OPERATOR_BUDGET`, so anything past that returns empty before
+        // we even start parsing. Drop the same value into a giant string
+        // so the byte length crosses the cap independently of JSON shape.
+        let cap = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
+        let bytes = "a".repeat(cap + 1);
+        let r = AuthQueryExecutor::parse_startup_parameters_text(Some(&bytes), "u", "p");
+        assert!(
+            r.is_empty(),
+            "oversize raw column must be rejected before serde_json walks it"
+        );
+    }
+
+    #[test]
     fn parse_startup_parameters_invalid_guc_name_dropped() {
         // Keys with spaces fail the shared `is_valid_guc_name` check used
         // for operator-supplied parameter maps.
@@ -1370,6 +1411,31 @@ mod tests {
         let cache = make_cache(fetcher, &config);
         assert!(cache.get_or_fetch("ghost").await.unwrap().is_none());
         assert!(cache.peek_startup_parameters("ghost").is_none());
+    }
+
+    #[tokio::test]
+    async fn peek_startup_parameters_returns_none_for_expired_entry() {
+        // HIGH #7 regression guard: a positive cache entry that has lived
+        // past `cache_ttl` must not pin a stale per-user startup parameter
+        // onto a backend the replenishment loop spawns later. Mirrors
+        // `test_cache_ttl_expiration` but exercises the peek path the
+        // backend-spawn hot path uses.
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user_with_params("alice", "md5abc123", &[("work_mem", "64MB")]);
+        let mut config = test_config();
+        config.cache_ttl = Duration::from_millis(50);
+
+        let cache = make_cache(fetcher, &config);
+        cache.get_or_fetch("alice").await.unwrap().unwrap();
+        // Sanity: peek sees the fresh entry.
+        assert!(cache.peek_startup_parameters("alice").is_some());
+
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        assert!(
+            cache.peek_startup_parameters("alice").is_none(),
+            "peek must return None once cache_ttl has elapsed for the entry"
+        );
     }
 
     #[tokio::test]

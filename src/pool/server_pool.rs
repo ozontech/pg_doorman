@@ -83,12 +83,6 @@ pub struct ServerPool {
 
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
-
-    /// Shared quarantine state for operator-supplied startup_parameters.
-    /// One instance per pool so the rejection counter accumulates across
-    /// every backend spawn this pool issues; per-call construction would
-    /// reset the counter on each spawn and never trip the threshold.
-    startup_parameter_quarantine: Arc<crate::server::quarantine::QuarantineState>,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -110,10 +104,6 @@ impl std::fmt::Debug for ServerPool {
             .field(
                 "connection_counter",
                 &self.connection_counter.load(Ordering::Relaxed),
-            )
-            .field(
-                "startup_parameter_quarantine",
-                &self.startup_parameter_quarantine,
             )
             .finish()
     }
@@ -139,17 +129,6 @@ impl ServerPool {
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
     ) -> ServerPool {
-        // The quarantine knobs are global (general.*) so we read them at
-        // construction time; subsequent RELOADs that touch only the knobs
-        // do not redirect the existing pool's quarantine because RELOAD
-        // builds a new ServerPool whenever a pool's hash changes.
-        let cfg = crate::config::config_arc();
-        let startup_parameter_quarantine =
-            Arc::new(crate::server::quarantine::QuarantineState::new(
-                cfg.general.startup_parameter_quarantine_threshold,
-                Duration::from_millis(cfg.general.startup_parameter_quarantine_ttl),
-            ));
-
         ServerPool {
             address,
             user: user.clone(),
@@ -170,7 +149,6 @@ impl ServerPool {
             resume_notify: Notify::new(),
             session_mode,
             fallback_state,
-            startup_parameter_quarantine,
         }
     }
 
@@ -261,7 +239,6 @@ impl ServerPool {
                 self.application_name.clone(),
                 self.session_mode,
                 startup_parameters.clone(),
-                self.startup_parameter_quarantine.clone(),
             ),
         )
         .await;
@@ -271,7 +248,11 @@ impl ServerPool {
         // StartupMessage. The socket is dead after FATAL, so retry needs a fresh
         // TCP connection. We retry on any startup failure (matching libpq), but
         // skip retry on transport-level errors (ConnectError, ServerUnavailableError)
-        // since TLS cannot help when the server was never reached.
+        // since TLS cannot help when the server was never reached. Startup
+        // parameter rejections (PG ErrorResponse on a key we sent) are also
+        // not TLS-fixable, but they surface as `ServerStartupError` with the
+        // PG sqlstate intact — the client receives the same message PG would
+        // have produced, so the retry is a no-op rather than a hazard.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
         let should_tls_retry = match &result {
@@ -318,7 +299,6 @@ impl ServerPool {
                     self.application_name.clone(),
                     self.session_mode,
                     startup_parameters,
-                    self.startup_parameter_quarantine.clone(),
                 ),
             )
             .await;
@@ -359,37 +339,6 @@ impl ServerPool {
     /// Returns the address of this pool.
     pub fn address(&self) -> &Address {
         &self.address
-    }
-
-    /// Snapshot of operator-supplied startup_parameter names that this
-    /// pool currently strips from `StartupMessage`. Used by SHOW POOLS
-    /// (admin console) so operators can see which knobs a pool is
-    /// parking without correlating logs to Prometheus.
-    pub fn quarantined_startup_parameters(&self) -> Vec<String> {
-        self.startup_parameter_quarantine.snapshot_quarantined()
-    }
-
-    /// Live-update the quarantine threshold and TTL so a SIGHUP that only
-    /// touches `general.startup_parameter_quarantine_*` takes effect on the
-    /// reused pool. The pool hash does not include these general-level
-    /// knobs, so without this hook a reload would silently leave the pool
-    /// running with the previous values.
-    pub fn update_quarantine_knobs(&self, threshold: u32, ttl: std::time::Duration) {
-        self.startup_parameter_quarantine
-            .update_knobs(threshold, ttl);
-    }
-
-    /// Drop bookkeeping for quarantined keys whose TTL has elapsed and clear
-    /// the matching Prometheus gauge series. Called from the SHOW POOLS /
-    /// metrics-collection path so an idle pool with no backend churn does
-    /// not leave a stale `pg_doorman_backend_startup_parameter_quarantined`
-    /// at 1 long after the underlying TTL expired.
-    pub fn reconcile_quarantine_gauges(&self) {
-        for key in self.startup_parameter_quarantine.reconcile_expired() {
-            crate::web::metrics::BACKEND_STARTUP_PARAMETER_QUARANTINED
-                .with_label_values(&[&self.address.pool_name, &key])
-                .set(0);
-        }
     }
 
     /// Inspect the operator-supplied cascade with the source layer kept for
@@ -869,7 +818,6 @@ impl ServerPool {
                 self.application_name.clone(),
                 self.session_mode,
                 startup_parameters.clone(),
-                self.startup_parameter_quarantine.clone(),
             ),
         )
         .await;
@@ -919,7 +867,6 @@ impl ServerPool {
                     self.application_name.clone(),
                     self.session_mode,
                     startup_parameters,
-                    self.startup_parameter_quarantine.clone(),
                 ),
             )
             .await;

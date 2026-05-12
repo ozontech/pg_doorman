@@ -5,7 +5,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::{
@@ -68,6 +68,13 @@ pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 /// This is atomic and safe and read-optimized.
 /// The pool is recreated dynamically when the config is reloaded.
 pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::default()));
+
+/// Hash of the previous reload's `general.startup_parameters` map. Used by
+/// `ConnectionPool::from_config` to recognize when a SIGHUP changed the
+/// general-level baseline so dynamic auth_query pools can be drained — the
+/// per-pool reuse hash already folds in the baseline, but dynamic pools are
+/// carried over by identifier rather than rebuilt from the same path.
+static PREVIOUS_GENERAL_STARTUP_HASH: AtomicU64 = AtomicU64::new(0);
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
@@ -319,8 +326,35 @@ impl ConnectionPool {
             );
         }
 
+        // Hashing each pool's effective config against (Pool, general
+        // startup_parameters baseline) folds general-level GUC changes into
+        // the same reuse decision pg_doorman already uses for pool-level
+        // changes. Without this, a SIGHUP that only edits
+        // `general.startup_parameters` would leave every idle backend
+        // pinned to the previous `reset_val` until the connection rotates
+        // through `lifetime_ms`, so clients would see mixed defaults from
+        // the same pool depending on which backend they got.
+        let general_startup_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            config.general.startup_parameters.hash(&mut hasher);
+            hasher.finish()
+        };
+        let previous_general_startup_hash =
+            PREVIOUS_GENERAL_STARTUP_HASH.swap(general_startup_hash, Ordering::Relaxed);
+        // The static defaults to `0`, which collides with the empty-map
+        // hash on a fresh process; treat that special case as "no prior
+        // value" so the first reload never falsely claims a change.
+        let general_startup_parameters_changed = previous_general_startup_hash != 0
+            && previous_general_startup_hash != general_startup_hash;
         for (pool_name, pool_config) in &config.pools {
-            let new_pool_hash_value = pool_config.hash_value();
+            let new_pool_hash_value = {
+                use std::hash::Hasher;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                hasher.write_u64(pool_config.hash_value());
+                hasher.write_u64(general_startup_hash);
+                hasher.finish()
+            };
             let server_tls_config = build_server_tls_for_pool(pool_config, &config.general)?;
 
             // There is one pool per database/user pair.
@@ -335,18 +369,6 @@ impl ConnectionPool {
                         && pool.address.server_tls.as_ref() == server_tls_config.as_ref()
                     {
                         info!("[{}@{}] config unchanged", user.username, pool_name);
-                        // Quarantine threshold and TTL live in `general` and
-                        // therefore do not influence the pool hash. A SIGHUP
-                        // that only retunes those knobs would otherwise leave
-                        // every kept pool running with stale values, so push
-                        // the new numbers into the shared QuarantineState
-                        // here while the pool is still being reused.
-                        pool.database.update_quarantine_knobs(
-                            config.general.startup_parameter_quarantine_threshold,
-                            std::time::Duration::from_millis(
-                                config.general.startup_parameter_quarantine_ttl,
-                            ),
-                        );
                         new_pools.insert(identifier.clone(), pool.clone());
                         continue;
                     }
@@ -750,6 +772,21 @@ impl ConnectionPool {
                         user.username
                     );
                     pools_to_remove.push(id);
+                }
+            }
+        }
+
+        // 2b. general.startup_parameters changed: drain every dynamic pool
+        //     so the next auth_query lookup builds fresh backends with the
+        //     new baseline. Static pools are already handled by the pool
+        //     reuse hash above, which folds in `general_startup_hash`.
+        if general_startup_parameters_changed {
+            info!(
+                "general.startup_parameters changed on reload — collecting all dynamic pools for recycle"
+            );
+            for id in DYNAMIC_POOLS.load().iter() {
+                if !pools_to_remove.contains(id) {
+                    pools_to_remove.push(id.clone());
                 }
             }
         }

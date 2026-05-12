@@ -222,7 +222,6 @@ Feature: Per-pool startup_parameters
       admin_username = "admin"
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 md5"
-      startup_parameter_quarantine_threshold = 999
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -238,10 +237,10 @@ Feature: Per-pool startup_parameters
       pool_size = 2
       """
     Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "test" fails
-    And pg_doorman log contains "backend startup rejected"
+    And pg_doorman log contains "PG rejected operator-supplied startup parameter"
     And pg_doorman log contains "nonexistent_guc_zzz"
 
-  Scenario: quarantine after consecutive rejections strips the bad key on next attempt
+  Scenario: every subsequent connect fails the same way until the operator fixes the config
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
@@ -257,8 +256,6 @@ Feature: Per-pool startup_parameters
       admin_username = "admin"
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 md5"
-      startup_parameter_quarantine_threshold = 1
-      startup_parameter_quarantine_ttl = 60000
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -273,17 +270,14 @@ Feature: Per-pool startup_parameters
       password = "md58a67a0c805a5ee0384ea28e0dea557b6"
       pool_size = 2
       """
-    # First connection trips the quarantine threshold and fails.
+    # PostgreSQL rejects the unknown GUC at backend startup; pg_doorman
+    # forwards the rejection to the client. The very next connect repeats
+    # the same failure - no quarantine, no silent strip, no graceful
+    # recovery: the operator must fix the parameter in the config for the
+    # pool to start working.
     Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "test" fails
-    # After quarantine engages, the bad key is stripped and a fresh backend can
-    # be created; the connection now succeeds and the SHOW returns the default
-    # because nonexistent_guc_yyy never reached PostgreSQL.
-    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "test" succeeds
-    # SHOW POOLS surfaces the quarantined parameter name so an operator
-    # triaging from psql can see what pg_doorman is parking.
-    When we create admin session "adm" to pg_doorman as "admin" with password "admin"
-    And we execute "SHOW POOLS" on admin session "adm" and store response
-    Then admin session "adm" response should contain "nonexistent_guc_yyy"
+    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "test" fails
+    And pg_doorman log contains "nonexistent_guc_yyy"
 
   Scenario: RESET ALL restores startup_parameters defaults
     Given PostgreSQL started with pg_hba.conf:
@@ -551,7 +545,7 @@ Feature: Per-pool startup_parameters
         -U admin -d pgdoorman -A -t -c 'SHOW STARTUP_PARAMETERS'
       """
     Then the command should succeed
-    # Default psql -A -t output is pipe-delimited: user|database|parameter|value|source|quarantined.
+    # Default psql -A -t output is pipe-delimited: user|database|parameter|value|source.
     # The general baseline shows up as source=general; the pool override as source=pool.
-    And the command output should contain "statement_timeout|10s|general|no"
-    And the command output should contain "plan_cache_mode|force_custom_plan|pool|no"
+    And the command output should contain "statement_timeout|10s|general"
+    And the command output should contain "plan_cache_mode|force_custom_plan|pool"
