@@ -20,6 +20,13 @@ use super::PoolIdentifier;
 pub struct AuthQueryState {
     cache_cell: tokio::sync::OnceCell<AuthQueryCache>,
     pub(crate) config: AuthQueryConfig,
+    /// Hash of the pool-level `startup_parameters` map captured at the
+    /// moment this state was built. RELOAD compares it against the new
+    /// `pool_config.startup_parameters` hash and drains dynamic pools +
+    /// rebuilds the dedicated shared pool when they differ — otherwise
+    /// dynamic backends would keep starting with the previous baseline's
+    /// `reset_val`.
+    pub(crate) pool_startup_hash: u64,
     pool_name: String,
     server_host: String,
     server_port: u16,
@@ -33,6 +40,7 @@ impl AuthQueryState {
     /// Create a new AuthQueryState.
     pub(crate) fn new(
         config: AuthQueryConfig,
+        pool_startup_hash: u64,
         pool_name: String,
         server_host: String,
         server_port: u16,
@@ -42,6 +50,7 @@ impl AuthQueryState {
         Self {
             cache_cell: tokio::sync::OnceCell::new(),
             config,
+            pool_startup_hash,
             pool_name,
             server_host,
             server_port,

@@ -573,9 +573,23 @@ impl ConnectionPool {
 
         for (pool_name, pool_config) in &config.pools {
             if let Some(ref aq_config) = pool_config.auth_query {
-                // RELOAD: reuse state when config unchanged (preserves cache, executor, stats)
+                let pool_startup_hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    pool_config.startup_parameters.hash(&mut hasher);
+                    hasher.finish()
+                };
+                // RELOAD: reuse state when both the auth_query config AND
+                // the pool-level startup_parameters are unchanged. A
+                // pool.startup_parameters edit must drop the cache and
+                // recycle the shared/dynamic pools: their backends were
+                // started with the old baseline as `reset_val`, and that
+                // value survives client-side `RESET ALL` / `DISCARD ALL`
+                // unless the backend is recreated.
                 if let Some(old_state) = old_aq_states_for_reuse.get(pool_name) {
-                    if old_state.config == *aq_config {
+                    if old_state.config == *aq_config
+                        && old_state.pool_startup_hash == pool_startup_hash
+                    {
                         info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
                         auth_query_states.insert(pool_name.clone(), old_state.clone());
                         // Still need to ensure shared pool exists in new_pools
@@ -761,6 +775,7 @@ impl ConnectionPool {
                     pool_name.clone(),
                     Arc::new(AuthQueryState::new(
                         aq_config.clone(),
+                        pool_startup_hash,
                         pool_name.clone(),
                         pool_config.server_host.clone(),
                         pool_config.server_port,
@@ -775,18 +790,32 @@ impl ConnectionPool {
         let old_aq_states = old_aq_states_for_reuse;
         let mut pools_to_remove: Vec<PoolIdentifier> = Vec::new();
 
-        // 1. Compare old vs new auth_query configs
+        // 1. Compare old vs new auth_query configs, plus pool-level
+        //    startup_parameters: either change must drain dynamic pools
+        //    for this pool_name so the next auth_query lookup builds
+        //    fresh backends with the new baseline reset_val.
         for (pool_name, old_state) in old_aq_states.iter() {
-            let new_aq = config
-                .pools
-                .get(pool_name)
-                .and_then(|p| p.auth_query.as_ref());
-            let changed = match new_aq {
+            let new_pool_config = config.pools.get(pool_name);
+            let new_aq = new_pool_config.and_then(|p| p.auth_query.as_ref());
+            let aq_changed = match new_aq {
                 None => true,                          // auth_query removed
                 Some(new) => *new != old_state.config, // config changed
             };
-            if changed {
-                info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+            let new_pool_startup_hash = new_pool_config.map(|p| {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                p.startup_parameters.hash(&mut hasher);
+                hasher.finish()
+            });
+            let pool_startup_changed = new_pool_startup_hash
+                .map(|h| h != old_state.pool_startup_hash)
+                .unwrap_or(false);
+            if aq_changed || pool_startup_changed {
+                if aq_changed {
+                    info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+                } else {
+                    info!("[pool: {pool_name}] pool.startup_parameters changed — collecting dynamic pools for removal");
+                }
                 for id in DYNAMIC_POOLS.load().iter() {
                     if id.db == *pool_name {
                         pools_to_remove.push(id.clone());
