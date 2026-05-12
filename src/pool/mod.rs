@@ -1032,6 +1032,18 @@ impl ConnectionPool {
         {
             let conn = match self.database.get().await {
                 Ok(conn) => conn,
+                // PG-side rejection of an operator-supplied startup
+                // parameter must keep its typed shape so the cold auth
+                // path returns the same `ErrorResponse` (real SQLSTATE
+                // and PG message) to the client that the transaction
+                // checkout path already returns through
+                // src/client/transaction.rs. Stringifying the
+                // PoolError here collapses the carried sqlstate/message
+                // into a generic 58000/3D000 — which contradicts the
+                // "rejection forwarded verbatim" contract.
+                Err(PoolError::Backend(err @ Error::ServerStartupParameterRejection { .. })) => {
+                    return Err(err);
+                }
                 Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
             };
             guard.set_from_hashmap(&conn.server_parameters_as_hashmap(), true);
