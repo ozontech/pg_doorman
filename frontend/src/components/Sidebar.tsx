@@ -10,6 +10,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { getSsoTokenUsername } from "../lib/jwt";
@@ -103,77 +104,72 @@ export function Sidebar() {
   const { authHeader, basic, setBasic, ssoToken, setSsoToken, role } =
     useAdminAuth();
   const location = useLocation();
-
-  const [version, setVersion] = useState<string | null>(null);
-  const [overview, setOverview] = useState<OverviewDto | null>(null);
-  const [pools, setPools] = useState<PoolsDto | null>(null);
-  const [proc, setProc] = useState<ProcessDto | null>(null);
-  const [rate, setRate] = useState<RateState>({ qps: 0, errsPerSec: 0 });
   // Seed prev snapshot from localStorage so the first poll after a page
   // navigation immediately yields a delta — without this the sidebar
   // (and the operator) saw "0.00 / 0.00" every time they reopened the
   // tab or jumped between pages.
   const prevRef = useRef<PrevTotals | null>(loadPrevTotals());
+  const [rate, setRate] = useState<RateState>({ qps: 0, errsPerSec: 0 });
 
-  useEffect(() => {
-    let cancelled = false;
-    apiGet<VersionDto>("/api/version", authHeader)
-      .then((d) => {
-        if (!cancelled) setVersion(d.version);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [authHeader]);
+  // Version is one-shot — render once and forget. No refetch interval.
+  const versionQuery = useQuery({
+    queryKey: ["sidebar.version", authHeader],
+    queryFn: ({ signal }) =>
+      apiGet<VersionDto>("/api/version", authHeader, signal),
+    staleTime: 5 * 60_000,
+  });
+  const version = versionQuery.data?.version ?? null;
 
+  // Operational polls. TanStack Query keeps the last response in cache
+  // across page navigations so reopening the SPA does not start the
+  // sidebar from "0.00" while the first request hits the wire.
+  const overviewQuery = useQuery({
+    queryKey: ["sidebar.overview", authHeader],
+    queryFn: ({ signal }) =>
+      apiGet<OverviewDto>("/api/overview", authHeader, signal),
+    refetchInterval: SIDEBAR_POLL_MS,
+  });
+  const overview = overviewQuery.data ?? null;
+
+  const poolsQuery = useQuery({
+    queryKey: ["sidebar.pools", authHeader],
+    queryFn: ({ signal }) =>
+      apiGet<PoolsDto>("/api/pools", authHeader, signal),
+    refetchInterval: SIDEBAR_POLL_MS,
+  });
+  const pools = poolsQuery.data ?? null;
+
+  const procQuery = useQuery({
+    queryKey: ["sidebar.process", authHeader],
+    queryFn: ({ signal }) =>
+      apiGet<ProcessDto>("/api/process", authHeader, signal),
+    refetchInterval: SIDEBAR_POLL_MS,
+  });
+  const proc = procQuery.data ?? null;
+
+  // Derive QPS / errors-per-second from the previous snapshot whenever
+  // /api/overview returns. Persisted prevRef survives mounts so the
+  // very first response after a page change immediately yields a rate.
   useEffect(() => {
-    let cancelled = false;
-    const tick = () => {
-      apiGet<OverviewDto>("/api/overview", authHeader)
-        .then((d) => {
-          if (cancelled) return;
-          setOverview(d);
-          const prev = prevRef.current;
-          const cur: PrevTotals = {
-            ts: d.ts,
-            queries: d.query_count_total,
-            errors: d.errors_count_total,
-          };
-          if (prev) {
-            const dt = (cur.ts - prev.ts) / 1000;
-            // Sanity: only use the persisted prev when it's within the
-            // last 60 s. A stale snapshot (laptop slept, tab closed for
-            // hours) would compute a meaningless rate.
-            if (dt > 0 && dt < 60) {
-              setRate({
-                qps: Math.max(0, (cur.queries - prev.queries) / dt),
-                errsPerSec: Math.max(0, (cur.errors - prev.errors) / dt),
-              });
-            }
-          }
-          prevRef.current = cur;
-          savePrevTotals(cur);
-        })
-        .catch(() => {});
-      apiGet<PoolsDto>("/api/pools", authHeader)
-        .then((d) => {
-          if (!cancelled) setPools(d);
-        })
-        .catch(() => {});
-      apiGet<ProcessDto>("/api/process", authHeader)
-        .then((d) => {
-          if (!cancelled) setProc(d);
-        })
-        .catch(() => {});
+    if (!overview) return;
+    const cur: PrevTotals = {
+      ts: overview.ts,
+      queries: overview.query_count_total,
+      errors: overview.errors_count_total,
     };
-    tick();
-    const id = window.setInterval(tick, SIDEBAR_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [authHeader]);
+    const prev = prevRef.current;
+    if (prev && prev.ts !== cur.ts) {
+      const dt = (cur.ts - prev.ts) / 1000;
+      if (dt > 0 && dt < 60) {
+        setRate({
+          qps: Math.max(0, (cur.queries - prev.queries) / dt),
+          errsPerSec: Math.max(0, (cur.errors - prev.errors) / dt),
+        });
+      }
+    }
+    prevRef.current = cur;
+    savePrevTotals(cur);
+  }, [overview]);
 
   const health = useMemo(() => {
     if (!overview || !pools) return null;
@@ -274,7 +270,7 @@ export function Sidebar() {
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 text-sm text-text-dim">
+      <div className="space-y-2 border-t border-border px-4 py-3 text-sm text-text-dim">
         {(basic || ssoToken) ? (
           <button
             type="button"
@@ -282,15 +278,18 @@ export function Sidebar() {
               setBasic(null, false);
               setSsoToken(null);
             }}
-            className="min-w-0 flex-1 truncate text-left text-text-muted hover:text-accent"
-            title="Click to clear stored credentials and re-prompt."
+            className="block w-full truncate text-left text-text-muted hover:text-accent"
+            title={`Sign out · ${signedInLabel(basic, ssoToken)} — click to clear stored credentials and re-prompt.`}
           >
             sign out · {signedInLabel(basic, ssoToken)}
           </button>
         ) : (
-          <span className="text-text-dim">anonymous</span>
+          <span className="block text-text-dim">anonymous</span>
         )}
-        <ThemeToggle />
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-text-dim">theme</span>
+          <ThemeToggle />
+        </div>
       </div>
     </nav>
   );

@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { AuthGate } from "./components/AuthGate";
 import { CommandPalette } from "./components/CommandPalette";
@@ -59,21 +60,38 @@ function RoutedShell() {
   );
 }
 
+// Shared client. staleTime is shorter than the per-query refetchInterval so
+// the second mount of a page finds the response already in cache and renders
+// instantly; gcTime keeps the data around for five minutes after the last
+// observer detaches so a tab-flip and return reuse the same snapshot.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1_000,
+      gcTime: 5 * 60_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
 function AppMain() {
   return (
-    <ThemeProvider>
-      <AdminAuthProvider>
-        <BrowserRouter>
-          <div className="flex min-h-screen bg-bg text-text">
-            <Sidebar />
-            <RoutedShell />
-          </div>
-          <CommandPalette />
-          <HelpModal />
-          <AppToaster />
-        </BrowserRouter>
-      </AdminAuthProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <AdminAuthProvider>
+          <BrowserRouter>
+            <div className="flex min-h-screen bg-bg text-text">
+              <Sidebar />
+              <RoutedShell />
+            </div>
+            <CommandPalette />
+            <HelpModal />
+            <AppToaster />
+          </BrowserRouter>
+        </AdminAuthProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 }
 
