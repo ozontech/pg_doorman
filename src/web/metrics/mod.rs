@@ -457,25 +457,46 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
     counter
 });
 
-/// Counter for every backend startup attempt that PostgreSQL rejected
-/// because of an operator-supplied `startup_parameters` entry. Tracked
-/// per pool and split by `sqlstate` so dashboards can tell whether a
-/// pool is hitting `22023` (invalid value), `42704` (undefined object),
-/// `42501` (insufficient privilege), `55P02` (cant change runtime
-/// parameter), or a fresh PG code under the startup-parameter family.
-/// The failing parameter name and username are on the corresponding warn
-/// log line; they are intentionally left out of the label set so a
-/// dynamic auth_query pool cannot blow up the series count when many
-/// roles share a broken config.
+/// Counts backend startup attempts pg_doorman aborted because PostgreSQL
+/// returned an `ErrorResponse` that names a key the pool actually sent in
+/// `StartupMessage`. Labels:
+///
+/// * `pool` — `<user>@<database>` identifier.
+/// * `sqlstate` — PG SQLSTATE on the rejection (`22023`, `42704`,
+///   `42501`, `55P02`, or any other code under the startup-parameter
+///   family — pg_doorman does not pre-filter by SQLSTATE).
+///
+/// SQLSTATE class `57P*` (server unavailable) is excluded: those
+/// `ErrorResponse`s are surfaced as `ServerUnavailableError` to drive the
+/// Patroni-assisted fallback path before the counter branch is reached.
+///
+/// Identification of the failing key is best-effort: pg_doorman first
+/// parses the canonical English `parameter "<name>"` phrase, then falls
+/// back to scanning the M-field for any sent key wrapped in double
+/// quotes (PG keeps the quote markers across all `lc_messages` locales).
+/// If both heuristics fail — typically because the PG error is unrelated
+/// to the sent map at all — the counter does NOT increment. Operator
+/// reading a non-zero rate can be confident the issue is on a key they
+/// configured; the per-line warn log carries the parameter name and
+/// username for triage.
+///
+/// The parameter name and username are intentionally NOT in the label
+/// set so a dynamic `auth_query` pool that mints per-tenant roles cannot
+/// blow up Prometheus series count by reading user input into labels.
 pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_backend_startup_parameter_errors_total",
-            "Cumulative count of backend startup attempts rejected by \
-             PostgreSQL because of an operator-supplied startup_parameters \
-             entry. Labels: pool, sqlstate (PostgreSQL SQLSTATE on the \
-             returned ErrorResponse). The failing parameter name and \
-             username are available in the corresponding warn log line.",
+            "Cumulative count of backend startup attempts pg_doorman \
+             aborted because PostgreSQL ErrorResponse identified a key \
+             this pool sent in StartupMessage (operator-supplied \
+             startup_parameters cascade). Labels: pool, sqlstate. \
+             SQLSTATE class 57P (server unavailable) is excluded — \
+             those rejections take the Patroni-assisted fallback path \
+             instead. The failing parameter name and username are in \
+             the corresponding warn log line; kept out of the label set \
+             so dynamic auth_query roles cannot inflate Prometheus \
+             series count.",
         ),
         &["pool", "sqlstate"],
     )

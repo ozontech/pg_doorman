@@ -33,12 +33,40 @@ pub fn extract_parameter_name(message: &str) -> Option<String> {
     Some(rest[..end].to_owned())
 }
 
+/// Locale-independent fallback for `extract_parameter_name`: scan the
+/// PG ErrorResponse `M` field for any of the operator-supplied keys
+/// pg_doorman actually sent, looking for the standard PG double-quoted
+/// form (`"key"`). PG quotes the parameter name in every locale even when
+/// the surrounding prose is translated, so a hit on `"name"` is a
+/// reliable signal that the failing key is `name`.
+///
+/// Returns the first match in iteration order of `sent_keys`. Used by
+/// `Server::startup` to keep the
+/// `pg_doorman_backend_startup_parameter_errors_total` counter usable
+/// against PG servers with non-English `lc_messages`.
+pub fn match_sent_key_in_message<'a, I>(message: &str, sent_keys: I) -> Option<String>
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    for key in sent_keys {
+        // Match the GUC name surrounded by double quotes. Bare substring
+        // search would false-positive on prose like "key is wrong" when
+        // `key` happens to be the parameter name; the quote markers in
+        // PG ErrorResponse messages are stable across locales.
+        let needle = format!("\"{key}\"");
+        if message.contains(&needle) {
+            return Some(key.clone());
+        }
+    }
+    None
+}
+
 /// Handles error response during server startup.
 ///
 /// Currently unused: `Server::startup` inlines the equivalent logic so it
-/// can also inspect the M-field for the failing parameter name and feed
-/// it into the quarantine. Kept in tree as a reference helper for any
-/// future startup path that needs the pre-quarantine behavior verbatim.
+/// can also surface the failing parameter name into the warn log. Kept
+/// in tree as a reference helper for any future startup path that needs
+/// the verbatim PG-error-passthrough behaviour.
 #[allow(dead_code)]
 pub(crate) async fn handle_startup_error(
     stream: &mut StreamInner,
@@ -146,6 +174,42 @@ mod parameter_extractor_tests {
                 r#"unrecognized configuration parameter "auto_explain.log_min_duration""#
             ),
             Some("auto_explain.log_min_duration".into())
+        );
+    }
+
+    #[test]
+    fn match_sent_key_finds_quoted_key_in_localized_message() {
+        // Hypothetical Russian lc_messages output: prose is translated,
+        // PG still wraps the parameter name in double quotes.
+        let sent = vec!["plan_cache_mode".to_string(), "work_mem".to_string()];
+        let msg = r#"параметр "plan_cache_mode" не существует"#;
+        assert_eq!(
+            match_sent_key_in_message(msg, &sent),
+            Some("plan_cache_mode".into())
+        );
+    }
+
+    #[test]
+    fn match_sent_key_returns_none_when_no_quoted_match() {
+        let sent = vec!["plan_cache_mode".to_string()];
+        // The key appears in prose but not quoted — must not match,
+        // otherwise unrelated PG errors mentioning the word would
+        // poison the counter.
+        let msg = "some unrelated startup error mentions plan_cache_mode somewhere";
+        assert!(match_sent_key_in_message(msg, &sent).is_none());
+    }
+
+    #[test]
+    fn match_sent_key_skips_keys_not_in_message() {
+        let sent = vec![
+            "first_key".to_string(),
+            "second_key".to_string(),
+            "third_key".to_string(),
+        ];
+        let msg = r#"FATAL: invalid value for parameter "second_key""#;
+        assert_eq!(
+            match_sent_key_in_message(msg, &sent),
+            Some("second_key".into())
         );
     }
 }

@@ -956,33 +956,49 @@ impl Server {
                         ));
                     }
 
-                    // Warn the operator when PG rejected a parameter we
-                    // actually sent — this is the signal that
-                    // general/pool/auth_query has a typo or a value the
-                    // PG instance does not accept. We do not change the
-                    // error path; the client still receives the PG
-                    // sqlstate so the operator sees the same failure
-                    // their application would see talking to PG directly.
+                    // Identify the failing parameter. Two-step lookup so the
+                    // counter is not silently zeroed on PostgreSQL servers
+                    // running with non-English `lc_messages`:
+                    //
+                    // 1. Parse the canonical English `parameter "<name>"`
+                    //    phrase. Most production fleets keep PG default
+                    //    locale, so this is the common case.
+                    // 2. If parsing failed or returned a key we did not
+                    //    send, scan the message body for any operator-
+                    //    supplied key surrounded by double quotes. PG
+                    //    quotes the parameter name in every locale, even
+                    //    when the surrounding prose is translated.
+                    //
+                    // When either step finds a sent key, we warn-log with
+                    // the parameter name and increment the per-pool
+                    // counter. The client still receives PG's verbatim
+                    // sqlstate either way; this whole branch is
+                    // observability for the operator, not control flow.
                     if !startup_parameters.is_empty() {
-                        if let Some(param_name) =
+                        let matched_key =
                             crate::server::startup_error::extract_parameter_name(&msg.message)
-                        {
-                            if startup_parameters.contains_key(&param_name) {
-                                warn!(
-                                    "[{}@{}] PG rejected operator-supplied startup \
-                                     parameter=\"{}\" sqlstate={} message=\"{}\"; the \
-                                     error is being forwarded to the client. Fix the \
-                                     parameter in general/pool/auth_query.",
-                                    address.username,
-                                    address.pool_name,
-                                    param_name,
-                                    msg.code,
-                                    msg.message,
-                                );
-                                crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
-                                    .with_label_values(&[&address.pool_name, &msg.code])
-                                    .inc();
-                            }
+                                .filter(|n| startup_parameters.contains_key(n))
+                                .or_else(|| {
+                                    crate::server::startup_error::match_sent_key_in_message(
+                                        &msg.message,
+                                        startup_parameters.keys(),
+                                    )
+                                });
+                        if let Some(param_name) = matched_key {
+                            warn!(
+                                "[{}@{}] PG rejected operator-supplied startup \
+                                 parameter=\"{}\" sqlstate={} message=\"{}\"; the \
+                                 error is being forwarded to the client. Fix the \
+                                 parameter in general/pool/auth_query.",
+                                address.username,
+                                address.pool_name,
+                                param_name,
+                                msg.code,
+                                msg.message,
+                            );
+                            crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
+                                .with_label_values(&[&address.pool_name, &msg.code])
+                                .inc();
                         }
                     }
 
