@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { ClientsDto } from "../types";
@@ -213,13 +212,7 @@ export default function Clients() {
     <section className="flex flex-col">
       <PageHero
         title="Clients"
-        description="Identify a specific client session. Filter by application_name when one app is misbehaving; by addr when you have an IP from pg_stat_activity; by user/database when an account is the suspect. Sort by Q age ms to find a stuck query; by Age s to find a long-lived session; by Errors to find the noisy ones. State = waiting means the client is queued for a backend connection."
-      />
-      <SectionHeader
-        title="Filters"
-        what="Substring filter on pool / database / user / application_name and an exact state match."
-        how="Each filter change jumps you back to page 1."
-        normal="50 rows per page; the count on the right is the filtered total — change a filter to see how it shrinks."
+        description="Identify a specific client session. Filter substring on pool / database / user / application_name + exact state match. Sort by Q age ms for stuck queries, Age s for long-lived sessions, Errors for noisy ones. State = waiting means the client is queued for a backend. 50 rows per page; the count on the right shrinks with each filter."
       />
       <div className="flex flex-wrap items-end gap-3 border-b border-border px-6 py-3">
         <FilterField label="pool" value={filters.pool} width="w-32"

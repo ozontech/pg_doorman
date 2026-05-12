@@ -62,6 +62,21 @@ export function Sparkline({
   // move. Null means the cursor left the canvas.
   const [hover, setHover] = useState<{ ts: number; value: number } | null>(null);
 
+  // Mirror `events` in a ref so the draw hook reads the latest array
+  // without forcing the options useMemo to re-create on every event poll.
+  // Earlier the options dep array included `events` directly; the
+  // /api/events poll handed us a new array reference every 3 s, which
+  // destroyed and recreated the plot — visually the chart blanked for a
+  // frame and the operator saw the dashboard "flicker on its own".
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
+  // Width is also reffed: ResizeObserver updates a state but only to
+  // gate the first plot creation, never to recreate. Live size changes
+  // route through plot.setSize() in a separate effect.
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
   useEffect(() => {
     if (!wrapRef.current) return;
     const ro = new ResizeObserver((entries) => {
@@ -74,7 +89,9 @@ export function Sparkline({
 
   const options: Options = useMemo(
     () => ({
-      width: width || 200,
+      // First creation uses whatever width is current; later resize calls
+      // setSize() against the live plot instead of recreating it.
+      width: widthRef.current || 200,
       height: HEIGHT_PX,
       cursor: {
         sync: syncKey ? { key: syncKey } : undefined,
@@ -122,13 +139,15 @@ export function Sparkline({
             if (warn !== undefined) drawLine(warn, WARN_STROKE);
             if (crit !== undefined) drawLine(crit, CRIT_STROKE);
             // Event annotations: thin amber vertical line per /api/events
-            // entry inside the visible window.
-            if (events && events.length > 0) {
+            // entry inside the visible window. Pulled from the ref, not
+            // captured at memoisation time.
+            const liveEvents = eventsRef.current;
+            if (liveEvents && liveEvents.length > 0) {
               ctx.save();
               ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
               ctx.setLineDash([]);
               ctx.lineWidth = 1;
-              for (const ev of events) {
+              for (const ev of liveEvents) {
                 const xPx = u.valToPos(ev.ts, "x", true);
                 if (!Number.isFinite(xPx)) continue;
                 if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
@@ -143,7 +162,7 @@ export function Sparkline({
         ],
       },
     }),
-    [width, warn, crit, logY, syncKey, events],
+    [warn, crit, logY, syncKey],
   );
 
   // Create plot only after width is known and the series has enough
@@ -154,7 +173,7 @@ export function Sparkline({
   const dataReady = series[0].length >= 2;
   useEffect(() => {
     if (!containerRef.current) return;
-    if (width === 0) return;
+    if (widthRef.current === 0) return;
     if (!dataReady) return;
     plotRef.current = new uPlot(options, series, containerRef.current);
     return () => {
@@ -163,6 +182,13 @@ export function Sparkline({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options, dataReady]);
+
+  // Live resize via setSize — no plot recreation, just a canvas redraw.
+  useEffect(() => {
+    if (plotRef.current && width > 0) {
+      plotRef.current.setSize({ width, height: HEIGHT_PX });
+    }
+  }, [width]);
 
   useEffect(() => {
     plotRef.current?.setData(series);

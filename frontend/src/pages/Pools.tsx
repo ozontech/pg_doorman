@@ -5,7 +5,6 @@ import { tip } from "../lib/tooltips";
 import { apiGet } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
@@ -200,13 +199,7 @@ export default function Pools() {
     <section className="flex flex-col">
       <PageHero
         title="Pools"
-        description="Find the pool that hurts. Sort by Saturation when a pool is rejecting checkouts; by p95 ms when a query stalls; by Errors when SQLSTATE volume is up. The State column shows degraded when one threshold is breached, critical when two stack. Click any row to see SQLSTATE breakdown, oldest-active query age, and the pause/reconnect controls."
-      />
-      <SectionHeader
-        title="Filter & sort"
-        what="Narrow the table by typing a pool fragment (e.g. 'app-' to see only that tenant) or by picking a severity."
-        how="Click a column to sort by it; click again to flip direction. State remains in the URL — you can paste a filter into chat."
-        normal="Default order: most saturated first. During an outage the suspect is usually on the first screen."
+        description="Find the pool that hurts. Sort by Saturation, p95 ms, or Errors — default order is most saturated first. State = degraded when one threshold trips, critical when two stack. Filter substring + severity are URL-persisted, paste a link to share. Click a row for SQLSTATE breakdown and pause/reconnect controls."
       />
       <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <input

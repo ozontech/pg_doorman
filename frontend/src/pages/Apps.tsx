@@ -9,7 +9,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { AppsDto } from "../types";
@@ -131,13 +130,7 @@ export default function Apps() {
     <section className="flex flex-col">
       <PageHero
         title="Apps"
-        description="One row per application_name as reported by clients. clients = currently connected; the totals are cumulative since pg_doorman started. Sort by err/1k q to find apps that fail more often per request — values above 1 are unusual; above 10 means time to look at the app's recent deploy."
-      />
-      <SectionHeader
-        title="Aggregates"
-        what="One row per application_name. clients = currently-connected; the totals are cumulative since the pooler started."
-        how="Sort and filter happen in the browser, on the latest snapshot — no extra request per keystroke."
-        normal="When err/1k q jumps for one app while the rest stay flat, that app is the suspect — start by asking who deployed last."
+        description="One row per application_name. clients = currently connected; totals are cumulative since pg_doorman started. Sort and filter happen in the browser on the latest snapshot. Watch err/1k q — > 1 is unusual, > 10 = look at the app's recent deploy."
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input

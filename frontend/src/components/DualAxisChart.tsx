@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Options } from "uplot";
 import type uPlot from "uplot";
 import { Chart } from "./Chart";
@@ -33,6 +33,11 @@ export function DualAxisChart({
   events,
 }: DualAxisChartProps) {
   const [hover, setHover] = useState<{ ts: number; left: number; right: number } | null>(null);
+  // Live ref so the draw hook reads the latest events without forcing
+  // options to re-create on every event poll — that re-creation tore
+  // down the plot every 3 s and flashed the canvas blank.
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   const options: Options = useMemo(
     () => ({
       width: 1024,
@@ -98,12 +103,13 @@ export function DualAxisChart({
             };
             if (rightWarn !== undefined) drawLine(rightWarn, "rgb(245 165 36 / 0.6)");
             if (rightCrit !== undefined) drawLine(rightCrit, "rgb(229 72 77 / 0.6)");
-            if (events && events.length > 0) {
+            const live = eventsRef.current;
+            if (live && live.length > 0) {
               ctx.save();
               ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
               ctx.setLineDash([]);
               ctx.lineWidth = 1;
-              for (const ev of events) {
+              for (const ev of live) {
                 const xPx = u.valToPos(ev.ts, "x", true);
                 if (!Number.isFinite(xPx)) continue;
                 if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
@@ -128,7 +134,6 @@ export function DualAxisChart({
       rightCrit,
       height,
       syncKey,
-      events,
     ],
   );
 
