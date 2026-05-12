@@ -288,6 +288,7 @@ export function Sidebar() {
       )}
 
       <div className="space-y-2 border-t border-border px-4 py-3 text-sm text-text-dim">
+        <TransportLine />
         <a
           href="https://ozontech.github.io/pg_doorman/"
           target="_blank"
@@ -454,6 +455,35 @@ function SignalRow({
       <span className={`font-mono text-xs font-semibold tabular ${tone}`}>
         {value}
       </span>
+    </div>
+  );
+}
+
+// Persistent transport indicator. Previously the http/https warning
+// surfaced only inside the sign-in modal; once an operator was past
+// login they had no visible signal that a Bearer JWT was flying over
+// plain HTTP. A single hairline row in the sidebar footer makes the
+// state always-readable.
+function TransportLine() {
+  const protocol =
+    typeof window !== "undefined" ? window.location.protocol : "";
+  const secure = protocol === "https:";
+  return (
+    <div
+      className={`flex items-center gap-2 text-xs ${
+        secure ? "text-text-dim" : "text-warning"
+      }`}
+      title={
+        secure
+          ? "Connection is HTTPS — credentials and admin actions ride encrypted."
+          : "Connection is plain HTTP — credentials and admin actions ride in the clear. Use HTTPS in production."
+      }
+    >
+      <span
+        aria-hidden="true"
+        className={`h-1.5 w-1.5 rounded-full ${secure ? "bg-success" : "bg-warning"}`}
+      />
+      transport · {secure ? "https" : "http"}
     </div>
   );
 }

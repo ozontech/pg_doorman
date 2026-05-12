@@ -279,11 +279,14 @@ function LogLevelPanel() {
         <div className="text-xs uppercase tracking-wide text-text-dim">Active filter</div>
         <div className="mt-1 font-mono text-base text-text">{poll.data?.log_level}</div>
         <p className="mt-3 max-w-2xl text-xs text-text-muted">
-          RUST_LOG-style filter. Change at runtime with{" "}
-          <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`SET log_level = '…'`}</code>{" "}
-          on the admin protocol;{" "}
+          RUST_LOG-style filter. Runtime change is only available over the
+          admin protocol — connect via{" "}
+          <code className="rounded bg-surface px-1.5 py-0.5 font-mono">psql</code>{" "}
+          and run{" "}
+          <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`SET log_level = '…'`}</code>;{" "}
           <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`'default'`}</code>{" "}
-          resets to the startup level.
+          resets to the startup level. The web admin surface does not yet
+          accept this mutation.
         </p>
       </div>
     </PanelShell>
