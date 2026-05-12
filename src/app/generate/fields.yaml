@@ -54,7 +54,7 @@ sections:
     en: "Access Control (pg_hba - Recommended)"
     ru: "Контроль доступа (pg_hba — рекомендуется)"
   startup_parameters:
-    en: "PostgreSQL Startup Parameters (operator-defined GUCs)"
+    en: "PostgreSQL Startup GUCs"
     ru: "Параметры запуска PostgreSQL (GUC, задаваемые оператором)"
   pool_server:
     en: "Server Connection Settings"
@@ -1152,36 +1152,37 @@ fields:
     startup_parameters:
       config:
         en: |
-          Baseline PostgreSQL GUCs that pg_doorman adds to every backend
-          StartupMessage. Pools override values per key; auth_query in
-          passthrough mode can override them per user. Config load
+          Baseline PostgreSQL GUCs that pg_doorman adds to each new
+          backend StartupMessage. Pools override values per key;
+          passthrough auth_query can override them per user. Config load
           validates reserved keys, GUC names, null bytes, and this level's
-          size. The merged cascade is checked again at backend startup; if
-          it does not fit PG's MAX_STARTUP_PACKET_LENGTH (10000 bytes),
-          pg_doorman skips operator-supplied GUCs for that startup and logs
-          a warning.
+          size. Before backend startup, pg_doorman checks the resolved
+          parameter set again; if it does not fit PG's
+          MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
+          configured GUCs for that startup and logs a warning.
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
           Базовые GUC PostgreSQL, которые pg_doorman добавляет в
-          StartupMessage каждого бэкенда. Пулы могут переопределять
-          значения по ключу; auth_query в режиме passthrough может
-          переопределять их на уровне пользователя. При загрузке
-          конфигурации проверяются зарезервированные ключи, имена GUC,
-          нулевые байты и размер этого уровня. Слитый каскад проверяется
-          снова при запуске бэкенда; если он не помещается в лимит PG
+          StartupMessage каждого нового бэкенда. Пулы могут
+          переопределять значения по ключу; auth_query в режиме
+          passthrough может переопределять их для конкретного
+          пользователя. При загрузке конфигурации проверяются
+          зарезервированные ключи, имена GUC, нулевые байты и размер
+          этого уровня. Объединённый набор параметров снова проверяется
+          при запуске бэкенда; если он не помещается в лимит PG
           MAX_STARTUP_PACKET_LENGTH (10000 байт), pg_doorman пропускает
-          GUC, заданные оператором, для этого запуска и пишет предупреждение.
+          операторские GUC для этого запуска и пишет предупреждение.
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each backend `StartupMessage`; PostgreSQL stores them as the session reset defaults, so client `RESET ALL` / `DISCARD ALL` returns to these values.
+        Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend `StartupMessage`; PostgreSQL stores them as the session reset defaults, so client `RESET ALL` / `DISCARD ALL` returns to these values.
 
         Cascade order: `general.startup_parameters`, then `pools.<name>.startup_parameters`, then the optional `startup_parameters` JSON column returned by passthrough `auth_query`. Later layers win per key. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple roles.
 
-        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the operator budget. Before each backend startup, pg_doorman checks the full merged cascade against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes); if it does not fit, pg_doorman drops all operator-supplied keys for that startup and logs the event.
+        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes); if it does not fit, pg_doorman drops the auth_query overlay when the baseline still fits, otherwise it drops all configured keys for that startup and logs the event.
 
-        If PostgreSQL rejects a parameter at backend startup, pg_doorman returns the PG `ErrorResponse` to the client unchanged. There is no retry with the key removed and no per-key quarantine. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are written to the corresponding warning log line.
+        If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's `ErrorResponse` to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are written to the corresponding warning log line.
 
-        Inspect the effective per-pool cascade with `SHOW STARTUP_PARAMETERS` or the `/api/pools` REST endpoint.
+        Inspect the resolved per-pool values with `SHOW STARTUP_PARAMETERS` or the `/api/pools` REST endpoint.
       default: "{} (empty)"
 
   pool:
@@ -1323,11 +1324,11 @@ fields:
       config:
         en: |
           Don't evict connections younger than this (milliseconds).
-          Protects freshly created connections from eviction churn
+          Protects freshly created connections from repeated evictions
           between user pools sharing the same database.
         ru: |
           Не изымать соединения моложе этого значения (миллисекунды).
-          Защищает свежесозданные соединения от постоянного churn'а
+          Защищает свежесозданные соединения от постоянных выселений
           между user-пулами, разделяющими одну базу данных.
       doc: |
         Minimum age (in milliseconds) a connection must reach before it can be evicted by the
@@ -1490,21 +1491,22 @@ fields:
           backend StartupMessage. Wins over general.startup_parameters
           per key; auth_query in passthrough mode wins over this.
           Config load validates reserved keys, GUC names, null bytes, and
-          this level's size. The merged cascade is checked again at backend
-          startup against PG's MAX_STARTUP_PACKET_LENGTH (10000 bytes).
+          this level's size. Before backend startup, pg_doorman checks the
+          resolved parameter set again against PG's
+          MAX_STARTUP_PACKET_LENGTH (10000 bytes).
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
-          Переопределения параметров PostgreSQL для этого пула,
-          передаваемые в StartupMessage бэкенда. Имеют приоритет над
-          general.startup_parameters по ключу; auth_query в режиме
-          passthrough имеет приоритет над настройками пула. При загрузке
-          конфигурации проверяются зарезервированные ключи, имена GUC,
-          нулевые байты и размер этого уровня. Слитый каскад снова
-          проверяется при запуске бэкенда против лимита PG
-          MAX_STARTUP_PACKET_LENGTH (10000 байт).
+          Переопределения параметров PostgreSQL для этого пула. pg_doorman
+          добавляет их в StartupMessage каждого нового бэкенда. Значения
+          имеют приоритет над general.startup_parameters по ключу;
+          auth_query в режиме passthrough имеет приоритет над настройками
+          пула. При загрузке конфигурации проверяются зарезервированные
+          ключи, имена GUC, нулевые байты и размер этого уровня.
+          Объединённый набор параметров снова проверяется при запуске
+          бэкенда по лимиту PG MAX_STARTUP_PACKET_LENGTH (10000 байт).
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the operator budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
+        Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
 
         In the cascade `general` → `pool` → `auth_query`, this layer overrides `general` per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple users. See [`general.startup_parameters`](#startup-parameters) for validation rules, failure behavior, and observability.
       default: "{} (empty)"

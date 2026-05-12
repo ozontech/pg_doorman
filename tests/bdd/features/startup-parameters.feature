@@ -1,9 +1,9 @@
 @startup-parameters
 Feature: Per-pool startup_parameters
-  pg_doorman sends operator-supplied PostgreSQL run-time parameters in
-  every backend StartupMessage on a three-level cascade: general defaults,
-  per-pool overrides, and (in auth_query passthrough mode) per-user
-  overrides from an optional JSON column.
+  pg_doorman sends configured PostgreSQL runtime parameters in every
+  backend StartupMessage. Values come from general defaults, per-pool
+  overrides, and (in auth_query passthrough mode) per-user overrides
+  from an optional JSON column.
 
   Scenario: general.startup_parameters apply on a fresh backend
     Given PostgreSQL started with pg_hba.conf:
@@ -113,7 +113,7 @@ Feature: Per-pool startup_parameters
     Then psql query "SHOW plan_cache_mode" via pg_doorman as user "sp_tuned_user" to database "postgres" with password "tuned_pass" returns "force_custom_plan"
     And psql query "SHOW plan_cache_mode" via pg_doorman as user "sp_plain_user" to database "postgres" with password "plain_pass" returns "auto"
 
-  Scenario: operator-supplied application_name in startup_parameters wins over pool default
+  Scenario: startup_parameters application_name wins over pool default
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
@@ -272,10 +272,9 @@ Feature: Per-pool startup_parameters
       pool_size = 2
       """
     # PostgreSQL rejects the unknown GUC at backend startup; pg_doorman
-    # forwards the rejection to the client. The very next connect repeats
-    # the same failure - no quarantine, no silent strip, no graceful
-    # recovery: the operator must fix the parameter in the config for the
-    # pool to start working.
+    # returns that rejection to the client. The next connect repeats the
+    # same failure: pg_doorman does not strip the key or disable it for the
+    # pool. The operator must fix the parameter in the config.
     Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "test" fails
     Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "test" fails
     And pg_doorman log contains "nonexistent_guc_yyy"
@@ -322,7 +321,7 @@ Feature: Per-pool startup_parameters
       """
     Then the command should succeed
     # The first SHOW returns the client-set value, the second returns the
-    # operator-supplied startup default (RESET ALL falls back to reset_val,
+    # Startup default configured by pg_doorman (RESET ALL falls back to reset_val,
     # which is the value PG saw in StartupMessage).
     And the command output should contain "auto"
     And the command output should contain "force_custom_plan"
@@ -507,7 +506,7 @@ Feature: Per-pool startup_parameters
       """
     Then psql connection to pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" succeeds
 
-  Scenario: admin SHOW STARTUP_PARAMETERS lists the merged cascade per pool
+  Scenario: admin SHOW STARTUP_PARAMETERS lists resolved parameters per pool
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
@@ -546,7 +545,10 @@ Feature: Per-pool startup_parameters
         -U admin -d pgdoorman -A -t -c 'SHOW STARTUP_PARAMETERS'
       """
     Then the command should succeed
-    # Default psql -A -t output is pipe-delimited: user|database|parameter|value|source.
-    # The general baseline shows up as source=general; the pool override as source=pool.
-    And the command output should contain "statement_timeout|10s|general"
-    And the command output should contain "plan_cache_mode|force_custom_plan|pool"
+    # Default psql -A -t output is pipe-delimited:
+    # user|database|parameter|value|source|state.
+    # The general baseline shows up as source=general, the pool override
+    # as source=pool, and the runtime state stays `applied` because the
+    # cascade fits the operator budget for this fixture.
+    And the command output should contain "statement_timeout|10s|general|applied"
+    And the command output should contain "plan_cache_mode|force_custom_plan|pool|applied"

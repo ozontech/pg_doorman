@@ -470,7 +470,7 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///   `42501`, `55P02`, or any other code under the startup-parameter
 ///   family — pg_doorman does not pre-filter by SQLSTATE).
 ///
-/// SQLSTATE class `57P*` (server unavailable) is excluded: those
+/// SQLSTATEs with the `57P` prefix (server unavailable) are excluded: those
 /// `ErrorResponse`s are surfaced as `ServerUnavailableError` to drive the
 /// Patroni-assisted fallback path before the counter branch is reached.
 ///
@@ -487,12 +487,12 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 /// The parameter name and username are intentionally NOT in the label
 /// set so a dynamic `auth_query` pool that mints per-tenant roles cannot
 /// blow up Prometheus series count by reading user input into labels.
-/// Counts cases where pg_doorman dropped operator-supplied
+/// Counts cases where pg_doorman dropped configured
 /// `startup_parameters` *before* the StartupMessage went on the wire —
 /// the failure mode the per-pool `*_errors_total` counter cannot see
 /// because PG never had a chance to reject. Every reason increments
 /// the counter by 1 per drop event (one backend spawn that dropped
-/// the cascade, one parsed row that contained invalid entries, one
+/// the resolved set, one parsed row that contained invalid entries, one
 /// row whose overlay was ignored because of dedicated mode), so
 /// `rate by(reason)` is dimensionally consistent regardless of how
 /// many individual keys the offending row carried. Per-entry detail
@@ -504,9 +504,9 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///   series per pool name, so a multi-user database collapses into a
 ///   single row. Per-user attribution lives in the warn log line.
 /// * `reason` — bounded enum:
-///   * `cascade_budget_exceeded` — the merged general+pool+auth_query
-///     map exceeded the operator budget (`MAX_OPERATOR_BUDGET`, 9 488
-///     bytes). Every operator-supplied key was dropped for that spawn
+///   * `cascade_budget_exceeded` — the resolved general+pool+auth_query
+///     map exceeded the startup-parameter budget (`MAX_OPERATOR_BUDGET`, 9 488
+///     bytes). Every configured key was dropped for that spawn
 ///     and the backend got PG defaults instead.
 ///   * `packet_cap_exceeded` — the full StartupMessage including user,
 ///     application_name and database would exceed PG's
@@ -517,8 +517,8 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///     parse time, so the per-user overlay is ignored.
 ///   * `auth_query_overlay_oversize` — the merged baseline+overlay was
 ///     over budget, but the baseline alone fits. Keeps general/pool
-///     guardrails (statement_timeout, lock_timeout, …) for that
-///     user instead of stripping the operator cascade outright.
+///     defaults (statement_timeout, lock_timeout, ...) for that user
+///     instead of stripping the whole configured parameter set.
 ///   * `auth_query_bad_type` — the auth_query `startup_parameters`
 ///     column has a non-text type (likely `json`/`jsonb`); pg_doorman
 ///     reads it as text, so the row's overlay is dropped. Cast to
@@ -542,8 +542,8 @@ pub(crate) static STARTUP_PARAMETERS_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_startup_parameters_dropped_total",
-            "Cumulative count of operator-supplied startup_parameters \
-             entries pg_doorman dropped before sending StartupMessage. \
+            "Cumulative count of startup_parameters drop events before \
+             pg_doorman sends StartupMessage. \
              Labels: pool, reason (cascade_budget_exceeded, \
              packet_cap_exceeded, auth_query_oversize, \
              auth_query_overlay_oversize, auth_query_bad_type, \
@@ -565,9 +565,9 @@ pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = 
             "pg_doorman_backend_startup_parameter_errors_total",
             "Cumulative count of backend startup attempts pg_doorman \
              aborted because PostgreSQL ErrorResponse identified a key \
-             this pool sent in StartupMessage (operator-supplied \
-             startup_parameters cascade). Labels: pool, sqlstate. \
-             SQLSTATE class 57P (server unavailable) is excluded — \
+             this pool sent in StartupMessage (configured \
+             startup_parameters). Labels: pool, sqlstate. \
+             SQLSTATEs with the 57P prefix (server unavailable) are excluded — \
              those rejections take the Patroni-assisted fallback path \
              instead. The failing parameter name and username are in \
              the corresponding warn log line; kept out of the label set \

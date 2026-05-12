@@ -407,17 +407,17 @@ hba = []
 # """
 
 # --------------------------------------------------------------------------
-# PostgreSQL Startup Parameters (operator-defined GUCs)
+# PostgreSQL Startup Parameters (operator-set GUCs)
 # --------------------------------------------------------------------------
 
-# Baseline PostgreSQL GUCs that pg_doorman adds to every backend
-# StartupMessage. Pools override values per key; auth_query in
-# passthrough mode can override them per user. Config load
+# Baseline PostgreSQL GUCs that pg_doorman adds to each new
+# backend StartupMessage. Pools override values per key;
+# passthrough auth_query can override them per user. Config load
 # validates reserved keys, GUC names, null bytes, and this level's
-# size. The merged cascade is checked again at backend startup; if
-# it does not fit PG's MAX_STARTUP_PACKET_LENGTH (10000 bytes),
-# pg_doorman skips operator-supplied GUCs for that startup and logs
-# a warning.
+# size. Before backend startup, pg_doorman checks the resolved
+# parameter set again; if it does not fit PG's
+# MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
+# operator-set GUCs for that startup and logs a warning.
 # Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
 # Default: {} (empty)
 # startup_parameters = { plan_cache_mode = "force_custom_plan", work_mem = "64MB" }
@@ -621,8 +621,9 @@ log_client_parameter_status_changes = false
 # backend StartupMessage. Wins over general.startup_parameters
 # per key; auth_query in passthrough mode wins over this.
 # Config load validates reserved keys, GUC names, null bytes, and
-# this level's size. The merged cascade is checked again at backend
-# startup against PG's MAX_STARTUP_PACKET_LENGTH (10000 bytes).
+# this level's size. Before backend startup, pg_doorman checks the
+# resolved parameter set again against PG's
+# MAX_STARTUP_PACKET_LENGTH (10000 bytes).
 # Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
 # Default: {} (empty)
 # startup_parameters = { plan_cache_mode = "force_custom_plan" }

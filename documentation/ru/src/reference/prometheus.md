@@ -66,7 +66,8 @@ pg_doorman экспортирует следующие метрики:
 | `pg_doorman_pools_bytes_total` | Накопительный счётчик байт, переданных через пулы соединений, по направлению (`received`/`sent`), пользователю и базе. Для пропускной способности используйте `rate(pg_doorman_pools_bytes_total[5m])`. |
 | `pg_doorman_pools_bytes` | Устаревшая gauge-версия `pg_doorman_pools_bytes_total`; будет удалена в 3.10. |
 | `pg_doorman_pool_size` | Сконфигурированный максимальный размер пула на пользователя и базу. Полезен для расчёта оставшейся ёмкости пула вместе с pg_doorman_pools_servers. |
-| `pg_doorman_backend_startup_parameter_errors_total` | Накопительный счётчик отказов при запуске бэкенда из-за `startup_parameters`, заданных оператором. Лейблы: пул и SQLSTATE. Отклонённый параметр и имя пользователя пишутся в строку лога уровня warn, а не в лейблы метрики. |
+| `pg_doorman_backend_startup_parameter_errors_total` | Накопительный счётчик запусков бэкенда, которые PostgreSQL отклонил из-за `startup_parameters`. Лейблы: пул и SQLSTATE. Отклонённый параметр и имя пользователя пишутся в строку лога уровня `warn`, а не в лейблы метрики. |
+| `pg_doorman_startup_parameters_dropped_total` | Накопительный счётчик событий, когда pg_doorman отбросил `startup_parameters` до отправки `StartupMessage`. Лейблы: пул и причина (`cascade_budget_exceeded`, `packet_cap_exceeded`, `auth_query_oversize`, `auth_query_overlay_oversize`, `auth_query_bad_type`, `auth_query_invalid_json`, `auth_query_invalid_shape`, `auth_query_invalid_entry`, `dedicated_mode`). |
 
 ### Метрики запросов и транзакций
 

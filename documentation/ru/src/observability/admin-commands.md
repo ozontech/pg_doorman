@@ -34,7 +34,7 @@ psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 | `SHOW LISTS` | Счётчики по категориям (databases, users, pools, clients, servers). |
 | `SHOW USERS` | Список пользователей и их режимы пула. |
 | `SHOW AUTH_QUERY` | Кэш `auth_query`: попадания/промахи/перезапросы, успехи/отказы аутентификации, ошибки исполнителя, счётчики динамических пулов. |
-| `SHOW STARTUP_PARAMETERS` | Эффективный каскад `startup_parameters` по каждому пулу: параметр, значение и уровень, который дал итоговое значение. |
+| `SHOW STARTUP_PARAMETERS` | Итоговые `startup_parameters` по каждому пулу: параметр, значение, источник и состояние применения. |
 | `SHOW SOCKETS` | Счётчики TCP- и Unix-сокетов по состоянию (только Linux — читает `/proc/net/`). |
 | `SHOW LOG_LEVEL` | Текущий уровень логирования. |
 | `SHOW VERSION` | Версия pg_doorman. |
@@ -72,15 +72,15 @@ mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0    
 ### `SHOW STARTUP_PARAMETERS`
 
 ```
-user | database | parameter         | value             | source
-app  | mydb     | statement_timeout | 5s                | general
-app  | mydb     | plan_cache_mode   | force_custom_plan | pool
+user | database | parameter         | value             | source  | state
+app  | mydb     | statement_timeout | 5s                | general | applied
+app  | mydb     | plan_cache_mode   | force_custom_plan | pool    | applied
 ```
 
-- `source` показывает уровень, который дал итоговое значение:
-  `general`, `pool` или `auth_query`.
-- Команда выводит тот же эффективный каскад, который используется при
-  сборке `StartupMessage` для новых бэкендов.
+- `source` показывает источник значения: `general`, `pool` или
+  `auth_query`.
+- `state` показывает, будет ли значение отправлено в ближайший
+  `StartupMessage`: `applied`, `dropped_due_to_budget` или `stale`.
 
 ### `SHOW POOL_COORDINATOR`
 

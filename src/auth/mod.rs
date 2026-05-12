@@ -937,12 +937,10 @@ where
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
 
-            // Forward the per-user overlay we just fetched. The
-            // caller's CacheEntry holds the exact row that authenticated
-            // this user; passing it through avoids a re-peek of the
-            // global auth_query cache in create_dynamic_pool, which
-            // could otherwise see a different overlay under low TTLs
-            // or a concurrent refetch.
+            // Use the overlay from the same auth_query row that
+            // authenticated this user. That keeps dynamic-pool creation
+            // tied to this login instead of reading the global cache
+            // again while TTL expiry or a concurrent refetch is changing it.
             let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
             let mut pool = create_dynamic_pool(pool_name, username, backend_auth, fetched_overlay)
                 .map_err(|err| {

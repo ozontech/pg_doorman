@@ -107,7 +107,7 @@ host    all all 0.0.0.0/0 reject
 
 ## Отличия от pg_hba.conf PostgreSQL
 
-- Нет ключевого слова `replication` (pg_doorman не пробрасывает соединения репликации).
+- Нет ключевого слова `replication` (pg_doorman не обслуживает соединения репликации).
 - Нет методов `peer`, `ident`, `cert`, `gss`, `sspi`, `pam`. PAM настраивается на пользователя через `auth_pam_service`, не через HBA.
 - Нет префикса `+groupname` для пользователя.
 - Нет регулярных выражений (синтаксис `/regex`).

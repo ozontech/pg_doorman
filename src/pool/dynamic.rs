@@ -28,10 +28,9 @@ use super::{
 ///
 /// On RELOAD, dynamic pools are dropped (not in config) and recreated
 /// on the next client connection with fresh settings.
-/// `fetched_overlay` is the exact per-user `startup_parameters` map the
-/// caller just fetched from `AuthQueryCache`. Passing it in avoids the
-/// race where this function would re-peek the cache and see a different
-/// (or missing) overlay under low TTLs or concurrent refetches.
+/// `fetched_overlay` is the per-user `startup_parameters` map from the
+/// auth_query row that authenticated this user. Passing it in ties pool
+/// creation to that row instead of reading the cache again.
 pub fn create_dynamic_pool(
     pool_name: &str,
     username: &str,
@@ -140,15 +139,12 @@ pub fn create_dynamic_pool(
         std::sync::Arc::new(merged)
     };
 
-    // Convert the caller's HashMap snapshot (the same one freshly
-    // returned by `cache.get_or_fetch(username)` in auth/mod.rs) into
-    // the BTreeMap shape ServerPool stores. The caller owns the
-    // snapshot, so there is no re-peek of the global cache here —
-    // an interleaved refetch cannot swap a different overlay under us.
-    // Dedicated-mode pools never reach this path (auth/mod.rs uses the
-    // shared pool branch instead), but the filter stays for defence-
-    // in-depth in case a future caller forwards a non-empty overlay
-    // through the dedicated-mode branch by accident.
+    // Convert the caller's HashMap snapshot into the BTreeMap shape
+    // ServerPool stores. The snapshot comes from the auth_query row used
+    // for this login, so TTL expiry or an interleaved refetch cannot
+    // change the overlay while the pool is created. Dedicated-mode pools
+    // should not reach this path, but keep the guard so a future caller
+    // cannot attach a per-user overlay to a shared backend pool.
     let per_user_startup_overlay: std::sync::Arc<std::collections::BTreeMap<String, String>> = {
         let is_dedicated = super::get_auth_query_state(pool_name)
             .map(|state| state.config.is_dedicated_mode())

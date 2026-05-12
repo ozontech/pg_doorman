@@ -3,13 +3,13 @@
 ### 3.9.0
 
 Per-pool PostgreSQL startup parameters. pg_doorman can now add
-operator-defined GUCs to each backend `StartupMessage`. Values merge in
+configured GUCs to each backend `StartupMessage`. Values apply in
 three layers: `general.startup_parameters`, `pools.<name>.startup_parameters`,
 and the optional `startup_parameters` column returned by passthrough
 `auth_query`.
 
 PostgreSQL stores these values as the session reset defaults, so
-client-side `RESET ALL` and `DISCARD ALL` return to the operator value.
+client-side `RESET ALL` and `DISCARD ALL` return to the configured value.
 This gives one pool a different `plan_cache_mode`, `statement_timeout`,
 `work_mem`, or `idle_in_transaction_session_timeout` without changing
 `postgresql.conf`, `ALTER ROLE`, or `ALTER DATABASE`.
@@ -18,7 +18,7 @@ This gives one pool a different `plan_cache_mode`, `statement_timeout`,
 
 - `general.startup_parameters`, `pools.<name>.startup_parameters`, and
   the optional `startup_parameters` text column on an `auth_query` row
-  merge per key. The later layer wins.
+  are applied in order. Later layers override earlier ones per key.
 - Dedicated `auth_query` mode uses a shared `server_user`, so
   pg_doorman ignores the per-user column there and logs one warning per
   pool and username.
@@ -30,30 +30,32 @@ This gives one pool a different `plan_cache_mode`, `statement_timeout`,
 - Reserved protocol keys (`user`, `database`, `replication`,
   `options`, the `_pq_.*` extension prefix) are refused at config load.
 - Keys must match the PG GUC naming shape `[A-Za-z_][A-Za-z0-9_.]*`,
-  values must not contain null bytes, and each level fits the operator
+  values must not contain null bytes, and each level fits the startup-parameter
   budget of `MAX_STARTUP_PACKET_LENGTH - 512` bytes.
-- The full cascade is checked before each backend startup against PG's 10 000-byte
-  `MAX_STARTUP_PACKET_LENGTH`; if the union would overflow, all
-  operator-supplied keys are dropped for that spawn and the event is
-  logged. That backend starts with PostgreSQL defaults for those keys.
+- The resolved parameter set is checked before each backend startup
+  against PG's 10 000-byte `MAX_STARTUP_PACKET_LENGTH`. If only the
+  auth_query layer overflows the packet, pg_doorman drops that layer and
+  keeps the general/pool baseline. If the baseline itself does not fit,
+  pg_doorman skips all configured keys for that spawn and logs the
+  byte counts.
 
 #### Behaviour on PG-side rejection
 
-- If PostgreSQL rejects an operator-supplied startup parameter at
-  backend startup, pg_doorman forwards the `ErrorResponse` to the
-  client unchanged. There is no retry with the key removed and no
-  per-key quarantine. Fix the parameter in the config; until then,
-  backend startup for that pool fails with PostgreSQL's own SQLSTATE and
-  message.
-- SQLSTATE class `57P` (server unavailable) keeps mapping to
+- If PostgreSQL rejects a configured startup parameter at backend
+  startup, pg_doorman returns PostgreSQL's `ErrorResponse` to the
+  client unchanged. pg_doorman does not retry without the key and does
+  not disable the key automatically for the pool. Fix the parameter in
+  the config; until then, backend startup for that pool fails with
+  PostgreSQL's own SQLSTATE and message.
+- SQLSTATEs with the `57P` prefix (server unavailable) keep mapping to
   `ServerUnavailableError` first so the Patroni-assisted fallback
   path can route around the failed node before the startup-parameter
   log line fires.
-- The operator-supplied parameter wins over the client sync path:
+- The configured parameter wins over the client sync path:
   even if the client connect string carries an `application_name`
   (or another tracked GUC like `TimeZone`), the per-checkout
-  `sync_parameters` call no longer overrides the operator value on
-  the backend. The operator-configured default stands until an
+  `sync_parameters` call no longer overrides the configured value on
+  the backend. That default stands until an
   explicit `SET` statement on the client session changes it.
 
 #### RELOAD coherence
@@ -66,18 +68,18 @@ This gives one pool a different `plan_cache_mode`, `statement_timeout`,
 #### Observability
 
 - `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`
-  counts every backend startup rejected by PostgreSQL because of an
-  operator-supplied parameter. The failing parameter name and
-  username are written to the warning log line, not to metric labels.
+  counts backend startups PostgreSQL rejected because of an
+  configured startup parameter. The failing parameter name and username are
+  written to the warning log line, not to metric labels.
 - `SHOW STARTUP_PARAMETERS` (admin SQL console) lists the per-pool
-  effective cascade with the layer that supplied each value. `psql` tab
+  resolved parameters with the source of each value. `psql` tab
   completion on `SHOW <TAB>` now includes the command.
-- The Web UI pool detail page shows the same data in a
-  "Startup parameters (operator-injected)" section, driven by the
-  new `startup_parameters[]` field on `/api/pools`.
+- The Web UI pool detail page shows the same rows in a "Startup
+  parameters (configured)" section, driven by the new
+  `startup_parameters[]` field on `/api/pools`.
 
 See [PostgreSQL startup parameters](tutorials/startup-parameters.md)
-for the operator walkthrough, plus [General Settings](reference/general.md)
+for the configuration walkthrough, plus [General Settings](reference/general.md)
 and [Pool Settings](reference/pool.md) for the full parameter list.
 
 ### 3.8.5
@@ -188,7 +190,7 @@ live in [`guides/web-ui.md`](guides/web-ui.md).
 **Built-in operator dashboard.** pg_doorman exposes a single-page
 diagnostic console on the same port as `/metrics`, served from
 inside the binary and gated on `[web].ui = true` plus a non-default
-`admin_password`. Reaching the same view through the existing psql
+`admin_password`. Getting comparable detail from the existing psql
 admin console means running `SHOW POOLS`, `SHOW CLIENTS`,
 `SHOW STATS` and friends in a loop, computing rates by hand between
 two snapshots, and joining the rows mentally. The dashboard does
