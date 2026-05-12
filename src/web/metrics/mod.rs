@@ -461,7 +461,11 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 /// returned an `ErrorResponse` that names a key the pool actually sent in
 /// `StartupMessage`. Labels:
 ///
-/// * `pool` — `<user>@<database>` identifier.
+/// * `pool` — pool name as it appears in `pools.<name>` of the config
+///   (in the default mapping this is the PostgreSQL database name).
+///   The label is *not* `<user>@<database>`: pg_doorman emits one
+///   series per pool name, so a multi-user database collapses into a
+///   single row. Per-user attribution lives in the warn log line.
 /// * `sqlstate` — PG SQLSTATE on the rejection (`22023`, `42704`,
 ///   `42501`, `55P02`, or any other code under the startup-parameter
 ///   family — pg_doorman does not pre-filter by SQLSTATE).
@@ -494,7 +498,11 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 /// many individual keys the offending row carried. Per-entry detail
 /// goes to the warn log only. Labels:
 ///
-/// * `pool` — `<user>@<database>` identifier.
+/// * `pool` — pool name as it appears in `pools.<name>` of the config
+///   (in the default mapping this is the PostgreSQL database name).
+///   The label is *not* `<user>@<database>`: pg_doorman emits one
+///   series per pool name, so a multi-user database collapses into a
+///   single row. Per-user attribution lives in the warn log line.
 /// * `reason` — bounded enum:
 ///   * `cascade_budget_exceeded` — the merged general+pool+auth_query
 ///     map exceeded the operator budget (`MAX_OPERATOR_BUDGET`, 9 488
