@@ -273,23 +273,31 @@ jobs:
           command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD suite (${{ matrix.suite.name }})
-        # Three attempts cover two distinct flake families that hit BDD
-        # jobs on GitHub-hosted runners:
+        # `--network=host` is the load-bearing flag. The previous run
+        # of this step used the default bridge network: the container
+        # inherits DNS from the docker daemon, which on a GitHub-hosted
+        # runner does not always re-export the host's systemd-resolved
+        # stub at 127.0.0.53. When that bridge DNS path is wedged,
+        # every cargo attempt inside the container fails with
+        # `Could not resolve host: index.crates.io` even though the
+        # host runner itself can reach crates.io fine. Sharing the
+        # host's network stack short-circuits the bridge resolver,
+        # which is the real root cause; `--network=host` is also safe
+        # here because each matrix entry runs on its own ephemeral
+        # runner, so no two BDD suites contend for the same loopback
+        # ports.
         #
-        #   1. Timing-sensitive scenarios (SCRAM passthrough reconnect
-        #      after retain, sleep-based lifecycle waits) occasionally
-        #      lose their margin under cross-job contention.
-        #   2. Transient DNS resolution failures on `index.crates.io`
-        #      can take both attempts to clear when only two were
-        #      allowed — cargo's own three-retry network loop runs over
-        #      ~25 seconds, so an outage longer than that drains both
-        #      attempts (see run #25734696524, Patroni proxy job).
+        # `CARGO_NET_RETRY=10` and `CARGO_HTTP_TIMEOUT=60` upgrade the
+        # cargo-internal retry loop for the residual case where DNS is
+        # fine but `index.crates.io` itself rate-limits / 5xx's mid-
+        # download. The defaults are 2 retries / 30 s timeout, which
+        # gives cargo about 25 s of attempts before it gives up —
+        # the new values triple that headroom.
         #
-        # A 30-second wait between attempts gives the DNS flake time to
-        # settle without doubling the wall-clock for the timing-flake
-        # case (the third attempt only runs when the first two failed).
-        # Each attempt builds and runs ~1-3 min, so worst-case wall is
-        # still inside the 30-minute timeout.
+        # `max_attempts: 3` plus a 30 s wait between them is the
+        # outer safety net for the rare case where the entire host
+        # runner is mid-flake. The third attempt only fires when the
+        # first two failed, so single-attempt successes pay nothing.
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
@@ -297,6 +305,9 @@ jobs:
           retry_wait_seconds: 30
           command: |
             docker run --rm \
+              --network=host \
+              -e CARGO_NET_RETRY=10 \
+              -e CARGO_HTTP_TIMEOUT=60 \
               -v ${{ github.workspace }}:/workspace \
               -w /workspace \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
