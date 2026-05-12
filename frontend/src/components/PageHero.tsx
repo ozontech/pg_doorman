@@ -1,8 +1,11 @@
+import { HelpTip } from "./HelpTip";
+
 /**
- * Page-level header. A clean title above a one-paragraph description that
- * explains what the page is and how often the data refreshes. Reused at the
- * top of every routed page so the visual hierarchy stays consistent without
- * resorting to gimmicky chrome.
+ * Page-level header. A single-line title with an `(i)` popover for the
+ * page guidance. Earlier versions rendered the description as a banner
+ * paragraph below the title; on wide monitors that wasted vertical space
+ * and read like marketing chrome. The popover keeps the same operator
+ * help one click away without claiming a strip of the viewport.
  */
 export function PageHero({
   title,
@@ -12,11 +15,13 @@ export function PageHero({
   description: string;
 }) {
   return (
-    <header className="border-b border-border bg-bg px-8 pb-7 pt-9">
-      <h1 className="text-3xl font-semibold tracking-tight text-text">{title}</h1>
-      <p className="mt-3 max-w-3xl text-sm leading-relaxed text-text-muted">
-        {description}
-      </p>
+    <header className="flex items-center gap-3 border-b border-border bg-bg px-8 pt-6 pb-4">
+      <h1 className="text-2xl font-semibold tracking-tight text-text">{title}</h1>
+      {description && (
+        <HelpTip title={title}>
+          <p>{description}</p>
+        </HelpTip>
+      )}
     </header>
   );
 }

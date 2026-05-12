@@ -1,54 +1,60 @@
 @import "tailwindcss";
 
-/* Bloomberg-Terminal direction: JetBrains Mono is the only typeface —
-   display, body, numerics. Subset trim: latin + cyrillic, weights 400 +
-   500, woff2 only (`font-bold` aka 700 is not used anywhere in the app —
-   `font-semibold`/600 is the heaviest weight rendered, and the browser
-   synthesises that from 500 with no visible artefacting in this face).
-   Result: 4 woff2 files in the bundle, ~150 KB across all subsets. */
+/* Typography pair: Geist Sans for prose/UI chrome, JetBrains Mono for
+   numerics, identifiers, and code. JetBrains Mono carries the cyrillic
+   subset so a pool name in russian still renders crisp in the mono
+   slots; Geist Sans is latin-only and falls back to JetBrains Mono for
+   any non-latin glyph that lands in body text. */
+@import "@fontsource/geist-sans/latin-400.css";
+@import "@fontsource/geist-sans/latin-500.css";
+@import "@fontsource/geist-sans/latin-600.css";
 @import "@fontsource/jetbrains-mono/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-500.css";
 @import "@fontsource/jetbrains-mono/cyrillic-400.css";
 @import "@fontsource/jetbrains-mono/cyrillic-500.css";
 
 @theme {
-  /* Surface — Bloomberg-flat. The whole canvas is one plane carved by
-     hairline borders rather than four near-identical near-black layers. */
-  --color-bg:         #000000;
-  --color-surface:    #000000;
-  --color-surface-2:  #0b0b0b;
-  --color-surface-3:  #0b0b0b;
+  /* Surface — zinc-tinted dark per the 2026 dev-tools baseline (shadcn,
+     Linear, Vercel). Pure #000 reads clinically harsh next to amber
+     accents; #09090B keeps the trading-terminal feel without the glare. */
+  --color-bg:         #09090b;
+  --color-surface:    #0e0e11;
+  --color-surface-2:  #18181b;
+  --color-surface-3:  #1f1f23;
 
   /* Borders — single hairline tone, never doubled. */
-  --color-border:        #1f1f1f;
-  --color-border-strong: #2a2a2a;
+  --color-border:        #27272a;
+  --color-border-strong: #3f3f46;
 
-  /* Text — warm paper-white, not bluish. */
-  --color-text:       #e8e3d6;
-  --color-text-muted: #9a9485;
-  --color-text-dim:   #5a564b;
+  /* Text — neutral paper-white on zinc background. */
+  --color-text:       #fafafa;
+  --color-text-muted: #a1a1aa;
+  --color-text-dim:   #71717a;
 
   /* Accent — Bloomberg amber. Used for call-to-action, focus rings,
      selection, and the live-tick underline animation below. */
   --color-accent:       #ffb000;
   --color-accent-hover: #ffc233;
-  --color-accent-fg:    #000000;
+  --color-accent-fg:    #09090b;
 
-  /* Semantic — high-contrast trader palette. */
+  /* Semantic — high-contrast palette tuned for the zinc surface.
+     Danger steps off the neon-red #ff4d4d in favour of Radix red-9
+     which sits cleaner next to the amber accent. */
   --color-success: #39d353;
   --color-warning: #ffb000;
-  --color-danger:  #ff4d4d;
+  --color-danger:  #e5484d;
   --color-info:    #00d4ff;
 
   /* Chart palette (uPlot lines) — distinct hues, no muddy gradients. */
   --color-chart-1: #ffb000;
   --color-chart-2: #00d4ff;
   --color-chart-3: #39d353;
-  --color-chart-4: #ff4d4d;
+  --color-chart-4: #e5484d;
 
-  /* Typography. JetBrains Mono is the only typeface; system fallbacks
-     cover the rare case where the woff2 fails to load. */
-  --font-sans: "JetBrains Mono", ui-monospace, monospace;
+  /* Typography. Geist Sans for chrome/prose, JetBrains Mono for numbers
+     and identifiers. Both fall back to system mono/sans so a font-load
+     failure never strands the operator on an unstyled page. */
+  --font-sans: "Geist Sans", "JetBrains Mono", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --font-size-xs:   11px;
   --font-size-sm:   13px;

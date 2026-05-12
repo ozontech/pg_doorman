@@ -466,7 +466,7 @@ export default function Overview() {
         title="Overview"
         description="Is the pooler healthy right now. The pill is green when no threshold is breached; if it goes amber or red, the chip strip names the breach and the process row confirms the pooler itself is still alive. Use the four signal sparklines to triage: spike on Latency P95 = backend slow; spike on Errors/s = read the SQLSTATE breakdown on Pool detail; spike on Saturation = a pool is full and clients will start waiting."
       />
-      <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
+      <div className="mx-auto w-full max-w-[1680px] space-y-6 px-6 py-6">
         <HealthPill
           health={health}
           lastUpdated={overviewPoll.lastUpdated}

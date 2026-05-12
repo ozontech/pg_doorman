@@ -39,13 +39,15 @@ function HeatmapRow({ label, cells, capacity, pollIntervalMs }: HeatmapRowProps)
       <button
         type="button"
         onClick={() => navigate(`/pools/${encodeURIComponent(label)}`)}
-        className="w-48 truncate text-left text-sm text-text hover:text-accent"
-        title="Open pool detail"
+        className="min-w-0 flex-1 truncate text-left font-mono text-sm text-text hover:text-accent"
+        title={`${label} — open pool detail`}
       >
         {label}
       </button>
-      <span className="w-16 text-right text-xs text-text-dim tabular">{capacity} max</span>
-      <div className="relative flex gap-px">
+      <span className="w-16 shrink-0 text-right text-xs text-text-dim tabular">
+        {capacity} max
+      </span>
+      <div className="relative flex shrink-0 gap-px">
         {cells.map((cell, i) => (
           <div
             key={i}
@@ -101,10 +103,10 @@ export function Heatmap({ rows, maxRows = 30, pollIntervalMs = 1500 }: HeatmapPr
   const truncated = rows.length - visible.length;
   return (
     <div className="border-b border-border py-2">
-      <div className="flex items-center px-4 py-1 text-xs text-text-muted uppercase tracking-wide">
-        <span className="w-48">Pool</span>
-        <span className="w-16 text-right">Capacity</span>
-        <span className="ml-3 flex items-center gap-3">
+      <div className="flex items-center gap-3 px-4 py-1 text-xs uppercase tracking-wide text-text-muted">
+        <span className="min-w-0 flex-1">Pool</span>
+        <span className="w-16 shrink-0 text-right">Capacity</span>
+        <span className="flex shrink-0 items-center gap-3">
           <span>Last 60 samples · saturation</span>
           <span className="inline-flex items-center gap-2 normal-case tracking-normal text-[10px]">
             <span className="inline-block h-2 w-2" style={{ background: "rgb(45 194 107)" }} />{" "}
