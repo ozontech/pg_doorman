@@ -53,6 +53,17 @@ pub fn validate(map: &BTreeMap<String, String>, scope: &str) -> Result<(), Error
     validate_total_size(map, scope)
 }
 
+/// Validate a single borrowed `(key, value)` pair the same way [`validate`]
+/// would. Used by the auth_query JSON parser to check entries inline
+/// without building a one-element `BTreeMap` for each one. The total-size
+/// check is *not* applied here — that gate runs once over the parent
+/// map in [`validate`] (config load) or against the merged cascade at
+/// runtime in `ServerPool::resolved_startup_parameters`.
+pub fn validate_entry(key: &str, value: &str, scope: &str) -> Result<(), Error> {
+    validate_key(key, scope)?;
+    validate_value(key, value, scope)
+}
+
 fn validate_key(key: &str, scope: &str) -> Result<(), Error> {
     if key.is_empty() {
         return Err(Error::BadConfig(format!("{scope}: empty key")));

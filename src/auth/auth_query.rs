@@ -476,15 +476,15 @@ impl AuthQueryExecutor {
                 .inc();
             return std::collections::HashMap::new();
         };
-        let mut out = std::collections::HashMap::new();
+        let mut out = std::collections::HashMap::with_capacity(obj.len());
         let scope = format!("auth_query.startup_parameters[user={username}]");
         let mut had_invalid_entry = false;
         for (k, v) in obj {
             match v {
                 serde_json::Value::String(s) => {
-                    let mut probe = std::collections::BTreeMap::new();
-                    probe.insert(k.clone(), s.clone());
-                    if let Err(e) = crate::config::startup_parameters::validate(&probe, &scope) {
+                    if let Err(e) =
+                        crate::config::startup_parameters::validate_entry(&k, &s, &scope)
+                    {
                         warn!("[{pool_name}] {e}");
                         had_invalid_entry = true;
                         continue;
