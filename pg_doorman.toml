@@ -407,7 +407,7 @@ hba = []
 # """
 
 # --------------------------------------------------------------------------
-# PostgreSQL Startup Parameters (operator-set GUCs)
+# PostgreSQL Startup GUCs
 # --------------------------------------------------------------------------
 
 # Baseline PostgreSQL GUCs that pg_doorman adds to each new
@@ -417,7 +417,7 @@ hba = []
 # size. Before backend startup, pg_doorman checks the resolved
 # parameter set again; if it does not fit PG's
 # MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
-# operator-set GUCs for that startup and logs a warning.
+# configured GUCs for that startup and logs a warning.
 # Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
 # Default: {} (empty)
 # startup_parameters = { plan_cache_mode = "force_custom_plan", work_mem = "64MB" }
@@ -569,7 +569,7 @@ cleanup_server_connections = true
 # max_db_connections = 0
 
 # Don't evict connections younger than this (milliseconds).
-# Protects freshly created connections from eviction churn
+# Protects freshly created connections from repeated evictions
 # between user pools sharing the same database.
 # min_connection_lifetime = 30000
 
