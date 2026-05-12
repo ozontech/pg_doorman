@@ -95,6 +95,17 @@ pub struct ServerPool {
     /// view is immutable for the lifetime of the pool object. Shared as
     /// `Arc` so backend spawns can borrow it without per-call cloning.
     base_startup_parameters: Arc<std::collections::BTreeMap<String, String>>,
+
+    /// Per-user auth_query overlay captured at pool construction. Dynamic
+    /// passthrough pools populate this from a fresh `cache.get_or_fetch`
+    /// snapshot taken right after auth, so every backend spawn from this
+    /// pool sees the same overlay even when the auth_query cache TTL has
+    /// since expired. Empty for static pools and for the dedicated-mode
+    /// shared pool (which intentionally has no per-user override).
+    /// Refetches that change the overlay are handled by the reload /
+    /// drain logic in `pool/mod.rs`; this field is immutable for the
+    /// lifetime of the pool object.
+    per_user_startup_overlay: Arc<std::collections::BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -141,6 +152,7 @@ impl ServerPool {
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
         base_startup_parameters: Arc<BTreeMap<String, String>>,
+        per_user_startup_overlay: Arc<BTreeMap<String, String>>,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -163,6 +175,7 @@ impl ServerPool {
             session_mode,
             fallback_state,
             base_startup_parameters,
+            per_user_startup_overlay,
         }
     }
 
@@ -394,35 +407,22 @@ impl ServerPool {
     /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
     /// no operator-supplied parameters for this backend startup.
     fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
-        // Look up the per-user auth_query entry only when the pool runs in
-        // passthrough auth_query mode (no shared server_user). In dedicated
-        // mode the shared backend serves multiple dynamic users, so no
-        // single per-user override could be honoured.
-        //
-        // The closure runs under a DashMap shard read lock. Return `None` for
-        // an empty overlay so the caller can keep borrowing the base map.
-        let auth_query_state = super::get_auth_query_state(&self.address.pool_name);
-        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> = match auth_query_state {
-            Some(state) if !state.config.is_dedicated_mode() => {
-                let overlay_applied =
-                    state.peek_startup_parameters(&self.user.username, |overlay| {
-                        if overlay.is_empty() {
-                            None
-                        } else {
-                            let mut owned = (*self.base_startup_parameters).clone();
-                            for (k, v) in overlay {
-                                owned.insert(k.clone(), v.clone());
-                            }
-                            Some(owned)
-                        }
-                    });
-                match overlay_applied.flatten() {
-                    Some(owned) => std::borrow::Cow::Owned(owned),
-                    None => std::borrow::Cow::Borrowed(&*self.base_startup_parameters),
+        // The per-user overlay was captured at pool construction from a
+        // fresh auth_query cache snapshot, so backend spawns are
+        // deterministic even after the cache TTL expires or a refetch
+        // races a spawn. Static pools and dedicated-mode shared pools
+        // pass an empty overlay; they fall through to the borrowed base
+        // map and skip the merge entirely.
+        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> =
+            if self.per_user_startup_overlay.is_empty() {
+                std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
+            } else {
+                let mut owned = (*self.base_startup_parameters).clone();
+                for (k, v) in self.per_user_startup_overlay.iter() {
+                    owned.insert(k.clone(), v.clone());
                 }
-            }
-            _ => std::borrow::Cow::Borrowed(&*self.base_startup_parameters),
-        };
+                std::borrow::Cow::Owned(owned)
+            };
 
         // Per-level validation does not see the merged cascade or the
         // user/database/application_name fields added by the wire layer. Check

@@ -135,6 +135,38 @@ pub fn create_dynamic_pool(
         std::sync::Arc::new(merged)
     };
 
+    // Capture the per-user auth_query overlay once, at pool creation.
+    // The auth_query cache was just populated for this username by the
+    // caller in src/auth/mod.rs, so the peek is guaranteed warm; freezing
+    // the snapshot here means backend spawns from this pool stay
+    // deterministic even after the cache TTL elapses. Empty for
+    // dedicated-mode pools (a single shared backend serves many dynamic
+    // users) and for any auth_query row without a `startup_parameters`
+    // column.
+    let per_user_startup_overlay: std::sync::Arc<std::collections::BTreeMap<String, String>> = {
+        let snapshot = super::get_auth_query_state(pool_name).and_then(|state| {
+            if state.config.is_dedicated_mode() {
+                None
+            } else {
+                state
+                    .peek_startup_parameters(username, |overlay| {
+                        if overlay.is_empty() {
+                            None
+                        } else {
+                            Some(
+                                overlay
+                                    .iter()
+                                    .map(|(k, v)| (k.clone(), v.clone()))
+                                    .collect(),
+                            )
+                        }
+                    })
+                    .flatten()
+            }
+        });
+        std::sync::Arc::new(snapshot.unwrap_or_default())
+    };
+
     let manager = ServerPool::new(
         address.clone(),
         user.clone(),
@@ -157,6 +189,7 @@ pub fn create_dynamic_pool(
         pool_mode == PoolMode::Session,
         fallback_state,
         base_startup_parameters,
+        per_user_startup_overlay,
     );
 
     let queue_strategy = match config.general.server_round_robin {

@@ -502,6 +502,8 @@ impl ConnectionPool {
                     pool_mode == PoolMode::Session,
                     fallback_state,
                     base_startup_parameters,
+                    // Static pools carry no per-user auth_query overlay.
+                    Arc::new(std::collections::BTreeMap::new()),
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -700,6 +702,9 @@ impl ConnectionPool {
                             pool_mode == PoolMode::Session,
                             fallback_state,
                             base_startup_parameters,
+                            // Dedicated-mode shared pool serves multiple
+                            // dynamic users — no single per-user override.
+                            Arc::new(std::collections::BTreeMap::new()),
                         );
 
                         let queue_strategy = match config.general.server_round_robin {

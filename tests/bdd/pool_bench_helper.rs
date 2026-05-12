@@ -76,6 +76,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         false,                   // session_mode
         None,                    // fallback_state
         std::sync::Arc::new(std::collections::BTreeMap::new()),
+        std::sync::Arc::new(std::collections::BTreeMap::new()),
     );
 
     // Create Pool with configuration
@@ -428,6 +429,7 @@ async fn setup_internal_pool_with_lifetimes(
         Duration::from_secs(10),
         false,
         None,
+        std::sync::Arc::new(std::collections::BTreeMap::new()),
         std::sync::Arc::new(std::collections::BTreeMap::new()),
     );
 

@@ -2095,6 +2095,7 @@ mod tests {
             false,
             None,
             Arc::new(std::collections::BTreeMap::new()),
+            Arc::new(std::collections::BTreeMap::new()),
         );
         Pool::builder(server_pool)
             .coordinator(Some(coord))
@@ -2244,6 +2245,7 @@ mod tests {
             Duration::from_secs(5),
             false,
             None,
+            Arc::new(std::collections::BTreeMap::new()),
             Arc::new(std::collections::BTreeMap::new()),
         );
         let pool = Pool::builder(server_pool)
