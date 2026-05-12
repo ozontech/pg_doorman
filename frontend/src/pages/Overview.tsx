@@ -469,10 +469,20 @@ export default function Overview() {
         <ProcessBar process={processPoll.data} onOpenThreads={() => openPanelById("threads")} onOpenRss={() => openPanelById("rss")} />
         <Card
           title="Golden signals"
-          help={{
-            what: "Latency P95, traffic, error rate, and worst saturation.",
-            how: "Three minutes of history (one dot every 1.5 s). Click a card to widen the window to 1h, see p50/p95/p99 over the visible range, and overlay admin events.",
-            normal: "P95 < 100 ms · errors near 0 /s · saturation < 70 %.",
+          helpStructured={{
+            definition:
+              "Four operator-grade signals: backend query p95, traffic, error rate, and worst-pool saturation.",
+            source: "SHOW STATS · SHOW POOLS (per-pool aggregated)",
+            formula:
+              "p95 = max(query_p95 across pools) · traffic = Δqueries / Δt · errors = Δerrors_total / Δt · saturation = max(active / max_connections)",
+            thresholds: {
+              healthy: "p95 < 100 ms · errors ≈ 0/s · saturation < 70 %",
+              warn: "p95 ≥ 100 ms · errors ≥ 1/s · saturation ≥ 70 %",
+              crit: "p95 ≥ 500 ms · errors ≥ 10/s · saturation ≥ 90 %",
+            },
+            related: ["waiting", "max_active_age_ms", "errors_per_s"],
+            docsHref:
+              "https://ozontech.github.io/pg_doorman/concepts/admin-monitoring.html",
           }}
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -528,9 +538,20 @@ export default function Overview() {
         <Card
           title="Connection breakdown ↗"
           onTitleClick={() => openPanelById("conn_breakdown")}
-          help={{
-            what: "Stacked clients in active / idle / waiting state.",
-            how: "Stacked over the 3 min window. No threshold — the shape is the signal. Active rising while idle stays low = good throughput; waiting rising = backends are full and clients are queueing.",
+          helpStructured={{
+            definition:
+              "Stacked client states — active, idle, waiting — across the whole pooler over the last three minutes.",
+            source: "SHOW POOLS · cl_active + cl_idle + cl_waiting",
+            formula:
+              "active = Σ cl_active · idle = Σ cl_idle · waiting = Σ cl_waiting",
+            thresholds: {
+              healthy: "waiting ≈ 0",
+              warn: "waiting > 0 sustained",
+              crit: "waiting > 10 sustained 10 s",
+            },
+            related: ["max_active_age_ms", "wait_p95_ms"],
+            docsHref:
+              "https://ozontech.github.io/pg_doorman/concepts/connection-pooling.html",
           }}
         >
           <AreaChart
@@ -544,10 +565,19 @@ export default function Overview() {
         {heatmapRows.length > 0 && (
           <Card
             title="Pool fill heatmap"
-            help={{
-              what: "One row per pool, last 90 s of saturation.",
-              how: "Cell color thresholds: green < 70 % · amber 70–89 % · red ≥ 90 %.",
-              normal: "A row that turns amber/red while neighbours stay green points at one specific pool.",
+            helpStructured={{
+              definition:
+                "One row per pool. Each cell is the pool's saturation at a 1.5 s sample over the last 90 s.",
+              source: "SHOW POOLS · cl_active / max_client_conn per pool",
+              formula: "saturation = active / max_connections",
+              thresholds: {
+                healthy: "cells green < 70 %",
+                warn: "amber 70–89 %",
+                crit: "red ≥ 90 %",
+              },
+              related: ["wait_p95_ms", "max_active_age_ms"],
+              docsHref:
+                "https://ozontech.github.io/pg_doorman/concepts/connection-pooling.html",
             }}
           >
             <Heatmap rows={heatmapRows} />
@@ -556,10 +586,20 @@ export default function Overview() {
         <Card
           title="Wait queue vs oldest active ↗"
           onTitleClick={() => openPanelById("wait_oldest")}
-          help={{
-            what: "Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools.",
-            how: "Both lines move together when traffic is fine. They diverge when one client holds a transaction open and others queue behind it — that is the pattern to look for during a stall.",
-            normal: "Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection.",
+          helpStructured={{
+            definition:
+              "Clients currently queued for a backend vs the oldest in-flight query across pools.",
+            source: "SHOW POOLS · cl_waiting · maxwait_us / 1000",
+            formula:
+              "waiting = Σ cl_waiting · oldest = max(maxwait_us) across pools",
+            thresholds: {
+              healthy: "waiting ≈ 0 · oldest < 30 s",
+              warn: "oldest ≥ 30 s",
+              crit: "oldest ≥ 5 min — stuck transaction",
+            },
+            related: ["wait_p95_ms", "active_clients", "backend_p99"],
+            docsHref:
+              "https://ozontech.github.io/pg_doorman/concepts/admin-monitoring.html",
           }}
         >
           <DualAxisChart
@@ -632,11 +672,13 @@ export default function Overview() {
 function Card({
   title,
   help,
+  helpStructured,
   children,
   onTitleClick,
 }: {
   title: string;
   help?: { what?: string; how?: string; normal?: string };
+  helpStructured?: import("../components/HelpTip").HelpContent;
   children: ReactNode;
   onTitleClick?: () => void;
 }) {
@@ -650,6 +692,7 @@ function Card({
     <>
       <SectionHeader
         title={title}
+        help={helpStructured}
         what={help?.what}
         how={help?.how}
         normal={help?.normal}
