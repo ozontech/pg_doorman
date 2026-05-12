@@ -241,7 +241,8 @@ Feature: Per-pool startup_parameters
     And pg_doorman log contains "nonexistent_guc_zzz"
 
   Scenario: every subsequent connect fails the same way until the operator fixes the config
-    Given PostgreSQL started with pg_hba.conf:
+    Given pg_doorman log capture enabled
+    And PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
       host    all             all             127.0.0.1/32            trust
