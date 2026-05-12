@@ -27,6 +27,15 @@ pub struct AuthQueryState {
     /// dynamic backends would keep starting with the previous baseline's
     /// `reset_val`.
     pub(crate) pool_startup_hash: u64,
+    /// Fingerprint of every other parent input the dedicated shared
+    /// pool was built from: `pool_config.hash_value()` (which folds in
+    /// host/port/TLS/timeouts/fallback/app_name/users/startup_parameters)
+    /// combined with the `general.startup_parameters` hash. RELOAD
+    /// compares this on reuse so a SIGHUP that changed the parent pool
+    /// host, TLS material, or timeouts (without touching the
+    /// `auth_query` config itself) still rebuilds the shared pool
+    /// against the new parent config.
+    pub(crate) parent_fingerprint: u64,
     pool_name: String,
     server_host: String,
     server_port: u16,
@@ -38,9 +47,11 @@ pub struct AuthQueryState {
 
 impl AuthQueryState {
     /// Create a new AuthQueryState.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         config: AuthQueryConfig,
         pool_startup_hash: u64,
+        parent_fingerprint: u64,
         pool_name: String,
         server_host: String,
         server_port: u16,
@@ -51,6 +62,7 @@ impl AuthQueryState {
             cache_cell: tokio::sync::OnceCell::new(),
             config,
             pool_startup_hash,
+            parent_fingerprint,
             pool_name,
             server_host,
             server_port,

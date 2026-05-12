@@ -650,16 +650,29 @@ impl ConnectionPool {
                     pool_config.startup_parameters.hash(&mut hasher);
                     hasher.finish()
                 };
-                // RELOAD: reuse state when both the auth_query config AND
-                // the pool-level startup_parameters are unchanged. A
-                // pool.startup_parameters edit must drop the cache and
-                // recycle the shared/dynamic pools: their backends were
-                // started with the old baseline as `reset_val`, and that
-                // value survives client-side `RESET ALL` / `DISCARD ALL`
-                // unless the backend is recreated.
+                // Parent fingerprint folds every other parent input the
+                // dedicated shared pool depends on into one hash:
+                // `pool_config.hash_value()` covers host/port/TLS/
+                // timeouts/fallback/app_name/users; the general
+                // startup hash covers the operator-wide baseline that
+                // also flows into the shared pool's reset_val. A SIGHUP
+                // that changes any of these without touching the
+                // auth_query config still rebuilds the shared pool.
+                let parent_fingerprint = pool_config.hash_value() ^ general_startup_hash;
+                // RELOAD: reuse state when the auth_query config AND
+                // the pool-level startup_parameters AND the parent
+                // fingerprint are unchanged. Any other parent edit
+                // (host/port/TLS/timeouts/fallback/app_name change,
+                // general.startup_parameters edit) must drop the cache
+                // and recycle the shared/dynamic pools: their backends
+                // were started with the old parent inputs as
+                // `reset_val` and TLS identity, and those survive
+                // client-side `RESET ALL` / `DISCARD ALL` unless the
+                // backend is recreated.
                 if let Some(old_state) = old_aq_states_for_reuse.get(pool_name) {
                     if old_state.config == *aq_config
                         && old_state.pool_startup_hash == pool_startup_hash
+                        && old_state.parent_fingerprint == parent_fingerprint
                     {
                         info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
                         auth_query_states.insert(pool_name.clone(), old_state.clone());
@@ -855,6 +868,7 @@ impl ConnectionPool {
                     Arc::new(AuthQueryState::new(
                         aq_config.clone(),
                         pool_startup_hash,
+                        parent_fingerprint,
                         pool_name.clone(),
                         pool_config.server_host.clone(),
                         pool_config.server_port,
@@ -886,15 +900,23 @@ impl ConnectionPool {
                 p.startup_parameters.hash(&mut hasher);
                 hasher.finish()
             });
+            let new_parent_fingerprint =
+                new_pool_config.map(|p| p.hash_value() ^ general_startup_hash);
             let pool_startup_changed = new_pool_startup_hash
                 .map(|h| h != old_state.pool_startup_hash)
                 .unwrap_or(false);
-            if aq_changed || pool_startup_changed {
-                if aq_changed {
-                    info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+            let parent_fingerprint_changed = new_parent_fingerprint
+                .map(|h| h != old_state.parent_fingerprint)
+                .unwrap_or(false);
+            if aq_changed || pool_startup_changed || parent_fingerprint_changed {
+                let reason = if aq_changed {
+                    "auth_query config changed"
+                } else if pool_startup_changed {
+                    "pool.startup_parameters changed"
                 } else {
-                    info!("[pool: {pool_name}] pool.startup_parameters changed — collecting dynamic pools for removal");
-                }
+                    "parent pool/general config changed"
+                };
+                info!("[pool: {pool_name}] {reason} — collecting dynamic pools for removal");
                 for id in DYNAMIC_POOLS.load().iter() {
                     if id.db == *pool_name {
                         pools_to_remove.push(id.clone());
