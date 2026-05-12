@@ -414,6 +414,9 @@ impl AuthQueryExecutor {
                      parameters are ignored for this row.",
                     ty = column.type_().name()
                 );
+                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                    .with_label_values(&[pool_name, "auth_query_bad_type"])
+                    .inc();
                 return std::collections::HashMap::new();
             }
         };
@@ -457,6 +460,9 @@ impl AuthQueryExecutor {
                     "[{username}@{pool_name}] auth_query startup_parameters: JSON parse failed: \
                      {e}; parameters ignored"
                 );
+                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                    .with_label_values(&[pool_name, "auth_query_invalid_json"])
+                    .inc();
                 return std::collections::HashMap::new();
             }
         };
@@ -465,6 +471,9 @@ impl AuthQueryExecutor {
                 "[{username}@{pool_name}] auth_query startup_parameters: top-level value is not a \
                  JSON object; ignored"
             );
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[pool_name, "auth_query_invalid_shape"])
+                .inc();
             return std::collections::HashMap::new();
         };
         let mut out = std::collections::HashMap::new();

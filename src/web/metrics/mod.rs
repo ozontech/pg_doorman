@@ -505,6 +505,13 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///     over budget, but the baseline alone fits. Keeps general/pool
 ///     guardrails (statement_timeout, lock_timeout, …) for that
 ///     user instead of stripping the operator cascade outright.
+///   * `auth_query_bad_type` — the auth_query `startup_parameters`
+///     column has a non-text type (likely `json`/`jsonb`); pg_doorman
+///     reads it as text, so the row's overlay is dropped. Cast to
+///     `::text` in the auth_query SELECT to fix.
+///   * `auth_query_invalid_json` — the column value is not valid JSON.
+///   * `auth_query_invalid_shape` — the column parses but the
+///     top-level value is not a JSON object.
 ///   * `auth_query_invalid_entry` — an individual entry in the
 ///     auth_query JSON failed validation (reserved key, bad GUC name,
 ///     null byte, non-string value). Incremented per offending entry.
@@ -524,8 +531,9 @@ pub(crate) static STARTUP_PARAMETERS_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::
              entries pg_doorman dropped before sending StartupMessage. \
              Labels: pool, reason (cascade_budget_exceeded, \
              packet_cap_exceeded, auth_query_oversize, \
-             auth_query_overlay_oversize, auth_query_invalid_entry, \
-             dedicated_mode). Distinct from \
+             auth_query_overlay_oversize, auth_query_bad_type, \
+             auth_query_invalid_json, auth_query_invalid_shape, \
+             auth_query_invalid_entry, dedicated_mode). Distinct from \
              pg_doorman_backend_startup_parameter_errors_total which \
              counts PG-side rejections after StartupMessage.",
         ),
