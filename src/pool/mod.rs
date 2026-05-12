@@ -100,6 +100,37 @@ pub fn get_client_server_map() -> Option<ClientServerMap> {
     CLIENT_SERVER_MAP.get().cloned()
 }
 
+/// Stable hash of a per-user auth_query `startup_parameters` overlay.
+/// Used to detect overlay drift after `auth_query` refetches: if the
+/// new row's hash differs from `ConnectionPool::per_user_startup_overlay_hash`,
+/// the dynamic pool is dropped so the next client connection rebuilds
+/// against the new overlay. Accepts both `HashMap` (auth_query cache
+/// shape) and `BTreeMap` (the immutable snapshot stored on the pool)
+/// via a borrowed iterator, normalising key order so the hash is shape-
+/// independent.
+pub(crate) fn per_user_overlay_hash<'a, I>(entries: I) -> u64
+where
+    I: IntoIterator<Item = (&'a String, &'a String)>,
+{
+    use std::hash::{Hash, Hasher};
+    let mut sorted: Vec<(&str, &str)> = entries
+        .into_iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sorted.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Hash that `per_user_overlay_hash` produces for the empty overlay.
+/// Computed once and reused by every static / dedicated-mode pool so
+/// drift comparisons against dynamic pools' real overlay hashes are
+/// shape-stable across the codebase.
+pub(crate) fn empty_overlay_hash() -> u64 {
+    per_user_overlay_hash(std::iter::empty::<(&String, &String)>())
+}
+
 /// Build a `ServerTlsConfig` for a pool, merging pool-level overrides with general defaults.
 pub(crate) fn build_server_tls_for_pool(
     pool_config: &ConfigPool,
@@ -163,6 +194,31 @@ pub fn register_dynamic_pool(id: &PoolIdentifier) {
 /// Check if a pool identifier is a dynamic (auth_query passthrough) pool.
 pub fn is_dynamic_pool(id: &PoolIdentifier) -> bool {
     DYNAMIC_POOLS.load().contains(id)
+}
+
+/// Drop a dynamic pool from `POOLS` and `DYNAMIC_POOLS`. No-op for
+/// static pools — overlay drift only applies to auth_query passthrough.
+/// Used by the auth_query cache after a refetch when the new per-user
+/// `startup_parameters` map no longer matches the snapshot frozen in
+/// the live pool: the next client connection rebuilds the dynamic pool
+/// against the new overlay.
+pub fn drop_dynamic_pool(id: &PoolIdentifier) -> bool {
+    if !is_dynamic_pool(id) {
+        return false;
+    }
+    let pools = POOLS.load();
+    let mut new_pools = (**pools).clone();
+    let removed = new_pools.remove(id).is_some();
+    if removed {
+        POOLS.store(Arc::new(new_pools));
+    }
+    let dynamics = DYNAMIC_POOLS.load();
+    if dynamics.contains(id) {
+        let mut new_set = (**dynamics).clone();
+        new_set.remove(id);
+        DYNAMIC_POOLS.store(Arc::new(new_set));
+    }
+    removed
 }
 
 /// Get auth_query state for a database pool.
@@ -257,6 +313,14 @@ pub struct ConnectionPool {
     /// against current config to decide whether or not we need to recreate
     /// the pool after a RELOAD command
     pub config_hash: u64,
+
+    /// Hash of the per-user auth_query overlay frozen into this pool at
+    /// creation time. After a refetch, the auth_query cache compares the
+    /// new per-user startup_parameters map against this value; a mismatch
+    /// drops the dynamic pool so the next client connection rebuilds
+    /// against the new overlay. Static pools and dedicated-mode shared
+    /// pools both pin this to the empty-map hash.
+    pub per_user_startup_overlay_hash: u64,
 
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
@@ -532,6 +596,11 @@ impl ConnectionPool {
                     database: pool,
                     address,
                     config_hash: new_pool_hash_value,
+                    // Static and dedicated-mode shared pools carry no
+                    // per-user overlay, so they pin to the empty-map
+                    // hash. Dynamic passthrough pools set this from the
+                    // captured overlay in dynamic.rs.
+                    per_user_startup_overlay_hash: empty_overlay_hash(),
                     original_server_parameters: Arc::new(tokio::sync::Mutex::new(
                         ServerParameters::new(),
                     )),
@@ -738,6 +807,11 @@ impl ConnectionPool {
                             database: pool,
                             address,
                             config_hash: new_pool_hash_value,
+                            // Static and dedicated-mode shared pools carry no
+                            // per-user overlay, so they pin to the empty-map
+                            // hash. Dynamic passthrough pools set this from the
+                            // captured overlay in dynamic.rs.
+                            per_user_startup_overlay_hash: empty_overlay_hash(),
                             original_server_parameters: Arc::new(tokio::sync::Mutex::new(
                                 ServerParameters::new(),
                             )),
@@ -1121,6 +1195,75 @@ pub fn get_coordinator(db: &str) -> Option<Arc<pool_coordinator::PoolCoordinator
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- per_user_overlay_hash tests ---
+
+    #[test]
+    fn per_user_overlay_hash_empty_matches_empty_overlay_hash() {
+        let empty_map = std::collections::HashMap::<String, String>::new();
+        assert_eq!(
+            per_user_overlay_hash(empty_map.iter()),
+            empty_overlay_hash()
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_ignores_input_order() {
+        // HashMap with the same key/value pairs but inserted in different
+        // orders must hash identically. Without the internal sort the
+        // hash would depend on HashMap iteration order, which is
+        // randomized per process and would falsely flag overlay drift on
+        // every refetch.
+        let mut a = std::collections::HashMap::new();
+        a.insert("work_mem".to_string(), "64MB".to_string());
+        a.insert("statement_timeout".to_string(), "30s".to_string());
+        let mut b = std::collections::HashMap::new();
+        b.insert("statement_timeout".to_string(), "30s".to_string());
+        b.insert("work_mem".to_string(), "64MB".to_string());
+        assert_eq!(
+            per_user_overlay_hash(a.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_changes_when_value_changes() {
+        let mut a = std::collections::HashMap::new();
+        a.insert("work_mem".to_string(), "64MB".to_string());
+        let mut b = std::collections::HashMap::new();
+        b.insert("work_mem".to_string(), "128MB".to_string());
+        assert_ne!(
+            per_user_overlay_hash(a.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_changes_when_key_added() {
+        let mut a = std::collections::HashMap::new();
+        a.insert("work_mem".to_string(), "64MB".to_string());
+        let mut b = a.clone();
+        b.insert("statement_timeout".to_string(), "30s".to_string());
+        assert_ne!(
+            per_user_overlay_hash(a.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_matches_across_hashmap_and_btreemap() {
+        // The auth_query cache stores HashMap; the pool freezes a
+        // BTreeMap snapshot. Drift detection compares the two — they
+        // must hash to the same value for identical content.
+        let mut h = std::collections::HashMap::new();
+        h.insert("work_mem".to_string(), "64MB".to_string());
+        let mut b = std::collections::BTreeMap::new();
+        b.insert("work_mem".to_string(), "64MB".to_string());
+        assert_eq!(
+            per_user_overlay_hash(h.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
 
     // --- compute_spare tests ---
 

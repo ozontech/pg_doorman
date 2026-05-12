@@ -344,6 +344,7 @@ mod tests {
                 min_guaranteed_pool_size: 0,
             },
             config_hash: 0,
+            per_user_startup_overlay_hash: crate::pool::empty_overlay_hash(),
             prepared_statement_cache: None,
             coordinator: None,
             replenish_failures: Arc::new(AtomicU32::new(0)),

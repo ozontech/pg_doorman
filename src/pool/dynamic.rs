@@ -189,8 +189,14 @@ pub fn create_dynamic_pool(
         pool_mode == PoolMode::Session,
         fallback_state,
         base_startup_parameters,
-        per_user_startup_overlay,
+        per_user_startup_overlay.clone(),
     );
+
+    // Snapshot the overlay hash before the Arc moves into ServerPool.
+    // The auth_query cache compares the new fetched per-user map against
+    // this value after every refetch; a mismatch drops the dynamic pool
+    // so the next connect rebuilds with the new reset_val.
+    let overlay_hash = super::per_user_overlay_hash(per_user_startup_overlay.iter());
 
     let queue_strategy = match config.general.server_round_robin {
         true => QueueMode::Fifo,
@@ -217,6 +223,7 @@ pub fn create_dynamic_pool(
         database: pool,
         address,
         config_hash: 0, // dynamic pools don't participate in hash-based reload
+        per_user_startup_overlay_hash: overlay_hash,
         original_server_parameters: Arc::new(tokio::sync::Mutex::new(ServerParameters::new())),
         settings: PoolSettings {
             pool_mode,

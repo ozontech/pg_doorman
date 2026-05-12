@@ -659,6 +659,43 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         entry.startup_parameters.clear();
     }
 
+    /// When a fresh auth_query fetch produces a per-user
+    /// `startup_parameters` map that differs from the snapshot frozen
+    /// into the live dynamic pool at creation time, drop the pool so
+    /// the next client connection rebuilds against the new overlay.
+    /// Without this, an operator-side change to the row (`UPDATE
+    /// pgbouncer.users SET startup_parameters = ...`) only takes effect
+    /// for new dynamic-pool spawns, not for existing pools. Dedicated
+    /// mode and the dedicated-mode warning path land here with an empty
+    /// map; that compares equal to the empty-overlay hash that
+    /// dedicated pools store, so nothing is dropped on that path.
+    fn drop_dynamic_pool_if_overlay_drifted(
+        &self,
+        username: &str,
+        new_overlay: &std::collections::HashMap<String, String>,
+    ) {
+        let identifier = crate::pool::PoolIdentifier::new(&self.pool_name, username);
+        if !crate::pool::is_dynamic_pool(&identifier) {
+            return;
+        }
+        let new_hash = crate::pool::per_user_overlay_hash(new_overlay.iter());
+        let live_hash = crate::pool::POOLS
+            .load()
+            .get(&identifier)
+            .map(|p| p.per_user_startup_overlay_hash);
+        match live_hash {
+            Some(h) if h != new_hash => {
+                if crate::pool::drop_dynamic_pool(&identifier) {
+                    info!(
+                        "[{username}@{}] auth_query overlay drift on refetch — dynamic pool dropped, next connect will rebuild",
+                        self.pool_name
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Increment a stats counter if stats are enabled.
     fn inc(&self, counter: fn(&AuthQueryStats) -> &AtomicU64) {
         if let Some(ref stats) = self.stats {
@@ -723,7 +760,15 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 let mut entry = CacheEntry::positive(password_hash);
                 entry.startup_parameters = startup_params;
                 self.dedicated_mode_filter(&mut entry, username);
+                // Publish the fresh entry first so any concurrent
+                // create_dynamic_pool peeks the new overlay, then drop the
+                // pool whose snapshot drifted. Reversing the order would
+                // open a window where the drop runs against the live pool
+                // while the cache still holds the old map, and a racing
+                // create_dynamic_pool would rebuild against that stale
+                // map and immediately drift again.
                 self.entries.insert(username.to_string(), entry.clone());
+                self.drop_dynamic_pool_if_overlay_drifted(username, &entry.startup_parameters);
                 Ok(Some(entry))
             }
             Ok(None) => {
@@ -791,7 +836,9 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 entry.startup_parameters = startup_params;
                 entry.last_refetch_at = Some(Instant::now());
                 self.dedicated_mode_filter(&mut entry, username);
+                // Insert before drop — see comment in get_or_fetch.
                 self.entries.insert(username.to_string(), entry.clone());
+                self.drop_dynamic_pool_if_overlay_drifted(username, &entry.startup_parameters);
                 Ok(Some(entry))
             }
             Ok(None) => {
