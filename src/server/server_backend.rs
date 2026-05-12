@@ -1065,12 +1065,28 @@ impl Server {
                     // map shape but does not currently pass an already-Arc'd
                     // HashSet through, and lifting the construction up there
                     // is a larger refactor than this commit warrants.
-                    let operator_managed_startup_keys: Arc<HashSet<String>> =
-                        if startup_parameters.is_empty() {
-                            empty_operator_keys()
-                        } else {
-                            Arc::new(startup_parameters.keys().cloned().collect())
-                        };
+                    let operator_managed_startup_keys: Arc<HashSet<String>> = if startup_parameters
+                        .is_empty()
+                    {
+                        empty_operator_keys()
+                    } else {
+                        // Canonicalize every operator key the same way
+                        // ServerParameters::set_param does on the
+                        // sync_parameters path. Without this an operator
+                        // value configured as `timezone` would not match
+                        // a client-startup value reported as `TimeZone`
+                        // in compare_params(), letting the client
+                        // override the operator default. See codex
+                        // MED #7 (fresh review).
+                        Arc::new(
+                            startup_parameters
+                                .keys()
+                                .map(|k| {
+                                    crate::server::parameters::canonicalize_param_name(k.clone())
+                                })
+                                .collect(),
+                        )
+                    };
 
                     let server = Server {
                         address: address.to_owned(),
