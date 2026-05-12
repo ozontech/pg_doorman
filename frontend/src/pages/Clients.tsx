@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
-import type { ClientsDto } from "../types";
+import type { ClientDto, ClientsDto } from "../types";
 
-const POLL_MS = 1500;
+// Slower cadence than the dashboards: a per-client view at 1.5 s caused
+// Chrome to balloon in memory — 50 rows × 13 cells re-rendered every poll,
+// plus a full ClientRates record allocated each time. 3 s is still
+// "live" enough for the operator scanning sessions during an incident,
+// without making the GC chase 650 DOM updates per second.
+const POLL_MS = 3000;
 const PAGE_SIZE = 50;
 
 type ClientTotals = Record<string, { queries: number; transactions: number }>;
@@ -22,6 +27,12 @@ function useClientRates(data: ClientsDto | null): ClientRates {
   const prevRef = useRef<{ ts: number; clients: ClientTotals } | null>(null);
   useEffect(() => {
     if (!data) return;
+    // Skip when the snapshot ts has not advanced — React Strict Mode
+    // and parent re-renders can hand us the same data object twice in
+    // a row, and the previous version recomputed a brand-new
+    // ClientRates record on every such pass. That allocation pressure
+    // showed up as a steady Chrome memory growth on the Clients tab.
+    if (prevRef.current && prevRef.current.ts === data.ts) return;
     const cur: ClientTotals = {};
     for (const c of data.clients) {
       cur[c.client_id] = {
@@ -30,7 +41,7 @@ function useClientRates(data: ClientsDto | null): ClientRates {
       };
     }
     const prev = prevRef.current;
-    if (prev && prev.ts !== data.ts) {
+    if (prev) {
       const dt = (data.ts - prev.ts) / 1000;
       if (dt > 0) {
         const next: ClientRates = {};
@@ -333,45 +344,17 @@ export default function Clients() {
           </tr>
         </thead>
         <tbody>
-          {visibleClients.map((c) => (
-            <tr key={c.client_id} className="border-b border-border hover:bg-surface-2">
-              <td className="px-3 py-1.5 font-mono text-xs">{c.client_id}</td>
-              <td className="px-3 py-1.5 font-mono text-xs text-text-muted">{c.addr || "—"}</td>
-              <td className="px-3 py-1.5 text-xs">{c.user}@{c.database}</td>
-              <td className="px-3 py-1.5 text-xs text-text-muted">{c.application_name || "—"}</td>
-              <td className="px-3 py-1.5 text-xs">
-                <span className={
-                  c.state === "active" ? "text-success" :
-                  c.state === "waiting" ? "text-warning" :
-                  "text-text-muted"
-                }>
-                  {c.state}
-                </span>
-              </td>
-              <td className="px-3 py-1.5 text-right text-xs text-text-muted">
-                {c.wait && c.wait !== "none" ? (
-                  <span title={`reason: ${c.wait}`}>{c.wait_ms ? `${c.wait_ms} ms` : c.wait}</span>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="px-3 py-1.5 text-right">{c.current_query_age_ms || "—"}</td>
-              <td className="px-3 py-1.5 text-right">{c.age_seconds}</td>
-              <td className="px-3 py-1.5 text-right">
-                {rates[c.client_id] ? rates[c.client_id].qps.toFixed(1) : "—"}
-              </td>
-              <td className="px-3 py-1.5 text-right">
-                {rates[c.client_id] ? rates[c.client_id].tps.toFixed(1) : "—"}
-              </td>
-              <td className="px-3 py-1.5 text-right">{c.queries_total}</td>
-              <td className={`px-3 py-1.5 text-right ${c.errors_total > 0 ? "text-warning" : ""}`}>
-                {c.errors_total}
-              </td>
-              <td className="px-3 py-1.5 text-xs text-text-muted" title={c.tls ? "TLS" : "plaintext"}>
-                {c.tls ? "✓" : ""}
-              </td>
-            </tr>
-          ))}
+          {visibleClients.map((c) => {
+            const r = rates[c.client_id];
+            return (
+              <ClientRow
+                key={c.client_id}
+                client={c}
+                qps={r?.qps ?? null}
+                tps={r?.tps ?? null}
+              />
+            );
+          })}
         </tbody>
       </table>
       <div className="flex items-center gap-2 px-4 py-3">
@@ -396,3 +379,87 @@ export default function Clients() {
     </section>
   );
 }
+
+// Memoised row. /api/clients ships a fresh array every poll, so each `c`
+// reference is new even when the client did not move; default React.memo
+// shallow-compare would never skip. The custom comparator checks the
+// fields that drive the render — anything else (e.g. tls flag flapping)
+// is so rare it is fine to repaint when it changes.
+const ClientRow = memo(
+  function ClientRow({
+    client: c,
+    qps,
+    tps,
+  }: {
+    client: ClientDto;
+    qps: number | null;
+    tps: number | null;
+  }) {
+    return (
+      <tr className="border-b border-border hover:bg-surface-2">
+        <td className="px-3 py-1.5 font-mono text-xs">{c.client_id}</td>
+        <td className="px-3 py-1.5 font-mono text-xs text-text-muted">{c.addr || "—"}</td>
+        <td className="px-3 py-1.5 text-xs">{c.user}@{c.database}</td>
+        <td className="px-3 py-1.5 text-xs text-text-muted">{c.application_name || "—"}</td>
+        <td className="px-3 py-1.5 text-xs">
+          <span
+            className={
+              c.state === "active"
+                ? "text-success"
+                : c.state === "waiting"
+                  ? "text-warning"
+                  : "text-text-muted"
+            }
+          >
+            {c.state}
+          </span>
+        </td>
+        <td className="px-3 py-1.5 text-right text-xs text-text-muted">
+          {c.wait && c.wait !== "none" ? (
+            <span title={`reason: ${c.wait}`}>
+              {c.wait_ms ? `${c.wait_ms} ms` : c.wait}
+            </span>
+          ) : (
+            "—"
+          )}
+        </td>
+        <td className="px-3 py-1.5 text-right">{c.current_query_age_ms || "—"}</td>
+        <td className="px-3 py-1.5 text-right">{c.age_seconds}</td>
+        <td className="px-3 py-1.5 text-right">
+          {qps === null ? "—" : qps.toFixed(1)}
+        </td>
+        <td className="px-3 py-1.5 text-right">
+          {tps === null ? "—" : tps.toFixed(1)}
+        </td>
+        <td className="px-3 py-1.5 text-right">{c.queries_total}</td>
+        <td
+          className={`px-3 py-1.5 text-right ${c.errors_total > 0 ? "text-warning" : ""}`}
+        >
+          {c.errors_total}
+        </td>
+        <td
+          className="px-3 py-1.5 text-xs text-text-muted"
+          title={c.tls ? "TLS" : "plaintext"}
+        >
+          {c.tls ? "✓" : ""}
+        </td>
+      </tr>
+    );
+  },
+  (prev, next) =>
+    prev.client.client_id === next.client.client_id &&
+    prev.client.state === next.client.state &&
+    prev.client.wait === next.client.wait &&
+    prev.client.wait_ms === next.client.wait_ms &&
+    prev.client.current_query_age_ms === next.client.current_query_age_ms &&
+    prev.client.age_seconds === next.client.age_seconds &&
+    prev.client.queries_total === next.client.queries_total &&
+    prev.client.errors_total === next.client.errors_total &&
+    prev.client.application_name === next.client.application_name &&
+    prev.client.user === next.client.user &&
+    prev.client.database === next.client.database &&
+    prev.client.addr === next.client.addr &&
+    prev.client.tls === next.client.tls &&
+    prev.qps === next.qps &&
+    prev.tps === next.tps,
+);

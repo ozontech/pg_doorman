@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
+import {
+  AppWindow,
+  Boxes,
+  Database,
+  LayoutDashboard,
+  ScrollText,
+  Settings,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { getSsoTokenUsername } from "../lib/jwt";
@@ -12,7 +22,7 @@ import type {
   VersionDto,
 } from "../types";
 
-type NavItem = { to: string; label: string; personal?: boolean };
+type NavItem = { to: string; label: string; icon: LucideIcon; personal?: boolean };
 
 function signedInLabel(
   basic: { username: string } | null,
@@ -27,16 +37,16 @@ function signedInLabel(
 }
 
 const NAV: NavItem[] = [
-  { to: "/overview", label: "Overview" },
-  { to: "/pools", label: "Pools" },
-  { to: "/clients", label: "Clients" },
-  { to: "/apps", label: "Apps" },
+  { to: "/overview", label: "Overview", icon: LayoutDashboard },
+  { to: "/pools", label: "Pools", icon: Database },
+  { to: "/clients", label: "Clients", icon: Users },
+  { to: "/apps", label: "Apps", icon: AppWindow },
   // Caches exposes prepared-statement texts; logs leak SQL through the
   // operator stream. Both are personal-data paths and only Sso/Admin
   // roles can fetch them — hide the links for anonymous viewers.
-  { to: "/caches", label: "Caches", personal: true },
-  { to: "/logs", label: "Logs", personal: true },
-  { to: "/config", label: "Config" },
+  { to: "/caches", label: "Caches", icon: Boxes, personal: true },
+  { to: "/logs", label: "Logs", icon: ScrollText, personal: true },
+  { to: "/config", label: "Config", icon: Settings },
   // War room (/wall) intentionally omitted from the sidebar. It is a
   // kiosk view of the same Overview data, reached from the Overview
   // hero ("Open war room" button). Surfacing it as a top-level link
@@ -229,22 +239,26 @@ export function Sidebar() {
 
       <ul className="flex-1 px-2 pb-3 pt-3">
         {NAV.filter((item) => !item.personal || role !== "anonymous").map(
-          (item) => (
-            <li key={item.to}>
-              <NavLink
-                to={item.to}
-                className={({ isActive }) =>
-                  `block border-l-2 px-4 py-2 text-sm font-semibold transition-colors ${
-                    isActive
-                      ? "border-accent bg-accent/10 text-text"
-                      : "border-transparent text-text-muted hover:border-border-strong hover:text-text"
-                  }`
-                }
-              >
-                {item.label}
-              </NavLink>
-            </li>
-          ),
+          (item) => {
+            const Icon = item.icon;
+            return (
+              <li key={item.to}>
+                <NavLink
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2.5 border-l-2 px-4 py-2 text-sm font-medium transition-colors ${
+                      isActive
+                        ? "border-accent bg-accent/10 text-text"
+                        : "border-transparent text-text-muted hover:border-border-strong hover:text-text"
+                    }`
+                  }
+                >
+                  <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>{item.label}</span>
+                </NavLink>
+              </li>
+            );
+          },
         )}
       </ul>
 
@@ -316,10 +330,23 @@ function SignalsBlock({
   return (
     <div className="space-y-3 border-b border-border px-4 py-3">
       <div className="flex items-center gap-2">
-        <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-text">
-          {dotLabel}
+        {/* Live pulse: a single dot for the verdict plus a soft ping ring
+            around it so the operator can tell at a glance that data is
+            still flowing. Pulse animation is the same regardless of
+            severity; the dot colour carries the verdict. */}
+        <span className="relative inline-flex h-2 w-2" aria-hidden="true">
+          <span
+            className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${
+              health?.state === "critical"
+                ? "bg-danger"
+                : health?.state === "degraded"
+                  ? "bg-warning"
+                  : "bg-success"
+            }`}
+          />
+          <span className={`relative inline-flex h-2 w-2 rounded-full ${dotClass}`} />
         </span>
+        <span className="text-xs font-semibold text-text">{dotLabel}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
