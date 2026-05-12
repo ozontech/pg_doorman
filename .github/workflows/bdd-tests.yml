@@ -273,36 +273,38 @@ jobs:
           command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD suite (${{ matrix.suite.name }})
-        # `--network=host` is the load-bearing flag. The previous run
-        # of this step used the default bridge network: the container
-        # inherits DNS from the docker daemon, which on a GitHub-hosted
-        # runner does not always re-export the host's systemd-resolved
-        # stub at 127.0.0.53. When that bridge DNS path is wedged,
-        # every cargo attempt inside the container fails with
-        # `Could not resolve host: index.crates.io` even though the
-        # host runner itself can reach crates.io fine. Sharing the
-        # host's network stack short-circuits the bridge resolver,
-        # which is the real root cause; `--network=host` is also safe
-        # here because each matrix entry runs on its own ephemeral
-        # runner, so no two BDD suites contend for the same loopback
-        # ports.
+        # `--network=host` is the load-bearing flag. With the default
+        # bridge network, the container inherits DNS from the docker
+        # daemon, which on a GitHub-hosted runner does not always
+        # re-export the host's systemd-resolved stub at 127.0.0.53.
+        # When the bridge resolver is wedged for a job, every cargo
+        # attempt inside the container fails with
+        # `Could not resolve host: index.crates.io` and stays wedged
+        # for minutes — both cargo's own retries and an outer step
+        # retry hit the same dead resolver. Outer retries do not
+        # rescue that case (we tried 3×30 s in a previous commit and
+        # the job still drained all three attempts on the wedged
+        # resolver). Sharing the host's network stack short-circuits
+        # the bridge resolver entirely; this is safe because each
+        # matrix entry runs on its own ephemeral runner, so no two
+        # BDD suites contend for the same loopback ports.
         #
-        # `CARGO_NET_RETRY=10` and `CARGO_HTTP_TIMEOUT=60` upgrade the
-        # cargo-internal retry loop for the residual case where DNS is
-        # fine but `index.crates.io` itself rate-limits / 5xx's mid-
-        # download. The defaults are 2 retries / 30 s timeout, which
-        # gives cargo about 25 s of attempts before it gives up —
-        # the new values triple that headroom.
+        # `CARGO_NET_RETRY=10` (default 2) and `CARGO_HTTP_TIMEOUT=60`
+        # (default 30 s) widen cargo's internal network retry loop for
+        # the residual case where the host's own resolver works but
+        # `index.crates.io` itself rate-limits or 5xx's mid-fetch.
         #
-        # `max_attempts: 3` plus a 30 s wait between them is the
-        # outer safety net for the rare case where the entire host
-        # runner is mid-flake. The third attempt only fires when the
-        # first two failed, so single-attempt successes pay nothing.
+        # The outer 2-attempt retry remains for the timing-sensitive
+        # BDD flake family (SCRAM passthrough reconnect after retain,
+        # sleep-based lifecycle waits) that occasionally loses its
+        # margin under cross-job contention. It is not a network
+        # safety net — that responsibility moved to `--network=host`
+        # plus the cargo env vars above.
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
-          max_attempts: 3
-          retry_wait_seconds: 30
+          max_attempts: 2
+          retry_wait_seconds: 5
           command: |
             docker run --rm \
               --network=host \
