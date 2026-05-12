@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
 import { Collapsible } from "../components/Collapsible";
@@ -451,6 +451,15 @@ export default function Overview() {
       <PageHero
         title="Overview"
         description="Pooler-wide pulse. The sidebar carries the live health, alert count, and rate. Click a Golden signals tile to open the 1-hour panel with p50/p95/p99 and event overlays."
+        actions={
+          <Link
+            to="/wall"
+            className="border border-border-strong px-3 py-1.5 text-xs uppercase tracking-wider text-text-muted transition-colors hover:border-accent hover:text-accent"
+            title="Open kiosk view (large KPIs + heatmap)"
+          >
+            war room ↗
+          </Link>
+        }
       />
       <div className="mx-auto w-full max-w-[1680px] space-y-6 px-6 py-6">
         <ProcessBar process={processPoll.data} onOpenThreads={() => openPanelById("threads")} onOpenRss={() => openPanelById("rss")} />

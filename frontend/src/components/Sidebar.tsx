@@ -37,7 +37,11 @@ const NAV: NavItem[] = [
   { to: "/caches", label: "Caches", personal: true },
   { to: "/logs", label: "Logs", personal: true },
   { to: "/config", label: "Config" },
-  { to: "/wall", label: "War room" },
+  // War room (/wall) intentionally omitted from the sidebar. It is a
+  // kiosk view of the same Overview data, reached from the Overview
+  // hero ("Open war room" button). Surfacing it as a top-level link
+  // duplicated the operator's mental model and pushed the nav past
+  // 7±2 entries.
 ];
 
 // 3 s tick: signals visible on every page, not incident-grade. Backend

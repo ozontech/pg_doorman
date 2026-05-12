@@ -12,6 +12,7 @@ import type {
   LogLevelDto,
   PoolCoordinatorDto,
   PoolScalingDto,
+  PoolsDto,
   SocketsDto,
   UsersDto,
 } from "../types";
@@ -40,6 +41,9 @@ export default function ConfigState() {
       </Collapsible>
       <Collapsible id="config-users" title="users">
         <UsersPanel />
+      </Collapsible>
+      <Collapsible id="config-startup-parameters" title="startup parameters">
+        <StartupParametersPanel />
       </Collapsible>
       <Collapsible id="config-sockets" title="sockets">
         <SocketsPanel />
@@ -386,6 +390,83 @@ function KV({
         {value}
       </dd>
     </div>
+  );
+}
+
+function StartupParametersPanel() {
+  // Reuses /api/pools — each pool already carries its resolved startup
+  // parameters cascade in the same payload that drives the Pools list,
+  // so no extra endpoint is needed for the overview. Slow poll: declared
+  // values change only on SIGHUP and the operator does not need 1.5 s
+  // freshness here.
+  const poll = useEndpoint<PoolsDto>("/api/pools", SLOW_MS);
+  const rows = useMemo(() => {
+    const out: {
+      poolId: string;
+      parameter: string;
+      value: string;
+      source: string;
+      state: string;
+    }[] = [];
+    for (const pool of poll.data?.pools ?? []) {
+      for (const p of pool.startup_parameters ?? []) {
+        out.push({
+          poolId: pool.id,
+          parameter: p.parameter,
+          value: p.value ?? "***",
+          source: p.source,
+          state: p.state ?? "applied",
+        });
+      }
+    }
+    return out;
+  }, [poll.data]);
+  return (
+    <PanelShell loading={!poll.data} error={poll.error}>
+      {rows.length === 0 ? (
+        <p className="px-6 py-4 text-sm text-text-dim">
+          No pool has operator-supplied startup parameters. Configure them under
+          <code className="mx-1 font-mono">[pools.&lt;db&gt;.&lt;user&gt;] startup_parameters</code>
+          or
+          <code className="mx-1 font-mono">[databases.&lt;db&gt;] startup_parameters</code>
+          to override the libpq defaults for new backend connections.
+        </p>
+      ) : (
+        <table className="w-full text-sm tabular">
+          <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-6 py-2 text-left">Pool</th>
+              <th className="px-3 py-2 text-left">Parameter</th>
+              <th className="px-3 py-2 text-left">Value</th>
+              <th className="px-3 py-2 text-left">Source</th>
+              <th className="px-3 py-2 text-left">State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const stateTone =
+                r.state === "applied"
+                  ? "text-text-dim"
+                  : r.state === "dropped_due_to_budget"
+                    ? "text-danger"
+                    : "text-warning";
+              return (
+                <tr
+                  key={`${r.poolId}-${r.parameter}`}
+                  className="border-b border-border/40 hover:bg-surface-2"
+                >
+                  <td className="px-6 py-1.5 font-mono text-xs">{r.poolId}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs">{r.parameter}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs">{r.value}</td>
+                  <td className="px-3 py-1.5 text-xs text-text-muted">{r.source}</td>
+                  <td className={`px-3 py-1.5 text-xs ${stateTone}`}>{r.state}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </PanelShell>
   );
 }
 
