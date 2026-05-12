@@ -95,7 +95,24 @@ jobs:
               > grafana/demo/grafana/provisioning/dashboards/pg_doorman.json
 
       - name: Run smoke + ground-truth against grafana/demo
-        run: make dashboard-validate-ci
+        # Demo TPS warms up at different speed across shared GitHub
+        # runners, so a single attempt occasionally hits a panel that
+        # has not yet populated its rate window. Retry twice with a
+        # cleanup tear-down between attempts before failing the job.
+        run: |
+          set -e
+          attempt=1
+          max_attempts=3
+          until make dashboard-validate-ci; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                  echo "dashboard-validate-ci failed after $attempt attempts" >&2
+                  exit 1
+              fi
+              echo "dashboard-validate-ci attempt $attempt failed; tearing down and retrying" >&2
+              (cd grafana/demo && docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v) || true
+              sleep 5
+              attempt=$((attempt + 1))
+          done
 
       - name: Collect demo logs on failure
         if: failure()
