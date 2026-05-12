@@ -22,7 +22,22 @@ pub const MAX_OPERATOR_BUDGET: usize = MAX_STARTUP_PACKET_SIZE - RESERVED_HEADRO
 
 /// Keys pg_doorman manages itself or that PG treats specially in the startup
 /// packet. Operator must not put them in `startup_parameters`.
-pub const RESERVED_KEYS: &[&str] = &["user", "database", "replication", "options"];
+///
+/// `role` and `session_authorization` are blocked because they affect
+/// PostgreSQL authorization state, not session defaults: they become the
+/// `reset_val` for that backend, so a `RESET ROLE` after some `SET ROLE`
+/// returns to the operator-injected role instead of the login role
+/// pg_doorman authenticated as. Letting these through `startup_parameters`
+/// would break the contract that the cascade only configures benign
+/// session defaults.
+pub const RESERVED_KEYS: &[&str] = &[
+    "user",
+    "database",
+    "replication",
+    "options",
+    "role",
+    "session_authorization",
+];
 pub const RESERVED_PREFIX: &str = "_pq_.";
 
 /// Allowed GUC name shape: ASCII letter / underscore, then letters /
@@ -211,6 +226,46 @@ mod tests {
     #[test]
     fn reserved_database_rejected_case_insensitive() {
         let err = validate(&m(&[("DATABASE", "x")]), "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
+    }
+
+    #[test]
+    fn reserved_role_rejected() {
+        // `role` changes PG authorization state, not a session default.
+        // Letting it through startup_parameters would mean RESET ROLE
+        // restores the operator-injected role, not the login role.
+        let err = validate(&m(&[("role", "admin")]), "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
+    }
+
+    #[test]
+    fn reserved_role_rejected_case_insensitive() {
+        let err = validate(&m(&[("ROLE", "admin")]), "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
+    }
+
+    #[test]
+    fn reserved_session_authorization_rejected() {
+        let err = validate(&m(&[("session_authorization", "admin")]), "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
+    }
+
+    #[test]
+    fn reserved_session_authorization_rejected_case_insensitive() {
+        let err = validate(&m(&[("Session_Authorization", "admin")]), "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
+    }
+
+    #[test]
+    fn validate_entry_rejects_role() {
+        // auth_query JSON entries go through validate_entry, not validate.
+        let err = validate_entry("role", "admin", "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
+    }
+
+    #[test]
+    fn validate_entry_rejects_session_authorization() {
+        let err = validate_entry("session_authorization", "admin", "scope").unwrap_err();
         assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
     }
 
