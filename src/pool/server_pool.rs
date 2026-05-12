@@ -639,6 +639,15 @@ impl ServerPool {
             }
         };
 
+        // Resolve the startup_parameters cascade once for the whole
+        // fallback round. Without this, a wave of N candidates would
+        // do N×{auth_query peek, BTreeMap clone, validation walk}
+        // for one client checkout — and the merge result is host-
+        // independent, so the per-candidate work was pure waste.
+        // `try_fallback_target` borrows this map for both the plain
+        // attempt and the optional sslmode=allow TLS retry.
+        let startup_parameters_round = self.resolved_startup_parameters();
+
         // Whitelist-cache hit: single target, race-of-one is just a startup.
         if matches!(source, super::fallback::TargetSource::WhitelistCache) {
             let target = match targets.into_iter().next() {
@@ -663,7 +672,10 @@ impl ServerPool {
             crate::web::metrics::FALLBACK_CONNECTIONS_TOTAL
                 .with_label_values(&[&self.address.pool_name])
                 .inc();
-            return match self.try_fallback_target(&target).await {
+            return match self
+                .try_fallback_target(&target, &startup_parameters_round)
+                .await
+            {
                 Ok(server) => {
                     fallback.set_whitelisted(target.host, target.port, target.role);
                     (Ok(server), source)
@@ -694,7 +706,13 @@ impl ServerPool {
                 format_target_list(&sync_targets),
             );
             if let Some(server) = self
-                .race_wave(fallback, &sync_targets, &mut summary, source)
+                .race_wave(
+                    fallback,
+                    &sync_targets,
+                    &mut summary,
+                    source,
+                    &startup_parameters_round,
+                )
                 .await
             {
                 return (Ok(server), source);
@@ -722,7 +740,13 @@ impl ServerPool {
                 format_target_list(&other_targets),
             );
             if let Some(server) = self
-                .race_wave(fallback, &other_targets, &mut summary, source)
+                .race_wave(
+                    fallback,
+                    &other_targets,
+                    &mut summary,
+                    source,
+                    &startup_parameters_round,
+                )
                 .await
             {
                 return (Ok(server), source);
@@ -764,6 +788,7 @@ impl ServerPool {
         targets: &[super::fallback::FallbackTarget],
         summary: &mut FailureSummary,
         source: super::fallback::TargetSource,
+        startup_parameters: &BTreeMap<String, String>,
     ) -> Option<Server> {
         // We only count "we attempted to use fallback" once per wave, on
         // entry — not per candidate. The metric measures fallback usage
@@ -776,7 +801,7 @@ impl ServerPool {
 
         let futures: Vec<futures::future::BoxFuture<'_, Result<Server, Error>>> = targets
             .iter()
-            .map(|t| Box::pin(self.try_fallback_target(t)) as _)
+            .map(|t| Box::pin(self.try_fallback_target(t, startup_parameters)) as _)
             .collect();
 
         match race_first_success(futures).await {
@@ -830,6 +855,7 @@ impl ServerPool {
     async fn try_fallback_target(
         &self,
         target: &super::fallback::FallbackTarget,
+        startup_parameters: &BTreeMap<String, String>,
     ) -> Result<Server, Error> {
         // Use the fallback_connect_timeout for fallback startup deadlines —
         // the same scale as the TCP-probe and per-candidate cooldown window.
@@ -849,12 +875,12 @@ impl ServerPool {
         ));
         stats.register(stats.clone());
 
-        // Resolve once: the optional sslmode=allow retry below must see the
-        // same map as the plain attempt for the same reasons noted in
-        // `create()`. The fallback target's pool name matches `self`, so
+        // `startup_parameters` is resolved once per fallback round by
+        // the caller (`run_fallback_round` / `race_wave`), so a wave
+        // of N candidates does N×0 cascade resolves and merges instead
+        // of N×1. The fallback target's pool name matches `self`, so
         // the per-pool cascade still applies even though we are talking
         // to a different physical host than `self.address.host`.
-        let startup_parameters = self.resolved_startup_parameters();
 
         let result = startup_with_timeout(
             fallback_timeout,
@@ -871,7 +897,7 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
-                &startup_parameters,
+                startup_parameters,
             ),
         )
         .await;
@@ -922,7 +948,7 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
-                    &startup_parameters,
+                    startup_parameters,
                 ),
             )
             .await;
