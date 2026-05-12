@@ -83,7 +83,7 @@ export default function Wall() {
     // Stale-tab guard: a gap > 5 polling intervals means the browser
     // throttled the timer or the laptop slept; drop the buffer instead
     // of pretending the metric was flat through the pause.
-    if (prevRaw && ov.ts - prevRaw.ts > 5 * POLL_MS) {
+    if (prevRaw && ov.ts - prevRaw.ts > 90_000) {
       rawHistory.replace([]);
       sampleHistory.replace([]);
       satHistory.replace([]);

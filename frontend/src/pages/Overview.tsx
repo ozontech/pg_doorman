@@ -182,11 +182,15 @@ export default function Overview() {
     const ov = overviewPoll.data;
     const pools = poolsPoll.data;
     const prevRaw = rawHistory.history[rawHistory.history.length - 1];
-    // Stale-tab guard: if the gap since the last poll is bigger than five
-    // intervals (browser throttled the timer or the laptop slept), drop the
-    // history. Otherwise the chart bridges the gap with a flat line and
-    // misrepresents the state during the pause as steady-state activity.
-    if (prevRaw && ov.ts - prevRaw.ts > 5 * POLL_MS) {
+    // Stale-tab guard: if the gap since the last poll is bigger than the
+    // window below, the laptop probably slept or the operator left the
+    // tab for an extended time — drop the history so the chart does not
+    // bridge a multi-hour gap with a flat line. The previous 5 × 1.5 s
+    // window (7.5 s) was too aggressive: an operator visiting the war
+    // room for ten seconds and coming back saw every sparkline reset
+    // to "collecting samples · 1/120". 90 s keeps the safety net for
+    // real sleep events while letting brief navigation be invisible.
+    if (prevRaw && ov.ts - prevRaw.ts > 90_000) {
       rawHistory.replace([]);
       sampleHistory.replace([]);
       poolErrorsHistory.replace([]);

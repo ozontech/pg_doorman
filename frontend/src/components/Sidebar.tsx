@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   AppWindow,
+  BookOpen,
   Boxes,
   Database,
+  ExternalLink,
   LayoutDashboard,
   ScrollText,
   Settings,
@@ -271,6 +273,17 @@ export function Sidebar() {
       )}
 
       <div className="space-y-2 border-t border-border px-4 py-3 text-sm text-text-dim">
+        <a
+          href="https://ozontech.github.io/pg_doorman/"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="flex items-center gap-2 text-text-muted hover:text-accent"
+          title="Open pg_doorman documentation in a new tab"
+        >
+          <BookOpen size={14} strokeWidth={1.75} aria-hidden="true" />
+          <span>Documentation</span>
+          <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" className="ml-auto" />
+        </a>
         {(basic || ssoToken) ? (
           <button
             type="button"
