@@ -48,6 +48,48 @@ fn is_trusted(addr: IpAddr, trusted: &[IpNet]) -> bool {
     trusted.iter().any(|net| net.contains(&addr))
 }
 
+/// Decide whether the inbound request reached pg_doorman over a secure
+/// transport. The listener itself terminates plain HTTP, so the only
+/// honest signal is the proxy's `X-Forwarded-Proto` — and we trust it
+/// only when the TCP peer is in `trusted_proxies`. An attacker who
+/// connects directly without going through the proxy controls every
+/// header they want to send; the trusted-peer gate is what keeps them
+/// from forging `https` to bypass `sso_require_https`.
+///
+/// Multi-hop chains (`X-Forwarded-Proto: https, http`) are read
+/// left-to-right and accepted only when every hop is `https` —
+/// any `http` segment downgrades the result. This matches the access
+/// log's right-to-left walk in spirit: the inner-most hop closest to
+/// pg_doorman is the one we cannot verify, so a chain that includes
+/// a plain leg is treated as plain.
+pub fn request_is_secure(
+    peer_addr: Option<SocketAddr>,
+    x_forwarded_proto: Option<&str>,
+    trusted_proxies: &[IpNet],
+) -> bool {
+    let Some(peer) = peer_addr else {
+        return false;
+    };
+    if !is_trusted(peer.ip(), trusted_proxies) {
+        return false;
+    }
+    let Some(value) = x_forwarded_proto else {
+        return false;
+    };
+    let mut seen_any = false;
+    for hop in value.split(',') {
+        let hop = hop.trim();
+        if hop.is_empty() {
+            continue;
+        }
+        seen_any = true;
+        if !hop.eq_ignore_ascii_case("https") {
+            return false;
+        }
+    }
+    seen_any
+}
+
 /// Walks `X-Forwarded-For` right-to-left, skipping trusted IPs.
 /// Returns the first untrusted address found, or `None`.
 fn walk_xff(xff: Option<&str>, trusted: &[IpNet]) -> Option<IpAddr> {
@@ -196,5 +238,86 @@ mod tests {
             &[net("10.0.0.0/8")],
         );
         assert_eq!(out, "198.51.100.42");
+    }
+
+    #[test]
+    fn request_is_secure_requires_trusted_peer_and_https() {
+        assert!(request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            Some("https"),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_rejects_untrusted_peer() {
+        assert!(!request_is_secure(
+            Some(sock("203.0.113.7:443")),
+            Some("https"),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_rejects_missing_header() {
+        assert!(!request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            None,
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_rejects_http_value() {
+        assert!(!request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            Some("http"),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_case_insensitive() {
+        assert!(request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            Some("HTTPS"),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_downgrades_on_mixed_chain() {
+        assert!(!request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            Some("https, http"),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_accepts_chain_of_https() {
+        assert!(request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            Some("https, https"),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_rejects_empty_header() {
+        assert!(!request_is_secure(
+            Some(sock("10.0.0.1:443")),
+            Some("   ,   "),
+            &[net("10.0.0.0/8")],
+        ));
+    }
+
+    #[test]
+    fn request_is_secure_rejects_when_no_peer() {
+        assert!(!request_is_secure(
+            None,
+            Some("https"),
+            &[net("10.0.0.0/8")]
+        ));
     }
 }

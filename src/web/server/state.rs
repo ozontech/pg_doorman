@@ -41,6 +41,13 @@ pub struct WebServerOptions {
     /// "SSO grants read-only access" when the operator may actually
     /// land in Admin via group membership.
     pub sso_admin_groups_configured: bool,
+    /// `true` when `[web].sso_require_https = true`. The mux rejects
+    /// SSO credentials (Bearer / cookie / query) on requests that did
+    /// not arrive over HTTPS, identified by a trusted-proxy peer plus
+    /// `X-Forwarded-Proto: https`. Defaults to `false` so deployments
+    /// where the SSO proxy reaches pg_doorman over a private HTTP leg
+    /// keep working without configuration changes.
+    pub sso_require_https: bool,
 }
 
 impl WebServerOptions {
@@ -69,6 +76,7 @@ impl WebServerOptions {
             sso_config_error,
             trusted_proxies: cfg.web.trusted_proxies.clone(),
             sso_admin_groups_configured: !cfg.web.sso_admin_groups.is_empty(),
+            sso_require_https: cfg.web.sso_require_https,
         }
     }
 }

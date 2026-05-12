@@ -1841,3 +1841,10 @@ fields:
         ru: "Список групп, которые получают роль Admin (могут управлять пулами)."
       doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps SSO users read-only."
       default: "[]"
+
+    sso_require_https:
+      config:
+        en: "Reject SSO credentials presented over plain HTTP."
+        ru: "Отклонять SSO credentials, пришедшие по plain HTTP."
+      doc: "When true, Bearer/cookie/query SSO tokens are accepted only if the request peer is in trusted_proxies and the proxy forwarded X-Forwarded-Proto: https. Defaults to false so SSO works through a TLS-terminating proxy reaching pg_doorman over a private HTTP leg. Enable on shared networks where the proxy → pg_doorman hop is exposed."
+      default: "false"

@@ -482,6 +482,10 @@ sso_groups_claim = "groups"
 # Default: []
 # sso_admin_groups = ["pg-doorman-admins"]
 
+# Reject SSO credentials presented over plain HTTP.
+# Default: false
+sso_require_https = false
+
 # ############################################################################
 # TALOS AUTHENTICATION (Optional)
 # ############################################################################

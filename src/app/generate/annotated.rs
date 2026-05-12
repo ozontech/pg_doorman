@@ -1239,6 +1239,10 @@ fn write_web_section(w: &mut ConfigWriter, web: &Web) {
         w.kv(fi, "sso_admin_groups", &format!("[{rendered}]"));
     }
     w.blank();
+
+    write_field_comment(w, fi, "web", "sso_require_https");
+    w.kv(fi, "sso_require_https", &web.sso_require_https.to_string());
+    w.blank();
 }
 
 fn write_talos_section(w: &mut ConfigWriter) {

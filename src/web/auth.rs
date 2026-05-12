@@ -59,6 +59,32 @@ impl AuthOutcome {
     }
 }
 
+/// Whether the listener should accept SSO credentials presented over a
+/// plain-HTTP request. `request_is_secure` is the listener's verdict
+/// after combining the TCP peer with `X-Forwarded-Proto` (see
+/// [`crate::web::peer::request_is_secure`]); `require_https` is the
+/// operator's `[web].sso_require_https` knob.
+///
+/// Default policy (`require_https=false`) keeps backward compatibility:
+/// every deployment where a TLS-terminating proxy reaches pg_doorman
+/// over a private HTTP leg keeps working without configuration changes.
+/// Opt-in `require_https=true` rejects SSO credentials on plain HTTP so
+/// the JWT cannot leak between the proxy and pg_doorman.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SsoTransportPolicy {
+    pub request_is_secure: bool,
+    pub require_https: bool,
+}
+
+impl SsoTransportPolicy {
+    /// Permits SSO credentials when the operator has not opted in to
+    /// HTTPS-only SSO, or when the request actually arrived over a
+    /// trusted HTTPS hop.
+    fn permits_sso(self) -> bool {
+        !self.require_https || self.request_is_secure
+    }
+}
+
 /// Classify an inbound HTTP request into an `AuthOutcome`. Recognises:
 ///
 /// - `Authorization: Basic <b64(user:pass)>` against the admin
@@ -76,6 +102,15 @@ impl AuthOutcome {
 /// credentials to deny timing oracles. Both username and password legs
 /// are checked together without short-circuit (see the `&` operator
 /// inside the implementation).
+///
+/// `sso_transport` decides whether the SSO branches run at all. When
+/// the operator set `[web].sso_require_https = true` and the request
+/// did not arrive over a trusted HTTPS hop, every SSO source is
+/// skipped and the function falls through to either `Rejected` (an
+/// SSO credential was attempted) or `Anonymous` (no credentials at
+/// all). Basic credentials are unaffected — they are scheme-bound by
+/// `Authorization: Basic` and live or die on the constant-time
+/// compare above, regardless of transport.
 pub fn classify(
     authorization_header: Option<&str>,
     cookie_header: Option<&str>,
@@ -83,6 +118,7 @@ pub fn classify(
     admin_username: &str,
     admin_password: &str,
     sso: Option<&crate::web::sso::SsoRuntime>,
+    sso_transport: SsoTransportPolicy,
 ) -> AuthOutcome {
     let mut tried = false;
 
@@ -128,22 +164,42 @@ pub fn classify(
     // credential attempt when SSO is actually configured to consume
     // them; otherwise an Anonymous request to a public endpoint that
     // happens to carry such a cookie should still pass.
+    //
+    // Transport gate: when `sso_require_https` is on and the request
+    // did not arrive over a trusted HTTPS hop, skip every SSO branch
+    // and record one telemetry sample per blocked attempt. A request
+    // that carried only `Authorization: Bearer …` still sets
+    // `tried = true` above, so the caller falls through to a 401 —
+    // important so an operator chasing a misconfigured proxy gets a
+    // real failure instead of silent Anonymous behaviour.
     if let Some(rt) = sso {
-        if let Some(token) = bearer_token {
-            if let Ok(id) = rt.validate(token) {
-                return sso_outcome(id);
+        if sso_transport.permits_sso() {
+            if let Some(token) = bearer_token {
+                if let Ok(id) = rt.validate(token) {
+                    return sso_outcome(id);
+                }
             }
-        }
-        if let Some(token) = query_token {
-            tried = true;
-            if let Ok(id) = rt.validate(token) {
-                return sso_outcome(id);
+            if let Some(token) = query_token {
+                tried = true;
+                if let Ok(id) = rt.validate(token) {
+                    return sso_outcome(id);
+                }
             }
-        }
-        if let Some(token) = cookie_header.and_then(find_sso_cookie) {
-            tried = true;
-            if let Ok(id) = rt.validate(token) {
-                return sso_outcome(id);
+            if let Some(token) = cookie_header.and_then(find_sso_cookie) {
+                tried = true;
+                if let Ok(id) = rt.validate(token) {
+                    return sso_outcome(id);
+                }
+            }
+        } else {
+            let presented = bearer_token.is_some()
+                || query_token.is_some()
+                || cookie_header.and_then(find_sso_cookie).is_some();
+            if presented {
+                tried = true;
+                crate::web::metrics::WEB_SSO_VALIDATION_ERRORS
+                    .with_label_values(&["insecure_transport"])
+                    .inc();
             }
         }
     }
@@ -227,10 +283,43 @@ mod tests {
         .unwrap()
     }
 
+    fn permissive_transport() -> SsoTransportPolicy {
+        SsoTransportPolicy {
+            request_is_secure: false,
+            require_https: false,
+        }
+    }
+
+    fn https_only_transport(is_secure: bool) -> SsoTransportPolicy {
+        SsoTransportPolicy {
+            request_is_secure: is_secure,
+            require_https: true,
+        }
+    }
+
+    fn classify_default(
+        auth: Option<&str>,
+        cookie: Option<&str>,
+        query: Option<&str>,
+        admin_user: &str,
+        admin_pass: &str,
+        sso: Option<&SsoRuntime>,
+    ) -> AuthOutcome {
+        classify(
+            auth,
+            cookie,
+            query,
+            admin_user,
+            admin_pass,
+            sso,
+            permissive_transport(),
+        )
+    }
+
     #[test]
     fn anonymous_when_header_missing() {
         assert_eq!(
-            classify(None, None, None, "admin", "secret", None),
+            classify_default(None, None, None, "admin", "secret", None),
             AuthOutcome::Anonymous
         );
     }
@@ -239,7 +328,7 @@ mod tests {
     fn admin_when_credentials_match() {
         let header = format!("Basic {}", b64("admin:secret"));
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "secret", None),
+            classify_default(Some(&header), None, None, "admin", "secret", None),
             admin("admin")
         );
     }
@@ -248,7 +337,7 @@ mod tests {
     fn rejected_when_password_wrong() {
         let header = format!("Basic {}", b64("admin:wrong"));
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "secret", None),
+            classify_default(Some(&header), None, None, "admin", "secret", None),
             AuthOutcome::Rejected
         );
     }
@@ -257,7 +346,7 @@ mod tests {
     fn rejected_when_username_wrong() {
         let header = format!("Basic {}", b64("evil:secret"));
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "secret", None),
+            classify_default(Some(&header), None, None, "admin", "secret", None),
             AuthOutcome::Rejected
         );
     }
@@ -266,7 +355,7 @@ mod tests {
     fn rejected_when_scheme_not_basic_and_no_sso() {
         let header = format!("Bearer {}", b64("admin:secret"));
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "secret", None),
+            classify_default(Some(&header), None, None, "admin", "secret", None),
             AuthOutcome::Rejected
         );
     }
@@ -274,7 +363,7 @@ mod tests {
     #[test]
     fn rejected_when_base64_invalid() {
         assert_eq!(
-            classify(
+            classify_default(
                 Some("Basic !!!not-base64!!!"),
                 None,
                 None,
@@ -290,7 +379,7 @@ mod tests {
     fn rejected_when_decoded_has_no_colon() {
         let header = format!("Basic {}", b64("adminsecret"));
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "secret", None),
+            classify_default(Some(&header), None, None, "admin", "secret", None),
             AuthOutcome::Rejected
         );
     }
@@ -300,7 +389,7 @@ mod tests {
         let raw = base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, 0xfd]);
         let header = format!("Basic {}", raw);
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "secret", None),
+            classify_default(Some(&header), None, None, "admin", "secret", None),
             AuthOutcome::Rejected
         );
     }
@@ -310,7 +399,7 @@ mod tests {
         // Per RFC 7617 only the FIRST colon is the separator.
         let header = format!("Basic {}", b64("admin:p:a:s:s"));
         assert_eq!(
-            classify(Some(&header), None, None, "admin", "p:a:s:s", None),
+            classify_default(Some(&header), None, None, "admin", "p:a:s:s", None),
             admin("admin")
         );
     }
@@ -333,7 +422,7 @@ mod tests {
         let token = mint(600, "alice");
         let header = format!("Bearer {}", token);
         let rt = sso_rt(AllowedUsers::Any);
-        let out = classify(Some(&header), None, None, "admin", "secret", Some(&rt));
+        let out = classify_default(Some(&header), None, None, "admin", "secret", Some(&rt));
         match out {
             AuthOutcome::Sso(id) => {
                 assert_eq!(id.username, "alice");
@@ -347,7 +436,7 @@ mod tests {
     fn sso_query_token_works() {
         let token = mint(600, "alice");
         let rt = sso_rt(AllowedUsers::Any);
-        let out = classify(None, None, Some(&token), "admin", "secret", Some(&rt));
+        let out = classify_default(None, None, Some(&token), "admin", "secret", Some(&rt));
         assert!(matches!(out, AuthOutcome::Sso(_)));
     }
 
@@ -356,7 +445,7 @@ mod tests {
         let token = mint(600, "alice");
         let cookie = format!("foo=bar; sso_access_token={}; baz=qux", token);
         let rt = sso_rt(AllowedUsers::Any);
-        let out = classify(None, Some(&cookie), None, "admin", "secret", Some(&rt));
+        let out = classify_default(None, Some(&cookie), None, "admin", "secret", Some(&rt));
         assert!(matches!(out, AuthOutcome::Sso(_)));
     }
 
@@ -368,7 +457,7 @@ mod tests {
         let basic = format!("Basic {}", b64("admin:secret"));
         let cookie = format!("sso_access_token={}", token);
         let rt = sso_rt(AllowedUsers::Any);
-        let out = classify(
+        let out = classify_default(
             Some(&basic),
             Some(&cookie),
             None,
@@ -390,7 +479,7 @@ mod tests {
         let basic = format!("Basic {}", b64("admin:wrong"));
         let cookie = format!("sso_access_token={}", token);
         let rt = sso_rt(AllowedUsers::Any);
-        let out = classify(
+        let out = classify_default(
             Some(&basic),
             Some(&cookie),
             None,
@@ -408,7 +497,7 @@ mod tests {
         let token = mint(-600, "alice");
         let header = format!("Bearer {}", token);
         let rt = sso_rt(AllowedUsers::Any);
-        let out = classify(Some(&header), None, None, "admin", "secret", Some(&rt));
+        let out = classify_default(Some(&header), None, None, "admin", "secret", Some(&rt));
         assert_eq!(out, AuthOutcome::Rejected);
     }
 
@@ -419,7 +508,7 @@ mod tests {
         let rt = sso_rt(AllowedUsers::List(
             ["alice".to_string()].into_iter().collect(),
         ));
-        let out = classify(Some(&header), None, None, "admin", "secret", Some(&rt));
+        let out = classify_default(Some(&header), None, None, "admin", "secret", Some(&rt));
         assert_eq!(out, AuthOutcome::Rejected);
     }
 
@@ -430,7 +519,99 @@ mod tests {
         // so a credential was attempted but nothing took it: Rejected.
         let token = mint(600, "alice");
         let header = format!("Bearer {}", token);
-        let out = classify(Some(&header), None, None, "admin", "secret", None);
+        let out = classify_default(Some(&header), None, None, "admin", "secret", None);
         assert_eq!(out, AuthOutcome::Rejected);
+    }
+
+    #[test]
+    fn require_https_rejects_bearer_on_plain_http() {
+        // sso_require_https = true and the transport is not secure → the
+        // Bearer JWT is treated as a credential attempt that failed, so
+        // the caller gets a 401 instead of an Anonymous fall-through.
+        let token = mint(600, "alice");
+        let header = format!("Bearer {}", token);
+        let rt = sso_rt(AllowedUsers::Any);
+        let out = classify(
+            Some(&header),
+            None,
+            None,
+            "admin",
+            "secret",
+            Some(&rt),
+            https_only_transport(false),
+        );
+        assert_eq!(out, AuthOutcome::Rejected);
+    }
+
+    #[test]
+    fn require_https_accepts_bearer_on_secure_hop() {
+        let token = mint(600, "alice");
+        let header = format!("Bearer {}", token);
+        let rt = sso_rt(AllowedUsers::Any);
+        let out = classify(
+            Some(&header),
+            None,
+            None,
+            "admin",
+            "secret",
+            Some(&rt),
+            https_only_transport(true),
+        );
+        assert!(matches!(out, AuthOutcome::Sso(_)));
+    }
+
+    #[test]
+    fn require_https_does_not_block_basic() {
+        // Basic credentials live or die on the constant-time compare;
+        // sso_require_https only gates the SSO branches.
+        let header = format!("Basic {}", b64("admin:secret"));
+        let out = classify(
+            Some(&header),
+            None,
+            None,
+            "admin",
+            "secret",
+            None,
+            https_only_transport(false),
+        );
+        assert_eq!(out, admin("admin"));
+    }
+
+    #[test]
+    fn require_https_leaves_anonymous_alone_when_no_sso_attempt() {
+        // sso_require_https is on but the request carries no SSO source
+        // at all — it stays Anonymous so the caller can still hit a
+        // public read-only endpoint over plain HTTP.
+        let rt = sso_rt(AllowedUsers::Any);
+        let out = classify(
+            None,
+            None,
+            None,
+            "admin",
+            "secret",
+            Some(&rt),
+            https_only_transport(false),
+        );
+        assert_eq!(out, AuthOutcome::Anonymous);
+    }
+
+    #[test]
+    fn require_https_off_keeps_plain_http_sso_working() {
+        // The default policy (require_https = false) preserves
+        // backward-compatible behaviour for the SSO-proxy-fronts-pg_doorman
+        // deployment where the proxy → pg_doorman hop is private HTTP.
+        let token = mint(600, "alice");
+        let header = format!("Bearer {}", token);
+        let rt = sso_rt(AllowedUsers::Any);
+        let out = classify(
+            Some(&header),
+            None,
+            None,
+            "admin",
+            "secret",
+            Some(&rt),
+            permissive_transport(),
+        );
+        assert!(matches!(out, AuthOutcome::Sso(_)));
     }
 }

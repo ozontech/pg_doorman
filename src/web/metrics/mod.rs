@@ -1356,7 +1356,7 @@ pub(crate) static WEB_SSO_VALIDATION_ERRORS: Lazy<IntCounterVec> = Lazy::new(|| 
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_web_sso_validation_errors_total",
-            "JWT validation failures by reason: signature, expired, audience, no_username, allowlist. A sustained signature spike means the SSO proxy rotated keys without updating sso_public_key_file; allowlist spikes mean someone outside the allowlist is trying to log in.",
+            "JWT validation failures by reason: signature, expired, audience, no_username, allowlist, insecure_transport. A sustained signature spike means the SSO proxy rotated keys without updating sso_public_key_file; allowlist spikes mean someone outside the allowlist is trying to log in; insecure_transport means [web].sso_require_https is on and a JWT arrived without the trusted-proxy + X-Forwarded-Proto: https hop required to accept it.",
         ),
         &["reason"],
     )
