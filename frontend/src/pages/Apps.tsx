@@ -147,14 +147,12 @@ export default function Apps() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-3 py-2 text-left">
-              <InfoLabel tip="application_name as reported by the client at startup (libpq, JDBC, etc.). Use to identify which app is misbehaving.">
-                <span
-                  className="cursor-pointer"
-                  onClick={() => onSort("application_name")}
-                >
-                  application_name{sortIndicator("application_name")}
-                </span>
-              </InfoLabel>
+              <span
+                className="cursor-pointer"
+                onClick={() => onSort("application_name")}
+              >
+                application_name{sortIndicator("application_name")}
+              </span>
             </th>
             <th className="px-3 py-2 text-right">
               <InfoLabel tip="Currently-connected clients with this application_name.">

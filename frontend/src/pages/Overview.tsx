@@ -482,7 +482,7 @@ export default function Overview() {
             },
             related: ["waiting", "max_active_age_ms", "errors_per_s"],
             docsHref:
-              "https://ozontech.github.io/pg_doorman/concepts/admin-monitoring.html",
+              "https://ozontech.github.io/pg_doorman/tutorials/overview.html",
           }}
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -551,7 +551,7 @@ export default function Overview() {
             },
             related: ["max_active_age_ms", "wait_p95_ms"],
             docsHref:
-              "https://ozontech.github.io/pg_doorman/concepts/connection-pooling.html",
+              "https://ozontech.github.io/pg_doorman/tutorials/pool-pressure.html",
           }}
         >
           <AreaChart
@@ -577,7 +577,7 @@ export default function Overview() {
               },
               related: ["wait_p95_ms", "max_active_age_ms"],
               docsHref:
-                "https://ozontech.github.io/pg_doorman/concepts/connection-pooling.html",
+                "https://ozontech.github.io/pg_doorman/tutorials/pool-pressure.html",
             }}
           >
             <Heatmap rows={heatmapRows} />
@@ -599,7 +599,7 @@ export default function Overview() {
             },
             related: ["wait_p95_ms", "active_clients", "backend_p99"],
             docsHref:
-              "https://ozontech.github.io/pg_doorman/concepts/admin-monitoring.html",
+              "https://ozontech.github.io/pg_doorman/tutorials/troubleshooting.html",
           }}
         >
           <DualAxisChart

@@ -247,15 +247,11 @@ export default function Pools() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-4 py-2 text-left">
-              <InfoLabel tip={tip.poolId}>
-                <span className="cursor-pointer" onClick={() => onSort("id")}>
-                  Pool{sortIndicator("id")}
-                </span>
-              </InfoLabel>
+              <span className="cursor-pointer" onClick={() => onSort("id")}>
+                Pool{sortIndicator("id")}
+              </span>
             </th>
-            <th className="px-4 py-2 text-left">
-              <InfoLabel tip={tip.poolMode}>Mode</InfoLabel>
-            </th>
+            <th className="px-4 py-2 text-left">Mode</th>
             <th className="px-4 py-2 text-right">
               <InfoLabel tip={tip.saturation}>
                 <span className="cursor-pointer" onClick={() => onSort("saturation")}>
