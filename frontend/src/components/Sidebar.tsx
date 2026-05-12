@@ -13,6 +13,7 @@ import {
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { getSsoTokenUsername } from "../lib/jwt";
+import { ThemeToggle } from "./ThemeToggle";
 import { aggregateHealth } from "../lib/thresholds";
 import type {
   HottestDatabaseDto,
@@ -273,20 +274,23 @@ export function Sidebar() {
         </div>
       )}
 
-      <div className="space-y-2 border-t border-border px-4 py-3 text-xs text-text-dim">
-        {(basic || ssoToken) && (
+      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-text-dim">
+        {(basic || ssoToken) ? (
           <button
             type="button"
             onClick={() => {
               setBasic(null, false);
               setSsoToken(null);
             }}
-            className="font-mono uppercase tracking-wider text-text-muted hover:text-accent"
+            className="truncate text-text-muted hover:text-accent"
             title="Click to clear stored credentials and re-prompt."
           >
-            sign out ({signedInLabel(basic, ssoToken)})
+            sign out · {signedInLabel(basic, ssoToken)}
           </button>
+        ) : (
+          <span className="text-text-dim">anonymous</span>
         )}
+        <ThemeToggle />
       </div>
     </nav>
   );

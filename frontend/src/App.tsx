@@ -5,6 +5,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { SilentCallback } from "./components/SilentCallback";
 import { AdminAuthProvider } from "./hooks/useAdminAuth";
+import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import Overview from "./pages/Overview";
 import Pools from "./pages/Pools";
 import PoolDetail from "./pages/PoolDetail";
@@ -59,29 +60,38 @@ function RoutedShell() {
 
 function AppMain() {
   return (
-    <AdminAuthProvider>
-      <BrowserRouter>
-        <div className="flex min-h-screen bg-bg text-text">
-          <Sidebar />
-          <RoutedShell />
-        </div>
-        <CommandPalette />
-        <Toaster
-          position="top-right"
-          theme="dark"
-          duration={4000}
-          toastOptions={{
-            classNames: {
-              toast: "border border-border-strong bg-surface-2 text-text",
-              title: "font-medium",
-              description: "text-text-muted",
-              success: "border-success/40",
-              error: "border-danger/40",
-            },
-          }}
-        />
-      </BrowserRouter>
-    </AdminAuthProvider>
+    <ThemeProvider>
+      <AdminAuthProvider>
+        <BrowserRouter>
+          <div className="flex min-h-screen bg-bg text-text">
+            <Sidebar />
+            <RoutedShell />
+          </div>
+          <CommandPalette />
+          <AppToaster />
+        </BrowserRouter>
+      </AdminAuthProvider>
+    </ThemeProvider>
+  );
+}
+
+function AppToaster() {
+  const { resolved } = useTheme();
+  return (
+    <Toaster
+      position="top-right"
+      theme={resolved}
+      duration={4000}
+      toastOptions={{
+        classNames: {
+          toast: "border border-border-strong bg-surface text-text",
+          title: "font-medium",
+          description: "text-text-muted",
+          success: "border-success/40",
+          error: "border-danger/40",
+        },
+      }}
+    />
   );
 }
 
