@@ -322,6 +322,7 @@ mod tests {
             Duration::from_secs(5),
             false,
             None,
+            Arc::new(std::collections::BTreeMap::new()),
         );
         let database = Pool::builder(server_pool)
             .pool_name("test_db".to_string())
