@@ -693,6 +693,17 @@ impl ServerPool {
             "[{}@{}] fallback: all fallback candidates rejected ({summary_str})",
             self.address.username, self.address.pool_name,
         );
+        // If every candidate failed solely on operator-supplied startup
+        // parameter rejection, surface PG's actual sqlstate/message so the
+        // client gets the real error instead of a generic 53300. Healthy
+        // hosts are not blacklisted (mark_unhealthy skips this category),
+        // so the same misconfiguration will keep failing until the
+        // operator fixes the config.
+        if summary.all_startup_parameter_rejection() {
+            if let Some(err) = summary.into_last_err() {
+                return (Err(err), source);
+            }
+        }
         (
             Err(Error::ConnectError(format!(
                 "all fallback candidates rejected ({summary_str})"
@@ -1055,6 +1066,22 @@ impl FailureSummary {
         self.last_err = Some(err);
     }
 
+    /// True when the recorded failures are non-empty and contain only
+    /// `StartupParameterRejection`. Used to decide whether to surface the
+    /// original PG error to the client instead of the aggregate
+    /// "all candidates rejected" wrapper.
+    fn all_startup_parameter_rejection(&self) -> bool {
+        !self.counts.is_empty()
+            && self
+                .counts
+                .keys()
+                .all(|r| matches!(r, super::fallback::FailureReason::StartupParameterRejection))
+    }
+
+    fn into_last_err(self) -> Option<Error> {
+        self.last_err
+    }
+
     fn format(&self) -> String {
         if self.counts.is_empty() {
             return "no candidates".to_string();
@@ -1163,6 +1190,81 @@ mod tests {
 
     fn metrics_with_lifetime(lifetime_ms: u64) -> Metrics {
         Metrics::new(lifetime_ms, 0, 0)
+    }
+
+    fn rejection_err() -> Error {
+        Error::ServerStartupParameterRejection {
+            sqlstate: "22023".to_string(),
+            message: "invalid_value".to_string(),
+            server_identifier: crate::app::errors::ServerIdentifier::new(
+                "alice".to_string(),
+                "db",
+                "pool_a",
+            ),
+        }
+    }
+
+    fn timeout_err() -> Error {
+        Error::ConnectError("server startup timed out after 5s".to_string())
+    }
+
+    #[test]
+    fn all_startup_parameter_rejection_false_when_empty() {
+        let s = FailureSummary::default();
+        assert!(
+            !s.all_startup_parameter_rejection(),
+            "empty summary must not claim everyone rejected on startup parameter"
+        );
+    }
+
+    #[test]
+    fn all_startup_parameter_rejection_true_when_only_rejections() {
+        let mut s = FailureSummary::default();
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        assert!(s.all_startup_parameter_rejection());
+    }
+
+    #[test]
+    fn all_startup_parameter_rejection_false_when_mixed() {
+        let mut s = FailureSummary::default();
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        assert!(
+            !s.all_startup_parameter_rejection(),
+            "a single non-rejection cause must veto the shortcut"
+        );
+    }
+
+    #[test]
+    fn into_last_err_returns_most_recently_recorded() {
+        let mut s = FailureSummary::default();
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        match s.into_last_err() {
+            Some(Error::ServerStartupParameterRejection { sqlstate, .. }) => {
+                assert_eq!(sqlstate, "22023")
+            }
+            other => panic!("expected the last-recorded rejection, got {other:?}"),
+        }
     }
 
     #[test]

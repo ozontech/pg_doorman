@@ -53,6 +53,12 @@ pub enum FailureReason {
     ServerUnavailable,
     /// `startup_with_timeout` deadline elapsed.
     Timeout,
+    /// PostgreSQL rejected an operator-supplied startup parameter (the
+    /// real SQLSTATE lives in the carried Error). Distinct from
+    /// StartupError because the candidate host is healthy — only the
+    /// operator config is wrong — so it must not enter the per-host
+    /// cooldown that StartupError implies.
+    StartupParameterRejection,
     /// Anything else — should normally not happen on the fallback path.
     Other,
 }
@@ -64,8 +70,15 @@ impl FailureReason {
             FailureReason::StartupError => "startup_error",
             FailureReason::ServerUnavailable => "server_unavailable",
             FailureReason::Timeout => "timeout",
+            FailureReason::StartupParameterRejection => "startup_parameter_rejection",
             FailureReason::Other => "other",
         }
+    }
+
+    /// Whether `mark_unhealthy` should record a cooldown entry. Operator
+    /// config errors must not blacklist a healthy candidate.
+    pub fn warrants_host_cooldown(self) -> bool {
+        !matches!(self, FailureReason::StartupParameterRejection)
     }
 }
 
@@ -81,6 +94,9 @@ impl From<&Error> for FailureReason {
             Error::ConnectError(_) => FailureReason::ConnectError,
             Error::ServerUnavailableError(_, _) => FailureReason::ServerUnavailable,
             Error::ServerStartupError(_, _) => FailureReason::StartupError,
+            Error::ServerStartupParameterRejection { .. } => {
+                FailureReason::StartupParameterRejection
+            }
             _ => FailureReason::Other,
         }
     }
@@ -295,6 +311,14 @@ impl FallbackState {
         crate::web::metrics::FALLBACK_CANDIDATE_FAILURES_TOTAL
             .with_label_values(&[self.pool_name.as_str(), reason.as_str()])
             .inc();
+
+        // Operator config errors (e.g. invalid startup_parameter) must not
+        // blacklist a healthy candidate — the same misconfiguration will
+        // fail against every host until the operator fixes the config.
+        // Count it in the failure metric (above), then return.
+        if !reason.warrants_host_cooldown() {
+            return;
+        }
 
         let now = Instant::now();
         let base = self.connect_timeout;
@@ -886,6 +910,50 @@ mod tests {
                 id.clone(),
             )),
             FailureReason::ServerUnavailable
+        );
+        assert_eq!(
+            FailureReason::from(&Error::ServerStartupParameterRejection {
+                sqlstate: "22023".into(),
+                message: "invalid_value".into(),
+                server_identifier: id.clone(),
+            }),
+            FailureReason::StartupParameterRejection
+        );
+    }
+
+    #[test]
+    fn warrants_host_cooldown_skips_only_startup_parameter_rejection() {
+        // The whole point of the new helper: every host-related failure
+        // still cools the host down, only operator-config errors do not.
+        assert!(FailureReason::ConnectError.warrants_host_cooldown());
+        assert!(FailureReason::StartupError.warrants_host_cooldown());
+        assert!(FailureReason::ServerUnavailable.warrants_host_cooldown());
+        assert!(FailureReason::Timeout.warrants_host_cooldown());
+        assert!(FailureReason::Other.warrants_host_cooldown());
+        assert!(!FailureReason::StartupParameterRejection.warrants_host_cooldown());
+    }
+
+    #[test]
+    fn mark_unhealthy_skips_cooldown_for_startup_parameter_rejection() {
+        let state = FallbackState::new(
+            "test_pool_op_config_no_cooldown".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_millis(50),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::StartupParameterRejection);
+        // The candidate must remain eligible — the failure was the
+        // operator's config, not the host.
+        assert!(
+            state
+                .unhealthy_candidates
+                .lock()
+                .get(&("10.0.0.1".to_string(), 5432))
+                .is_none(),
+            "operator-config rejection must not record a cooldown entry"
         );
     }
 
