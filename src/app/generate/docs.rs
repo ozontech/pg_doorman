@@ -479,7 +479,7 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
     let _ = writeln!(out, "| `pg_doorman_backend_startup_parameter_errors_total` | Counter by `(pool, sqlstate)`. Increments when PostgreSQL rejects a backend startup and the `ErrorResponse` names a startup parameter sent by pg_doorman. SQLSTATE class `57P` is excluded because Patroni-assisted fallback handles those errors. The failing parameter name and username are written to the warning log line, not to labels. pg_doorman first parses the common `parameter \"<name>\"` phrase, then scans the message for any sent key in double quotes. If neither lookup finds a key, the counter is not incremented. |");
-    let _ = writeln!(out, "| `pg_doorman_startup_parameters_dropped_total` | Counter by `(pool, reason)`. Increments when pg_doorman drops operator-supplied entries before sending `StartupMessage`. Reasons: `cascade_budget_exceeded`, `packet_cap_exceeded`, `auth_query_oversize`, `auth_query_invalid_entry`. |\n");
+    let _ = writeln!(out, "| `pg_doorman_startup_parameters_dropped_total` | Counter by `(pool, reason)`. Increments when pg_doorman drops operator-supplied entries before sending `StartupMessage`. Reasons: `cascade_budget_exceeded`, `packet_cap_exceeded`, `auth_query_oversize`, `auth_query_overlay_oversize`, `auth_query_invalid_entry`, `dedicated_mode`. |\n");
 
     // Server Metrics
     let _ = writeln!(out, "### Server Metrics\n");

@@ -430,50 +430,91 @@ impl ServerPool {
         //
         // 1. Operator-supplied pairs against the reserved operator budget.
         // 2. Full StartupMessage size against PG's `MAX_STARTUP_PACKET_LENGTH`.
-        let body_bytes = sp::serialized_bytes(&merged);
-        if body_bytes > sp::MAX_OPERATOR_BUDGET {
-            warn!(
-                "[{}@{}] effective startup_parameters serialize to {} bytes, exceeding \
-                 operator budget {} (PG cap {}); all operator-supplied parameters dropped \
-                 for this backend spawn",
-                self.user.username,
-                self.address.pool_name,
-                body_bytes,
-                sp::MAX_OPERATOR_BUDGET,
-                sp::MAX_STARTUP_PACKET_SIZE,
-            );
-            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                .with_label_values(&[self.address.pool_name.as_str(), "cascade_budget_exceeded"])
-                .inc();
-            return std::borrow::Cow::Owned(BTreeMap::new());
-        }
+        //
+        // When the *merged* cascade overflows, retry with the baseline
+        // alone before falling back to an empty map: it is the per-user
+        // auth_query overlay that operators can grow arbitrarily large
+        // (e.g. a wide row of extension GUCs), while the
+        // general+pool baseline is config-controlled and already
+        // length-checked. Keeping the baseline preserves operator-wide
+        // guardrails such as `statement_timeout` and `lock_timeout` for
+        // a user whose per-row overlay is over budget.
         let username_for_wire = self
             .user
             .server_username
             .as_deref()
             .unwrap_or(self.user.username.as_str());
+
+        let body_bytes = sp::serialized_bytes(&merged);
         let packet_bytes = sp::full_packet_bytes(
             username_for_wire,
             &self.database,
             &self.application_name,
             &merged,
         );
-        if packet_bytes > sp::MAX_STARTUP_PACKET_SIZE {
-            warn!(
-                "[{}@{}] effective StartupMessage size {} bytes exceeds PG cap {} once \
-                 user/database/application_name are included; all operator-supplied \
-                 parameters dropped for this backend spawn",
-                self.user.username,
-                self.address.pool_name,
-                packet_bytes,
-                sp::MAX_STARTUP_PACKET_SIZE,
-            );
-            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                .with_label_values(&[self.address.pool_name.as_str(), "packet_cap_exceeded"])
-                .inc();
-            return std::borrow::Cow::Owned(BTreeMap::new());
+
+        let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
+        let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
+        if !over_budget && !over_packet {
+            return merged;
         }
-        merged
+
+        // The merged cascade is over a limit. If we have an overlay, try
+        // dropping just the overlay and keep the baseline.
+        let has_overlay = !self.per_user_startup_overlay.is_empty();
+        if has_overlay {
+            let baseline = &*self.base_startup_parameters;
+            let baseline_body = sp::serialized_bytes(baseline);
+            let baseline_packet = sp::full_packet_bytes(
+                username_for_wire,
+                &self.database,
+                &self.application_name,
+                baseline,
+            );
+            if baseline_body <= sp::MAX_OPERATOR_BUDGET
+                && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
+            {
+                warn!(
+                    "[{}@{}] auth_query per-user startup_parameters pushes the cascade \
+                     over the operator budget (merged {} bytes, packet {} bytes); \
+                     dropping the per-user overlay and keeping the general/pool \
+                     baseline for this backend spawn",
+                    self.user.username, self.address.pool_name, body_bytes, packet_bytes,
+                );
+                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                    .with_label_values(&[
+                        self.address.pool_name.as_str(),
+                        "auth_query_overlay_oversize",
+                    ])
+                    .inc();
+                return std::borrow::Cow::Borrowed(baseline);
+            }
+        }
+
+        // Either there was no overlay to drop or the baseline alone is
+        // still over budget — fall back to the empty map. The latter
+        // case is an operator-config error in general/pool startup_parameters,
+        // not a per-user issue.
+        let reason = if over_packet {
+            "packet_cap_exceeded"
+        } else {
+            "cascade_budget_exceeded"
+        };
+        warn!(
+            "[{}@{}] effective startup_parameters serialize to {} bytes (packet {} bytes), \
+             exceeding operator budget {} / PG cap {}; all operator-supplied parameters \
+             dropped for this backend spawn",
+            self.user.username,
+            self.address.pool_name,
+            body_bytes,
+            packet_bytes,
+            sp::MAX_OPERATOR_BUDGET,
+            sp::MAX_STARTUP_PACKET_SIZE,
+        );
+        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+            .with_label_values(&[self.address.pool_name.as_str(), reason])
+            .inc();
+        std::borrow::Cow::Owned(BTreeMap::new())
     }
 
     /// Establish a fallback connection by iterating through Patroni-discovered
