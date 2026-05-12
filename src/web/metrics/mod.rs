@@ -504,6 +504,10 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///   * `auth_query_invalid_entry` — an individual entry in the
 ///     auth_query JSON failed validation (reserved key, bad GUC name,
 ///     null byte, non-string value). Incremented per offending entry.
+///   * `dedicated_mode` — a per-user auth_query entry carried
+///     startup_parameters, but the pool runs in dedicated auth_query
+///     mode (one shared backend across users) so the per-user overlay
+///     was dropped. Incremented per dropped entry.
 ///
 /// All four cases also emit a `warn!` log line for human triage; the
 /// counter exists so dashboards and alerts can spot the silent drop
@@ -516,7 +520,7 @@ pub(crate) static STARTUP_PARAMETERS_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::
              entries pg_doorman dropped before sending StartupMessage. \
              Labels: pool, reason (cascade_budget_exceeded, \
              packet_cap_exceeded, auth_query_oversize, \
-             auth_query_invalid_entry). Distinct from \
+             auth_query_invalid_entry, dedicated_mode). Distinct from \
              pg_doorman_backend_startup_parameter_errors_total which \
              counts PG-side rejections after StartupMessage.",
         ),

@@ -638,6 +638,13 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         if !self.is_dedicated || entry.startup_parameters.is_empty() {
             return;
         }
+        // Every dropped entry contributes to the metric so operators can
+        // see the volume of per-user GUCs lost to dedicated mode without
+        // log scraping. The warn-log itself stays once per (pool, user)
+        // to keep the log readable.
+        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+            .with_label_values(&[self.pool_name.as_str(), "dedicated_mode"])
+            .inc_by(entry.startup_parameters.len() as u64);
         if self
             .dedicated_warnings
             .insert(username.to_string(), ())
