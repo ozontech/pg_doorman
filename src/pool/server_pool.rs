@@ -267,7 +267,9 @@ impl ServerPool {
         let should_tls_retry = match &result {
             Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
-                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+                Error::ConnectError(_)
+                    | Error::ServerUnavailableError(_, _)
+                    | Error::ServerStartupParameterRejection { .. }
             ),
             _ => false,
         };
@@ -827,7 +829,9 @@ impl ServerPool {
         let should_tls_retry = match &result {
             Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
-                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+                Error::ConnectError(_)
+                    | Error::ServerUnavailableError(_, _)
+                    | Error::ServerStartupParameterRejection { .. }
             ),
             _ => false,
         };
