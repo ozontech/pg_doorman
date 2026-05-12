@@ -1551,8 +1551,14 @@ impl Pool {
     /// `/api/pools` JSON share one resolver.
     pub fn effective_startup_parameters_with_sources(
         &self,
-    ) -> std::collections::BTreeMap<String, (String, super::startup_resolver::ParameterSource)>
-    {
+    ) -> std::collections::BTreeMap<
+        String,
+        (
+            String,
+            super::startup_resolver::ParameterSource,
+            super::startup_resolver::ApplicationState,
+        ),
+    > {
         self.inner
             .server_pool
             .effective_startup_parameters_with_sources()

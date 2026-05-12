@@ -21,6 +21,7 @@ use crate::stats::ServerStats;
 use crate::utils::format_duration_ms;
 
 use super::errors::{RecycleError, RecycleResult};
+use super::startup_resolver::ApplicationState;
 use super::types::Metrics;
 use super::ClientServerMap;
 
@@ -365,15 +366,41 @@ impl ServerPool {
         &self.address
     }
 
-    /// Return the effective startup parameter cascade with the winning source
-    /// layer for each key. Used by `SHOW STARTUP_PARAMETERS` and `/api/pools`.
+    /// Return the effective startup parameter cascade with the winning
+    /// source layer **and** the application state for each key. Used by
+    /// `SHOW STARTUP_PARAMETERS` and `/api/pools`.
     ///
-    /// This does not apply the runtime budget-overflow drop. It reports the
-    /// configured cascade so the operator can see the oversized input.
+    /// The cascade view comes from the live config and the auth_query
+    /// cache, so it reflects what the operator just edited. The
+    /// application state cross-checks each key against
+    /// `resolved_startup_parameters()` — the same wire-ready map that
+    /// `Server::startup` will ship for the next backend spawn — so the
+    /// admin view can flag keys that look configured but will not
+    /// actually leave the wire:
+    ///
+    /// * `Applied` — same key/value in both views; the next spawn
+    ///   ships it.
+    /// * `DroppedDueToBudget` — the wire map omits the key. The runtime
+    ///   budget/packet check dropped the operator cascade (or the
+    ///   overlay) on the most recent spawn; same will happen on the
+    ///   next one until the operator shrinks the config.
+    /// * `Stale` — the key is in the wire map but with a different
+    ///   value, which means the frozen `base_startup_parameters` /
+    ///   `per_user_startup_overlay` Arc on this pool was captured
+    ///   before the operator's latest edit. RELOAD has not yet
+    ///   recycled the pool (general/pool change) or the auth_query
+    ///   cache has not refetched (per-user change). The next spawn
+    ///   ships the stale value, not the configured one.
     pub fn effective_startup_parameters_with_sources(
         &self,
-    ) -> std::collections::BTreeMap<String, (String, super::startup_resolver::ParameterSource)>
-    {
+    ) -> std::collections::BTreeMap<
+        String,
+        (
+            String,
+            super::startup_resolver::ParameterSource,
+            ApplicationState,
+        ),
+    > {
         let cfg = crate::config::config_arc();
         let pool_params = cfg
             .pools
@@ -381,7 +408,6 @@ impl ServerPool {
             .map(|p| &p.startup_parameters)
             .cloned()
             .unwrap_or_default();
-        // Snapshot the per-user auth_query map once for the admin/web view.
         let auth_query_params: Option<std::collections::HashMap<String, String>> =
             match super::get_auth_query_state(&self.address.pool_name) {
                 Some(state) if !state.config.is_dedicated_mode() => {
@@ -389,11 +415,23 @@ impl ServerPool {
                 }
                 _ => None,
             };
-        super::startup_resolver::resolve_with_sources(
+        let configured = super::startup_resolver::resolve_with_sources(
             &cfg.general.startup_parameters,
             &pool_params,
             auth_query_params.as_ref(),
-        )
+        );
+        let wire = self.resolved_startup_parameters();
+        configured
+            .into_iter()
+            .map(|(k, (v, src))| {
+                let state = match wire.get(&k) {
+                    Some(wire_v) if wire_v == &v => ApplicationState::Applied,
+                    Some(_) => ApplicationState::Stale,
+                    None => ApplicationState::DroppedDueToBudget,
+                };
+                (k, (v, src, state))
+            })
+            .collect()
     }
 
     /// Resolve the operator-supplied startup_parameters map that this pool

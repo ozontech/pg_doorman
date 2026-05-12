@@ -835,6 +835,12 @@ where
         ("parameter", DataType::Text),
         ("value", DataType::Text),
         ("source", DataType::Text),
+        // applied | dropped_due_to_budget | stale — `applied` means the
+        // value lands on the wire, `dropped_due_to_budget` means the
+        // runtime cascade overflows, and `stale` means the pool's
+        // frozen snapshot is behind the live config (RELOAD or auth_query
+        // refetch will catch up).
+        ("state", DataType::Text),
     ];
 
     let mut res = BytesMut::new();
@@ -846,13 +852,14 @@ where
 
     for (identifier, pool) in entries {
         let effective = pool.database.effective_startup_parameters_with_sources();
-        for (parameter, (value, source)) in effective {
+        for (parameter, (value, source, state)) in effective {
             res.put(data_row(&[
                 identifier.user.clone(),
                 identifier.db.clone(),
                 parameter,
                 value,
                 source.as_str().to_string(),
+                state.as_str().to_string(),
             ]));
         }
     }

@@ -51,6 +51,35 @@ impl ParameterSource {
     }
 }
 
+/// Wire-application state for an entry returned by
+/// `ServerPool::effective_startup_parameters_with_sources`. Lets the
+/// admin/Web UI flag entries that the operator configured but the
+/// runtime will not actually ship in `StartupMessage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplicationState {
+    /// Configured value matches the wire-ready map; the next backend
+    /// spawn will ship this key/value.
+    Applied,
+    /// Runtime dropped the key (operator cascade exceeded the budget
+    /// or the packet cap on the most recent backend spawn — the
+    /// `*_dropped_total` counter ticked on the same spawn).
+    DroppedDueToBudget,
+    /// Wire map ships a different value than the live config has. The
+    /// pool's frozen baseline / overlay snapshot is stale — RELOAD or
+    /// auth_query cache refetch has not yet recycled this pool.
+    Stale,
+}
+
+impl ApplicationState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApplicationState::Applied => "applied",
+            ApplicationState::DroppedDueToBudget => "dropped_due_to_budget",
+            ApplicationState::Stale => "stale",
+        }
+    }
+}
+
 /// Same cascade as [`resolve`], but carries the layer that contributed each
 /// winning value. Used by `SHOW STARTUP_PARAMETERS` and `/api/pools` so an
 /// operator can see "this `work_mem` came from the pool, that `lock_timeout`

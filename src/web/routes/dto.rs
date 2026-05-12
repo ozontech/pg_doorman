@@ -171,19 +171,32 @@ pub(crate) struct StartupParameterDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
     pub source: &'static str,
+    /// `applied` / `dropped_due_to_budget` / `stale` — see
+    /// `pool::startup_resolver::ApplicationState`. Tells an operator
+    /// whether the configured cascade entry will actually ship in the
+    /// next backend `StartupMessage` for this pool.
+    pub state: &'static str,
 }
 
 impl StartupParameterDto {
     pub fn from_resolved(
-        merged: BTreeMap<String, (String, crate::pool::startup_resolver::ParameterSource)>,
+        merged: BTreeMap<
+            String,
+            (
+                String,
+                crate::pool::startup_resolver::ParameterSource,
+                crate::pool::startup_resolver::ApplicationState,
+            ),
+        >,
         reveal_values: bool,
     ) -> Vec<Self> {
         merged
             .into_iter()
-            .map(|(parameter, (value, source))| StartupParameterDto {
+            .map(|(parameter, (value, source, state))| StartupParameterDto {
                 parameter,
                 value: if reveal_values { Some(value) } else { None },
                 source: source.as_str(),
+                state: state.as_str(),
             })
             .collect()
     }
@@ -192,17 +205,25 @@ impl StartupParameterDto {
 #[cfg(test)]
 mod startup_parameter_dto_tests {
     use super::*;
-    use crate::pool::startup_resolver::ParameterSource;
+    use crate::pool::startup_resolver::{ApplicationState, ParameterSource};
 
-    fn sample_merged() -> BTreeMap<String, (String, ParameterSource)> {
+    fn sample_merged() -> BTreeMap<String, (String, ParameterSource, ApplicationState)> {
         let mut m = BTreeMap::new();
         m.insert(
             "application_name".to_string(),
-            ("tenant-a-audit".to_string(), ParameterSource::Pool),
+            (
+                "tenant-a-audit".to_string(),
+                ParameterSource::Pool,
+                ApplicationState::Applied,
+            ),
         );
         m.insert(
             "statement_timeout".to_string(),
-            ("30s".to_string(), ParameterSource::General),
+            (
+                "30s".to_string(),
+                ParameterSource::General,
+                ApplicationState::Applied,
+            ),
         );
         m
     }
