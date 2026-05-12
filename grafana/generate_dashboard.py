@@ -723,6 +723,39 @@ p_backend_phase_rate = ts_panel(
 )
 
 # ---------------------------------------------------------------------------
+# Row 19: Startup Parameters (collapsed) — PG-rejected and pre-wire-dropped GUCs
+# ---------------------------------------------------------------------------
+row19 = collapsed_row("Startup Parameters")
+
+p_sp_errors_by_sqlstate = ts_panel(
+    "PG-Side Rejections by SQLSTATE", [
+        prom(
+            f'sum by (sqlstate) (rate(pg_doorman_backend_startup_parameter_errors_total{{{S}}}[$__rate_interval]))',
+            "{{sqlstate}}",
+        ),
+    ], unit="ops", w=12,
+    desc="Per-pool rate of backend startups PG rejected because of an operator-supplied parameter. Split by SQLSTATE: 22023 invalid_value, 42704 undefined_object, 42501 insufficient_privilege, 55P02 cant_change_runtime_param. Non-zero for the same pool over a few minutes means every connect through that pool fails on the same operator GUC — fix general/pool/auth_query.",
+)
+p_sp_errors_by_pool = ts_panel(
+    "PG-Side Rejections by Pool", [
+        prom(
+            f'sum by (pool) (rate(pg_doorman_backend_startup_parameter_errors_total{{{S}}}[$__rate_interval]))',
+            "{{pool}}",
+        ),
+    ], unit="ops", w=12,
+    desc="Same counter aggregated by pool. The pool name shows which user@database is affected; check pg_doorman warn log for the parameter name and username.",
+)
+p_sp_dropped_by_reason = ts_panel(
+    "Pre-Wire Drops by Reason", [
+        prom(
+            f'sum by (reason) (rate(pg_doorman_startup_parameters_dropped_total{{{S}}}[$__rate_interval]))',
+            "{{reason}}",
+        ),
+    ], unit="ops", w=24,
+    desc="Operator-supplied entries pg_doorman dropped BEFORE the StartupMessage went on the wire — the failure mode the PG-side counter above cannot see. Reasons: cascade_budget_exceeded (merged map past 9 488 bytes), packet_cap_exceeded (full packet past PG MAX_STARTUP_PACKET_LENGTH 10 000 bytes), auth_query_oversize (per-user JSON column past operator budget), auth_query_invalid_entry (one JSON entry failed validation), dedicated_mode (per-user GUC ignored because the pool shares one backend across users). Non-zero on any reason needs operator attention — backends are connecting with PG defaults instead of the configured cascade.",
+)
+
+# ---------------------------------------------------------------------------
 # Build dashboard
 # ---------------------------------------------------------------------------
 d = (
@@ -831,6 +864,11 @@ d = (
     .with_panel(p_backend_phase_p99)
     .with_panel(p_backend_phase_p50)
     .with_panel(p_backend_phase_rate)
+    # Row 19: Startup Parameters
+    .with_row(row19)
+    .with_panel(p_sp_errors_by_sqlstate)
+    .with_panel(p_sp_errors_by_pool)
+    .with_panel(p_sp_dropped_by_reason)
 )
 
 dashboard_obj = d.build()
