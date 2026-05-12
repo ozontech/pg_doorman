@@ -1,0 +1,374 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Параметры запуска PostgreSQL - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/tutorials/startup-parameters.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Параметры-запуска-postgresql"><a class="header" href="#Параметры-запуска-postgresql">Параметры запуска PostgreSQL</a></h1>
+<p>PgDoorman может задавать параметры PostgreSQL при открытии серверного
+соединения, не меняя <code>postgresql.conf</code>, <code>ALTER ROLE</code> или
+<code>ALTER DATABASE</code>. Это полезно, например, в таких случаях:</p>
+<ul>
+<li>В горячем OLTP-пуле план переключается на generic после решения
+эвристики <code>plan_cache_mode = auto</code> и обратно уже не возвращается.
+<code>ALTER ROLE SET plan_cache_mode = force_custom_plan</code> затронет любую
+другую нагрузку под этой ролью, а изменить нужно только один пул.</li>
+<li>Приложение не задаёт <code>statement_timeout</code> или
+<code>idle_in_transaction_session_timeout</code>, а быстро доработать его нельзя.
+Администратору БД нужно сессионное значение по умолчанию, которое
+сохранится после клиентского <code>RESET ALL</code>.</li>
+<li>Одно приложение должно стабильно показывать конкретный
+<code>application_name</code>, независимо от значения, которое передаст драйвер,
+чтобы <code>pg_stat_activity</code> и аудит оставались читаемыми.</li>
+</ul>
+<p>Для этого используется <code>startup_parameters</code>: набор GUC PostgreSQL,
+который pg_doorman добавляет в <code>StartupMessage</code> новых серверных
+соединений пула.</p>
+<h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
+<p>Значения применяются в три слоя. Более узкий слой переопределяет ключ
+из предыдущего.</p>
+<pre><code class="language-toml">[general.startup_parameters]
+statement_timeout = "5s"
+
+[pools.checkout.startup_parameters]
+plan_cache_mode = "force_custom_plan"
+work_mem        = "64MB"
+</code></pre>
+<p>После <code>SIGHUP</code> или <code>RELOAD</code> через консоль администратора каждое новое
+серверное соединение пула <code>checkout</code> открывается со значениями
+<code>statement_timeout = 5s</code>, <code>plan_cache_mode = force_custom_plan</code> и
+<code>work_mem = 64MB</code>. В других пулах остаётся только
+<code>statement_timeout = 5s</code> из <code>general</code>; остальные значения берутся из
+настроек PostgreSQL по умолчанию. Уже открытые бэкенды не меняются:
+новые значения вступают в силу по мере ротации соединений.</p>
+<p>В passthrough-режиме <code>auth_query</code>, когда <code>server_user</code> не задан, запрос
+аутентификации может вернуть необязательную колонку <code>startup_parameters</code>
+типа <code>text</code> с JSON-объектом. Значения из этой колонки переопределяют
+<code>general</code> и настройки пула только для конкретного пользователя.</p>
+<pre><code class="language-sql">SELECT
+  rolpassword AS passwd,
+  CASE rolname
+    WHEN 'vip' THEN '{"work_mem":"256MB"}'::text
+    ELSE NULL::text
+  END AS startup_parameters
+FROM pg_authid
+WHERE rolname = $1;
+</code></pre>
+<p>Колонка должна возвращаться как <code>text</code>. Если SQL отдаёт <code>json</code> или
+<code>jsonb</code>, добавьте явное приведение типа <code>::text</code>. pg_doorman читает её
+именно как <code>text</code> и пишет предупреждение для полученной строки, если
+тип не совпал.</p>
+<p>Dedicated-режим <code>auth_query</code>, когда <code>server_user</code> задан, игнорирует эту
+колонку и один раз пишет предупреждение на пару <code>(пул, пользователь)</code>.
+В этом режиме один серверный пул обслуживает разных пользователей,
+поэтому per-user значения применить нельзя.</p>
+<h2 id="Что-pg_doorman-делает-со-значениями"><a class="header" href="#Что-pg_doorman-делает-со-значениями">Что pg_doorman делает со значениями</a></h2>
+<p>pg_doorman добавляет итоговый набор параметров в <code>StartupMessage</code>
+каждого нового бэкенда. PostgreSQL сохраняет эти значения как
+сессионные значения по умолчанию (<code>pg_settings.reset_val</code> и
+<code>pg_settings.source = 'client'</code>). Поэтому клиентские <code>RESET ALL</code> и
+<code>DISCARD ALL</code> возвращают операторские значения, а не исходные
+значения PostgreSQL.</p>
+<p>Значение видно со стороны клиента:</p>
+<pre><code class="language-text">checkout=&gt; SHOW plan_cache_mode;
+ plan_cache_mode
+-------------------
+ force_custom_plan
+
+checkout=&gt; SET plan_cache_mode = 'auto'; RESET ALL; SHOW plan_cache_mode;
+ plan_cache_mode
+-------------------
+ force_custom_plan
+</code></pre>
+<h2 id="Валидация"><a class="header" href="#Валидация">Валидация</a></h2>
+<p>При загрузке конфигурации pg_doorman проверяет:</p>
+<ul>
+<li>Имена ключей должны соответствовать маске GUC PostgreSQL:
+<code>^[A-Za-z_][A-Za-z0-9_.]*$</code>. Составные имена вроде
+<code>auto_explain.log_min_duration</code> допустимы; произвольная пунктуация
+нет.</li>
+<li>Зарезервированные ключи (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>
+и всё, что начинается с <code>_pq_.</code>) отклоняются. pg_doorman управляет
+ими сам, либо PostgreSQL обрабатывает их в <code>StartupMessage</code> особым
+образом.</li>
+<li>Значения не должны содержать нулевой байт.</li>
+<li>Каждый уровень (<code>general</code> или <code>pool</code>) должен помещаться в лимит для
+операторских параметров: <code>MAX_STARTUP_PACKET_LENGTH</code> (10000 байт)
+минус 512 байт, зарезервированных под служебные ключи pg_doorman.</li>
+</ul>
+<p>Перед запуском каждого бэкенда pg_doorman заново проверяет объединённый
+набор параметров по тому же лимиту. Два уровня, которые помещались по
+отдельности, могут вместе выйти за лимит, особенно когда <code>auth_query</code>
+добавляет третий слой. Если лимит превышает только слой <code>auth_query</code>,
+pg_doorman отбрасывает этот слой и сохраняет baseline из <code>general</code> и
+пула. Если не помещается сам baseline или полный startup-пакет,
+pg_doorman пропускает все операторские параметры для этого
+запуска и пишет размеры в лог.</p>
+<h2 id="Что-происходит-если-pg-отвергает-параметр"><a class="header" href="#Что-происходит-если-pg-отвергает-параметр">Что происходит, если PG отвергает параметр</a></h2>
+<p>Если PostgreSQL отвергает заданный оператором параметр при запуске
+бэкенда, pg_doorman возвращает клиенту <code>ErrorResponse</code> PostgreSQL без
+изменений. Клиент видит тот же sqlstate (<code>22023</code>, <code>42704</code>, <code>42501</code>,
+<code>55P02</code> или любой другой код из стартового семейства) и то же сообщение,
+что увидел бы при прямом подключении к PostgreSQL.</p>
+<p>pg_doorman не пробует повторить подключение без отклонённого параметра
+и не отключает этот ключ автоматически для пула. Следующее подключение
+клиента отправит тот же <code>StartupMessage</code> и получит ту же ошибку, пока
+оператор не исправит конфигурацию.</p>
+<h2 id="Наблюдаемость"><a class="header" href="#Наблюдаемость">Наблюдаемость</a></h2>
+<p>Итоговые параметры по каждому пулу видны через административную
+SQL-консоль:</p>
+<pre><code class="language-text">admin&gt; SHOW STARTUP_PARAMETERS;
+ user | database | parameter         | value             | source  | state
+------+----------+-------------------+-------------------+---------+--------
+ shop | checkout | plan_cache_mode   | force_custom_plan | pool    | applied
+ shop | reports  | statement_timeout | 10s               | general | applied
+</code></pre>
+<p>Веб-интерфейс показывает эти же строки на странице пула в секции
+«Startup parameters (operator-injected)».</p>
+<p>В Prometheus:</p>
+<ul>
+<li><code>pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}</code>
+считает попытки запуска бэкенда, которые PostgreSQL отклонил из-за
+параметра, заданного оператором. Имя параметра и пользователя
+пишутся в строку лога уровня <code>warn</code>; в лейблы они не включены, чтобы
+динамические <code>auth_query</code>-пулы не раздували количество серий.</li>
+</ul>
+<p>Разумная отправная точка для алерта: если
+<code>pg_doorman_backend_startup_parameter_errors_total</code> растёт по одному и
+тому же пулу несколько минут подряд, новые подключения к этому пулу
+падают на одном и том же GUC. Конфигурацию нужно исправить до возврата
+трафика.</p>
+<h2 id="Когда-это-не-нужно"><a class="header" href="#Когда-это-не-нужно">Когда это не нужно</a></h2>
+<ul>
+<li>Приложение само задаёт параметр на каждом подключении. Дублирование в
+<code>startup_parameters</code> добавляет ещё одну настройку без изменения
+поведения.</li>
+<li>Тюнинг на одну транзакцию (<code>SET LOCAL</code>). <code>startup_parameters</code> задают
+сессионные значения по умолчанию; параметры уровня транзакции должно
+выставлять приложение.</li>
+<li>Значения, которые зависят от текущего запроса. Параметры запуска
+действуют для всех транзакций бэкенда на протяжении его жизни;
+режима «на один statement» нет.</li>
+</ul>
+<h2 id="Справочник"><a class="header" href="#Справочник">Справочник</a></h2>
+<ul>
+<li><a href="../reference/general.html">Общие настройки</a>: <code>startup_parameters</code>.</li>
+<li><a href="../reference/pool.html">Настройки пула</a>:
+<code>pools.&lt;name&gt;.startup_parameters</code>.</li>
+<li><a href="../authentication/auth-query.html">auth_query</a>: passthrough- и
+dedicated-режимы, чтение колонки <code>startup_parameters</code>.</li>
+<li><a href="../observability/admin-commands.html">Команды администратора</a>:
+<code>SHOW STARTUP_PARAMETERS</code>.</li>
+<li><a href="../reference/prometheus.html">Метрики Prometheus</a>: полный список.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/prepared-statements.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/prepared-statements.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

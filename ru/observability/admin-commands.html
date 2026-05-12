@@ -186,6 +186,7 @@
 <tr><td><code>SHOW LISTS</code></td><td>Счётчики по категориям (databases, users, pools, clients, servers).</td></tr>
 <tr><td><code>SHOW USERS</code></td><td>Список пользователей и их режимы пула.</td></tr>
 <tr><td><code>SHOW AUTH_QUERY</code></td><td>Кэш <code>auth_query</code>: попадания/промахи/перезапросы, успехи/отказы аутентификации, ошибки исполнителя, счётчики динамических пулов.</td></tr>
+<tr><td><code>SHOW STARTUP_PARAMETERS</code></td><td>Итоговые <code>startup_parameters</code> по каждому пулу: параметр, значение, источник и состояние применения.</td></tr>
 <tr><td><code>SHOW SOCKETS</code></td><td>Счётчики TCP- и Unix-сокетов по состоянию (только Linux — читает <code>/proc/net/</code>).</td></tr>
 <tr><td><code>SHOW LOG_LEVEL</code></td><td>Текущий уровень логирования.</td></tr>
 <tr><td><code>SHOW VERSION</code></td><td>Версия pg_doorman.</td></tr>
@@ -214,6 +215,17 @@ mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0    
 <li><code>cl_waiting &gt; 0</code> означает, что клиенты застряли в ожидании серверного соединения. Либо поднимите <code>pool_size</code>, либо проверьте медленные запросы.</li>
 <li><code>sv_idle</code> соответствует свободным серверным соединениям; <code>sv_active</code> — занятым; <code>sv_used</code> — зарезервированным координатором (см. ниже).</li>
 <li><code>maxwait</code> — самое долгое текущее ожидание в секундах. Если оно вырастает за <code>query_wait_timeout</code>, клиенты получают ошибки.</li>
+</ul>
+<h3 id="show-startup_parameters"><a class="header" href="#show-startup_parameters"><code>SHOW STARTUP_PARAMETERS</code></a></h3>
+<pre><code>user | database | parameter         | value             | source  | state
+app  | mydb     | statement_timeout | 5s                | general | applied
+app  | mydb     | plan_cache_mode   | force_custom_plan | pool    | applied
+</code></pre>
+<ul>
+<li><code>source</code> показывает источник значения: <code>general</code>, <code>pool</code> или
+<code>auth_query</code>.</li>
+<li><code>state</code> показывает, будет ли значение отправлено в ближайший
+<code>StartupMessage</code>: <code>applied</code>, <code>dropped_due_to_budget</code> или <code>stale</code>.</li>
 </ul>
 <h3 id="show-pool_coordinator"><a class="header" href="#show-pool_coordinator"><code>SHOW POOL_COORDINATOR</code></a></h3>
 <pre><code>database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions

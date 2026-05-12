@@ -633,6 +633,27 @@ hostnossl all      all    192.168.1.0/24  trust
 <li>Для методов аутентификации, отличных от <code>trust</code>, PgDoorman выполняет соответствующий challenge/response с клиентом.</li>
 <li>Для потоков Talos/JWT/PAM, настроенных на уровне пула или пользователя, <code>trust</code> всё равно обходит запрос пароля у клиента; однако эти режимы могут использоваться, если <code>trust</code> не совпал.</li>
 </ul>
+<h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
+<p>Базовые параметры PostgreSQL, которые pg_doorman добавляет в
+<code>StartupMessage</code> каждого нового бэкенда. <code>startup_parameters</code> уровня
+пула переопределяют эти значения по ключу, а passthrough <code>auth_query</code>
+может переопределить их для конкретного пользователя.</p>
+<p>При загрузке конфигурации pg_doorman проверяет зарезервированные
+протокольные ключи (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>,
+<code>_pq_.*</code>), имена GUC, нулевые байты и размер этого уровня. Перед каждым
+запуском бэкенда объединённый набор параметров снова проверяется по
+лимиту <code>MAX_STARTUP_PACKET_LENGTH</code> PostgreSQL; если он не помещается,
+pg_doorman пропускает операторские параметры для этого запуска и пишет
+предупреждение.</p>
+<p>Если PostgreSQL отвергает параметр при запуске бэкенда, pg_doorman
+возвращает клиенту <code>ErrorResponse</code> PostgreSQL без изменений: повторной
+попытки без этого ключа не будет, сам ключ автоматически не отключается.
+Накопительный счётчик отказов экспортируется как
+<code>pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}</code>;
+имя параметра и пользователя остаются в строке лога уровня <code>warn</code>.
+Итоговые параметры по каждому пулу видны через <code>SHOW STARTUP_PARAMETERS</code>
+в административной SQL-консоли и через <code>/api/pools</code> в веб-интерфейсе.</p>
+<p>По умолчанию: <code>{}</code>.</p>
 <h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
 <p>Когда клиент отправляет ровно этот запрос как SimpleQuery, pg_doorman отвечает немедленно
 без перенаправления его в PostgreSQL. Полезно для health checks от балансировщиков нагрузки (HAProxy, в стиле pgbouncer <code>SELECT 1</code>)

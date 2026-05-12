@@ -234,12 +234,16 @@ connections. Only relevant when <code>max_db_connections &gt; 0</code> and <code
 <p>Pool-level default for the minimum number of connections per user that are protected
 from coordinator eviction. When the coordinator needs to free a connection slot for
 another user, it will not evict connections from a user who is at or below this count.</p>
-<p>This is separate from <code>min_pool_size</code> (user-level): <code>min_pool_size</code> controls prewarm
+<p>Separate from <code>min_pool_size</code> (user-level): <code>min_pool_size</code> controls prewarm
 and replenish (proactively creating connections), while <code>min_guaranteed_pool_size</code>
 only affects eviction decisions (never creates connections).</p>
 <p>The effective protection for a user is <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>.
 Set to <code>0</code> (or omit) for no eviction protection. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
 <p>Default: <code>0 (no protection)</code>.</p>
+<h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
+<p>Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for <a href="#startup-parameters"><code>general.startup_parameters</code></a>: reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000-byte) <code>StartupMessage</code> cap.</p>
+<p>In the cascade <code>general</code> → <code>pool</code> → <code>auth_query</code>, this layer overrides <code>general</code> per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode <code>auth_query</code> pools ignore the per-user column because one shared backend serves multiple users. See <a href="#startup-parameters"><code>general.startup_parameters</code></a> for validation rules, failure behavior, and observability.</p>
+<p>Default: <code>{} (empty)</code>.</p>
 <h2 id="auth-query-settings"><a class="header" href="#auth-query-settings">Auth Query Settings</a></h2>
 <p>The <code>auth_query</code> section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.</p>
 <pre><code class="language-yaml">pools:
@@ -251,7 +255,7 @@ Set to <code>0</code> (or omit) for no eviction protection. Only relevant when <
 </code></pre>
 <p>There are two modes of operation:</p>
 <ul>
-<li><strong>Dedicated mode</strong> (<code>server_user</code> is set): All dynamically authenticated users share a single connection pool that connects to PostgreSQL as <code>server_user</code>. This is the simplest setup and works well when all users need the same backend access.</li>
+<li><strong>Dedicated mode</strong> (<code>server_user</code> is set): all dynamically authenticated users share one backend pool that connects to PostgreSQL as <code>server_user</code>. Use it when backend identity does not need to match the client user.</li>
 <li><strong>Passthrough mode</strong> (<code>server_user</code> is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.</li>
 </ul>
 <p>Static users (defined in the <code>users</code> section) are always checked first. The auth_query is only used when the username is not found among static users.</p>
@@ -288,7 +292,8 @@ GRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;
 </div>
 </div>
 <h3 id="query"><a class="header" href="#query">query</a></h3>
-<p>SQL query to fetch credentials. Must return a column named <code>passwd</code> or <code>password</code> containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name. Any extra columns are ignored. Use <code>$1</code> as the placeholder for the username parameter.</p>
+<p>SQL query to fetch credentials. It must return a column named <code>passwd</code> or <code>password</code> containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name.</p>
+<p>Extra columns are ignored except for the optional <code>startup_parameters</code> text column. In passthrough mode, pg_doorman reads that column as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores it and logs a warning. Use <code>$1</code> as the placeholder for the username parameter.</p>
 <p>Example: <code>"SELECT passwd FROM pg_shadow WHERE usename = $1"</code></p>
 <h3 id="user"><a class="header" href="#user">user</a></h3>
 <p>PostgreSQL username for the executor connection that runs auth queries.</p>

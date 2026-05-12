@@ -192,7 +192,7 @@ pg_doorman. Хранилище разделено на две независим
 <code>rate(pg_doorman_query_interner_synthetic_misses_total[5m])</code>.
 Норма — плоский ноль. Любой всплеск означает: либо TTL вытеснил
 запись, на которую сослался клиент, либо драйвер рассчитывает
-на безымянный prepared statement, переживший Sync.</li>
+на безымянный prepared statement, который остаётся доступным после Sync.</li>
 </ol>
 <h3 id="Детализация"><a class="header" href="#Детализация">Детализация</a></h3>
 <ol start="4">

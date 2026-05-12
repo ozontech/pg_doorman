@@ -227,6 +227,7 @@
 <tr><td>LISTEN / NOTIFY pinning in transaction mode</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Experimental</td></tr>
 <tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.5.1)</td></tr>
 <tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code> admin commands</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.4.1)</td></tr>
+<tr><td>Configured PostgreSQL GUCs in backend <code>StartupMessage</code> per pool</td><td style="text-align: center">Yes (<code>startup_parameters</code>, applied as <code>general</code> → pool → passthrough <code>auth_query</code>; client <code>RESET ALL</code> / <code>DISCARD ALL</code> returns to those values; PG startup errors reach the client unchanged)</td><td style="text-align: center">No equivalent configured defaults; selected client startup parameters can be tracked or ignored</td><td style="text-align: center">No (<code>maintain_params</code> preserves client-side parameters across rebind; no configured GUCs)</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="concepts/pool-coordinator.html">Pool Coordinator</a>, <a href="tutorials/pool-pressure.html">Pool pressure</a>.</p>

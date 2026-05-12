@@ -218,7 +218,7 @@
 <p>Что сбрасывается, когда сработал флаг:</p>
 <ul>
 <li>Флаг <code>SET</code> → <code>RESET ALL</code> сбрасывает session-level GUCs и неявно вызывает <code>pg_advisory_unlock_all</code>.</li>
-<li>Флаг <code>PREPARE</code> → <code>DEALLOCATE ALL</code> удаляет PostgreSQL-side prepared statements, которые драйвер именовал явно. Собственный кеш prepared statements pg_doorman переживает сброс — он индексируется текстом запроса, а не backend-именем.</li>
+<li>Флаг <code>PREPARE</code> → <code>DEALLOCATE ALL</code> удаляет PostgreSQL-side prepared statements, которые драйвер именовал явно. Собственный кеш prepared statements pg_doorman сохраняется после сброса: он индексируется текстом запроса, а не backend-именем.</li>
 <li>Флаг <code>DECLARE CURSOR</code> → <code>CLOSE ALL</code> закрывает курсоры.</li>
 </ul>
 <p><code>DEALLOCATE ALL</code> и <code>DISCARD ALL</code> со стороны клиента очищают prepared-statement-кеш именно этого клиента (следующий <code>Parse</code> зарегистрируется заново). Pool-level shared cache не затрагивается; у других клиентов их записи сохраняются.</p>

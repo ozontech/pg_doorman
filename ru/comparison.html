@@ -227,6 +227,7 @@
 <tr><td>LISTEN / NOTIFY pinning в transaction mode</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Экспериментально</td></tr>
 <tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.5.1)</td></tr>
 <tr><td>Команды администратора <code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да (с 1.4.1)</td></tr>
+<tr><td>GUC PostgreSQL на уровне пула в backend <code>StartupMessage</code></td><td style="text-align: center">Да (<code>startup_parameters</code>: <code>general</code> → пул → passthrough <code>auth_query</code>; клиентские <code>RESET ALL</code> / <code>DISCARD ALL</code> возвращают эти значения; ошибки PG при запуске бэкенда доходят до клиента без переписывания)</td><td style="text-align: center">Нет эквивалентных операторских значений по умолчанию; отдельные клиентские startup-параметры можно отслеживать или игнорировать</td><td style="text-align: center">Нет (<code>maintain_params</code> сохраняет клиентские параметры при rebind; операторских GUC нет)</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="concepts/pool-coordinator.html">Координатор пулов</a>, <a href="tutorials/pool-pressure.html">Пул под нагрузкой</a>.</p>

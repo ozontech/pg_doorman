@@ -161,6 +161,84 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="390"><a class="header" href="#390">3.9.0</a></h3>
+<p>Per-pool PostgreSQL startup parameters. pg_doorman can now add
+configured GUCs to each backend <code>StartupMessage</code>. Values apply in
+three layers: <code>general.startup_parameters</code>, <code>pools.&lt;name&gt;.startup_parameters</code>,
+and the optional <code>startup_parameters</code> column returned by passthrough
+<code>auth_query</code>.</p>
+<p>PostgreSQL stores these values as the session reset defaults, so
+client-side <code>RESET ALL</code> and <code>DISCARD ALL</code> return to the configured value.
+This gives one pool a different <code>plan_cache_mode</code>, <code>statement_timeout</code>,
+<code>work_mem</code>, or <code>idle_in_transaction_session_timeout</code> without changing
+<code>postgresql.conf</code>, <code>ALTER ROLE</code>, or <code>ALTER DATABASE</code>.</p>
+<h4 id="cascade-resolution"><a class="header" href="#cascade-resolution">Cascade resolution</a></h4>
+<ul>
+<li><code>general.startup_parameters</code>, <code>pools.&lt;name&gt;.startup_parameters</code>, and
+the optional <code>startup_parameters</code> text column on an <code>auth_query</code> row
+are applied in order. Later layers override earlier ones per key.</li>
+<li>Dedicated <code>auth_query</code> mode uses a shared <code>server_user</code>, so
+pg_doorman ignores the per-user column there and logs one warning per
+pool and username.</li>
+<li>A reload that changes startup parameters recycles the affected pools.
+Idle backends with the old reset defaults are not reused.</li>
+</ul>
+<h4 id="validation-and-protocol-safety"><a class="header" href="#validation-and-protocol-safety">Validation and protocol safety</a></h4>
+<ul>
+<li>Reserved protocol keys (<code>user</code>, <code>database</code>, <code>replication</code>,
+<code>options</code>, the <code>_pq_.*</code> extension prefix) are refused at config load.</li>
+<li>Keys must match the PG GUC naming shape <code>[A-Za-z_][A-Za-z0-9_.]*</code>,
+values must not contain null bytes, and each level fits the startup-parameter
+budget of <code>MAX_STARTUP_PACKET_LENGTH - 512</code> bytes.</li>
+<li>The resolved parameter set is checked before each backend startup
+against PG's 10 000-byte <code>MAX_STARTUP_PACKET_LENGTH</code>. If only the
+auth_query layer overflows the packet, pg_doorman drops that layer and
+keeps the general/pool baseline. If the baseline itself does not fit,
+pg_doorman skips all configured keys for that spawn and logs the
+byte counts.</li>
+</ul>
+<h4 id="behaviour-on-pg-side-rejection"><a class="header" href="#behaviour-on-pg-side-rejection">Behaviour on PG-side rejection</a></h4>
+<ul>
+<li>If PostgreSQL rejects a configured startup parameter at backend
+startup, pg_doorman returns PostgreSQL's <code>ErrorResponse</code> to the
+client unchanged. pg_doorman does not retry without the key and does
+not disable the key automatically for the pool. Fix the parameter in
+the config; until then, backend startup for that pool fails with
+PostgreSQL's own SQLSTATE and message.</li>
+<li>SQLSTATEs with the <code>57P</code> prefix (server unavailable) keep mapping to
+<code>ServerUnavailableError</code> first so the Patroni-assisted fallback
+path can route around the failed node before the startup-parameter
+log line fires.</li>
+<li>The configured parameter wins over the client sync path:
+even if the client connect string carries an <code>application_name</code>
+(or another tracked GUC like <code>TimeZone</code>), the per-checkout
+<code>sync_parameters</code> call no longer overrides the configured value on
+the backend. That default stands until an
+explicit <code>SET</code> statement on the client session changes it.</li>
+</ul>
+<h4 id="reload-coherence"><a class="header" href="#reload-coherence">RELOAD coherence</a></h4>
+<ul>
+<li>A SIGHUP that changes <code>general.startup_parameters</code> drains pools that
+inherit that baseline. The per-pool config hash includes the general
+startup map, and carried-over dynamic <code>auth_query</code> pools are recycled
+when the baseline changes.</li>
+</ul>
+<h4 id="observability"><a class="header" href="#observability">Observability</a></h4>
+<ul>
+<li><code>pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}</code>
+counts backend startups PostgreSQL rejected because of an
+configured startup parameter. The failing parameter name and username are
+written to the warning log line, not to metric labels.</li>
+<li><code>SHOW STARTUP_PARAMETERS</code> (admin SQL console) lists the per-pool
+resolved parameters with the source of each value. <code>psql</code> tab
+completion on <code>SHOW &lt;TAB&gt;</code> now includes the command.</li>
+<li>The Web UI pool detail page shows the same rows in a "Startup
+parameters (configured)" section, driven by the new
+<code>startup_parameters[]</code> field on <code>/api/pools</code>.</li>
+</ul>
+<p>See <a href="tutorials/startup-parameters.html">PostgreSQL startup parameters</a>
+for the configuration walkthrough, plus <a href="reference/general.html">General Settings</a>
+and <a href="reference/pool.html">Pool Settings</a> for the full parameter list.</p>
 <h3 id="385"><a class="header" href="#385">3.8.5</a></h3>
 <p>The web console now accepts JWTs issued by an external SSO proxy
 alongside the existing Basic auth. The listener resolves every
@@ -246,7 +324,7 @@ trusted hops, and uses the first untrusted address as <code>peer</code>. An
 untrusted client that sends <code>X-Forwarded-For</code> is ignored, so the
 field cannot be spoofed.</li>
 </ul>
-<h4 id="observability"><a class="header" href="#observability">Observability</a></h4>
+<h4 id="observability-1"><a class="header" href="#observability-1">Observability</a></h4>
 <ul>
 <li>New gauges <code>pg_doorman_web_sso_enabled</code> and
 <code>pg_doorman_web_sso_config_error</code>. The latter stays at <code>1</code> while
@@ -265,7 +343,7 @@ Operators alert on SSO degradation without grepping logs.</li>
 <p><strong>Built-in operator dashboard.</strong> pg_doorman exposes a single-page
 diagnostic console on the same port as <code>/metrics</code>, served from
 inside the binary and gated on <code>[web].ui = true</code> plus a non-default
-<code>admin_password</code>. Reaching the same view through the existing psql
+<code>admin_password</code>. Getting comparable detail from the existing psql
 admin console means running <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>,
 <code>SHOW STATS</code> and friends in a loop, computing rates by hand between
 two snapshots, and joining the rows mentally. The dashboard does

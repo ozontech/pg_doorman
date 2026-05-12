@@ -240,6 +240,19 @@
 <p>Эффективная защита для пользователя — <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>.
 Установите <code>0</code> (или опустите), чтобы отключить защиту от вытеснения. Имеет значение только при <code>max_db_connections &gt; 0</code>.</p>
 <p>По умолчанию: <code>0 (no protection)</code>.</p>
+<h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
+<p>Параметры PostgreSQL уровня пула, которые pg_doorman добавляет в
+<code>StartupMessage</code> каждого нового бэкенда. Значения переопределяют
+<code>general.startup_parameters</code> по ключу. В passthrough-пулах <code>auth_query</code>
+колонка <code>startup_parameters</code> может переопределить и этот уровень для
+конкретного пользователя.</p>
+<p>При загрузке конфигурации pg_doorman проверяет зарезервированные
+протокольные ключи, имена GUC, нулевые байты и размер этого уровня. Перед
+каждым запуском бэкенда объединённый набор параметров снова проверяется
+по лимиту <code>MAX_STARTUP_PACKET_LENGTH</code> PostgreSQL; если он не помещается,
+pg_doorman пропускает операторские параметры для этого запуска и пишет
+предупреждение.</p>
+<p>По умолчанию: <code>{}</code>.</p>
 <h2 id="Настройки-auth_query"><a class="header" href="#Настройки-auth_query">Настройки auth_query</a></h2>
 <p>Секция <code>auth_query</code> включает динамическую аутентификацию пользователей через запрос учётных данных
 у базы PostgreSQL во время подключения. Это позволяет pg_doorman аутентифицировать пользователей
@@ -290,7 +303,15 @@ GRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;
 </div>
 </div>
 <h3 id="query"><a class="header" href="#query">query</a></h3>
-<p>SQL-запрос для получения учётных данных. Должен возвращать колонку с именем <code>passwd</code> или <code>password</code>, содержащую MD5- или SCRAM-хеш. Если запрос возвращает ровно одну колонку, она используется независимо от имени. Любые лишние колонки игнорируются. В качестве плейсхолдера для имени пользователя используйте <code>$1</code>.</p>
+<p>SQL-запрос для получения учётных данных. Он должен возвращать колонку с
+именем <code>passwd</code> или <code>password</code>, содержащую MD5- или SCRAM-хеш. Если
+запрос возвращает ровно одну колонку, pg_doorman использует её независимо
+от имени.</p>
+<p>Дополнительные колонки игнорируются, кроме необязательной
+<code>startup_parameters</code> типа <code>text</code>. В passthrough-режиме pg_doorman читает
+её как JSON-объект с параметрами запуска PostgreSQL для этого пользователя.
+Dedicated-режим игнорирует эту колонку и пишет предупреждение. В
+качестве плейсхолдера для имени пользователя используйте <code>$1</code>.</p>
 <p>Пример: <code>"SELECT passwd FROM pg_shadow WHERE usename = $1"</code></p>
 <h3 id="user"><a class="header" href="#user">user</a></h3>
 <p>Имя пользователя PostgreSQL для executor-соединения, выполняющего auth-запросы.</p>

@@ -170,7 +170,7 @@
 </code></pre>
 <p>Для SCRAM оба процесса должны видеть <strong>одни и те же</strong> salt и iteration count — даже один отличающийся символ в сохранённом verifier ломает passthrough.</p>
 <h3 id="Когда-username-пула-отличается-от-роли-на-backend"><a class="header" href="#Когда-username-пула-отличается-от-роли-на-backend">Когда username пула отличается от роли на backend</a></h3>
-<p>Когда обращённый к клиенту <code>username</code> в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может — нечего пробрасывать. Дайте явные credentials:</p>
+<p>Когда обращённый к клиенту <code>username</code> в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может: у pg_doorman нет пароля для backend-роли. Дайте явные credentials:</p>
 <pre><code class="language-yaml">users:
   - username: "app_user"              # имя для клиента
     password: "md5..."                # хеш для аутентификации client → pg_doorman
@@ -178,7 +178,7 @@
     server_password: "plaintext_pwd"  # plaintext-пароль для этой роли
     pool_size: 40
 </code></pre>
-<p>Это же путь для JWT-аутентификации, где клиент не присылает пароль и пробрасывать нечего.</p>
+<p>Это же путь для JWT-аутентификации, где клиент не присылает пароль.</p>
 <div id="admonition-Где-взять-хеш-пароля" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Где-взять-хеш-пароля-title">
 <div class="admonition-title">
 <div id="admonition-Где-взять-хеш-пароля-title">

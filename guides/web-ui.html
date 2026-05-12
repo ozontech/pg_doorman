@@ -280,7 +280,8 @@ should carry <code>"sso_enabled":true</code> and the configured <code>sso_proxy_
 <tr><td><code>sso_allowed_users</code></td><td>Allowlist on the <code>preferred_username</code> (or <code>sub</code>) claim. <code>["*"]</code> accepts every valid JWT; a literal list restricts access to those usernames.</td><td><code>["*"]</code></td></tr>
 <tr><td><code>sso_groups_claim</code></td><td>Name of the JWT claim that carries the user's group memberships. Read together with <code>sso_admin_groups</code>.</td><td><code>"groups"</code></td></tr>
 <tr><td><code>sso_admin_groups</code></td><td>Group names that promote an SSO user to <code>Admin</code>. Empty keeps every SSO login at the read-only <code>Sso</code> role.</td><td><code>[]</code></td></tr>
-<tr><td><code>trusted_proxies</code></td><td>CIDR ranges trusted to set <code>X-Forwarded-For</code> / <code>Forwarded</code>. Empty trusts only the listener's own peer. See <a href="#access-log">Access log</a>.</td><td><code>[]</code></td></tr>
+<tr><td><code>sso_require_https</code></td><td>Reject Bearer/cookie/query SSO credentials presented over plain HTTP. The listener treats a request as secure only when the TCP peer is in <code>trusted_proxies</code> and <code>X-Forwarded-Proto: https</code> is forwarded. Defaults to off so SSO keeps working through a TLS-terminating proxy that reaches pg_doorman over a private HTTP leg.</td><td><code>false</code></td></tr>
+<tr><td><code>trusted_proxies</code></td><td>CIDR ranges trusted to set <code>X-Forwarded-For</code> / <code>Forwarded</code> / <code>X-Forwarded-Proto</code>. Empty trusts only the listener's own peer. See <a href="#access-log">Access log</a>.</td><td><code>[]</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="promoting-sso-users-to-admin-via-group-claim"><a class="header" href="#promoting-sso-users-to-admin-via-group-claim">Promoting SSO users to Admin via group claim</a></h3>

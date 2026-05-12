@@ -964,7 +964,7 @@ Reserve-first выдаёт permit за sub-ms, когда в резерве ес
 с 50 ms и неделю наблюдайте <code>reserve_acq</code> и <code>evictions</code>.</li>
 <li>Оставьте <code>min_connection_lifetime</code> на дефолте 30 000 ms, если у
 вас нет явной цели ускорить кросс-пуловую ребалансировку;
-понижение увеличивает частоту eviction и churn соединений.</li>
+понижение увеличивает частоту выселений и повторных подключений.</li>
 </ol>
 <p>За чем следить после каждого изменения (все в <code>SHOW POOL_COORDINATOR</code>):</p>
 <div class="table-wrapper"><table><thead><tr><th>До</th><th>После</th><th>Вердикт</th></tr></thead><tbody>
@@ -1331,7 +1331,7 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
 <tr><td>Одновременные <code>connect()</code> к бэкенду в одном пуле</td><td>Однопоточный, обрабатывает события последовательно в пределах пула, вызовы <code>connect()</code> выпускаются по одному.</td><td>Ограничено <code>scaling_max_parallel_creates</code> (по умолчанию 2 на пул): не больше N одновременных подключений к PostgreSQL в пуле, лишние задачи ждут на ограничитель всплесков.</td></tr>
 <tr><td>Anticipation возвратов</td><td>Нет. Клиенты ждут следующего доступного соединения в порядке прихода, в пределах <code>wait_timeout</code>.</td><td>Event-driven anticipation: возвращающееся соединение будит ровно одного из ожидающих в очереди, часто ещё до того, как будет выпущен хоть один новый <code>connect()</code>.</td></tr>
 <tr><td>Прогрев <code>min_pool_size</code></td><td>Поддерживается на каждом такте event loop (без отдельной задачи replenish).</td><td>Периодический фоновый replenish (<code>retain_connections_time</code>, по умолчанию 30 s), который отступает, когда ограничитель всплесков занят.</td></tr>
-<tr><td>Повторный логин после ошибки</td><td><code>server_login_retry</code> (по умолчанию 15 s) блокирует новые попытки логина после отказа бэкенда.</td><td>Аналога нет. Ошибки логина бэкенда пробрасываются клиенту на каждую попытку.</td></tr>
+<tr><td>Повторный логин после ошибки</td><td><code>server_login_retry</code> (по умолчанию 15 s) блокирует новые попытки логина после отказа бэкенда.</td><td>Аналога нет. Ошибки логина бэкенда возвращаются клиенту на каждую попытку.</td></tr>
 <tr><td>Jitter на lifetime</td><td>Нет. <code>server_lifetime</code> точный.</td><td>±20% jitter на <code>server_lifetime</code> и <code>idle_timeout</code>, чтобы избежать одновременного массового закрытия.</td></tr>
 <tr><td>Ключ поиска пула</td><td><code>(database, user, auth_type)</code></td><td><code>(database, user)</code></td></tr>
 <tr><td>Честность между пользователями на общем лимите</td><td>First come first served на <code>max_db_connections</code>.</td><td>Reserve arbiter оценивает запросы по <code>(starving, queued_clients)</code>.</td></tr>
@@ -1642,7 +1642,7 @@ Retain task пропускает повышение/закрытие на так
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../tutorials/prepared-statements.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../tutorials/startup-parameters.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -1656,7 +1656,7 @@ Retain task пропускает повышение/закрытие на так
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../tutorials/prepared-statements.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../tutorials/startup-parameters.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 

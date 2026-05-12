@@ -166,7 +166,7 @@
 <ul>
 <li><strong>Открытие членов кластера</strong> через опрос <code>/cluster</code> с интервалом <code>cluster_update_interval</code> (по умолчанию 3 с) и по запросу <code>GET /update_clusters</code>.</li>
 <li><strong>Маршрутизация по ролям.</strong> Каждый listen-порт привязан к одной или нескольким ролям (<code>leader</code>, <code>sync</code>, <code>async</code>, <code>any</code>). Соединения с этого порта попадают на члена, у которого совпадает одна из указанных ролей.</li>
-<li><strong>Least-connections.</strong> Для портов с несколькими допустимыми членами прокси держит счётчик соединений на каждого члена и отправляет новое соединение туда, где их меньше. Счётчики переживают cluster update.</li>
+<li><strong>Least-connections.</strong> Для портов с несколькими допустимыми членами прокси держит счётчик соединений на каждого члена и отправляет новое соединение туда, где их меньше. Обновление кластера не сбрасывает эти счётчики.</li>
 <li><strong>Отбрасывает реплики со старыми данными.</strong> <code>max_lag_in_bytes</code> per-port исключает членов, у которых <code>replication_lag</code> (из <code>/cluster</code>) выше порога. Leader по лагу никогда не исключается.</li>
 <li><strong>Пропускает не-running.</strong> Допускаются только члены со <code>state: "running"</code>; <code>starting</code>, <code>stopped</code>, <code>crashed</code> и узлы с тегом <code>noloadbalance</code> фильтруются.</li>
 </ul>

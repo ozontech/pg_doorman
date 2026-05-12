@@ -209,6 +209,8 @@
 <tr><td><code>pg_doorman_pools_bytes_total</code></td><td>Накопительный счётчик байт, переданных через пулы соединений, по направлению (<code>received</code>/<code>sent</code>), пользователю и базе. Для пропускной способности используйте <code>rate(pg_doorman_pools_bytes_total[5m])</code>.</td></tr>
 <tr><td><code>pg_doorman_pools_bytes</code></td><td>Устаревшая gauge-версия <code>pg_doorman_pools_bytes_total</code>; будет удалена в 3.10.</td></tr>
 <tr><td><code>pg_doorman_pool_size</code></td><td>Сконфигурированный максимальный размер пула на пользователя и базу. Полезен для расчёта оставшейся ёмкости пула вместе с pg_doorman_pools_servers.</td></tr>
+<tr><td><code>pg_doorman_backend_startup_parameter_errors_total</code></td><td>Накопительный счётчик запусков бэкенда, которые PostgreSQL отклонил из-за <code>startup_parameters</code>. Лейблы: пул и SQLSTATE. Отклонённый параметр и имя пользователя пишутся в строку лога уровня <code>warn</code>, а не в лейблы метрики.</td></tr>
+<tr><td><code>pg_doorman_startup_parameters_dropped_total</code></td><td>Накопительный счётчик событий, когда pg_doorman отбросил <code>startup_parameters</code> до отправки <code>StartupMessage</code>. Лейблы: пул и причина (<code>cascade_budget_exceeded</code>, <code>packet_cap_exceeded</code>, <code>auth_query_oversize</code>, <code>auth_query_overlay_oversize</code>, <code>auth_query_bad_type</code>, <code>auth_query_invalid_json</code>, <code>auth_query_invalid_shape</code>, <code>auth_query_invalid_entry</code>, <code>dedicated_mode</code>).</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-запросов-и-транзакций"><a class="header" href="#Метрики-запросов-и-транзакций">Метрики запросов и транзакций</a></h3>

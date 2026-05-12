@@ -186,6 +186,7 @@
 <tr><td><code>SHOW LISTS</code></td><td>Counts by category (databases, users, pools, clients, servers).</td></tr>
 <tr><td><code>SHOW USERS</code></td><td>List of users and their pool modes.</td></tr>
 <tr><td><code>SHOW AUTH_QUERY</code></td><td><code>auth_query</code> cache hit/miss/refetch rates, auth success/failure, executor errors, dynamic pool counts.</td></tr>
+<tr><td><code>SHOW STARTUP_PARAMETERS</code></td><td>Resolved <code>startup_parameters</code> per pool: parameter, value, source, and application state.</td></tr>
 <tr><td><code>SHOW SOCKETS</code></td><td>TCP and Unix socket counts by state (Linux only — reads <code>/proc/net/</code>).</td></tr>
 <tr><td><code>SHOW LOG_LEVEL</code></td><td>Current log level.</td></tr>
 <tr><td><code>SHOW VERSION</code></td><td>PgDoorman version.</td></tr>
@@ -214,6 +215,17 @@ mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0    
 <li><code>cl_waiting &gt; 0</code> means clients are stuck waiting for a backend. Either raise <code>pool_size</code> or check for slow queries.</li>
 <li><code>sv_idle</code> matches free backends; <code>sv_active</code> is in-use; <code>sv_used</code> is reserved by the coordinator (see below).</li>
 <li><code>maxwait</code> is the longest current wait in seconds. If it grows beyond <code>query_wait_timeout</code>, clients get errors.</li>
+</ul>
+<h3 id="show-startup_parameters"><a class="header" href="#show-startup_parameters"><code>SHOW STARTUP_PARAMETERS</code></a></h3>
+<pre><code>user | database | parameter         | value             | source  | state
+app  | mydb     | statement_timeout | 5s                | general | applied
+app  | mydb     | plan_cache_mode   | force_custom_plan | pool    | applied
+</code></pre>
+<ul>
+<li><code>source</code> shows where the value came from: <code>general</code>, <code>pool</code>, or
+<code>auth_query</code>.</li>
+<li><code>state</code> shows whether the next backend <code>StartupMessage</code> will carry
+the value: <code>applied</code>, <code>dropped_due_to_budget</code>, or <code>stale</code>.</li>
 </ul>
 <h3 id="show-pool_coordinator"><a class="header" href="#show-pool_coordinator"><code>SHOW POOL_COORDINATOR</code></a></h3>
 <pre><code>database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
@@ -245,7 +257,7 @@ app  | mydb     | 1        | 12345   | 87         | 3                    | 142  
 <p>Admin connections do not pass through <code>pg_hba.conf</code> rules — they go directly to the admin handler. Restrict admin access at the network layer (<code>listen_addresses</code>, firewall) or use Unix sockets.</p>
 <h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
-<li><a href="../reference/prometheus.html">Prometheus reference</a> — same data, machine-readable.</li>
+<li><a href="../reference/prometheus.html">Prometheus reference</a> — the metric form of the same state.</li>
 <li><a href="../concepts/pool-coordinator.html">Pool Coordinator</a> — what <code>SHOW POOL_COORDINATOR</code> is telling you.</li>
 <li><a href="../tutorials/pool-pressure.html">Pool Pressure</a> — what <code>SHOW POOL_SCALING</code> is telling you.</li>
 <li><a href="../tutorials/troubleshooting.html">Troubleshooting</a> — common failure modes and their <code>SHOW</code> output.</li>

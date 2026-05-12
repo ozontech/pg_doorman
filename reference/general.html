@@ -314,13 +314,13 @@ pg_doorman generate --no-comments --output config.yaml
 </ul>
 <p>Default: <code>"allow"</code>.</p>
 <h3 id="tls_ca_cert"><a class="header" href="#tls_ca_cert">tls_ca_cert</a></h3>
-<p>The file containing the CA certificate to verify the client certificate. This is required when <code>tls_mode</code> is set to <code>verify-full</code>.</p>
+<p>CA certificate file used to verify client certificates. Required when <code>tls_mode</code> is set to <code>verify-full</code>.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="tls_private_key"><a class="header" href="#tls_private_key">tls_private_key</a></h3>
-<p>The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_certificate</code>.</p>
+<p>Path to the private key file for TLS connections. Required to enable TLS for incoming client connections. Must be used together with <code>tls_certificate</code>.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="tls_certificate"><a class="header" href="#tls_certificate">tls_certificate</a></h3>
-<p>The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_private_key</code>.</p>
+<p>Path to the certificate file for TLS connections. Required to enable TLS for incoming client connections. Must be used together with <code>tls_private_key</code>.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="tls_rate_limit_per_second"><a class="header" href="#tls_rate_limit_per_second">tls_rate_limit_per_second</a></h3>
 <p>Limit the number of simultaneous attempts to create a TLS session.
@@ -445,8 +445,8 @@ the maximum time that transmitted data may remain unacknowledged before TCP will
 connection. This helps detect dead client connections faster than keepalive probes when the connection
 is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).</p>
 <p>When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
-be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
-timeout when keepalive cannot help (e.g., during active data transmission).</p>
+be terminated. Use it to avoid 15-16 minute delays caused by TCP retransmission timeout when
+keepalive cannot help (e.g., during active data transmission).</p>
 <p><strong>Note:</strong> This option is only supported on Linux. On other operating systems, this setting is ignored.</p>
 <p>Set to <code>0</code> to disable (use OS default).</p>
 <p>Default: <code>60</code>.</p>
@@ -646,6 +646,13 @@ hostnossl all      all    192.168.1.0/24  trust
 without forwarding it to PostgreSQL. Useful for health checks from load balancers (HAProxy, pgbouncer-style <code>SELECT 1</code>)
 or application-level keepalive probes. The default <code>;</code> (empty statement) is the lightest possible check.</p>
 <p>Default: <code>";"</code>.</p>
+<h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
+<p>Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend <code>StartupMessage</code>; PostgreSQL stores them as the session reset defaults, so client <code>RESET ALL</code> / <code>DISCARD ALL</code> returns to these values.</p>
+<p>Cascade order: <code>general.startup_parameters</code>, then <code>pools.&lt;name&gt;.startup_parameters</code>, then the optional <code>startup_parameters</code> JSON column returned by passthrough <code>auth_query</code>. Later layers win per key. Dedicated-mode <code>auth_query</code> pools ignore the per-user column because one shared backend serves multiple roles.</p>
+<p>Validation at config load rejects reserved protocol keys (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>, anything starting with <code>_pq_.</code>), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000 bytes); if it does not fit, pg_doorman drops the auth_query overlay when the baseline still fits, otherwise it drops all configured keys for that startup and logs the event.</p>
+<p>If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's <code>ErrorResponse</code> to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as <code>pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}</code>; the parameter name and username are written to the corresponding warning log line.</p>
+<p>Inspect the resolved per-pool values with <code>SHOW STARTUP_PARAMETERS</code> or the <code>/api/pools</code> REST endpoint.</p>
+<p>Default: <code>{} (empty)</code>.</p>
 
                     </main>
 

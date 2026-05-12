@@ -232,7 +232,7 @@ host    all all 0.0.0.0/0 reject
 <p>Если в базе хранятся только хеши MD5, а клиент запрашивает SCRAM, аутентификация провалится с понятной ошибкой. Перед тем как ужесточать правила, переведите базу на SCRAM-SHA-256 (<code>ALTER ROLE ... PASSWORD</code>).</p>
 <h2 id="Отличия-от-pg_hbaconf-postgresql"><a class="header" href="#Отличия-от-pg_hbaconf-postgresql">Отличия от pg_hba.conf PostgreSQL</a></h2>
 <ul>
-<li>Нет ключевого слова <code>replication</code> (pg_doorman не пробрасывает соединения репликации).</li>
+<li>Нет ключевого слова <code>replication</code> (pg_doorman не обслуживает соединения репликации).</li>
 <li>Нет методов <code>peer</code>, <code>ident</code>, <code>cert</code>, <code>gss</code>, <code>sspi</code>, <code>pam</code>. PAM настраивается на пользователя через <code>auth_pam_service</code>, не через HBA.</li>
 <li>Нет префикса <code>+groupname</code> для пользователя.</li>
 <li>Нет регулярных выражений (синтаксис <code>/regex</code>).</li>
