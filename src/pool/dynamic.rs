@@ -28,10 +28,15 @@ use super::{
 ///
 /// On RELOAD, dynamic pools are dropped (not in config) and recreated
 /// on the next client connection with fresh settings.
+/// `fetched_overlay` is the exact per-user `startup_parameters` map the
+/// caller just fetched from `AuthQueryCache`. Passing it in avoids the
+/// race where this function would re-peek the cache and see a different
+/// (or missing) overlay under low TTLs or concurrent refetches.
 pub fn create_dynamic_pool(
     pool_name: &str,
     username: &str,
     backend_auth: Option<BackendAuthMethod>,
+    fetched_overlay: Arc<std::collections::HashMap<String, String>>,
 ) -> Result<ConnectionPool, Error> {
     // Fast path: pool already exists
     if let Some(existing) = get_pool(pool_name, username) {
@@ -135,36 +140,28 @@ pub fn create_dynamic_pool(
         std::sync::Arc::new(merged)
     };
 
-    // Capture the per-user auth_query overlay once, at pool creation.
-    // The auth_query cache was just populated for this username by the
-    // caller in src/auth/mod.rs, so the peek is guaranteed warm; freezing
-    // the snapshot here means backend spawns from this pool stay
-    // deterministic even after the cache TTL elapses. Empty for
-    // dedicated-mode pools (a single shared backend serves many dynamic
-    // users) and for any auth_query row without a `startup_parameters`
-    // column.
+    // Convert the caller's HashMap snapshot (the same one freshly
+    // returned by `cache.get_or_fetch(username)` in auth/mod.rs) into
+    // the BTreeMap shape ServerPool stores. The caller owns the
+    // snapshot, so there is no re-peek of the global cache here —
+    // an interleaved refetch cannot swap a different overlay under us.
+    // Dedicated-mode pools never reach this path (auth/mod.rs uses the
+    // shared pool branch instead), but the filter stays for defence-
+    // in-depth in case a future caller forwards a non-empty overlay
+    // through the dedicated-mode branch by accident.
     let per_user_startup_overlay: std::sync::Arc<std::collections::BTreeMap<String, String>> = {
-        let snapshot = super::get_auth_query_state(pool_name).and_then(|state| {
-            if state.config.is_dedicated_mode() {
-                None
-            } else {
-                state
-                    .peek_startup_parameters(username, |overlay| {
-                        if overlay.is_empty() {
-                            None
-                        } else {
-                            Some(
-                                overlay
-                                    .iter()
-                                    .map(|(k, v)| (k.clone(), v.clone()))
-                                    .collect(),
-                            )
-                        }
-                    })
-                    .flatten()
-            }
-        });
-        std::sync::Arc::new(snapshot.unwrap_or_default())
+        let is_dedicated = super::get_auth_query_state(pool_name)
+            .map(|state| state.config.is_dedicated_mode())
+            .unwrap_or(false);
+        if is_dedicated || fetched_overlay.is_empty() {
+            std::sync::Arc::new(std::collections::BTreeMap::new())
+        } else {
+            let map: std::collections::BTreeMap<String, String> = fetched_overlay
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            std::sync::Arc::new(map)
+        }
     };
 
     let manager = ServerPool::new(

@@ -11,6 +11,7 @@ pub mod talos;
 // Standard library imports
 use std::marker::Unpin;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 // External crate imports
 use crate::auth::hba::CheckResult;
@@ -936,8 +937,15 @@ where
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
 
-            let mut pool =
-                create_dynamic_pool(pool_name, username, backend_auth).map_err(|err| {
+            // Forward the per-user overlay we just fetched. The
+            // caller's CacheEntry holds the exact row that authenticated
+            // this user; passing it through avoids a re-peek of the
+            // global auth_query cache in create_dynamic_pool, which
+            // could otherwise see a different overlay under low TTLs
+            // or a concurrent refetch.
+            let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
+            let mut pool = create_dynamic_pool(pool_name, username, backend_auth, fetched_overlay)
+                .map_err(|err| {
                     error!(
                         "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
                     );
