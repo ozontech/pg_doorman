@@ -12,6 +12,13 @@ use std::collections::{BTreeMap, HashMap};
 /// `auth_query` (static user), and also for dedicated-mode auth_query pools
 /// where one shared backend serves multiple dynamic users so per-user
 /// parameters cannot be honoured.
+///
+/// The production hot path goes through
+/// [`ServerPool::resolved_startup_parameters`] using a cached
+/// `Arc<BTreeMap>` for the general+pool base; this function is the
+/// pure-cascade variant kept as the canonical reference of the merge
+/// rule and exercised by unit tests.
+#[allow(dead_code)]
 pub fn resolve(
     general: &BTreeMap<String, String>,
     pool: &BTreeMap<String, String>,

@@ -33,6 +33,61 @@ pub fn extract_parameter_name(message: &str) -> Option<String> {
     Some(rest[..end].to_owned())
 }
 
+/// Classify a PostgreSQL `ErrorResponse` received during backend startup
+/// into the right pg_doorman `Error` variant. Centralizes the SQLSTATE →
+/// Error mapping so the rule stays in one place across `Server::startup`,
+/// `handle_startup_error`, and anywhere else the startup path needs to
+/// react to a PG-side rejection.
+///
+/// Decision order:
+///
+/// 1. SQLSTATE class `57P*` (server unavailable / shutting down / starting
+///    up / cannot connect now) → `ServerUnavailableError`. Drives the
+///    Patroni-assisted fallback path; must win over the startup-parameter
+///    branch so a node-down rejection cannot be misclassified as a bad
+///    operator GUC.
+/// 2. If `sent_keys` is non-empty AND the PG message names a key in that
+///    set (English `parameter "<name>"` template, with a
+///    locale-independent fallback that scans for any sent key wrapped in
+///    double quotes) → `ServerStartupParameterRejection { sqlstate,
+///    message, server_identifier }`. Lets the checkout site forward the
+///    PG sqlstate verbatim to the client, instead of the generic 53300
+///    pool-exhausted fallback.
+/// 3. Otherwise → `ServerStartupError(<sqlstate>: <message>, …)`.
+pub fn classify_pg_startup_error<'a, I>(
+    sqlstate: String,
+    message: String,
+    server_identifier: &ServerIdentifier,
+    sent_keys: I,
+) -> Error
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    if sqlstate.starts_with("57P") {
+        return Error::ServerUnavailableError(message, server_identifier.clone());
+    }
+    let mut sent_iter = sent_keys.into_iter().peekable();
+    if sent_iter.peek().is_some() {
+        // Collect lazily so we walk the sent set at most once: try the
+        // English template first; on miss, scan once for any quoted key.
+        let parsed_key = extract_parameter_name(&message);
+        let collected: Vec<&'a String> = sent_iter.collect();
+        let matched = parsed_key
+            .as_ref()
+            .filter(|n| collected.iter().any(|k| k.as_str() == n.as_str()))
+            .cloned()
+            .or_else(|| match_sent_key_in_message(&message, collected.iter().copied()));
+        if matched.is_some() {
+            return Error::ServerStartupParameterRejection {
+                sqlstate,
+                message,
+                server_identifier: server_identifier.clone(),
+            };
+        }
+    }
+    Error::ServerStartupError(format!("{sqlstate}: {message}"), server_identifier.clone())
+}
+
 /// Locale-independent fallback for `extract_parameter_name`: scan the
 /// PG ErrorResponse `M` field for any of the operator-supplied keys
 /// pg_doorman actually sent, looking for the standard PG double-quoted
@@ -61,12 +116,11 @@ where
     None
 }
 
-/// Handles error response during server startup.
-///
-/// Currently unused: `Server::startup` inlines the equivalent logic so it
-/// can also surface the failing parameter name into the warn log. Kept
-/// in tree as a reference helper for any future startup path that needs
-/// the verbatim PG-error-passthrough behaviour.
+/// Handles error response during server startup. Surfaces the PG sqlstate
+/// through [`classify_pg_startup_error`] so non-`Server::startup` callers
+/// (currently none in production; kept for symmetry and future code paths
+/// that need verbatim PG-error-passthrough behaviour) follow the same
+/// `ServerUnavailableError` / `ServerStartupError` mapping.
 #[allow(dead_code)]
 pub(crate) async fn handle_startup_error(
     stream: &mut StreamInner,
@@ -105,17 +159,15 @@ pub(crate) async fn handle_startup_error(
                         f.code,
                         f.message
                     );
-                    if f.code.starts_with("57P") {
-                        Err(Error::ServerUnavailableError(
-                            f.message,
-                            server_identifier.clone(),
-                        ))
-                    } else {
-                        Err(Error::ServerStartupError(
-                            f.message,
-                            server_identifier.clone(),
-                        ))
-                    }
+                    // No sent-key set is available here; the helper falls
+                    // back to plain `ServerStartupError` for non-57P codes,
+                    // matching the previous behaviour exactly.
+                    Err(classify_pg_startup_error(
+                        f.code,
+                        f.message,
+                        server_identifier,
+                        std::iter::empty::<&String>(),
+                    ))
                 }
                 Err(err) => {
                     error!(

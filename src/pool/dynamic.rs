@@ -122,6 +122,19 @@ pub fn create_dynamic_pool(
 
     let fallback_state = super::build_fallback_state(pool_name, pool_config, &config.general);
 
+    // Merge general+pool startup_parameters baseline from the same config
+    // snapshot. Dynamic auth_query pools follow the same lifecycle as
+    // static pools: rebuilt on RELOAD when the underlying base changes
+    // (see `general_startup_parameters_changed` in pool/mod.rs).
+    let base_startup_parameters = {
+        let mut merged: std::collections::BTreeMap<String, String> =
+            config.general.startup_parameters.clone();
+        for (k, v) in &pool_config.startup_parameters {
+            merged.insert(k.clone(), v.clone());
+        }
+        std::sync::Arc::new(merged)
+    };
+
     let manager = ServerPool::new(
         address.clone(),
         user.clone(),
@@ -143,6 +156,7 @@ pub fn create_dynamic_pool(
         config.general.query_wait_timeout.as_std(),
         pool_mode == PoolMode::Session,
         fallback_state,
+        base_startup_parameters,
     );
 
     let queue_strategy = match config.general.server_round_robin {

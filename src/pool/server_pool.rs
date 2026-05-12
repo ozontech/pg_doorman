@@ -140,24 +140,8 @@ impl ServerPool {
         query_wait_timeout: Duration,
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
+        base_startup_parameters: Arc<BTreeMap<String, String>>,
     ) -> ServerPool {
-        // Merge general+pool startup_parameters once at construction. The
-        // reload path rebuilds this pool whenever either layer's hash
-        // changes (see `ConnectionPool::from_config`), so this snapshot
-        // stays valid for the pool's lifetime. Per-user auth_query overlay
-        // is layered on top per spawn inside `resolved_startup_parameters`.
-        let base_startup_parameters = {
-            let cfg = crate::config::config_arc();
-            let mut merged: std::collections::BTreeMap<String, String> =
-                cfg.general.startup_parameters.clone();
-            if let Some(pool_cfg) = cfg.pools.get(&address.pool_name) {
-                for (k, v) in &pool_cfg.startup_parameters {
-                    merged.insert(k.clone(), v.clone());
-                }
-            }
-            Arc::new(merged)
-        };
-
         ServerPool {
             address,
             user: user.clone(),
@@ -274,15 +258,10 @@ impl ServerPool {
         .await;
 
         // libpq sslmode=allow: PostgreSQL has no protocol-level "TLS required"
-        // signal — pg_hba rejects plain connections via FATAL 28000 only after
-        // StartupMessage. The socket is dead after FATAL, so retry needs a fresh
-        // TCP connection. We retry on any startup failure (matching libpq), but
-        // skip retry on transport-level errors (ConnectError, ServerUnavailableError)
-        // since TLS cannot help when the server was never reached. Startup
-        // parameter rejections (PG ErrorResponse on a key we sent) are also
-        // not TLS-fixable, but they surface as `ServerStartupError` with the
-        // PG sqlstate intact — the client receives the same message PG would
-        // have produced, so the retry is a no-op rather than a hazard.
+        // signal. pg_hba rejects plain connections with FATAL 28000 after the
+        // StartupMessage, and the socket cannot be reused after that. Match
+        // libpq by retrying startup failures over TLS, but skip transport
+        // failures where no PostgreSQL startup response was received.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
         let should_tls_retry = match &result {
@@ -371,17 +350,11 @@ impl ServerPool {
         &self.address
     }
 
-    /// Inspect the operator-supplied cascade with the source layer kept for
-    /// each key. Used by the admin `SHOW STARTUP_PARAMETERS` command and the
-    /// `/api/pools` JSON so operators can answer "where did `work_mem=64MB`
-    /// come from for this pool" without reading the live config plus the
-    /// auth_query cache by hand.
+    /// Return the effective startup parameter cascade with the winning source
+    /// layer for each key. Used by `SHOW STARTUP_PARAMETERS` and `/api/pools`.
     ///
-    /// Unlike [`Self::resolved_startup_parameters`], this method does **not**
-    /// apply the runtime budget-overflow drop: it reports the cascade as
-    /// configured even when the merged body would not fit in PG's startup
-    /// packet, so the operator sees the misconfiguration through this view
-    /// instead of an empty result.
+    /// This does not apply the runtime budget-overflow drop. It reports the
+    /// configured cascade so the operator can see the oversized input.
     pub fn effective_startup_parameters_with_sources(
         &self,
     ) -> std::collections::BTreeMap<String, (String, super::startup_resolver::ParameterSource)>
@@ -393,12 +366,14 @@ impl ServerPool {
             .map(|p| &p.startup_parameters)
             .cloned()
             .unwrap_or_default();
-        let auth_query_params = match super::get_auth_query_state(&self.address.pool_name) {
-            Some(state) if !state.config.is_dedicated_mode() => {
-                state.peek_startup_parameters(&self.user.username)
-            }
-            _ => None,
-        };
+        // Snapshot the per-user auth_query map once for the admin/web view.
+        let auth_query_params: Option<std::collections::HashMap<String, String>> =
+            match super::get_auth_query_state(&self.address.pool_name) {
+                Some(state) if !state.config.is_dedicated_mode() => {
+                    state.peek_startup_parameters(&self.user.username, |m| m.clone())
+                }
+                _ => None,
+            };
         super::startup_resolver::resolve_with_sources(
             &cfg.general.startup_parameters,
             &pool_params,
@@ -409,52 +384,50 @@ impl ServerPool {
     /// Resolve the operator-supplied startup_parameters map that this pool
     /// will hand to `Server::startup` for one backend spawn.
     ///
-    /// Fast path (no per-user auth_query overlay): returns
-    /// `Cow::Borrowed(&self.base_startup_parameters)` — zero allocation.
-    /// Slow path (passthrough auth_query with a populated cache entry):
-    /// clones the cached base and layers the per-user overrides on top.
+    /// Without a per-user auth_query overlay, this borrows the cached base
+    /// map. With an overlay, it clones the base map and applies the user
+    /// values.
     ///
-    /// Both paths validate the merged cascade against the operator budget
-    /// and the exact PG `MAX_STARTUP_PACKET_LENGTH`; an overflow returns an
-    /// empty map for this spawn and logs, so the backend connects with PG
-    /// defaults rather than failing every retry.
+    /// The merged map is checked against the operator budget and the full
+    /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
+    /// no operator-supplied parameters for this backend startup.
     fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
         // Look up the per-user auth_query entry only when the pool runs in
         // passthrough auth_query mode (no shared server_user). In dedicated
         // mode the shared backend serves multiple dynamic users, so no
         // single per-user override could be honoured.
-        let auth_query_overlay = match super::get_auth_query_state(&self.address.pool_name) {
+        //
+        // The closure runs under a DashMap shard read lock. Return `None` for
+        // an empty overlay so the caller can keep borrowing the base map.
+        let auth_query_state = super::get_auth_query_state(&self.address.pool_name);
+        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> = match auth_query_state {
             Some(state) if !state.config.is_dedicated_mode() => {
-                state.peek_startup_parameters(&self.user.username)
-            }
-            _ => None,
-        };
-
-        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> = match auth_query_overlay {
-            Some(overlay) if !overlay.is_empty() => {
-                let mut owned = (*self.base_startup_parameters).clone();
-                for (k, v) in &overlay {
-                    owned.insert(k.clone(), v.clone());
+                let overlay_applied =
+                    state.peek_startup_parameters(&self.user.username, |overlay| {
+                        if overlay.is_empty() {
+                            None
+                        } else {
+                            let mut owned = (*self.base_startup_parameters).clone();
+                            for (k, v) in overlay {
+                                owned.insert(k.clone(), v.clone());
+                            }
+                            Some(owned)
+                        }
+                    });
+                match overlay_applied.flatten() {
+                    Some(owned) => std::borrow::Cow::Owned(owned),
+                    None => std::borrow::Cow::Borrowed(&*self.base_startup_parameters),
                 }
-                std::borrow::Cow::Owned(owned)
             }
             _ => std::borrow::Cow::Borrowed(&*self.base_startup_parameters),
         };
 
-        // Per-level validation in `Config::validate` does not see the merged
-        // cascade, and the per-level guard does not see the user/database/
-        // application_name fields the wire layer always adds. Two cheap
-        // checks, in order:
+        // Per-level validation does not see the merged cascade or the
+        // user/database/application_name fields added by the wire layer. Check
+        // both limits here:
         //
-        // 1. Fast path: just the operator-supplied pairs against the
-        //    operator budget. This catches cascade overflows without
-        //    knowing the username/database length.
-        // 2. Exact-length check: the full StartupMessage pg_doorman is about
-        //    to put on the wire, against PG's `MAX_STARTUP_PACKET_LENGTH`.
-        //    Mirrors the layout in `crate::messages::protocol::startup` and
-        //    includes the length prefix, version, `user`, effective
-        //    `application_name` and `database` so a long `application_name`
-        //    cannot slip a near-budget operator set over the cap.
+        // 1. Operator-supplied pairs against the reserved operator budget.
+        // 2. Full StartupMessage size against PG's `MAX_STARTUP_PACKET_LENGTH`.
         let body_bytes = sp::serialized_bytes(&merged);
         if body_bytes > sp::MAX_OPERATOR_BUDGET {
             warn!(
@@ -553,8 +526,8 @@ impl ServerPool {
             (Ok(conn), _) => Ok(conn),
             (Err(err), super::fallback::TargetSource::WhitelistCache) => {
                 // Cached host was stale; wipe it and try with full discovery
-                // exactly once more. Bounded retry — discovery round failure
-                // surfaces directly without a third try.
+                // exactly once more. If discovery fails too, return that
+                // failure without a third attempt.
                 info!(
                     "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
                     self.address.username, self.address.pool_name,
@@ -729,8 +702,8 @@ impl ServerPool {
     /// Race `Server::startup` against `targets` in parallel. On first Ok
     /// return `Some(server)` (winner is whitelisted as a side effect). On
     /// full exhaustion mark every loser unhealthy, record reasons into
-    /// `summary`, and return `None` — the caller advances to the next wave
-    /// or surfaces the aggregate.
+    /// `summary`, and return `None`; the caller advances to the next wave or
+    /// returns the aggregate error.
     async fn race_wave(
         &self,
         fallback: &super::fallback::FallbackState,
@@ -1096,12 +1069,12 @@ impl FailureSummary {
 
 /// Race `futures` and return the first `Ok`, together with its index in the
 /// input slice. If every future yields `Err`, return all errors with their
-/// original indices — the caller decides how to surface them (per-host
-/// cooldown, log aggregation). Pending futures are dropped on first
+/// original indices; the caller decides how to use them for per-host cooldown
+/// and log aggregation. Pending futures are dropped on first
 /// success, which cancels the in-flight `Server::startup` for the losing
 /// candidates: their TCP sockets go away under us; the kernel finishes the
-/// half-open handshake asynchronously. This is intentional — the
-/// user-facing requirement is "first successful sync wins", and chasing
+/// half-open handshake asynchronously. The user-facing requirement is
+/// "first successful sync wins", and chasing
 /// graceful disconnect on every loser would gate the winner on the slowest
 /// loser.
 async fn race_first_success<'a, T: 'a, E: 'a>(
@@ -1191,8 +1164,7 @@ mod tests {
     #[test]
     fn lifetime_exceeded_skipped_when_under_pressure() {
         // A connection well past its budget is kept alive when the caller
-        // signals pressure. This is the whole point of the new flag: a
-        // working connection must not be closed mid-storm.
+        // signals pressure. A working connection must not be closed mid-storm.
         let metrics = metrics_with_lifetime(1);
         thread::sleep(Duration::from_millis(5));
         assert!(lifetime_exceeded(&metrics, true).is_none());
@@ -1229,9 +1201,9 @@ mod tests {
     async fn startup_with_timeout_returns_connect_error_on_deadline() {
         // Simulates a server that opened TCP but never replies to
         // StartupMessage: the inner future never resolves. We expect
-        // `startup_with_timeout` to surface this as `ConnectError`, which is
-        // what callers treat as a transport-level failure (triggers fallback
-        // on the main path; marks the candidate unhealthy on the fallback path).
+        // `startup_with_timeout` to return `ConnectError`, which callers treat
+        // as a transport-level failure (triggers fallback on the main path;
+        // marks the candidate unhealthy on the fallback path).
         let pending = std::future::pending::<Result<Server, Error>>();
         let result =
             startup_with_timeout(Duration::from_millis(20), "1.2.3.4", 5432, pending).await;

@@ -33,20 +33,17 @@ const MAX_USERNAME_LEN: usize = 63;
 // PasswordFetcher trait (allows mocking AuthQueryExecutor in unit tests)
 // ---------------------------------------------------------------------------
 
-/// Password hash plus the per-user startup_parameters map surfaced by
-/// auth_query. The map is empty when the SQL did not return the optional
-/// `startup_parameters` column, when the column was NULL/empty, or when
-/// every entry failed validation.
+/// Password hash plus the per-user startup_parameters map returned by
+/// auth_query. The map is empty when the optional column is absent, NULL,
+/// empty, or fully rejected by validation.
 pub type Credentials = (String, std::collections::HashMap<String, String>);
 
 /// Trait for fetching credentials from PostgreSQL.
 /// `AuthQueryExecutor` implements this; tests and benchmarks can substitute a mock.
 ///
-/// `fetch` returns just the password hash; `fetch_credentials` additionally
-/// returns the per-user startup_parameters map parsed from the optional
-/// auth_query result column. The default implementation pairs the password
-/// with an empty map, which is the correct semantics for any fetcher that
-/// does not surface per-user parameters.
+/// `fetch` returns the password hash. `fetch_credentials` also returns the
+/// optional per-user startup parameter map. Fetchers that do not support that
+/// column use the default empty map.
 pub trait PasswordFetcher: Send + Sync {
     fn fetch<'a>(
         &'a self,
@@ -423,13 +420,10 @@ impl AuthQueryExecutor {
         Self::parse_startup_parameters_text(raw.as_deref(), username, pool_name)
     }
 
-    /// Parse the optional `startup_parameters` JSON-object value shipped by
-    /// the auth_query SQL. Each string-typed entry becomes a per-user GUC;
-    /// reserved keys, syntactically invalid GUC names, and non-string values
-    /// are dropped with a warning. Unparseable JSON and JSON that is not an
-    /// object both yield an empty map with a warning. Never fails: this is
-    /// operator-supplied configuration data, and a malformed entry must not
-    /// block authentication.
+    /// Parse the optional `startup_parameters` JSON object returned by
+    /// auth_query. Valid string entries become per-user GUCs. Invalid keys,
+    /// non-string values, malformed JSON, and non-object JSON are logged and
+    /// ignored; authentication still continues.
     fn parse_startup_parameters_text(
         text: Option<&str>,
         username: &str,
@@ -441,13 +435,9 @@ impl AuthQueryExecutor {
         if text.is_empty() {
             return std::collections::HashMap::new();
         }
-        // Reject oversize input before serde_json walks the whole row. The
-        // operator budget covers the merged cascade pg_doorman ships in
-        // StartupMessage, so a single auth_query row that already exceeds
-        // that budget on its own can never produce a sendable map. Capping
-        // here keeps a misbehaving DB row from forcing pg_doorman to
-        // allocate megabytes of serde_json::Value tree on every auth_query
-        // refresh.
+        // Reject oversize input before serde_json allocates the Value tree.
+        // A single auth_query row above the operator budget cannot produce a
+        // sendable startup map.
         let max_bytes = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
         if text.len() > max_bytes {
             warn!(
@@ -536,7 +526,7 @@ pub struct CacheEntry {
     /// for SCRAM passthrough to backend PG (Step 6).
     /// None for MD5 users or before first SCRAM auth.
     pub client_key: Option<Vec<u8>>,
-    /// Per-user startup parameters surfaced by the auth_query optional
+    /// Per-user startup parameters returned by the optional auth_query
     /// `startup_parameters` JSON column. Empty when the column is absent,
     /// empty/NULL, or filtered out in dedicated auth_query mode.
     pub startup_parameters: std::collections::HashMap<String, String>,
@@ -811,8 +801,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     }
 
     /// Clear all entries (called on RELOAD when auth_query config changes).
-    /// Also resets dedicated-mode warning suppression so an operator who
-    /// fixes their config and reloads gets fresh warnings next time.
+    /// Also resets dedicated-mode warning suppression after reload.
     pub fn clear(&self) {
         self.entries.clear();
         self.locks.clear();
@@ -833,22 +822,21 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             .and_then(|e| e.client_key.clone())
     }
 
-    /// Cheap, sync, non-fetching lookup of the per-user startup_parameters
-    /// map. Returns `None` when the username has no cached entry yet (e.g.
-    /// pool prewarm fires before any client has authenticated), when the
-    /// cached entry is negative, or when the cached entry has lived past
-    /// `cache_ttl` / `cache_failure_ttl`. Never triggers a PG fetch and
-    /// never initializes the executor; intended for the backend-spawn hot
-    /// path where blocking on auth_query I/O would be unacceptable.
+    /// Synchronous lookup of the cached per-user startup_parameters map.
+    /// Returns `None` when there is no positive, unexpired cache entry. This
+    /// never queries PostgreSQL or initializes the executor.
     ///
-    /// The TTL check exists so that a backend spawned by the replenishment
-    /// loop or anticipation path does not pin stale per-user GUCs after
-    /// the operator changed the `auth_query` row and the operator-visible
-    /// cache rotation moment has already passed.
-    pub fn peek_startup_parameters(
+    /// The TTL check prevents replenishment and anticipation from using stale
+    /// per-user GUCs after the auth_query row should have expired.
+    pub fn peek_startup_parameters<R>(
         &self,
         username: &str,
-    ) -> Option<std::collections::HashMap<String, String>> {
+        f: impl FnOnce(&std::collections::HashMap<String, String>) -> R,
+    ) -> Option<R> {
+        // Closure-based to avoid cloning the cached HashMap on every
+        // backend spawn. The DashMap shard read-lock is held only for the
+        // duration of `f`; consumers merge the overlay directly into their
+        // owned destination map instead of through an intermediate clone.
         let entry = self.entries.get(username)?;
         if entry.is_negative {
             return None;
@@ -856,7 +844,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         if entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
             return None;
         }
-        Some(entry.startup_parameters.clone())
+        Some(f(&entry.startup_parameters))
     }
 
     /// Number of cached entries (for metrics/admin).
@@ -1404,12 +1392,26 @@ mod tests {
     // peek_startup_parameters: sync, non-fetching lookup used by backend spawn
     // ---------------------------------------------------------------------
 
+    // Closure-based API tested by snapshotting the borrowed HashMap into
+    // an owned one when an existing assertion needs to inspect contents.
+    // Generic over the cache's fetcher because the test harness uses a
+    // `MockFetcher` rather than the production `AuthQueryExecutor`.
+    fn peek_snapshot<F>(
+        cache: &AuthQueryCache<F>,
+        username: &str,
+    ) -> Option<std::collections::HashMap<String, String>>
+    where
+        F: PasswordFetcher,
+    {
+        cache.peek_startup_parameters(username, |m| m.clone())
+    }
+
     #[tokio::test]
     async fn peek_startup_parameters_missing_user_returns_none() {
         let fetcher = Arc::new(MockFetcher::new());
         let config = test_config();
         let cache = make_cache(fetcher, &config);
-        assert!(cache.peek_startup_parameters("alice").is_none());
+        assert!(peek_snapshot(&cache, "alice").is_none());
     }
 
     #[tokio::test]
@@ -1419,7 +1421,7 @@ mod tests {
         let config = test_config();
         let cache = make_cache(fetcher, &config);
         assert!(cache.get_or_fetch("ghost").await.unwrap().is_none());
-        assert!(cache.peek_startup_parameters("ghost").is_none());
+        assert!(peek_snapshot(&cache, "ghost").is_none());
     }
 
     #[tokio::test]
@@ -1436,13 +1438,13 @@ mod tests {
 
         let cache = make_cache(fetcher, &config);
         cache.get_or_fetch("alice").await.unwrap().unwrap();
-        // Sanity: peek sees the fresh entry.
-        assert!(cache.peek_startup_parameters("alice").is_some());
+        // Verify that peek sees the entry before it expires.
+        assert!(peek_snapshot(&cache, "alice").is_some());
 
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
         assert!(
-            cache.peek_startup_parameters("alice").is_none(),
+            peek_snapshot(&cache, "alice").is_none(),
             "peek must return None once cache_ttl has elapsed for the entry"
         );
     }
@@ -1459,7 +1461,7 @@ mod tests {
         let cache = make_cache(fetcher, &config);
         cache.get_or_fetch("alice").await.unwrap().unwrap();
 
-        let params = cache.peek_startup_parameters("alice").unwrap();
+        let params = peek_snapshot(&cache, "alice").unwrap();
         assert_eq!(params.get("work_mem").map(String::as_str), Some("64MB"));
         assert_eq!(
             params.get("statement_timeout").map(String::as_str),
@@ -1469,9 +1471,7 @@ mod tests {
 
     #[tokio::test]
     async fn peek_startup_parameters_dedicated_mode_returns_empty() {
-        // Dedicated mode filters cached entries to drop per-user params.
-        // peek must surface the filtered state: a present-but-empty map,
-        // not None, because the user is still cached.
+        // Dedicated mode keeps the user cached but removes per-user params.
         let fetcher = Arc::new(MockFetcher::new());
         fetcher.add_user_with_params("alice", "md5abc123", &[("work_mem", "64MB")]);
         let mut config = test_config();
@@ -1481,7 +1481,7 @@ mod tests {
         let cache = make_cache(fetcher, &config);
         cache.get_or_fetch("alice").await.unwrap().unwrap();
 
-        let params = cache.peek_startup_parameters("alice").unwrap();
+        let params = peek_snapshot(&cache, "alice").unwrap();
         assert!(params.is_empty());
     }
 }

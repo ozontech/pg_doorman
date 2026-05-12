@@ -310,7 +310,7 @@ impl Server {
     }
 
     /// Drains any remaining data from the server that hasn't been read yet.
-    /// This is used to synchronize the connection state when data is unexpectedly available.
+    /// Used to synchronize connection state when data is unexpectedly available.
     /// All received data is discarded (sent to a sink).
     pub async fn wait_available(&mut self) {
         if !self.is_data_available() {
@@ -507,7 +507,7 @@ impl Server {
     }
 
     /// Sets the number of expected responses in async mode.
-    /// This is calculated from the batch operations before sending to server.
+    /// Calculated from the batch operations before sending to the server.
     #[inline(always)]
     pub fn set_expected_responses(&mut self, count: u32) {
         self.expected_responses = count;
@@ -699,14 +699,8 @@ impl Server {
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
         let mut parameter_diff = self.server_parameters.compare_params(parameters);
 
-        // Keys the operator injected through `startup_parameters` are
-        // authoritative for the session: they are pg_settings.reset_val on
-        // the backend and the operator chose them on purpose. The client
-        // may still issue an explicit SET later, but the per-checkout sync
-        // from `client.server_parameters` must not silently overwrite an
-        // operator-supplied default with a client-side value (e.g. an
-        // application_name baked into a connection string). Skip the
-        // retain pass when no operator keys are tracked.
+        // Do not let values from the client startup packet overwrite
+        // operator-supplied startup defaults during checkout sync.
         if !self.operator_managed_startup_keys.is_empty() {
             parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
         }
@@ -759,13 +753,10 @@ impl Server {
     /// Pretend to be the Postgres client and connect to the server given host, port and credentials.
     /// Perform the authentication and return the server in a ready for query state.
     ///
-    /// `startup_parameters` is the cascade-resolved operator-supplied map
-    /// (general → pool → auth_query, more specific wins). It goes onto the
-    /// wire as part of `StartupMessage` exactly as the operator configured
-    /// it. If PG rejects any of those parameters, the resulting
-    /// `ErrorResponse` is surfaced to the client unchanged — pg_doorman
-    /// behaves like the PostgreSQL backend itself rather than masking the
-    /// failure with retries or per-key quarantine.
+    /// `startup_parameters` is the resolved cascade
+    /// (`general` -> pool -> auth_query). It is sent in the backend
+    /// `StartupMessage`. If PostgreSQL rejects a value, pg_doorman forwards
+    /// the `ErrorResponse` unchanged.
     #[allow(clippy::too_many_arguments)]
     pub async fn startup(
         address: &Address,
@@ -826,9 +817,9 @@ impl Server {
 
         startup(
             &mut stream,
-            username.clone(),
+            username.as_str(),
             database,
-            application_name.clone(),
+            application_name.as_str(),
             startup_parameters,
         )
         .await?;
@@ -930,14 +921,9 @@ impl Server {
                     }
                 }
 
-                // ErrorResponse. Read the message body and parse it. PG's
-                // verdict is the operator's verdict — we surface the
-                // sqlstate and message to the client unchanged. The one
-                // exception is the Patroni-assisted fallback path: SQLSTATE
-                // class `57P*` (server unavailable) needs its dedicated
-                // `ServerUnavailableError` classification so the fallback
-                // discovery can route around the failed node instead of
-                // returning a startup error to the client.
+                // ErrorResponse during startup. Keep SQLSTATE class 57P
+                // on the fallback path; other startup errors are forwarded
+                // to the client as PostgreSQL returned them.
                 'E' => {
                     let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
                     let _ = bytes.get_u8();
@@ -956,26 +942,12 @@ impl Server {
                         ));
                     }
 
-                    // Identify the failing parameter. Two-step lookup so the
-                    // observability does not silently regress on PostgreSQL
-                    // servers running with non-English `lc_messages`:
+                    // Identify the failing parameter for logs and metrics.
                     //
-                    // 1. Parse the canonical English `parameter "<name>"`
-                    //    phrase. Most production fleets keep PG default
-                    //    locale, so this is the common case.
-                    // 2. If parsing failed or returned a key we did not
-                    //    send, scan the message body for any operator-
-                    //    supplied key surrounded by double quotes. PG
-                    //    quotes the parameter name in every locale, even
-                    //    when the surrounding prose is translated.
-                    //
-                    // When either step finds a sent key, we warn-log,
-                    // increment the per-pool counter, AND return the new
-                    // typed `ServerStartupParameterRejection` so the
-                    // checkout path can forward the PG sqlstate to the
-                    // client verbatim (instead of substituting the generic
-                    // 53300 "pool exhausted" fallback that every other
-                    // server startup failure receives).
+                    // First parse the common English `parameter "<name>"`
+                    // phrase, then fall back to looking for any sent key in
+                    // double quotes. The fallback covers translated
+                    // `lc_messages` where PostgreSQL still quotes the name.
                     let matched_key = if startup_parameters.is_empty() {
                         None
                     } else {

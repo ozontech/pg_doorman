@@ -457,6 +457,25 @@ impl ConnectionPool {
 
                 let fallback_state = build_fallback_state(pool_name, pool_config, &config.general);
 
+                // Merge general+pool startup_parameters from the same
+                // `config` snapshot we hashed above. ServerPool keeps this
+                // as Arc<BTreeMap> for the rest of its life — the reload
+                // path rebuilds the pool whenever either layer's hash
+                // changes, so the snapshot stays valid until then. Passing
+                // it in explicitly (rather than letting ServerPool::new
+                // call config_arc() again) closes a narrow race where a
+                // second reload between this iteration and constructor
+                // execution would write a different baseline to the pool
+                // than the one the reuse hash captured.
+                let base_startup_parameters = {
+                    let mut merged: std::collections::BTreeMap<String, String> =
+                        config.general.startup_parameters.clone();
+                    for (k, v) in &pool_config.startup_parameters {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                    Arc::new(merged)
+                };
+
                 let manager = ServerPool::new(
                     address.clone(),
                     user.clone(),
@@ -478,6 +497,7 @@ impl ConnectionPool {
                     config.general.query_wait_timeout.as_std(),
                     pool_mode == PoolMode::Session,
                     fallback_state,
+                    base_startup_parameters,
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -631,6 +651,15 @@ impl ConnectionPool {
                         let fallback_state =
                             build_fallback_state(pool_name, pool_config, &config.general);
 
+                        let base_startup_parameters = {
+                            let mut merged: std::collections::BTreeMap<String, String> =
+                                config.general.startup_parameters.clone();
+                            for (k, v) in &pool_config.startup_parameters {
+                                merged.insert(k.clone(), v.clone());
+                            }
+                            Arc::new(merged)
+                        };
+
                         let manager = ServerPool::new(
                             address.clone(),
                             shared_user.clone(),
@@ -652,6 +681,7 @@ impl ConnectionPool {
                             config.general.query_wait_timeout.as_std(),
                             pool_mode == PoolMode::Session,
                             fallback_state,
+                            base_startup_parameters,
                         );
 
                         let queue_strategy = match config.general.server_round_robin {

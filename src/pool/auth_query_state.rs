@@ -107,10 +107,16 @@ impl AuthQueryState {
     /// username has no cached entry. Used on the backend-spawn hot path
     /// where blocking on a PG roundtrip would defeat the point of the
     /// cache; cold lookups intentionally surface as "no per-user override".
-    pub fn peek_startup_parameters(
+    /// Pass the cached per-user startup_parameters map (when present and
+    /// fresh) to `f` and return its result. `f` borrows the HashMap; no
+    /// clone happens on the backend-spawn hot path. Returns `None` if the
+    /// auth_query executor hasn't been lazily initialized yet, the entry
+    /// is absent / negative, or the entry's TTL has elapsed.
+    pub fn peek_startup_parameters<R>(
         &self,
         username: &str,
-    ) -> Option<std::collections::HashMap<String, String>> {
-        self.cache_cell.get()?.peek_startup_parameters(username)
+        f: impl FnOnce(&std::collections::HashMap<String, String>) -> R,
+    ) -> Option<R> {
+        self.cache_cell.get()?.peek_startup_parameters(username, f)
     }
 }

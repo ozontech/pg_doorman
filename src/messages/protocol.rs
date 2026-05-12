@@ -162,34 +162,23 @@ pub fn simple_query(query: &str) -> BytesMut {
 
 /// Send startup message to the server.
 ///
-/// Required parameters (`user`, `application_name`, `database`) are written
-/// first in their historical wire order, so the byte stream is unchanged when
-/// `extra_params` is empty. Operator-supplied values from `extra_params` are
-/// appended in the map's iteration order (BTreeMap → lexicographic). If
-/// `extra_params` contains an `application_name` key, it overrides the
-/// `application_name` argument so an operator-supplied value wins over the
-/// pg_doorman-managed default.
+/// Required parameters (`user`, `application_name`, `database`) keep their
+/// historical wire order when `extra_params` is empty. Additional parameters
+/// are appended in BTreeMap order. `extra_params["application_name"]`
+/// overrides the default application name.
 pub async fn startup<S>(
     stream: &mut S,
-    user: String,
+    user: &str,
     database: &str,
-    application_name: String,
+    application_name: &str,
     extra_params: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), Error>
 where
     S: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    // Pre-compute the exact wire size so the whole StartupMessage fits in
-    // one allocation and the length prefix can be written in place. The
-    // previous shape (`BytesMut::new()` body, then a second `with_capacity`
-    // copy for the length prefix) paid two allocations and a memcpy per
-    // backend spawn.
-    let total_size = full_packet_bytes(
-        user.as_str(),
-        database,
-        application_name.as_str(),
-        extra_params,
-    );
+    // Pre-compute the wire size so the StartupMessage fits in one allocation
+    // and the length prefix can be written in place.
+    let total_size = full_packet_bytes(user, database, application_name, extra_params);
     let mut startup = BytesMut::with_capacity(total_size);
 
     // Length prefix (includes itself).
@@ -207,7 +196,7 @@ where
     let effective_app_name = extra_params
         .get("application_name")
         .map(String::as_str)
-        .unwrap_or(application_name.as_str());
+        .unwrap_or(application_name);
     startup.put(&b"application_name\0"[..]);
     startup.put_slice(effective_app_name.as_bytes());
     startup.put_u8(0);
@@ -345,7 +334,7 @@ pub fn md5_hash_second_pass(hash: &str, salt: &[u8]) -> Vec<u8> {
 }
 
 /// Send password challenge response to the server.
-/// This is the MD5 challenge.
+/// Handles the MD5 challenge.
 pub async fn md5_password<S>(
     stream: &mut S,
     user: &str,
@@ -857,7 +846,7 @@ pub fn insert_close_complete_after_last_close_complete(
 }
 
 /// Insert ParseComplete messages before each ParameterDescription ('t') message.
-/// This is used for the Describe flow when Parse was skipped due to caching.
+/// Used by the Describe flow when Parse was skipped due to caching.
 ///
 /// Describe response for a statement is:
 /// - ParameterDescription ('t') followed by RowDescription ('T') or NoData ('n')
@@ -994,7 +983,7 @@ mod startup_tests {
         );
         params.insert("work_mem".to_string(), "64MB".to_string());
 
-        startup(&mut buf, "alice".into(), "appdb", "myapp".into(), &params)
+        startup(&mut buf, "alice", "appdb", "myapp", &params)
             .await
             .expect("startup");
 
@@ -1025,15 +1014,9 @@ mod startup_tests {
     #[tokio::test]
     async fn startup_with_empty_params_keeps_pre_feature_format() {
         let mut buf: Vec<u8> = Vec::new();
-        startup(
-            &mut buf,
-            "alice".into(),
-            "appdb",
-            "myapp".into(),
-            &BTreeMap::new(),
-        )
-        .await
-        .expect("startup");
+        startup(&mut buf, "alice", "appdb", "myapp", &BTreeMap::new())
+            .await
+            .expect("startup");
         let body = &buf[8..];
         let s = String::from_utf8_lossy(body);
         assert!(s.contains("user\0alice"));
@@ -1047,7 +1030,7 @@ mod startup_tests {
         let mut params = BTreeMap::new();
         params.insert("application_name".to_string(), "operator_app".to_string());
 
-        startup(&mut buf, "alice".into(), "appdb", "ignored".into(), &params)
+        startup(&mut buf, "alice", "appdb", "ignored", &params)
             .await
             .expect("startup");
 
@@ -1059,8 +1042,7 @@ mod startup_tests {
         assert!(!s.contains("application_name\0ignored"));
     }
 
-    /// Belt-and-suspenders: ensure the length prefix matches the byte count
-    /// PG reads — anything off here breaks every connection.
+    /// The length prefix must match the byte count PostgreSQL reads.
     #[tokio::test]
     async fn startup_length_prefix_matches_body() {
         let mut buf: Vec<u8> = Vec::new();
@@ -1068,7 +1050,7 @@ mod startup_tests {
         params.insert("k1".to_string(), "v1".to_string());
         params.insert("k2".to_string(), "v2".to_string());
 
-        startup(&mut buf, "u".into(), "d", "a".into(), &params)
+        startup(&mut buf, "u", "d", "a", &params)
             .await
             .expect("startup");
 
