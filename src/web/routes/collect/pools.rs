@@ -6,7 +6,7 @@ use crate::web::routes::dto::{PoolDto, PoolsDto, StartupParameterDto};
 
 use super::{now_unix_ms, snapshot};
 
-pub(crate) fn collect_pools() -> PoolsDto {
+pub(crate) fn collect_pools(reveal_startup_values: bool) -> PoolsDto {
     let snap = snapshot();
     let pool_lookup = &snap.pool_lookup;
     let pools_map = get_all_pools();
@@ -72,6 +72,7 @@ pub(crate) fn collect_pools() -> PoolsDto {
             tls_backend_connections,
             startup_parameters: StartupParameterDto::from_resolved(
                 pool.database.effective_startup_parameters_with_sources(),
+                reveal_startup_values,
             ),
         };
         pools.push(dto);
