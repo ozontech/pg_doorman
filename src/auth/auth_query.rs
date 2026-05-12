@@ -478,6 +478,7 @@ impl AuthQueryExecutor {
         };
         let mut out = std::collections::HashMap::new();
         let scope = format!("auth_query.startup_parameters[user={username}]");
+        let mut had_invalid_entry = false;
         for (k, v) in obj {
             match v {
                 serde_json::Value::String(s) => {
@@ -485,9 +486,7 @@ impl AuthQueryExecutor {
                     probe.insert(k.clone(), s.clone());
                     if let Err(e) = crate::config::startup_parameters::validate(&probe, &scope) {
                         warn!("[{pool_name}] {e}");
-                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                            .with_label_values(&[pool_name, "auth_query_invalid_entry"])
-                            .inc();
+                        had_invalid_entry = true;
                         continue;
                     }
                     out.insert(k, s);
@@ -505,11 +504,18 @@ impl AuthQueryExecutor {
                         "[{username}@{pool_name}] auth_query startup_parameters: value for '{k}' \
                          is {kind}, not string; ignored"
                     );
-                    crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                        .with_label_values(&[pool_name, "auth_query_invalid_entry"])
-                        .inc();
+                    had_invalid_entry = true;
                 }
             }
+        }
+        // One increment per parsed row that contained at least one
+        // invalid entry, matching every other reason on this counter
+        // so `rate by(reason)` is dimensionally consistent. Per-entry
+        // detail stays in the warn log.
+        if had_invalid_entry {
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[pool_name, "auth_query_invalid_entry"])
+                .inc();
         }
         out
     }
@@ -647,13 +653,14 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         if !self.is_dedicated || entry.startup_parameters.is_empty() {
             return;
         }
-        // Every dropped entry contributes to the metric so operators can
-        // see the volume of per-user GUCs lost to dedicated mode without
-        // log scraping. The warn-log itself stays once per (pool, user)
-        // to keep the log readable.
+        // One increment per drop event (a single fetched row whose
+        // overlay was dropped because of dedicated mode), matching every
+        // other reason on this counter so `rate by(reason)` is
+        // dimensionally consistent. The warn log carries the same
+        // once-per-(pool, user) shape.
         crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
             .with_label_values(&[self.pool_name.as_str(), "dedicated_mode"])
-            .inc_by(entry.startup_parameters.len() as u64);
+            .inc();
         if self
             .dedicated_warnings
             .insert(username.to_string(), ())

@@ -486,7 +486,13 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 /// Counts cases where pg_doorman dropped operator-supplied
 /// `startup_parameters` *before* the StartupMessage went on the wire —
 /// the failure mode the per-pool `*_errors_total` counter cannot see
-/// because PG never had a chance to reject. Labels:
+/// because PG never had a chance to reject. Every reason increments
+/// the counter by 1 per drop event (one backend spawn that dropped
+/// the cascade, one parsed row that contained invalid entries, one
+/// row whose overlay was ignored because of dedicated mode), so
+/// `rate by(reason)` is dimensionally consistent regardless of how
+/// many individual keys the offending row carried. Per-entry detail
+/// goes to the warn log only. Labels:
 ///
 /// * `pool` — `<user>@<database>` identifier.
 /// * `reason` — bounded enum:
@@ -512,13 +518,14 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///   * `auth_query_invalid_json` — the column value is not valid JSON.
 ///   * `auth_query_invalid_shape` — the column parses but the
 ///     top-level value is not a JSON object.
-///   * `auth_query_invalid_entry` — an individual entry in the
-///     auth_query JSON failed validation (reserved key, bad GUC name,
-///     null byte, non-string value). Incremented per offending entry.
-///   * `dedicated_mode` — a per-user auth_query entry carried
+///   * `auth_query_invalid_entry` — at least one entry in the parsed
+///     auth_query JSON object failed validation (reserved key, bad
+///     GUC name, null byte, non-string value). Incremented once per
+///     parsed row that had any invalid entry.
+///   * `dedicated_mode` — a per-user auth_query row carried
 ///     startup_parameters, but the pool runs in dedicated auth_query
 ///     mode (one shared backend across users) so the per-user overlay
-///     was dropped. Incremented per dropped entry.
+///     was dropped. Incremented once per such row.
 ///
 /// All cases also emit a `warn!` log line for human triage; the
 /// counter exists so dashboards and alerts can spot the silent drop
