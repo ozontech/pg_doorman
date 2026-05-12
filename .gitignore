@@ -1,7 +1,7 @@
 .idea
 .junie
 .claude
-/target
+target/
 .DS_Store
 .direnv
 .pre-commit-config.yaml
@@ -59,6 +59,9 @@ flamegraph-output/
 
 # Superpowers spec drafts (private session artifacts)
 /docs/superpowers/
+
+# Internal planning notes (private session artifacts)
+/docs/internal-plans/
 
 # Per-session agent handoff scratchpads — not part of public history.
 .local/
