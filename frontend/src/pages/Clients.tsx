@@ -223,7 +223,14 @@ export default function Clients() {
     <section className="flex flex-col">
       <PageHero
         title="Clients"
-        description="Identify a specific client session. Filter substring on pool / database / user / application_name + exact state match. Sort by Q age ms for stuck queries, Age s for long-lived sessions, Errors for noisy ones. State = waiting means the client is queued for a backend. 50 rows per page; the count on the right shrinks with each filter."
+        help={{
+          definition:
+            "All active client sessions. Address-level search for a stuck or noisy session: sort by Q age ms to find frozen queries, by Age s for long-lived sessions, by Errors for the loud ones. State = waiting means the client is queued for a backend.",
+          source: "SHOW CLIENTS",
+          related: ["SHOW SERVERS", "pg_stat_activity.client_addr"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
       <div className="flex flex-wrap items-end gap-3 border-b border-border px-6 py-3">
         <FilterField label="pool" value={filters.pool} width="w-32"

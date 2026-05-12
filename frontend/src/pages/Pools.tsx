@@ -199,7 +199,14 @@ export default function Pools() {
     <section className="flex flex-col">
       <PageHero
         title="Pools"
-        description="Find the pool that hurts. Sort by Saturation, p95 ms, or Errors — default order is most saturated first. State = degraded when one threshold trips, critical when two stack. Filter substring + severity are URL-persisted, paste a link to share. Click a row for SQLSTATE breakdown and pause/reconnect controls."
+        help={{
+          definition:
+            "All (user, database) pools. Triage entry point — sort by saturation / p95 / waiting / errors to find the pool that hurts. Click a row to drill into Pool detail with SQLSTATE breakdown and pause/reconnect controls.",
+          source: "SHOW POOLS · SHOW POOLS_EXTENDED",
+          related: ["SHOW POOL_COORDINATOR", "pg_stat_activity"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input

@@ -130,7 +130,20 @@ export default function Apps() {
     <section className="flex flex-col">
       <PageHero
         title="Apps"
-        description="One row per application_name. clients = currently connected; totals are cumulative since pg_doorman started. Sort and filter happen in the browser on the latest snapshot. Watch err/1k q — > 1 is unusual, > 10 = look at the app's recent deploy."
+        help={{
+          definition:
+            "One row per application_name from the libpq StartupMessage. Tenant-level view — which app is generating traffic and errors. Sort + filter happen browser-side on the latest snapshot.",
+          source: "derived from SHOW CLIENTS (group by application_name)",
+          formula: "err / 1k q = errors_total × 1000 / queries_total",
+          thresholds: {
+            healthy: "err / 1k q < 1",
+            warn: "1–10",
+            crit: "> 10 — check the app's recent deploy",
+          },
+          related: ["SHOW STATS", "pg_stat_activity.application_name"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input

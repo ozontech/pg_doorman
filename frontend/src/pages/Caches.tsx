@@ -24,7 +24,24 @@ export default function Caches() {
     <section className="flex flex-col">
       <PageHero
         title="Caches"
-        description="Two caches whose miss rate translates directly into PostgreSQL CPU. Prepared = per-pool statement cache; hit rate below 95 % means you are paying for a Parse on every call. Query cache = process-wide SQL text dedup; growing anonymous bytes with no upper bound means an app is sending unique ad-hoc SQL on every request — fix the app or shrink client_anonymous_prepared_cache_size."
+        help={{
+          definition:
+            "Two caches whose miss rate converts directly into PostgreSQL CPU. Prepared — per-pool (hash → DOORMAN_N) statement cache; pg_doorman remaps anonymous Parse to a named statement so the backend re-uses the plan across clients. Query cache — process-wide SQL text interner (named + anonymous).",
+          source:
+            "SHOW PREPARED_STATEMENTS · SHOW INTERNER · SHOW INTERNER <N>",
+          formula: "hit rate = hits / (hits + misses)",
+          thresholds: {
+            healthy: "hit rate ≥ 95 %",
+            warn: "< 95 % — raise prepared_statements_cache_size",
+            crit: "< 80 % — hot-path Parse on every call",
+          },
+          related: [
+            "SHOW POOLS_MEMORY",
+            "client_anonymous_prepared_cache_size",
+          ],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/tutorials/prepared-statements.html",
+        }}
       />
       <div className="flex items-center gap-1 border-b border-border bg-surface px-6">
         <TabButton active={tab === "prepared"} onClick={() => setTab("prepared")}>Prepared</TabButton>

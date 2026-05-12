@@ -25,7 +25,15 @@ export default function ConfigState() {
     <section className="flex flex-col">
       <PageHero
         title="Config & state"
-        description="What pg_doorman is actually running with right now. Read-only — same content as SHOW CONFIG / SHOW POOLS over the admin protocol, just queryable from a browser. Use the filter on the config table to confirm a SIGHUP picked up your edit."
+        help={{
+          definition:
+            "Read-only snapshot of what pg_doorman is running with right now. Same content as SHOW CONFIG / SHOW DATABASES / SHOW USERS / SHOW POOL_COORDINATOR / SHOW POOL_SCALING — just queryable from the browser. Compare default vs current after a SIGHUP / RELOAD to confirm the edit took effect.",
+          source:
+            "SHOW CONFIG · SHOW DATABASES · SHOW USERS · SHOW AUTH_QUERY · SHOW LOG_LEVEL · SHOW STARTUP_PARAMETERS · SHOW SOCKETS · SHOW POOL_SCALING · SHOW POOL_COORDINATOR",
+          related: ["RELOAD", "SIGHUP"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
       <Collapsible id="config-config" title="config" defaultOpen>
         <ConfigPanel />

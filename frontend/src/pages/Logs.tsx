@@ -104,7 +104,19 @@ export default function Logs() {
     <section className="flex h-screen flex-col">
       <PageHero
         title="Logs"
-        description="Live pooler stream — last 500 lines in memory. Filter by level, SQLSTATE (e.g. 53300), client (#c123), or module (auth, pool, stats). Pause freezes the view; new lines still arrive in the background. Drops > 0 = the buffer overflowed between polls — raise log_tap_max_entries in [web] or narrow the filter."
+        help={{
+          definition:
+            "Live pooler log stream via LogTap. Filter by SQLSTATE (e.g. 53300), client (#c123), or module (auth, pool, stats). Pause freezes the view; new lines accumulate in the backend ring buffer. The tap stops 2 minutes after the last reader.",
+          source: "LogTap side-channel · SET log_level = '…' to change verbosity",
+          related: ["SHOW LOG_LEVEL", "journalctl -u pg_doorman"],
+          thresholds: {
+            healthy: "drops = 0",
+            warn: "drops > 0 — buffer overflow",
+            crit: "drops sustained — raise [web].log_tap_max_entries or narrow filter",
+          },
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/json-logging.html",
+        }}
       />
       <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <select
