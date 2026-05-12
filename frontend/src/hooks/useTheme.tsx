@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -72,10 +73,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", onChange);
   }, [pref]);
 
-  // Apply / unapply the .dark class on <html>. Done in an effect so the
-  // first paint matches the persisted preference instead of flashing
-  // light-then-dark.
-  useEffect(() => {
+  // Apply / unapply the .dark class on <html>. useLayoutEffect runs
+  // before the browser commits the first paint, so an operator who
+  // persisted "dark" does not see a flash of light theme before the
+  // class lands.
+  useLayoutEffect(() => {
     const root = document.documentElement;
     if (resolved === "dark") root.classList.add("dark");
     else root.classList.remove("dark");

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { apiGet } from "../api";
+import { toast } from "sonner";
+import { apiGet, apiPost } from "../api";
 import { Collapsible } from "../components/Collapsible";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
@@ -34,6 +35,7 @@ export default function ConfigState() {
           docsHref:
             "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
         }}
+        actions={<ReloadButton />}
       />
       <Collapsible id="config-config" title="config" defaultOpen>
         <ConfigPanel />
@@ -63,6 +65,96 @@ export default function ConfigState() {
         <PoolCoordinatorPanel />
       </Collapsible>
     </section>
+  );
+}
+
+// Global "Reload config" button — calls `POST /api/admin/reload`, which
+// asks pg_doorman to re-read the TOML file. The button lives in the
+// Config page hero so an operator finishing a TOML edit can verify the
+// change without navigating into a pool. A typed confirmation prevents
+// fat-fingering during incidents — RELOAD touches every pool.
+function ReloadButton() {
+  const { authHeader, role } = useAdminAuth();
+  const [confirm, setConfirm] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [pending, setPending] = useState(false);
+  if (role !== "admin") return null;
+  const run = async () => {
+    setPending(true);
+    try {
+      await apiPost("/api/admin/reload", authHeader);
+      toast.success("RELOAD dispatched · re-read pg_doorman.toml");
+      setConfirm(false);
+      setTyped("");
+    } catch (e) {
+      toast.error(
+        `RELOAD failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirm(true)}
+        className="rounded border border-border-strong px-3 py-1.5 text-xs font-medium text-text-muted hover:border-accent hover:text-accent"
+        title="RELOAD: ask pg_doorman to re-read its TOML config (affects every pool)"
+      >
+        Reload config
+      </button>
+      {confirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70 backdrop-blur-sm"
+          onClick={() => !pending && setConfirm(false)}
+        >
+          <div
+            className="w-[min(420px,calc(100vw-2rem))] rounded-lg border border-border-strong bg-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold tracking-tight text-text">
+              Reload pg_doorman config?
+            </h2>
+            <p className="mt-2 text-sm text-text-muted">
+              Re-reads the TOML file. Most settings apply on the next backend;
+              pool size shrinks via natural drain. Affects every pool. Type{" "}
+              <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
+                RELOAD
+              </code>{" "}
+              to confirm.
+            </p>
+            <input
+              autoFocus
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="RELOAD"
+              className="mt-3 block h-9 w-full rounded border border-border-strong bg-surface-2 px-2 font-mono text-sm text-text"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setConfirm(false)}
+                className="rounded border border-border-strong px-3 py-1 text-xs text-text-muted hover:text-text disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={pending || typed !== "RELOAD"}
+                onClick={run}
+                className="rounded border border-accent bg-accent px-3 py-1 text-xs font-semibold text-accent-fg hover:bg-accent-hover disabled:opacity-50"
+              >
+                {pending ? "Reloading…" : "Reload"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

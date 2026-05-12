@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { getSsoTokenUsername } from "../lib/jwt";
@@ -74,7 +75,11 @@ interface PrevTotals {
   errors: number;
 }
 
-const PREV_TOTALS_KEY = "pgdoorman.prev.totals";
+// Host-scoped so two pooler tabs (pooler-a / pooler-b) keep separate
+// previous-totals slots — without this they would overwrite each other.
+const PREV_TOTALS_KEY = `pgdoorman.prev.totals.${
+  typeof window !== "undefined" ? window.location.host : "any"
+}`;
 
 function loadPrevTotals(): PrevTotals | null {
   try {
@@ -162,7 +167,15 @@ export function Sidebar() {
     const prev = prevRef.current;
     if (prev && prev.ts !== cur.ts) {
       const dt = (cur.ts - prev.ts) / 1000;
-      if (dt > 0 && dt < 60) {
+      const counterReset =
+        cur.queries < prev.queries || cur.errors < prev.errors;
+      if (counterReset) {
+        // pg_doorman restarted between polls — counters rolled back to
+        // zero. Showing "0 qps" would mislead the operator into thinking
+        // traffic stopped; keep the previous rate visible and pick up a
+        // real delta on the next tick against the new baseline below.
+        toast.info("pg_doorman restarted — rate baseline reset");
+      } else if (dt > 0 && dt < 60) {
         setRate({
           qps: Math.max(0, (cur.queries - prev.queries) / dt),
           errsPerSec: Math.max(0, (cur.errors - prev.errors) / dt),

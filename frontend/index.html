@@ -5,6 +5,22 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>pg_doorman</title>
+    <script>
+      // Apply the persisted theme before the bundle parses so the first
+      // paint already wears the right palette. Without this an operator
+      // who set "dark" saw a light flash on every reload.
+      (function () {
+        try {
+          var pref = localStorage.getItem("pgdoorman.theme");
+          var dark =
+            pref === "dark" ||
+            (pref !== "light" &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="font-sans">
     <div id="root"></div>

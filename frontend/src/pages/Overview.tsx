@@ -10,6 +10,7 @@ import { MemoryPanel } from "../components/MemoryPanel";
 import { PanelView, type PanelKind } from "../components/PanelView";
 import { SectionHeader } from "../components/SectionHeader";
 import { Sparkline } from "../components/Sparkline";
+import { describeSqlstate } from "../lib/sqlstate";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
@@ -20,6 +21,7 @@ import type {
   InternerDto,
   OverviewDto,
   PoolCoordinatorDto,
+  PoolDto,
   PoolScalingDto,
   PoolsDto,
   ProcessDto,
@@ -29,7 +31,10 @@ import type {
 const POLL_MS = 1500;
 const HISTORY_KEY = "overview";
 const HEATMAP_CELLS = 60;
-const PREV_PROCESS_KEY = "pgdoorman.prev.process";
+// Host-scoped so two pooler tabs keep separate process baselines.
+const PREV_PROCESS_KEY = `pgdoorman.prev.process.${
+  typeof window !== "undefined" ? window.location.host : "any"
+}`;
 
 function loadPrevProcess(): ProcessDto | null {
   try {
@@ -466,6 +471,7 @@ export default function Overview() {
         }
       />
       <div className="mx-auto w-full max-w-[1680px] space-y-6 px-6 py-6">
+        <FallbackBanner pools={poolsPoll.data?.pools ?? []} />
         <ProcessBar process={processPoll.data} onOpenThreads={() => openPanelById("threads")} onOpenRss={() => openPanelById("rss")} />
         <Card
           title="Golden signals"
@@ -619,6 +625,7 @@ export default function Overview() {
             events={chartEvents}
           />
         </Card>
+        <SqlstateTopCard pools={poolsPoll.data?.pools ?? []} />
         {top5Errors.labels.length > 0 && (
           <Card
             title="Top pools by error rate ↗"
@@ -959,6 +966,90 @@ function panelDescriptor(
   }
 }
 
+
+// Banner that surfaces Patroni-assisted fallback when any pool is
+// routing to the fallback backend. The DTO has carried fallback_active
+// for releases but only PoolDetail rendered it as a KV pair — operators
+// during a Patroni failover had to click into each pool to find out
+// where they were. The banner names the affected pools and links to
+// the docs.
+// Aggregated SQLSTATE breakdown across all pools. Closes the gap the
+// "Errors / s ↗" tile promised: the tile tooltip claimed it opens a
+// SQLSTATE breakdown but the panel was just a line chart, so the
+// operator had to drill into every pool individually to find the
+// dominant error class. This card sums each pool's errors_by_sqlstate
+// and lists the top ten with describeSqlstate() context.
+function SqlstateTopCard({ pools }: { pools: PoolDto[] }) {
+  const totals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of pools) {
+      const codes = p.errors_by_sqlstate;
+      if (!codes) continue;
+      for (const [code, count] of Object.entries(codes)) {
+        m.set(code, (m.get(code) ?? 0) + count);
+      }
+    }
+    return [...m.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+  }, [pools]);
+  if (totals.length === 0) return null;
+  return (
+    <Card
+      title="Top SQLSTATE codes"
+      helpStructured={{
+        definition:
+          "Aggregated error-code frequency across every pool since pg_doorman started. Click a row's pool to drill into per-pool SQLSTATE counts in Pool detail.",
+        source: "Σ pool.errors_by_sqlstate across SHOW POOLS",
+        related: ["pg_doorman::stats", "pg_stat_activity.last_error"],
+        docsHref:
+          "https://ozontech.github.io/pg_doorman/tutorials/troubleshooting.html",
+      }}
+    >
+      <ul className="space-y-1 px-4 py-3 text-sm tabular">
+        {totals.map(([code, count]) => (
+          <li
+            key={code}
+            className="flex items-baseline justify-between gap-3 border-b border-border/40 py-1 last:border-b-0"
+          >
+            <span className="flex min-w-0 flex-col">
+              <span className="font-mono text-text">{code}</span>
+              <span className="truncate text-xs text-text-dim">
+                {describeSqlstate(code)}
+              </span>
+            </span>
+            <span className="font-mono text-text">{count}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function FallbackBanner({ pools }: { pools: PoolDto[] }) {
+  const inFallback = pools.filter((p) => p.fallback_active);
+  if (inFallback.length === 0) return null;
+  const names = inFallback.map((p) => p.id).join(", ");
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning"
+    >
+      <span className="font-semibold">Patroni fallback active</span> ·{" "}
+      {inFallback.length} pool{inFallback.length === 1 ? "" : "s"} routing to
+      the fallback backend.{" "}
+      <span className="font-mono text-text-muted">{names}</span>.{" "}
+      <a
+        href="https://ozontech.github.io/pg_doorman/tutorials/patroni-assisted-fallback.html"
+        target="_blank"
+        rel="noreferrer noopener"
+        className="underline hover:no-underline"
+      >
+        What is fallback?
+      </a>
+    </div>
+  );
+}
 
 function ResourceDetail({
   sockets,

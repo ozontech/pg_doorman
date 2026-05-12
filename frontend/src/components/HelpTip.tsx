@@ -47,6 +47,21 @@ interface HelpTipProps {
 export function HelpTip({ title, help, children, variant = "icon" }: HelpTipProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  // Hover-close grace timer. Without it the popover stayed open after the
+  // mouse left — on Overview that meant six overlapping tooltips would
+  // pile up while the operator scanned the page.
+  const closeTimerRef = useRef<number | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => setOpen(false), 200);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -65,25 +80,38 @@ export function HelpTip({ title, help, children, variant = "icon" }: HelpTipProp
     };
   }, [open]);
 
+  useEffect(() => () => cancelClose(), []);
+
   const triggerClass =
     variant === "circle"
       ? "grid h-5 w-5 place-items-center rounded-full border border-border-strong text-[10px] font-semibold text-text-muted transition-colors hover:border-accent hover:text-accent"
       : "inline-flex items-center justify-center text-text-dim transition-colors hover:text-accent";
 
   return (
-    <div ref={ref} className="relative inline-flex">
+    <div
+      ref={ref}
+      className="relative inline-flex"
+      onMouseLeave={scheduleClose}
+    >
       <button
         type="button"
         aria-expanded={open}
         aria-label={`Help: ${title}`}
         onClick={() => setOpen((v) => !v)}
-        onMouseEnter={() => setOpen(true)}
+        onMouseEnter={() => {
+          cancelClose();
+          setOpen(true);
+        }}
         className={triggerClass}
       >
         {variant === "circle" ? "i" : <Info size={14} strokeWidth={1.75} />}
       </button>
       {open && (
-        <div className="absolute left-0 top-7 z-30">
+        <div
+          className="absolute left-0 top-7 z-30"
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
           <div className="w-96 max-w-[calc(100vw-2rem)] max-h-[60vh] overflow-y-auto rounded-lg border border-border-strong bg-surface p-4 shadow-xl">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-accent">
               {title}

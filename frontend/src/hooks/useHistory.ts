@@ -13,15 +13,17 @@ export interface HistoryHandle<T> {
 
 /**
  * Rolling window of the latest `maxPoints` values keyed by `key`. Persisted
- * in localStorage so a full reload or a new browser tab keeps the recent
- * context. sessionStorage was scoped to a single tab, which made charts
- * blink to empty whenever an operator reopened the console; localStorage
- * preserves the rolling window across reloads and across tabs viewing the
- * same pooler. Storage write failures (private mode, quota) are silent —
- * the in-memory history still works.
+ * in localStorage scoped by `window.location.host` so two tabs pointing at
+ * different poolers (pooler-a and pooler-b) keep separate histories.
+ * sessionStorage was scoped to a single tab, which made charts blink to
+ * empty whenever an operator reopened the console; localStorage preserves
+ * the rolling window across reloads and across tabs viewing the same
+ * pooler. Storage write failures (private mode, quota) are silent — the
+ * in-memory history still works.
  */
 export function useHistory<T>(key: string, maxPoints = DEFAULT_MAX_POINTS): HistoryHandle<T> {
-  const storageKey = `pgdoorman.history.${key}`;
+  const origin = typeof window !== "undefined" ? window.location.host : "any";
+  const storageKey = `pgdoorman.history.${origin}.${key}`;
   const [history, setHistory] = useState<T[]>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
