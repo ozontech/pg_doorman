@@ -340,8 +340,12 @@ impl ConnectionPool {
             config.general.startup_parameters.hash(&mut hasher);
             hasher.finish()
         };
-        let previous_general_startup_hash =
-            PREVIOUS_GENERAL_STARTUP_HASH.swap(general_startup_hash, Ordering::Relaxed);
+        // Load only; the hash is not advanced until the new pool map has
+        // been committed at the bottom of from_config. Otherwise a reload
+        // that fails halfway poisons the hash, and the next reload of the
+        // *same* config silently skips the recycle of dynamic pools that
+        // still carry the old reset_val.
+        let previous_general_startup_hash = PREVIOUS_GENERAL_STARTUP_HASH.load(Ordering::Relaxed);
         // The static defaults to `0`, which collides with the empty-map
         // hash on a fresh process; treat that special case as "no prior
         // value" so the first reload never falsely claims a change.
@@ -858,6 +862,11 @@ impl ConnectionPool {
         COORDINATORS.store(Arc::new(coordinators));
         AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
         POOLS.store(Arc::new(new_pools.clone()));
+        // Advance the recycle-watcher hash only after the new state is
+        // published; a failure path above (Err returned via `?`) leaves
+        // PREVIOUS_GENERAL_STARTUP_HASH alone so the next reload still
+        // sees the old value and re-evaluates the change correctly.
+        PREVIOUS_GENERAL_STARTUP_HASH.store(general_startup_hash, Ordering::Relaxed);
         Ok(())
     }
 
