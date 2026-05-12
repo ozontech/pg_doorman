@@ -828,6 +828,31 @@ mod tests {
         assert_eq!(row[14].as_ref(), "5", "column 14 should be avg_errors");
     }
 
+    /// SHOW POOLS row width must match the header width on every config,
+    /// otherwise the admin console renders misaligned columns. The risk
+    /// shows up when only one of header or row is touched when a new
+    /// column is added.
+    #[test]
+    fn show_pools_row_and_header_have_same_width() {
+        let percentile = Percentile {
+            p99: 0,
+            p95: 0,
+            p90: 0,
+            p50: 0,
+        };
+        let stats = PoolStats::new_with_percentiles(
+            PoolIdentifier::new("shop", "alice"),
+            PoolMode::Transaction,
+            percentile.clone(),
+            percentile.clone(),
+            percentile,
+        );
+
+        let header = PoolStats::generate_show_pools_header();
+        let row = stats.generate_show_pools_row();
+        assert_eq!(header.len(), row.len(), "header/row width mismatch");
+    }
+
     /// Both entry points must agree on shape when fed the same global
     /// POOLS state and equivalent client/server maps. Validates that
     /// `construct_pool_lookup_from` is a structural extract of

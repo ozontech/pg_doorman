@@ -14,6 +14,24 @@ static TRACKED_PARAMETERS: Lazy<HashSet<String>> = Lazy::new(|| {
     set
 });
 
+/// Canonicalise a PostgreSQL session parameter name so that startup-time
+/// lowercase forms (`timezone`, `datestyle`) match the
+/// `ParameterStatus` casing PG sends back (`TimeZone`, `DateStyle`).
+/// Used both by `ServerParameters::set_param` (where it has lived since
+/// day one) and by `Server::startup` when it captures the operator-
+/// managed key set: without the canonical form, `sync_parameters`
+/// filters by exact-string match and a client startup value reported
+/// as `TimeZone` would overwrite an operator value set as `timezone`.
+pub fn canonicalize_param_name(key: String) -> String {
+    if key == "timezone" {
+        "TimeZone".to_string()
+    } else if key == "datestyle" {
+        "DateStyle".to_string()
+    } else {
+        key
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ServerParameters {
     // Kept `pub(crate)` to preserve current internal usage patterns during refactor.
@@ -57,15 +75,8 @@ impl ServerParameters {
 
     /// If `startup` is false, then only tracked parameters will be set.
     pub fn set_param(&mut self, key: impl Into<String>, value: impl Into<String>, startup: bool) {
-        let mut key = key.into();
+        let key = canonicalize_param_name(key.into());
         let value = value.into();
-
-        // Startup parameters may come uncapitalized, while ParameterStatus uses canonical keys.
-        if key == "timezone" {
-            key = "TimeZone".to_string();
-        } else if key == "datestyle" {
-            key = "DateStyle".to_string();
-        };
 
         if TRACKED_PARAMETERS.contains(&key) || startup {
             self.parameters.insert(key, value);

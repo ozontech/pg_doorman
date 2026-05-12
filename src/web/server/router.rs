@@ -59,7 +59,7 @@ pub(super) fn unauthorized_for(req: &ParsedRequest<'_>) -> Response {
     }
 }
 
-fn route_api(req: &ParsedRequest<'_>) -> Response {
+fn route_api(req: &ParsedRequest<'_>, role: Role) -> Response {
     // ParsedRequest already split path on `?` — no further work here.
     let query = parse_query(req.query.unwrap_or(""));
 
@@ -71,7 +71,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
     match req.path {
         "/api/version" => routes::version::handle_version(),
         "/api/overview" => routes::overview::handle_overview(),
-        "/api/pools" => routes::pools::handle_pools(),
+        "/api/pools" => routes::pools::handle_pools(role),
         "/api/clients" => routes::clients::handle_clients(&query),
         "/api/connections" => routes::connections::handle_connections(),
         "/api/databases" => routes::databases::handle_databases(),
@@ -79,7 +79,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/stats" => routes::stats::handle_stats(),
         "/api/users" => routes::users::handle_users(),
         "/api/auth_query" => routes::auth_query::handle_auth_query(),
-        "/api/config" => routes::config::handle_config(),
+        "/api/config" => routes::config::handle_config(role),
         "/api/log_level" => routes::log_level::handle_log_level(),
         "/api/pool_coordinator" => routes::pool_coordinator::handle_pool_coordinator(),
         "/api/pool_scaling" => routes::pool_scaling::handle_pool_scaling(),
@@ -138,7 +138,7 @@ pub(super) fn dispatch(
                 _ => unauthorized_for(req),
             };
         }
-        return route_api(req);
+        return route_api(req, actual);
     }
 
     // SPA shell: serve the embedded bundle. Anything that is not /api or

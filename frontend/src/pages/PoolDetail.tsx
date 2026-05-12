@@ -25,6 +25,7 @@ import type {
   PoolScalingDto,
   PoolScalingRowDto,
   PoolsDto,
+  StartupParameter,
 } from "../types";
 
 interface AdminActionResponse {
@@ -311,6 +312,12 @@ export default function PoolDetail() {
         <Section title="Errors by SQLSTATE" wide>
           <SqlstateBreakdown errors={pool.errors_by_sqlstate} />
         </Section>
+
+        {pool.startup_parameters && pool.startup_parameters.length > 0 && (
+          <Section title="Startup parameters (operator-injected)" wide>
+            <StartupParametersBlock parameters={pool.startup_parameters} />
+          </Section>
+        )}
 
         {evalResult && evalResult.reasons.length > 0 && (
           <Section title="Threshold reasons" wide>
@@ -671,6 +678,69 @@ function ScalingBlock({ row }: { row: PoolScalingRowDto | null }) {
         tip={tip.scalingReplenishDef}
       />
     </>
+  );
+}
+
+// Operator-supplied PostgreSQL GUCs that pg_doorman injects into each new
+// backend's StartupMessage. Source is the cascade layer (`general`, `pool`,
+// `auth_query`) that contributed the winning value. If PG rejects one of
+// these at backend startup, the client sees the PG error directly —
+// pg_doorman does not retry or silently strip the key.
+function StartupParametersBlock({
+  parameters,
+}: {
+  parameters?: StartupParameter[];
+}) {
+  const rows = parameters ?? [];
+  if (rows.length === 0) {
+    return (
+      <p className="text-sm text-text-dim">
+        No operator-supplied startup parameters configured for this pool.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-1 tabular">
+      {rows.map((p) => {
+        // Anonymous viewers receive `value` undefined - the backend
+        // redacts operator-supplied values for read-only callers. Render
+        // it as "***" so the row still shows the parameter and the
+        // cascade source the operator configured.
+        const displayValue = p.value ?? "***";
+        const state = p.state ?? "applied";
+        // `applied` is the steady state - the row matches what backends
+        // ship. Anything else is operator-visible information that needs
+        // attention: a stale snapshot (RELOAD has not propagated) or a
+        // cascade that runs over the StartupMessage budget.
+        const stateClass =
+          state === "applied"
+            ? "text-text-dim"
+            : state === "dropped_due_to_budget"
+              ? "text-error"
+              : "text-warning";
+        return (
+          <li
+            key={p.parameter}
+            className="flex items-baseline justify-between gap-3 border-b border-border/50 py-1 last:border-b-0"
+          >
+            <span className="flex flex-col">
+              <span className="font-mono text-text">
+                {p.parameter} = {displayValue}
+              </span>
+              <span className="text-xs text-text-dim">
+                source: {p.source}
+                {state !== "applied" ? (
+                  <>
+                    {" · "}
+                    <span className={stateClass}>state: {state}</span>
+                  </>
+                ) : null}
+              </span>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

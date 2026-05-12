@@ -86,6 +86,28 @@ export interface PoolDto {
   tls_handshake_errors_total: number;
   // Live TLS-encrypted backend connections held by the pool.
   tls_backend_connections: number;
+  // Operator-supplied PostgreSQL startup parameters this pool injects into
+  // each new backend StartupMessage. Backend omits this field when the
+  // cascade is empty for the pool's user.
+  startup_parameters?: StartupParameter[];
+}
+
+export interface StartupParameter {
+  parameter: string;
+  // Backend omits `value` for anonymous viewers so the public read-only
+  // UI does not leak operator-supplied tenant identifiers, audit tags,
+  // or accidental secrets. Admin and SSO callers receive the full
+  // value. When undefined, render as "***".
+  value?: string;
+  // "general" | "pool" | "auth_query" — cascade layer that contributed the
+  // winning value.
+  source: string;
+  // "applied" | "dropped_due_to_budget" | "stale" — wire-application
+  // state cross-checked against the pool's frozen snapshot. `applied`
+  // means the next backend spawn ships this key/value; the other two
+  // states tell the operator that the pool needs a RELOAD or that the
+  // operator cascade is over the StartupMessage budget.
+  state: string;
 }
 
 export interface PoolsDto {

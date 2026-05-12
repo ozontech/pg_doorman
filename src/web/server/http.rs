@@ -11,7 +11,7 @@ use tokio::io::{AsyncReadExt, BufReader, BufWriter};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::TcpStream;
 
-use crate::web::auth::{classify, AuthOutcome, Role};
+use crate::web::auth::{classify, AuthOutcome, Role, SsoTransportPolicy};
 use crate::web::metrics::write_metrics_response;
 
 use super::router::{dispatch, unauthorized_for};
@@ -102,6 +102,15 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
             continue;
         }
 
+        // Decide whether the request reached us over a trusted HTTPS hop
+        // before classifying. The transport gate only matters when the
+        // operator opted in via `[web].sso_require_https`; when off, the
+        // verdict is moot.
+        let request_is_secure = crate::web::peer::request_is_secure(
+            peer_addr,
+            parsed.x_forwarded_proto,
+            &opts.trusted_proxies,
+        );
         let auth = classify(
             parsed.authorization,
             parsed.cookie,
@@ -109,6 +118,10 @@ pub(super) async fn handle_connection(stream: TcpStream, opts: Arc<WebServerOpti
             &opts.admin_username,
             &opts.admin_password,
             opts.sso.as_deref(),
+            SsoTransportPolicy {
+                request_is_secure,
+                require_https: opts.sso_require_https,
+            },
         );
 
         // /api/logs needs an async handler because it talks to the LogTap

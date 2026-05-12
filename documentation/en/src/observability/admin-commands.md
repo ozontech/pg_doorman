@@ -34,6 +34,7 @@ Admin commands are read with `SHOW <subcommand>` or executed with bare verbs (`P
 | `SHOW LISTS` | Counts by category (databases, users, pools, clients, servers). |
 | `SHOW USERS` | List of users and their pool modes. |
 | `SHOW AUTH_QUERY` | `auth_query` cache hit/miss/refetch rates, auth success/failure, executor errors, dynamic pool counts. |
+| `SHOW STARTUP_PARAMETERS` | Resolved `startup_parameters` per pool: parameter, value, source, and application state. |
 | `SHOW SOCKETS` | TCP and Unix socket counts by state (Linux only — reads `/proc/net/`). |
 | `SHOW LOG_LEVEL` | Current log level. |
 | `SHOW VERSION` | PgDoorman version. |
@@ -67,6 +68,19 @@ mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0    
 - `cl_waiting > 0` means clients are stuck waiting for a backend. Either raise `pool_size` or check for slow queries.
 - `sv_idle` matches free backends; `sv_active` is in-use; `sv_used` is reserved by the coordinator (see below).
 - `maxwait` is the longest current wait in seconds. If it grows beyond `query_wait_timeout`, clients get errors.
+
+### `SHOW STARTUP_PARAMETERS`
+
+```
+user | database | parameter         | value             | source  | state
+app  | mydb     | statement_timeout | 5s                | general | applied
+app  | mydb     | plan_cache_mode   | force_custom_plan | pool    | applied
+```
+
+- `source` shows where the value came from: `general`, `pool`, or
+  `auth_query`.
+- `state` shows whether the next backend `StartupMessage` will carry
+  the value: `applied`, `dropped_due_to_budget`, or `stale`.
 
 ### `SHOW POOL_COORDINATOR`
 
@@ -109,7 +123,7 @@ Admin connections do not pass through `pg_hba.conf` rules — they go directly t
 
 ## Where to next
 
-- [Prometheus reference](../reference/prometheus.md) — same data, machine-readable.
+- [Prometheus reference](../reference/prometheus.md) — the metric form of the same state.
 - [Pool Coordinator](../concepts/pool-coordinator.md) — what `SHOW POOL_COORDINATOR` is telling you.
 - [Pool Pressure](../tutorials/pool-pressure.md) — what `SHOW POOL_SCALING` is telling you.
 - [Troubleshooting](../tutorials/troubleshooting.md) — common failure modes and their `SHOW` output.

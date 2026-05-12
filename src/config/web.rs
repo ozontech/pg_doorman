@@ -74,6 +74,18 @@ pub struct Web {
     /// SSO user resolves to `Sso`.
     #[serde(default)]
     pub sso_admin_groups: Vec<String>,
+
+    /// Reject Bearer/cookie/query SSO credentials when the request did
+    /// not arrive over HTTPS. The listener treats a request as secure
+    /// only when its TCP peer is in `trusted_proxies` and the proxy
+    /// forwarded `X-Forwarded-Proto: https`. Defaults to `false` so
+    /// existing deployments where the SSO proxy terminates TLS on a
+    /// different host (and reaches pg_doorman over a private network)
+    /// keep working without configuration changes. Enable on multi-
+    /// tenant networks where an attacker could observe the HTTP leg
+    /// between the proxy and pg_doorman.
+    #[serde(default)]
+    pub sso_require_https: bool,
 }
 
 impl Web {
@@ -93,6 +105,7 @@ impl Web {
             trusted_proxies: Vec::new(),
             sso_groups_claim: Self::default_sso_groups_claim(),
             sso_admin_groups: Vec::new(),
+            sso_require_https: false,
         }
     }
 

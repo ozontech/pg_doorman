@@ -9,7 +9,119 @@ use crate::messages::PgErrorMsg;
 
 use super::stream::StreamInner;
 
-/// Handles error response during server startup.
+/// Extract the GUC name from the human-readable M-field of a PG
+/// ErrorResponse. Matches messages of the form:
+///   `unrecognized configuration parameter "foobar"`
+///   `invalid value for parameter "work_mem": "abc"`
+///   `permission denied to set parameter "session_preload_libraries"`
+///
+/// Returns `None` if the message does not contain the literal substring
+/// `parameter "..."` (e.g. it is unrelated to a configuration parameter).
+///
+/// Hand-rolled rather than using `regex` to keep that crate out of the
+/// runtime dependency set; the pattern is fixed (`parameter "([^"]+)"`)
+/// and trivial to scan for. The same constraint shaped
+/// `crate::config::startup_parameters::is_valid_guc_name`.
+pub fn extract_parameter_name(message: &str) -> Option<String> {
+    const NEEDLE: &str = r#"parameter ""#;
+    let start = message.find(NEEDLE)? + NEEDLE.len();
+    let rest = &message[start..];
+    let end = rest.find('"')?;
+    if end == 0 {
+        return None;
+    }
+    Some(rest[..end].to_owned())
+}
+
+/// Classify a PostgreSQL `ErrorResponse` received during backend startup
+/// into the right pg_doorman `Error` variant. Centralizes the SQLSTATE →
+/// Error mapping so the rule stays in one place across `Server::startup`,
+/// `handle_startup_error`, and anywhere else the startup path needs to
+/// react to a PG-side rejection.
+///
+/// Decision order:
+///
+/// 1. SQLSTATE class `57P*` (server unavailable / shutting down / starting
+///    up / cannot connect now) → `ServerUnavailableError`. Drives the
+///    Patroni-assisted fallback path; must win over the startup-parameter
+///    branch so a node-down rejection cannot be misclassified as a bad
+///    operator GUC.
+/// 2. If `sent_keys` is non-empty AND the PG message names a key in that
+///    set (English `parameter "<name>"` template, with a
+///    locale-independent fallback that scans for any sent key wrapped in
+///    double quotes) → `ServerStartupParameterRejection { sqlstate,
+///    message, server_identifier }`. Lets the checkout site forward the
+///    PG sqlstate verbatim to the client, instead of the generic 53300
+///    pool-exhausted fallback.
+/// 3. Otherwise → `ServerStartupError(<sqlstate>: <message>, …)`.
+pub fn classify_pg_startup_error<'a, I>(
+    sqlstate: String,
+    message: String,
+    server_identifier: &ServerIdentifier,
+    sent_keys: I,
+) -> Error
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    if sqlstate.starts_with("57P") {
+        return Error::ServerUnavailableError(message, server_identifier.clone());
+    }
+    let mut sent_iter = sent_keys.into_iter().peekable();
+    if sent_iter.peek().is_some() {
+        // Collect lazily so we walk the sent set at most once: try the
+        // English template first; on miss, scan once for any quoted key.
+        let parsed_key = extract_parameter_name(&message);
+        let collected: Vec<&'a String> = sent_iter.collect();
+        let matched = parsed_key
+            .as_ref()
+            .filter(|n| collected.iter().any(|k| k.as_str() == n.as_str()))
+            .cloned()
+            .or_else(|| match_sent_key_in_message(&message, collected.iter().copied()));
+        if matched.is_some() {
+            return Error::ServerStartupParameterRejection {
+                sqlstate,
+                message,
+                server_identifier: server_identifier.clone(),
+            };
+        }
+    }
+    Error::ServerStartupError(format!("{sqlstate}: {message}"), server_identifier.clone())
+}
+
+/// Locale-independent fallback for `extract_parameter_name`: scan the
+/// PG ErrorResponse `M` field for any of the operator-supplied keys
+/// pg_doorman actually sent, looking for the standard PG double-quoted
+/// form (`"key"`). PG quotes the parameter name in every locale even when
+/// the surrounding prose is translated, so a hit on `"name"` is a
+/// reliable signal that the failing key is `name`.
+///
+/// Returns the first match in iteration order of `sent_keys`. Used by
+/// `Server::startup` to keep the
+/// `pg_doorman_backend_startup_parameter_errors_total` counter usable
+/// against PG servers with non-English `lc_messages`.
+pub fn match_sent_key_in_message<'a, I>(message: &str, sent_keys: I) -> Option<String>
+where
+    I: IntoIterator<Item = &'a String>,
+{
+    for key in sent_keys {
+        // Match the GUC name surrounded by double quotes. Bare substring
+        // search would false-positive on prose like "key is wrong" when
+        // `key` happens to be the parameter name; the quote markers in
+        // PG ErrorResponse messages are stable across locales.
+        let needle = format!("\"{key}\"");
+        if message.contains(&needle) {
+            return Some(key.clone());
+        }
+    }
+    None
+}
+
+/// Handles error response during server startup. Surfaces the PG sqlstate
+/// through [`classify_pg_startup_error`] so non-`Server::startup` callers
+/// (currently none in production; kept for symmetry and future code paths
+/// that need verbatim PG-error-passthrough behaviour) follow the same
+/// `ServerUnavailableError` / `ServerStartupError` mapping.
+#[allow(dead_code)]
 pub(crate) async fn handle_startup_error(
     stream: &mut StreamInner,
     len: i32,
@@ -47,17 +159,15 @@ pub(crate) async fn handle_startup_error(
                         f.code,
                         f.message
                     );
-                    if f.code.starts_with("57P") {
-                        Err(Error::ServerUnavailableError(
-                            f.message,
-                            server_identifier.clone(),
-                        ))
-                    } else {
-                        Err(Error::ServerStartupError(
-                            f.message,
-                            server_identifier.clone(),
-                        ))
-                    }
+                    // No sent-key set is available here; the helper falls
+                    // back to plain `ServerStartupError` for non-57P codes,
+                    // matching the previous behaviour exactly.
+                    Err(classify_pg_startup_error(
+                        f.code,
+                        f.message,
+                        server_identifier,
+                        std::iter::empty::<&String>(),
+                    ))
                 }
                 Err(err) => {
                     error!(
@@ -71,5 +181,87 @@ pub(crate) async fn handle_startup_error(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod parameter_extractor_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_parameter_extracted() {
+        assert_eq!(
+            extract_parameter_name(r#"unrecognized configuration parameter "foobar""#),
+            Some("foobar".into())
+        );
+    }
+
+    #[test]
+    fn invalid_value_extracted() {
+        assert_eq!(
+            extract_parameter_name(r#"invalid value for parameter "work_mem": "abc""#),
+            Some("work_mem".into())
+        );
+    }
+
+    #[test]
+    fn permission_denied_extracted() {
+        assert_eq!(
+            extract_parameter_name(
+                r#"permission denied to set parameter "session_preload_libraries""#
+            ),
+            Some("session_preload_libraries".into())
+        );
+    }
+
+    #[test]
+    fn no_quoted_parameter_returns_none() {
+        assert_eq!(extract_parameter_name("connection refused by peer"), None);
+    }
+
+    #[test]
+    fn namespaced_parameter_extracted() {
+        assert_eq!(
+            extract_parameter_name(
+                r#"unrecognized configuration parameter "auto_explain.log_min_duration""#
+            ),
+            Some("auto_explain.log_min_duration".into())
+        );
+    }
+
+    #[test]
+    fn match_sent_key_finds_quoted_key_in_localized_message() {
+        // Hypothetical Russian lc_messages output: prose is translated,
+        // PG still wraps the parameter name in double quotes.
+        let sent = vec!["plan_cache_mode".to_string(), "work_mem".to_string()];
+        let msg = r#"параметр "plan_cache_mode" не существует"#;
+        assert_eq!(
+            match_sent_key_in_message(msg, &sent),
+            Some("plan_cache_mode".into())
+        );
+    }
+
+    #[test]
+    fn match_sent_key_returns_none_when_no_quoted_match() {
+        let sent = vec!["plan_cache_mode".to_string()];
+        // The key appears in prose but not quoted — must not match,
+        // otherwise unrelated PG errors mentioning the word would
+        // poison the counter.
+        let msg = "some unrelated startup error mentions plan_cache_mode somewhere";
+        assert!(match_sent_key_in_message(msg, &sent).is_none());
+    }
+
+    #[test]
+    fn match_sent_key_skips_keys_not_in_message() {
+        let sent = vec![
+            "first_key".to_string(),
+            "second_key".to_string(),
+            "third_key".to_string(),
+        ];
+        let msg = r#"FATAL: invalid value for parameter "second_key""#;
+        assert_eq!(
+            match_sent_key_in_message(msg, &sent),
+            Some("second_key".into())
+        );
     }
 }

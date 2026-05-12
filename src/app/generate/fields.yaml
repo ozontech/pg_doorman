@@ -53,6 +53,9 @@ sections:
   hba:
     en: "Access Control (pg_hba - Recommended)"
     ru: "Контроль доступа (pg_hba — рекомендуется)"
+  startup_parameters:
+    en: "PostgreSQL Startup GUCs"
+    ru: "Параметры запуска PostgreSQL (GUC, задаваемые оператором)"
   pool_server:
     en: "Server Connection Settings"
     ru: "Настройки подключения к серверу"
@@ -467,8 +470,8 @@ fields:
         is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).
 
         When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
-        be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
-        timeout when keepalive cannot help (e.g., during active data transmission).
+        be terminated. Use it to avoid 15-16 minute delays caused by TCP retransmission timeout when
+        keepalive cannot help (e.g., during active data transmission).
 
         **Note:** This option is only supported on Linux. On other operating systems, this setting is ignored.
 
@@ -937,7 +940,7 @@ fields:
         ru: |
           Путь к файлу TLS-сертификата для входящих клиентских подключений.
           Должен использоваться вместе с tls_private_key.
-      doc: "The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_private_key`."
+      doc: "Path to the certificate file for TLS connections. Required to enable TLS for incoming client connections. Must be used together with `tls_private_key`."
       default: "None"
 
     tls_private_key:
@@ -948,7 +951,7 @@ fields:
         ru: |
           Путь к файлу приватного ключа TLS для входящих клиентских подключений.
           Должен использоваться вместе с tls_certificate.
-      doc: "The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_certificate`."
+      doc: "Path to the private key file for TLS connections. Required to enable TLS for incoming client connections. Must be used together with `tls_certificate`."
       default: "None"
 
     tls_ca_cert:
@@ -959,7 +962,7 @@ fields:
         ru: |
           Путь к CA-сертификату для верификации клиентских сертификатов.
           Используется с tls_mode = "verify-full"
-      doc: "The file containing the CA certificate to verify the client certificate. This is required when `tls_mode` is set to `verify-full`."
+      doc: "CA certificate file used to verify client certificates. Required when `tls_mode` is set to `verify-full`."
       default: "None"
 
     tls_mode:
@@ -1146,6 +1149,42 @@ fields:
         - For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.
         - For Talos/JWT/PAM flows configured at the pool/user level, `trust` still bypasses the client password prompt; however, those modes may be used when `trust` does not match.
 
+    startup_parameters:
+      config:
+        en: |
+          Baseline PostgreSQL GUCs that pg_doorman adds to each new
+          backend StartupMessage. Pools override values per key;
+          passthrough auth_query can override them per user. Config load
+          validates reserved keys, GUC names, null bytes, and this level's
+          size. Before backend startup, pg_doorman checks the resolved
+          parameter set again; if it does not fit PG's
+          MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
+          configured GUCs for that startup and logs a warning.
+          Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+        ru: |
+          Базовые GUC PostgreSQL, которые pg_doorman добавляет в
+          StartupMessage каждого нового бэкенда. Пулы могут
+          переопределять значения по ключу; auth_query в режиме
+          passthrough может переопределять их для конкретного
+          пользователя. При загрузке конфигурации проверяются
+          зарезервированные ключи, имена GUC, нулевые байты и размер
+          этого уровня. Объединённый набор параметров снова проверяется
+          при запуске бэкенда; если он не помещается в лимит PG
+          MAX_STARTUP_PACKET_LENGTH (10000 байт), pg_doorman пропускает
+          операторские GUC для этого запуска и пишет предупреждение.
+          Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+      doc: |
+        Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend `StartupMessage`; PostgreSQL stores them as the session reset defaults, so client `RESET ALL` / `DISCARD ALL` returns to these values.
+
+        Cascade order: `general.startup_parameters`, then `pools.<name>.startup_parameters`, then the optional `startup_parameters` JSON column returned by passthrough `auth_query`. Later layers win per key. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple roles.
+
+        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes); if it does not fit, pg_doorman drops the auth_query overlay when the baseline still fits, otherwise it drops all configured keys for that startup and logs the event.
+
+        If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's `ErrorResponse` to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are written to the corresponding warning log line.
+
+        Inspect the resolved per-pool values with `SHOW STARTUP_PARAMETERS` or the `/api/pools` REST endpoint.
+      default: "{} (empty)"
+
   pool:
     server_host:
       config:
@@ -1285,11 +1324,11 @@ fields:
       config:
         en: |
           Don't evict connections younger than this (milliseconds).
-          Protects freshly created connections from eviction churn
+          Protects freshly created connections from repeated evictions
           between user pools sharing the same database.
         ru: |
           Не изымать соединения моложе этого значения (миллисекунды).
-          Защищает свежесозданные соединения от постоянного churn'а
+          Защищает свежесозданные соединения от постоянных выселений
           между user-пулами, разделяющими одну базу данных.
       doc: |
         Minimum age (in milliseconds) a connection must reach before it can be evicted by the
@@ -1349,7 +1388,7 @@ fields:
         from coordinator eviction. When the coordinator needs to free a connection slot for
         another user, it will not evict connections from a user who is at or below this count.
 
-        This is separate from `min_pool_size` (user-level): `min_pool_size` controls prewarm
+        Separate from `min_pool_size` (user-level): `min_pool_size` controls prewarm
         and replenish (proactively creating connections), while `min_guaranteed_pool_size`
         only affects eviction decisions (never creates connections).
 
@@ -1444,6 +1483,33 @@ fields:
         ru: "Переопределить путь к приватному ключу TLS-клиента для этого пула."
       doc: "Per-pool override of `server_tls_private_key`."
       default: "None (uses global setting)"
+
+    startup_parameters:
+      config:
+        en: |
+          Per-pool overrides for PostgreSQL configuration parameters in
+          backend StartupMessage. Wins over general.startup_parameters
+          per key; auth_query in passthrough mode wins over this.
+          Config load validates reserved keys, GUC names, null bytes, and
+          this level's size. Before backend startup, pg_doorman checks the
+          resolved parameter set again against PG's
+          MAX_STARTUP_PACKET_LENGTH (10000 bytes).
+          Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+        ru: |
+          Переопределения параметров PostgreSQL для этого пула. pg_doorman
+          добавляет их в StartupMessage каждого нового бэкенда. Значения
+          имеют приоритет над general.startup_parameters по ключу;
+          auth_query в режиме passthrough имеет приоритет над настройками
+          пула. При загрузке конфигурации проверяются зарезервированные
+          ключи, имена GUC, нулевые байты и размер этого уровня.
+          Объединённый набор параметров снова проверяется при запуске
+          бэкенда по лимиту PG MAX_STARTUP_PACKET_LENGTH (10000 байт).
+          Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+      doc: |
+        Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
+
+        In the cascade `general` → `pool` → `auth_query`, this layer overrides `general` per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple users. See [`general.startup_parameters`](#startup-parameters) for validation rules, failure behavior, and observability.
+      default: "{} (empty)"
 
   user:
     username:
@@ -1573,7 +1639,9 @@ fields:
           Если запрос возвращает ровно один столбец, он используется независимо от имени.
           Используйте $1 как параметр для имени пользователя.
       doc: |
-        SQL query to fetch credentials. Must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name. Any extra columns are ignored. Use `$1` as the placeholder for the username parameter.
+        SQL query to fetch credentials. It must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name.
+
+        Extra columns are ignored except for the optional `startup_parameters` text column. In passthrough mode, pg_doorman reads that column as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores it and logs a warning. Use `$1` as the placeholder for the username parameter.
 
         Example: `"SELECT passwd FROM pg_shadow WHERE usename = $1"`
 
@@ -1771,5 +1839,12 @@ fields:
       config:
         en: "Group names that map onto the Admin role."
         ru: "Список групп, которые получают роль Admin (могут управлять пулами)."
-      doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps the SSO surface read-only."
+      doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps SSO users read-only."
       default: "[]"
+
+    sso_require_https:
+      config:
+        en: "Reject SSO credentials presented over plain HTTP."
+        ru: "Отклонять SSO credentials, пришедшие по plain HTTP."
+      doc: "When true, Bearer/cookie/query SSO tokens are accepted only if the request peer is in trusted_proxies and the proxy forwarded X-Forwarded-Proto: https. Defaults to false so SSO works through a TLS-terminating proxy reaching pg_doorman over a private HTTP leg. Enable on shared networks where the proxy → pg_doorman hop is exposed."
+      default: "false"

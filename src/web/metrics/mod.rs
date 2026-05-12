@@ -457,6 +457,130 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
     counter
 });
 
+/// Counts backend startup attempts pg_doorman aborted because PostgreSQL
+/// returned an `ErrorResponse` that names a key the pool actually sent in
+/// `StartupMessage`. Labels:
+///
+/// * `pool` — pool name as it appears in `pools.<name>` of the config
+///   (in the default mapping this is the PostgreSQL database name).
+///   The label is *not* `<user>@<database>`: pg_doorman emits one
+///   series per pool name, so a multi-user database collapses into a
+///   single row. Per-user attribution lives in the warn log line.
+/// * `sqlstate` — PG SQLSTATE on the rejection (`22023`, `42704`,
+///   `42501`, `55P02`, or any other code under the startup-parameter
+///   family — pg_doorman does not pre-filter by SQLSTATE).
+///
+/// SQLSTATEs with the `57P` prefix (server unavailable) are excluded: those
+/// `ErrorResponse`s are surfaced as `ServerUnavailableError` to drive the
+/// Patroni-assisted fallback path before the counter branch is reached.
+///
+/// Identification of the failing key is best-effort: pg_doorman first
+/// parses the canonical English `parameter "<name>"` phrase, then falls
+/// back to scanning the M-field for any sent key wrapped in double
+/// quotes (PG keeps the quote markers across all `lc_messages` locales).
+/// If both heuristics fail — typically because the PG error is unrelated
+/// to the sent map at all — the counter does NOT increment. Operator
+/// reading a non-zero rate can be confident the issue is on a key they
+/// configured; the per-line warn log carries the parameter name and
+/// username for triage.
+///
+/// The parameter name and username are intentionally NOT in the label
+/// set so a dynamic `auth_query` pool that mints per-tenant roles cannot
+/// blow up Prometheus series count by reading user input into labels.
+/// Counts cases where pg_doorman dropped configured
+/// `startup_parameters` *before* the StartupMessage went on the wire —
+/// the failure mode the per-pool `*_errors_total` counter cannot see
+/// because PG never had a chance to reject. Every reason increments
+/// the counter by 1 per drop event (one backend spawn that dropped
+/// the resolved set, one parsed row that contained invalid entries, one
+/// row whose overlay was ignored because of dedicated mode), so
+/// `rate by(reason)` is dimensionally consistent regardless of how
+/// many individual keys the offending row carried. Per-entry detail
+/// goes to the warn log only. Labels:
+///
+/// * `pool` — pool name as it appears in `pools.<name>` of the config
+///   (in the default mapping this is the PostgreSQL database name).
+///   The label is *not* `<user>@<database>`: pg_doorman emits one
+///   series per pool name, so a multi-user database collapses into a
+///   single row. Per-user attribution lives in the warn log line.
+/// * `reason` — bounded enum:
+///   * `cascade_budget_exceeded` — the resolved general+pool+auth_query
+///     map exceeded the startup-parameter budget (`MAX_OPERATOR_BUDGET`, 9 488
+///     bytes). Every configured key was dropped for that spawn
+///     and the backend got PG defaults instead.
+///   * `packet_cap_exceeded` — the full StartupMessage including user,
+///     application_name and database would exceed PG's
+///     `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes). Same drop-all
+///     behaviour.
+///   * `auth_query_oversize` — the auth_query `startup_parameters`
+///     text column for some username exceeded the operator budget at
+///     parse time, so the per-user overlay is ignored.
+///   * `auth_query_overlay_oversize` — the merged baseline+overlay was
+///     over budget, but the baseline alone fits. Keeps general/pool
+///     defaults (statement_timeout, lock_timeout, ...) for that user
+///     instead of stripping the whole configured parameter set.
+///   * `auth_query_bad_type` — the auth_query `startup_parameters`
+///     column has a non-text type (likely `json`/`jsonb`); pg_doorman
+///     reads it as text, so the row's overlay is dropped. Cast to
+///     `::text` in the auth_query SELECT to fix.
+///   * `auth_query_invalid_json` — the column value is not valid JSON.
+///   * `auth_query_invalid_shape` — the column parses but the
+///     top-level value is not a JSON object.
+///   * `auth_query_invalid_entry` — at least one entry in the parsed
+///     auth_query JSON object failed validation (reserved key, bad
+///     GUC name, null byte, non-string value). Incremented once per
+///     parsed row that had any invalid entry.
+///   * `dedicated_mode` — a per-user auth_query row carried
+///     startup_parameters, but the pool runs in dedicated auth_query
+///     mode (one shared backend across users) so the per-user overlay
+///     was dropped. Incremented once per such row.
+///
+/// All cases also emit a `warn!` log line for human triage; the
+/// counter exists so dashboards and alerts can spot the silent drop
+/// without log scraping.
+pub(crate) static STARTUP_PARAMETERS_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_startup_parameters_dropped_total",
+            "Cumulative count of startup_parameters drop events before \
+             pg_doorman sends StartupMessage. \
+             Labels: pool, reason (cascade_budget_exceeded, \
+             packet_cap_exceeded, auth_query_oversize, \
+             auth_query_overlay_oversize, auth_query_bad_type, \
+             auth_query_invalid_json, auth_query_invalid_shape, \
+             auth_query_invalid_entry, dedicated_mode). Distinct from \
+             pg_doorman_backend_startup_parameter_errors_total which \
+             counts PG-side rejections after StartupMessage.",
+        ),
+        &["pool", "reason"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_backend_startup_parameter_errors_total",
+            "Cumulative count of backend startup attempts pg_doorman \
+             aborted because PostgreSQL ErrorResponse identified a key \
+             this pool sent in StartupMessage (configured \
+             startup_parameters). Labels: pool, sqlstate. \
+             SQLSTATEs with the 57P prefix (server unavailable) are excluded — \
+             those rejections take the Patroni-assisted fallback path \
+             instead. The failing parameter name and username are in \
+             the corresponding warn log line; kept out of the label set \
+             so dynamic auth_query roles cannot inflate Prometheus \
+             series count.",
+        ),
+        &["pool", "sqlstate"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 /// Counter for protocol-level large-message streaming events. pg_doorman
 /// drops to byte-stream forwarding when a server message of type DataRow
 /// ('D') or CopyData ('d') exceeds max_message_size — see
@@ -1232,7 +1356,7 @@ pub(crate) static WEB_SSO_VALIDATION_ERRORS: Lazy<IntCounterVec> = Lazy::new(|| 
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_web_sso_validation_errors_total",
-            "JWT validation failures by reason: signature, expired, audience, no_username, allowlist. A sustained signature spike means the SSO proxy rotated keys without updating sso_public_key_file; allowlist spikes mean someone outside the allowlist is trying to log in.",
+            "JWT validation failures by reason: signature, expired, audience, no_username, allowlist, insecure_transport. A sustained signature spike means the SSO proxy rotated keys without updating sso_public_key_file; allowlist spikes mean someone outside the allowlist is trying to log in; insecure_transport means [web].sso_require_https is on and a JWT arrived without the trusted-proxy + X-Forwarded-Proto: https hop required to accept it.",
         ),
         &["reason"],
     )

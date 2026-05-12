@@ -7,7 +7,7 @@
 //! tests are a candidate follow-up.
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct VersionDto {
@@ -148,6 +148,122 @@ pub(crate) struct PoolDto {
     /// Live TLS-encrypted backend connections held by the pool. Mirrors
     /// `pg_doorman_server_tls_connections`.
     pub tls_backend_connections: u64,
+
+    /// Operator-supplied PostgreSQL startup parameters this pool injects into
+    /// each new backend `StartupMessage`, in the order produced by the
+    /// `general` -> pool -> auth_query cascade. Each entry carries the layer
+    /// that contributed the winning value. Omitted from JSON when the pool
+    /// has no operator overrides for this user.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub startup_parameters: Vec<StartupParameterDto>,
+}
+
+/// One entry in `PoolDto.startup_parameters`. The `source` field tells the
+/// operator which cascade layer contributed the value — `"general"`, `"pool"`
+/// or `"auth_query"`. `value` is omitted for anonymous viewers because
+/// operator-supplied values can include tenant identifiers, audit tags,
+/// or extension-specific GUC payloads the public read-only UI must not
+/// expose; admin/SSO callers and the admin SQL command keep the full
+/// value.
+#[derive(Debug, Serialize)]
+pub(crate) struct StartupParameterDto {
+    pub parameter: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    pub source: &'static str,
+    /// `applied` / `dropped_due_to_budget` / `stale` — see
+    /// `pool::startup_resolver::ApplicationState`. Tells an operator
+    /// whether the configured cascade entry will actually ship in the
+    /// next backend `StartupMessage` for this pool.
+    pub state: &'static str,
+}
+
+impl StartupParameterDto {
+    pub fn from_resolved(
+        merged: BTreeMap<
+            String,
+            (
+                String,
+                crate::pool::startup_resolver::ParameterSource,
+                crate::pool::startup_resolver::ApplicationState,
+            ),
+        >,
+        reveal_values: bool,
+    ) -> Vec<Self> {
+        merged
+            .into_iter()
+            .map(|(parameter, (value, source, state))| StartupParameterDto {
+                parameter,
+                value: if reveal_values { Some(value) } else { None },
+                source: source.as_str(),
+                state: state.as_str(),
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod startup_parameter_dto_tests {
+    use super::*;
+    use crate::pool::startup_resolver::{ApplicationState, ParameterSource};
+
+    fn sample_merged() -> BTreeMap<String, (String, ParameterSource, ApplicationState)> {
+        let mut m = BTreeMap::new();
+        m.insert(
+            "application_name".to_string(),
+            (
+                "tenant-a-audit".to_string(),
+                ParameterSource::Pool,
+                ApplicationState::Applied,
+            ),
+        );
+        m.insert(
+            "statement_timeout".to_string(),
+            (
+                "30s".to_string(),
+                ParameterSource::General,
+                ApplicationState::Applied,
+            ),
+        );
+        m
+    }
+
+    #[test]
+    fn reveal_values_true_serializes_value_field() {
+        let dtos = StartupParameterDto::from_resolved(sample_merged(), true);
+        let json = serde_json::to_string(&dtos).expect("serialize");
+        assert!(
+            json.contains("\"value\":\"tenant-a-audit\""),
+            "expected admin/SSO view to include the operator-supplied value, got {json}"
+        );
+        assert!(
+            json.contains("\"value\":\"30s\""),
+            "expected admin/SSO view to include the general baseline value, got {json}"
+        );
+    }
+
+    #[test]
+    fn reveal_values_false_omits_value_field_but_keeps_parameter_and_source() {
+        let dtos = StartupParameterDto::from_resolved(sample_merged(), false);
+        let json = serde_json::to_string(&dtos).expect("serialize");
+        assert!(
+            !json.contains("\"value\""),
+            "anonymous view must not include any startup_parameter value, got {json}"
+        );
+        assert!(
+            json.contains("\"parameter\":\"application_name\""),
+            "anonymous view must preserve parameter name, got {json}"
+        );
+        assert!(
+            json.contains("\"source\":\"pool\""),
+            "anonymous view must preserve source label, got {json}"
+        );
+        assert_eq!(
+            dtos.len(),
+            2,
+            "redaction must not drop entries — anonymous view still tells the operator which keys are set"
+        );
+    }
 }
 
 #[derive(Debug, Serialize)]

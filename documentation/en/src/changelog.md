@@ -1,5 +1,87 @@
 # Changelog
 
+### 3.9.0
+
+Per-pool PostgreSQL startup parameters. pg_doorman can now add
+configured GUCs to each backend `StartupMessage`. Values apply in
+three layers: `general.startup_parameters`, `pools.<name>.startup_parameters`,
+and the optional `startup_parameters` column returned by passthrough
+`auth_query`.
+
+PostgreSQL stores these values as the session reset defaults, so
+client-side `RESET ALL` and `DISCARD ALL` return to the configured value.
+This gives one pool a different `plan_cache_mode`, `statement_timeout`,
+`work_mem`, or `idle_in_transaction_session_timeout` without changing
+`postgresql.conf`, `ALTER ROLE`, or `ALTER DATABASE`.
+
+#### Cascade resolution
+
+- `general.startup_parameters`, `pools.<name>.startup_parameters`, and
+  the optional `startup_parameters` text column on an `auth_query` row
+  are applied in order. Later layers override earlier ones per key.
+- Dedicated `auth_query` mode uses a shared `server_user`, so
+  pg_doorman ignores the per-user column there and logs one warning per
+  pool and username.
+- A reload that changes startup parameters recycles the affected pools.
+  Idle backends with the old reset defaults are not reused.
+
+#### Validation and protocol safety
+
+- Reserved protocol keys (`user`, `database`, `replication`,
+  `options`, the `_pq_.*` extension prefix) are refused at config load.
+- Keys must match the PG GUC naming shape `[A-Za-z_][A-Za-z0-9_.]*`,
+  values must not contain null bytes, and each level fits the startup-parameter
+  budget of `MAX_STARTUP_PACKET_LENGTH - 512` bytes.
+- The resolved parameter set is checked before each backend startup
+  against PG's 10 000-byte `MAX_STARTUP_PACKET_LENGTH`. If only the
+  auth_query layer overflows the packet, pg_doorman drops that layer and
+  keeps the general/pool baseline. If the baseline itself does not fit,
+  pg_doorman skips all configured keys for that spawn and logs the
+  byte counts.
+
+#### Behaviour on PG-side rejection
+
+- If PostgreSQL rejects a configured startup parameter at backend
+  startup, pg_doorman returns PostgreSQL's `ErrorResponse` to the
+  client unchanged. pg_doorman does not retry without the key and does
+  not disable the key automatically for the pool. Fix the parameter in
+  the config; until then, backend startup for that pool fails with
+  PostgreSQL's own SQLSTATE and message.
+- SQLSTATEs with the `57P` prefix (server unavailable) keep mapping to
+  `ServerUnavailableError` first so the Patroni-assisted fallback
+  path can route around the failed node before the startup-parameter
+  log line fires.
+- The configured parameter wins over the client sync path:
+  even if the client connect string carries an `application_name`
+  (or another tracked GUC like `TimeZone`), the per-checkout
+  `sync_parameters` call no longer overrides the configured value on
+  the backend. That default stands until an
+  explicit `SET` statement on the client session changes it.
+
+#### RELOAD coherence
+
+- A SIGHUP that changes `general.startup_parameters` drains pools that
+  inherit that baseline. The per-pool config hash includes the general
+  startup map, and carried-over dynamic `auth_query` pools are recycled
+  when the baseline changes.
+
+#### Observability
+
+- `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`
+  counts backend startups PostgreSQL rejected because of an
+  configured startup parameter. The failing parameter name and username are
+  written to the warning log line, not to metric labels.
+- `SHOW STARTUP_PARAMETERS` (admin SQL console) lists the per-pool
+  resolved parameters with the source of each value. `psql` tab
+  completion on `SHOW <TAB>` now includes the command.
+- The Web UI pool detail page shows the same rows in a "Startup
+  parameters (configured)" section, driven by the new
+  `startup_parameters[]` field on `/api/pools`.
+
+See [PostgreSQL startup parameters](tutorials/startup-parameters.md)
+for the configuration walkthrough, plus [General Settings](reference/general.md)
+and [Pool Settings](reference/pool.md) for the full parameter list.
+
 ### 3.8.5
 
 The web console now accepts JWTs issued by an external SSO proxy
@@ -108,7 +190,7 @@ live in [`guides/web-ui.md`](guides/web-ui.md).
 **Built-in operator dashboard.** pg_doorman exposes a single-page
 diagnostic console on the same port as `/metrics`, served from
 inside the binary and gated on `[web].ui = true` plus a non-default
-`admin_password`. Reaching the same view through the existing psql
+`admin_password`. Getting comparable detail from the existing psql
 admin console means running `SHOW POOLS`, `SHOW CLIENTS`,
 `SHOW STATS` and friends in a loop, computing rates by hand between
 two snapshots, and joining the rows mentally. The dashboard does

@@ -1,7 +1,7 @@
 // Implementation of the PostgreSQL server (database) protocol.
 
 // Standard library imports
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
@@ -27,7 +27,6 @@ use crate::stats::ServerStats;
 use super::authentication::handle_authentication;
 use super::cleanup::CleanupState;
 use super::parameters::ServerParameters;
-use super::startup_error::handle_startup_error;
 use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
 use super::{prepared_statements, protocol_io, startup_cancel};
 
@@ -164,6 +163,23 @@ pub struct Server {
     /// Per-connection lifetime override (ms). Set on fallback connections so
     /// they expire before the local backend recovers.
     pub(crate) override_lifetime_ms: Option<u64>,
+
+    /// Names of GUCs that pg_doorman injected through `startup_parameters`
+    /// for this backend. They become `pg_settings.reset_val` for the
+    /// session, so `sync_parameters` must not push a client-side value over
+    /// them on checkout — the operator decision wins over the client.
+    /// `Arc` because every spawn from the same pool sees the same set;
+    /// without the share each backend allocated its own `HashSet<String>`.
+    operator_managed_startup_keys: Arc<HashSet<String>>,
+}
+
+/// Shared empty key set so pools that don't use `startup_parameters`
+/// hand every backend the same `Arc<HashSet>` instead of allocating a
+/// new empty `HashSet` per spawn.
+fn empty_operator_keys() -> Arc<HashSet<String>> {
+    static EMPTY: once_cell::sync::Lazy<Arc<HashSet<String>>> =
+        once_cell::sync::Lazy::new(|| Arc::new(HashSet::new()));
+    EMPTY.clone()
 }
 
 impl std::fmt::Display for Server {
@@ -305,7 +321,7 @@ impl Server {
     }
 
     /// Drains any remaining data from the server that hasn't been read yet.
-    /// This is used to synchronize the connection state when data is unexpectedly available.
+    /// Used to synchronize connection state when data is unexpectedly available.
     /// All received data is discarded (sent to a sink).
     pub async fn wait_available(&mut self) {
         if !self.is_data_available() {
@@ -502,7 +518,7 @@ impl Server {
     }
 
     /// Sets the number of expected responses in async mode.
-    /// This is calculated from the batch operations before sending to server.
+    /// Calculated from the batch operations before sending to the server.
     #[inline(always)]
     pub fn set_expected_responses(&mut self, count: u32) {
         self.expected_responses = count;
@@ -692,7 +708,13 @@ impl Server {
     }
 
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
-        let parameter_diff = self.server_parameters.compare_params(parameters);
+        let mut parameter_diff = self.server_parameters.compare_params(parameters);
+
+        // Do not let values from the client startup packet overwrite
+        // operator-supplied startup defaults during checkout sync.
+        if !self.operator_managed_startup_keys.is_empty() {
+            parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
+        }
 
         if parameter_diff.is_empty() {
             return Ok(());
@@ -741,6 +763,11 @@ impl Server {
 
     /// Pretend to be the Postgres client and connect to the server given host, port and credentials.
     /// Perform the authentication and return the server in a ready for query state.
+    ///
+    /// `startup_parameters` is the resolved cascade
+    /// (`general` -> pool -> auth_query). It is sent in the backend
+    /// `StartupMessage`. If PostgreSQL rejects a value, pg_doorman forwards
+    /// the `ErrorResponse` unchanged.
     #[allow(clippy::too_many_arguments)]
     pub async fn startup(
         address: &Address,
@@ -753,6 +780,7 @@ impl Server {
         server_prepared_statement_cache_size: usize,
         application_name: String,
         session_mode: bool,
+        startup_parameters: &std::collections::BTreeMap<String, String>,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -797,11 +825,13 @@ impl Server {
         // code 0); see the `'R'` branch below.
         let auth_started = Instant::now();
         let mut startup_started: Option<Instant> = None;
+
         startup(
             &mut stream,
-            username.clone(),
+            username.as_str(),
             database,
-            application_name.clone(),
+            application_name.as_str(),
+            startup_parameters,
         )
         .await?;
 
@@ -902,11 +932,67 @@ impl Server {
                     }
                 }
 
-                // ErrorResponse
+                // ErrorResponse during startup. Keep SQLSTATE class 57P
+                // on the fallback path; other startup errors are forwarded
+                // to the client as PostgreSQL returned them.
                 'E' => {
-                    return handle_startup_error(&mut stream, len, &server_identifier)
-                        .await
-                        .map(|_| unreachable!());
+                    let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
+                    let _ = bytes.get_u8();
+                    let _ = bytes.get_i32();
+                    let Ok(msg) = PgErrorMsg::parse(&bytes) else {
+                        return Err(Error::ServerStartupError(
+                            "startup ErrorResponse".to_string(),
+                            server_identifier.clone(),
+                        ));
+                    };
+
+                    if msg.code.starts_with("57P") {
+                        return Err(Error::ServerUnavailableError(
+                            msg.message,
+                            server_identifier.clone(),
+                        ));
+                    }
+
+                    // Identify the failing parameter for logs and metrics.
+                    //
+                    // First parse the common English `parameter "<name>"`
+                    // phrase, then fall back to looking for any sent key in
+                    // double quotes. The fallback covers translated
+                    // `lc_messages` where PostgreSQL still quotes the name.
+                    let matched_key = if startup_parameters.is_empty() {
+                        None
+                    } else {
+                        crate::server::startup_error::extract_parameter_name(&msg.message)
+                            .filter(|n| startup_parameters.contains_key(n))
+                            .or_else(|| {
+                                crate::server::startup_error::match_sent_key_in_message(
+                                    &msg.message,
+                                    startup_parameters.keys(),
+                                )
+                            })
+                    };
+                    if let Some(param_name) = matched_key {
+                        warn!(
+                            "[{}@{}] PG rejected operator-supplied startup \
+                             parameter=\"{}\" sqlstate={} message=\"{}\"; the \
+                             error is being forwarded to the client. Fix the \
+                             parameter in general/pool/auth_query.",
+                            address.username, address.pool_name, param_name, msg.code, msg.message,
+                        );
+                        crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
+                            .with_label_values(&[&address.pool_name, &msg.code])
+                            .inc();
+                        return Err(Error::ServerStartupParameterRejection {
+                            sqlstate: msg.code,
+                            message: msg.message,
+                            server_identifier: server_identifier.clone(),
+                        });
+                    }
+
+                    return Err(Error::ServerStartupError(
+                        format!("{}: {}", msg.code, msg.message),
+                        server_identifier.clone(),
+                    ));
                 }
 
                 // Notice
@@ -972,6 +1058,36 @@ impl Server {
                         phase_started.elapsed().as_secs_f64(),
                     );
 
+                    // The empty case is a shared `Arc<HashSet>` static, so
+                    // pools that don't use the feature pay zero allocation
+                    // per spawn. The non-empty case still allocates once per
+                    // spawn — the caller in pool/server_pool.rs knows the
+                    // map shape but does not currently pass an already-Arc'd
+                    // HashSet through, and lifting the construction up there
+                    // is a larger refactor than this commit warrants.
+                    let operator_managed_startup_keys: Arc<HashSet<String>> = if startup_parameters
+                        .is_empty()
+                    {
+                        empty_operator_keys()
+                    } else {
+                        // Canonicalize every operator key the same way
+                        // ServerParameters::set_param does on the
+                        // sync_parameters path. Without this an operator
+                        // value configured as `timezone` would not match
+                        // a client-startup value reported as `TimeZone`
+                        // in compare_params(), letting the client
+                        // override the operator default. See codex
+                        // MED #7 (fresh review).
+                        Arc::new(
+                            startup_parameters
+                                .keys()
+                                .map(|k| {
+                                    crate::server::parameters::canonicalize_param_name(k.clone())
+                                })
+                                .collect(),
+                        )
+                    };
+
                     let server = Server {
                         address: address.to_owned(),
                         stream: BufStream::new(stream),
@@ -1010,6 +1126,7 @@ impl Server {
                         pending_large_message: None,
                         close_reason: None,
                         override_lifetime_ms: None,
+                        operator_managed_startup_keys,
                     };
                     server.stats.update_process_id(process_id);
                     server.stats.set_tls(connected_with_tls);

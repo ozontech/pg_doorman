@@ -69,6 +69,13 @@ allow_empty:
   # are zero on a -M simple workload so the ratio expression returns
   # an empty vector.
   - "Prepared Statement Hit Ratio"
+  # Startup_parameters panels track operator-supplied GUCs that PG
+  # rejected or that pg_doorman dropped before the wire. The demo
+  # ships no startup_parameters config, so no backend ever sees an
+  # operator GUC and no rejection or drop counter ever increments.
+  - "PG-Side Rejections by SQLSTATE"
+  - "PG-Side Rejections by Pool"
+  - "Pre-Wire Drops by Reason"
 
 bounds:
   - name: pool_size_app_user

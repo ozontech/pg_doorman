@@ -265,6 +265,12 @@ function AuthModal({
     onSubmit({ username, password }, remember);
   };
 
+  // Bloomberg-Terminal sign-in surface: full-page, no modal chrome.
+  // The whole canvas reads as a single carved console, with the amber
+  // accent reserved for the primary SSO action and the live status
+  // line at the bottom. We deliberately avoid the gradient/glass
+  // cliché — the rest of the SPA never uses it, and an operator
+  // landing here should feel they are still in the same console.
   return (
     <div
       role="dialog"
@@ -272,28 +278,49 @@ function AuthModal({
       aria-labelledby="auth-modal-title"
       ref={dialogRef}
       onKeyDown={onKeyDown}
-      className="fixed inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm"
+      className="fixed inset-0 flex min-h-screen items-center justify-center bg-bg px-4 py-8"
     >
-      <div className="w-80 rounded border border-border bg-surface p-6 shadow-xl">
-        <h2 id="auth-modal-title" className="mb-4 text-md font-semibold">
-          Sign in
-        </h2>
-        {ssoConfigError && (
-          <div
-            role="alert"
-            className="mb-4 rounded border border-warning/40 bg-warning/10 p-2 text-xs text-warning"
+      <section className="w-full max-w-lg border border-border bg-surface">
+        {/* Amber tick line above the heading: the same accent used on
+            live cells across the dashboard, anchoring the sign-in
+            surface to the rest of the SPA. */}
+        <div className="h-px bg-accent" aria-hidden="true" />
+        <header className="border-b border-border px-8 pb-5 pt-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-text-dim">
+            pg_doorman · operator console
+          </p>
+          <h2
+            id="auth-modal-title"
+            className="mt-3 text-xl font-semibold text-text"
           >
-            SSO is configured but not loaded:{" "}
-            <strong className="font-mono">{ssoConfigError}</strong>. Use
-            Basic auth below until this is fixed.
-          </div>
-        )}
-        {ssoProxyUrl && (
-          <div className="mb-4">
-            <button
-              type="button"
-              disabled={redirecting}
-              onClick={() => {
+            <span className="text-accent">&gt;</span> authentication required
+          </h2>
+          <p className="mt-2 text-sm text-text-muted">
+            Identify yourself to enter the console. SSO opens the
+            corporate identity flow; Local admin uses the
+            <span className="font-mono"> [general] </span>
+            credentials from <span className="font-mono">pg_doorman.toml</span>.
+          </p>
+        </header>
+        <div className="space-y-6 px-8 py-6">
+          {ssoConfigError && (
+            <div
+              role="alert"
+              className="border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning"
+            >
+              <span className="font-semibold uppercase tracking-wide">
+                SSO not loaded
+              </span>{" "}
+              · <span className="font-mono">{ssoConfigError}</span>. Basic
+              auth below still works until this is fixed.
+            </div>
+          )}
+          {ssoProxyUrl && (
+            <SsoBlock
+              proxyUrl={ssoProxyUrl}
+              ssoAdminPossible={ssoAdminPossible}
+              redirecting={redirecting}
+              onRedirect={() => {
                 setRedirecting(true);
                 if (!redirectToSso(ssoProxyUrl)) {
                   // Bad sso_proxy_url; the helper logged to console.
@@ -301,64 +328,203 @@ function AuthModal({
                   setRedirecting(false);
                 }
               }}
-              className="w-full rounded bg-accent px-3 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-60"
-            >
-              {redirecting ? "Redirecting…" : "Sign in via SSO"}
-            </button>
-            <p className="mt-2 text-xs text-text-muted">
-              {ssoAdminPossible
-                ? "SSO can grant read or admin access depending on your group memberships."
-                : "SSO grants read-only access including logs and SQL text."}
-            </p>
-            <div className="my-4 flex items-center gap-2 text-xs text-text-dim">
-              <span className="h-px flex-1 bg-border" />
-              or
-              <span className="h-px flex-1 bg-border" />
-            </div>
-          </div>
-        )}
-        <form onSubmit={submit}>
-          <p className="mb-4 text-sm text-text-muted">
-            {currentBasic
-              ? "That user/password did not work. Check [general].admin_username and [general].admin_password in pg_doorman.toml."
-              : "Sign in with the admin_username / admin_password from [general] in pg_doorman.toml."}
-          </p>
-          <label className="mb-2 block text-xs uppercase tracking-wide text-text-muted">
+            />
+          )}
+          <BasicBlock
+            currentBasic={currentBasic}
+            username={username}
+            password={password}
+            remember={remember}
+            onUsername={setUsername}
+            onPassword={setPassword}
+            onRemember={setRemember}
+            onSubmit={submit}
+            ssoVisible={ssoProxyUrl !== null}
+          />
+        </div>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-8 py-3 text-xs text-text-dim">
+          <TransportChip />
+          <span className="font-mono uppercase tracking-wider">
+            {ssoProxyUrl ? "sso + basic" : "basic only"}
+          </span>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function SsoBlock({
+  proxyUrl,
+  ssoAdminPossible,
+  redirecting,
+  onRedirect,
+}: {
+  proxyUrl: string;
+  ssoAdminPossible: boolean;
+  redirecting: boolean;
+  onRedirect: () => void;
+}) {
+  // Trim the proxy host out of the URL so the operator sees where SSO
+  // will route them before clicking. The try/catch handles a typo'd
+  // sso_proxy_url at render time — the runtime `safeProxyUrl` check
+  // only fires when the operator actually clicks the button.
+  let host: string | null = null;
+  try {
+    host = new URL(proxyUrl).host;
+  } catch {
+    host = null;
+  }
+  return (
+    <div>
+      <p className="mb-2 text-xs uppercase tracking-[0.2em] text-text-dim">
+        Single sign-on
+      </p>
+      <button
+        type="button"
+        disabled={redirecting}
+        onClick={onRedirect}
+        className="flex h-11 w-full items-center justify-between border border-accent bg-accent px-4 text-sm font-semibold uppercase tracking-wider text-accent-fg transition-colors hover:bg-accent-hover focus-visible:bg-accent-hover disabled:cursor-wait disabled:opacity-70"
+      >
+        <span>{redirecting ? "Redirecting…" : "Sign in via SSO"}</span>
+        <span aria-hidden="true" className="font-mono">
+          {redirecting ? "··" : "→"}
+        </span>
+      </button>
+      <p className="mt-2 text-xs leading-relaxed text-text-muted">
+        {host ? (
+          <>
+            Routes via <span className="font-mono text-text">{host}</span>.{" "}
+          </>
+        ) : null}
+        {ssoAdminPossible
+          ? "Group membership in the JWT decides whether you land in read-only Sso or full Admin."
+          : "SSO grants read-only access including logs and SQL text."}
+      </p>
+    </div>
+  );
+}
+
+function BasicBlock({
+  currentBasic,
+  username,
+  password,
+  remember,
+  onUsername,
+  onPassword,
+  onRemember,
+  onSubmit,
+  ssoVisible,
+}: {
+  currentBasic: { username: string; password: string } | null;
+  username: string;
+  password: string;
+  remember: boolean;
+  onUsername: (next: string) => void;
+  onPassword: (next: string) => void;
+  onRemember: (next: boolean) => void;
+  onSubmit: (e: FormEvent) => void;
+  ssoVisible: boolean;
+}) {
+  return (
+    <div>
+      {ssoVisible && (
+        <div
+          className="mb-4 flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-text-dim"
+          aria-hidden="true"
+        >
+          <span className="h-px flex-1 bg-border" />
+          or use local admin
+          <span className="h-px flex-1 bg-border" />
+        </div>
+      )}
+      {!ssoVisible && (
+        <p className="mb-3 text-xs uppercase tracking-[0.2em] text-text-dim">
+          Local admin
+        </p>
+      )}
+      {currentBasic && (
+        <p
+          role="alert"
+          className="mb-3 border border-danger/30 bg-danger/10 px-3 py-2 text-xs leading-relaxed text-danger"
+        >
+          That user/password was rejected. Recheck{" "}
+          <span className="font-mono">[general].admin_username</span> and{" "}
+          <span className="font-mono">[general].admin_password</span> in{" "}
+          <span className="font-mono">pg_doorman.toml</span>.
+        </p>
+      )}
+      <form onSubmit={onSubmit} className="space-y-3">
+        <div>
+          <label
+            htmlFor="auth-username"
+            className="mb-1 block text-xs uppercase tracking-wide text-text-muted"
+          >
             Username
           </label>
           <input
+            id="auth-username"
             autoFocus
             autoComplete="username"
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="mb-3 w-full rounded border border-border-strong bg-surface-2 px-2 py-1.5 text-sm text-text"
+            onChange={(e) => onUsername(e.target.value)}
+            className="block h-10 w-full border border-border-strong bg-surface-2 px-3 text-sm text-text focus:border-accent focus:outline-none"
           />
-          <label className="mb-2 block text-xs uppercase tracking-wide text-text-muted">
+        </div>
+        <div>
+          <label
+            htmlFor="auth-password"
+            className="mb-1 block text-xs uppercase tracking-wide text-text-muted"
+          >
             Password
           </label>
           <input
+            id="auth-password"
             type="password"
             autoComplete="current-password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mb-3 w-full rounded border border-border-strong bg-surface-2 px-2 py-1.5 text-sm text-text"
+            onChange={(e) => onPassword(e.target.value)}
+            className="block h-10 w-full border border-border-strong bg-surface-2 px-3 text-sm text-text focus:border-accent focus:outline-none"
           />
-          <label className="mb-4 flex items-center gap-2 text-sm text-text-muted">
-            <input
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-            />
-            Remember me on this device
-          </label>
-          <button
-            type="submit"
-            className="w-full rounded bg-surface-2 px-3 py-1.5 text-sm font-medium text-text hover:bg-surface-3"
-          >
-            Sign in with Basic
-          </button>
-        </form>
-      </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-text-muted">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => onRemember(e.target.checked)}
+            className="h-4 w-4 accent-accent"
+          />
+          Remember me on this device
+        </label>
+        <button
+          type="submit"
+          className="flex h-11 w-full items-center justify-center border border-border-strong bg-surface-2 text-sm font-semibold uppercase tracking-wider text-text transition-colors hover:bg-surface-3 hover:border-accent focus-visible:border-accent"
+        >
+          Sign in with Basic
+        </button>
+      </form>
     </div>
+  );
+}
+
+function TransportChip() {
+  // Read the live protocol so the operator can tell at a glance
+  // whether they are about to hand a Bearer JWT to a plain-HTTP
+  // listener. Falls back to the insecure rendering when `window` is
+  // not present (SSR / test render) — there is no honest signal in
+  // that context, and "http" is the safer default for a chip that
+  // exists to warn about insecure transport.
+  const protocol =
+    typeof window !== "undefined" ? window.location.protocol : "";
+  const secure = protocol === "https:";
+  const className = secure
+    ? "border-success/40 text-success"
+    : "border-warning/40 text-warning";
+  return (
+    <span
+      className={`inline-flex items-center gap-2 border px-2 py-1 font-mono uppercase tracking-wider ${className}`}
+    >
+      <span aria-hidden="true">▌</span>
+      transport · {secure ? "https" : "http"}
+    </span>
   );
 }

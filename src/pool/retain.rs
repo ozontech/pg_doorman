@@ -322,6 +322,8 @@ mod tests {
             Duration::from_secs(5),
             false,
             None,
+            Arc::new(std::collections::BTreeMap::new()),
+            Arc::new(std::collections::BTreeMap::new()),
         );
         let database = Pool::builder(server_pool)
             .pool_name("test_db".to_string())
@@ -342,6 +344,7 @@ mod tests {
                 min_guaranteed_pool_size: 0,
             },
             config_hash: 0,
+            per_user_startup_overlay_hash: crate::pool::empty_overlay_hash(),
             prepared_statement_cache: None,
             coordinator: None,
             replenish_failures: Arc::new(AtomicU32::new(0)),

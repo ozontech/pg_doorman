@@ -819,6 +819,58 @@ where
     write_all_half(stream, &res).await
 }
 
+/// Show the operator-supplied PostgreSQL startup parameters that pg_doorman
+/// will inject into the `StartupMessage` of each new backend connection,
+/// resolved per pool through the `general` -> pool -> auth_query cascade.
+///
+/// Each row lists one parameter for one pool, with the layer that contributed
+/// the winning value (`general`, `pool`, `auth_query`).
+pub async fn show_startup_parameters<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let columns = vec![
+        ("user", DataType::Text),
+        ("database", DataType::Text),
+        ("parameter", DataType::Text),
+        ("value", DataType::Text),
+        ("source", DataType::Text),
+        // applied | dropped_due_to_budget | stale — `applied` means the
+        // value lands on the wire, `dropped_due_to_budget` means the
+        // runtime cascade overflows, and `stale` means the pool's
+        // frozen snapshot is behind the live config (RELOAD or auth_query
+        // refetch will catch up).
+        ("state", DataType::Text),
+    ];
+
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let pools = get_all_pools();
+    let mut entries: Vec<_> = pools.iter().collect();
+    entries.sort_by(|a, b| (&a.0.db, &a.0.user).cmp(&(&b.0.db, &b.0.user)));
+
+    for (identifier, pool) in entries {
+        let effective = pool.database.effective_startup_parameters_with_sources();
+        for (parameter, (value, source, state)) in effective {
+            res.put(data_row(&[
+                identifier.user.clone(),
+                identifier.db.clone(),
+                parameter,
+                value,
+                source.as_str().to_string(),
+                state.as_str().to_string(),
+            ]));
+        }
+    }
+
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
 /// Show pool coordinator status per database.
 /// Displays connection limits, current usage, and cumulative counters.
 pub async fn show_pool_coordinator<T>(stream: &mut T) -> Result<(), Error>

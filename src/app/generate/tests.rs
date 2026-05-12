@@ -91,6 +91,7 @@ pub fn generate_config_with_client<
                         patroni_api_timeout: None,
                         fallback_connect_timeout: None,
                         fallback_lifetime: None,
+                        startup_parameters: std::collections::BTreeMap::new(),
                         users: users_vec.clone(),
                     },
                 );

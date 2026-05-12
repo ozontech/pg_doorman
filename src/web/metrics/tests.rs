@@ -41,6 +41,7 @@ async fn test_prometheus_server_basic() {
                 sso_config_error: None,
                 trusted_proxies: Vec::new(),
                 sso_admin_groups_configured: false,
+                sso_require_https: false,
             },
         )
         .await;
@@ -245,6 +246,7 @@ async fn test_prometheus_server_integration() {
                 sso_config_error: None,
                 trusted_proxies: Vec::new(),
                 sso_admin_groups_configured: false,
+                sso_require_https: false,
             },
         )
         .await;

@@ -759,6 +759,45 @@ where
                             // Mirrors the SQLSTATE in the ErrorResponse below
                             // so the per-pool breakdown reflects checkout
                             // failures alongside PG-side errors.
+                            //
+                            // Special case: PG itself rejected the
+                            // operator-supplied startup_parameters cascade.
+                            // Forward the verbatim sqlstate/message so the
+                            // client receives the same PG-native error it
+                            // would have seen connecting to PG directly,
+                            // instead of the generic 53300
+                            // (too_many_connections) checkout-fallback.
+                            // Same shape as the rest of the branch (reset
+                            // buffered state on 'S', error_response, log,
+                            // return), only the SQLSTATE and message differ.
+                            if let crate::pool::PoolError::Backend(
+                                Error::ServerStartupParameterRejection {
+                                    sqlstate,
+                                    message: pg_message,
+                                    ..
+                                },
+                            ) = &err
+                            {
+                                current_pool.address.stats.error_with_sqlstate(sqlstate);
+                                self.stats.checkout_error();
+
+                                if message[0] as char == 'S' {
+                                    self.reset_buffered_state();
+                                }
+
+                                error_response(&mut self.write, pg_message, sqlstate).await?;
+
+                                error!(
+                                    "[{}@{} #c{}] PG rejected startup_parameters: sqlstate={} {}",
+                                    self.username,
+                                    self.pool_name,
+                                    self.connection_id,
+                                    sqlstate,
+                                    pg_message,
+                                );
+                                return Err(Error::AllServersDown);
+                            }
+
                             current_pool.address.stats.error_with_sqlstate("53300");
                             self.stats.checkout_error();
 

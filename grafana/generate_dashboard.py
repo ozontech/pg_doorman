@@ -141,6 +141,11 @@ var_user = (
 # Selector shorthand
 S = 'instance=~"$instance", user=~"$user", database=~"$database"'
 SD = 'instance=~"$instance", database=~"$database"'
+# Selector for metrics that carry only `pool` (not `user`/`database`),
+# e.g. startup_parameters counters. Filtering on `user`/`database`
+# yields an empty series even when traffic exists, because those
+# labels are not in the metric's label set.
+SI = 'instance=~"$instance"'
 
 # ---------------------------------------------------------------------------
 # Row 1: Overview
@@ -723,6 +728,39 @@ p_backend_phase_rate = ts_panel(
 )
 
 # ---------------------------------------------------------------------------
+# Row 19: Startup Parameters (collapsed) — PG-rejected and pre-wire-dropped GUCs
+# ---------------------------------------------------------------------------
+row19 = collapsed_row("Startup Parameters")
+
+p_sp_errors_by_sqlstate = ts_panel(
+    "PG-Side Rejections by SQLSTATE", [
+        prom(
+            f'sum by (sqlstate) (rate(pg_doorman_backend_startup_parameter_errors_total{{{SI}}}[$__rate_interval]))',
+            "{{sqlstate}}",
+        ),
+    ], unit="ops", w=12,
+    desc="Rate of backend startups PostgreSQL rejected because of a configured startup parameter. Split by SQLSTATE: 22023 invalid_value, 42704 undefined_object, 42501 insufficient_privilege, 55P02 cant_change_runtime_param. Growth for the same pool over several minutes means new connects through that pool fail on the same GUC; fix general/pool/auth_query. Filters on $user/$database do not apply: the counter has only the `pool` label.",
+)
+p_sp_errors_by_pool = ts_panel(
+    "PG-Side Rejections by Pool", [
+        prom(
+            f'sum by (pool) (rate(pg_doorman_backend_startup_parameter_errors_total{{{SI}}}[$__rate_interval]))',
+            "{{pool}}",
+        ),
+    ], unit="ops", w=12,
+    desc="Same counter aggregated by pool. The pool name shows which logical pool is affected; per-user attribution lives in the pg_doorman warn log.",
+)
+p_sp_dropped_by_reason = ts_panel(
+    "Pre-Wire Drops by Reason", [
+        prom(
+            f'sum by (reason) (rate(pg_doorman_startup_parameters_dropped_total{{{SI}}}[$__rate_interval]))',
+            "{{reason}}",
+        ),
+    ], unit="ops", w=24,
+    desc="Startup parameter drop events before pg_doorman sends StartupMessage. Reasons: cascade_budget_exceeded (resolved set above 9 488 bytes), packet_cap_exceeded (full packet above PG MAX_STARTUP_PACKET_LENGTH 10 000 bytes), auth_query_oversize (per-user JSON column above the startup-parameter budget), auth_query_overlay_oversize (auth_query overlay overflows but the general/pool baseline still fits), auth_query_bad_type / auth_query_invalid_json / auth_query_invalid_shape (column type, JSON parse, or non-object payload), auth_query_invalid_entry (one or more JSON entries failed validation), dedicated_mode (per-user GUC ignored because the pool shares one backend across users). Any increase should be investigated. Filters on $user/$database do not apply: the counter has only `pool` and `reason` labels.",
+)
+
+# ---------------------------------------------------------------------------
 # Build dashboard
 # ---------------------------------------------------------------------------
 d = (
@@ -831,6 +869,11 @@ d = (
     .with_panel(p_backend_phase_p99)
     .with_panel(p_backend_phase_p50)
     .with_panel(p_backend_phase_rate)
+    # Row 19: Startup Parameters
+    .with_row(row19)
+    .with_panel(p_sp_errors_by_sqlstate)
+    .with_panel(p_sp_errors_by_pool)
+    .with_panel(p_sp_dropped_by_reason)
 )
 
 dashboard_obj = d.build()

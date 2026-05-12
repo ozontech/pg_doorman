@@ -406,6 +406,22 @@ hba = []
 # host all all 0.0.0.0/0 reject
 # """
 
+# --------------------------------------------------------------------------
+# PostgreSQL Startup GUCs
+# --------------------------------------------------------------------------
+
+# Baseline PostgreSQL GUCs that pg_doorman adds to each new
+# backend StartupMessage. Pools override values per key;
+# passthrough auth_query can override them per user. Config load
+# validates reserved keys, GUC names, null bytes, and this level's
+# size. Before backend startup, pg_doorman checks the resolved
+# parameter set again; if it does not fit PG's
+# MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
+# configured GUCs for that startup and logs a warning.
+# Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+# Default: {} (empty)
+# startup_parameters = { plan_cache_mode = "force_custom_plan", work_mem = "64MB" }
+
 # ############################################################################
 # WEB UI / METRICS
 # ############################################################################
@@ -465,6 +481,10 @@ sso_groups_claim = "groups"
 # Group names that map onto the Admin role.
 # Default: []
 # sso_admin_groups = ["pg-doorman-admins"]
+
+# Reject SSO credentials presented over plain HTTP.
+# Default: false
+sso_require_https = false
 
 # ############################################################################
 # TALOS AUTHENTICATION (Optional)
@@ -553,7 +573,7 @@ cleanup_server_connections = true
 # max_db_connections = 0
 
 # Don't evict connections younger than this (milliseconds).
-# Protects freshly created connections from eviction churn
+# Protects freshly created connections from repeated evictions
 # between user pools sharing the same database.
 # min_connection_lifetime = 30000
 
@@ -600,6 +620,17 @@ cleanup_server_connections = true
 # Log SET commands from clients.
 # Default: false
 log_client_parameter_status_changes = false
+
+# Per-pool overrides for PostgreSQL configuration parameters in
+# backend StartupMessage. Wins over general.startup_parameters
+# per key; auth_query in passthrough mode wins over this.
+# Config load validates reserved keys, GUC names, null bytes, and
+# this level's size. Before backend startup, pg_doorman checks the
+# resolved parameter set again against PG's
+# MAX_STARTUP_PACKET_LENGTH (10000 bytes).
+# Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
+# Default: {} (empty)
+# startup_parameters = { plan_cache_mode = "force_custom_plan" }
 
 # --------------------------------------------------------------------------
 # Users Configuration (TOML uses indexed format)

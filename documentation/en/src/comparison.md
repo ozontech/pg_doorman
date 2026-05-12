@@ -77,6 +77,7 @@ See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md), [`patro
 | LISTEN / NOTIFY pinning in transaction mode | No | No | Experimental |
 | Cross-rule connection cap (`shared_pool`) | No | No | Yes (since 1.5.1) |
 | `PAUSE` / `RESUME` / `RECONNECT` admin commands | Yes | Yes | Yes (since 1.4.1) |
+| Configured PostgreSQL GUCs in backend `StartupMessage` per pool | Yes (`startup_parameters`, applied as `general` → pool → passthrough `auth_query`; client `RESET ALL` / `DISCARD ALL` returns to those values; PG startup errors reach the client unchanged) | No equivalent configured defaults; selected client startup parameters can be tracked or ignored | No (`maintain_params` preserves client-side parameters across rebind; no configured GUCs) |
 
 See [Pool Coordinator](concepts/pool-coordinator.md), [Pool pressure](tutorials/pool-pressure.md).
 

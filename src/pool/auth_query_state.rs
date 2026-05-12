@@ -20,6 +20,22 @@ use super::PoolIdentifier;
 pub struct AuthQueryState {
     cache_cell: tokio::sync::OnceCell<AuthQueryCache>,
     pub(crate) config: AuthQueryConfig,
+    /// Hash of the pool-level `startup_parameters` map captured at the
+    /// moment this state was built. RELOAD compares it against the new
+    /// `pool_config.startup_parameters` hash and drains dynamic pools +
+    /// rebuilds the dedicated shared pool when they differ — otherwise
+    /// dynamic backends would keep starting with the previous baseline's
+    /// `reset_val`.
+    pub(crate) pool_startup_hash: u64,
+    /// Fingerprint of every other parent input the dedicated shared
+    /// pool was built from: `pool_config.hash_value()` (which folds in
+    /// host/port/TLS/timeouts/fallback/app_name/users/startup_parameters)
+    /// combined with the `general.startup_parameters` hash. RELOAD
+    /// compares this on reuse so a SIGHUP that changed the parent pool
+    /// host, TLS material, or timeouts (without touching the
+    /// `auth_query` config itself) still rebuilds the shared pool
+    /// against the new parent config.
+    pub(crate) parent_fingerprint: u64,
     pool_name: String,
     server_host: String,
     server_port: u16,
@@ -31,8 +47,11 @@ pub struct AuthQueryState {
 
 impl AuthQueryState {
     /// Create a new AuthQueryState.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         config: AuthQueryConfig,
+        pool_startup_hash: u64,
+        parent_fingerprint: u64,
         pool_name: String,
         server_host: String,
         server_port: u16,
@@ -42,6 +61,8 @@ impl AuthQueryState {
         Self {
             cache_cell: tokio::sync::OnceCell::new(),
             config,
+            pool_startup_hash,
+            parent_fingerprint,
             pool_name,
             server_host,
             server_port,
@@ -99,5 +120,24 @@ impl AuthQueryState {
     /// Number of cached entries (0 if cache not yet initialized).
     pub fn cache_len(&self) -> usize {
         self.cache_cell.get().map_or(0, |c| c.len())
+    }
+
+    /// Sync, non-fetching peek of the per-user startup_parameters map.
+    /// Returns `None` if the auth_query executor was never initialized
+    /// (no client has authenticated through this pool yet) or if the
+    /// username has no cached entry. Used on the backend-spawn hot path
+    /// where blocking on a PG roundtrip would defeat the point of the
+    /// cache; cold lookups intentionally surface as "no per-user override".
+    /// Pass the cached per-user startup_parameters map (when present and
+    /// fresh) to `f` and return its result. `f` borrows the HashMap; no
+    /// clone happens on the backend-spawn hot path. Returns `None` if the
+    /// auth_query executor hasn't been lazily initialized yet, the entry
+    /// is absent / negative, or the entry's TTL has elapsed.
+    pub fn peek_startup_parameters<R>(
+        &self,
+        username: &str,
+        f: impl FnOnce(&std::collections::HashMap<String, String>) -> R,
+    ) -> Option<R> {
+        self.cache_cell.get()?.peek_startup_parameters(username, f)
     }
 }

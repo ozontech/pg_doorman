@@ -49,6 +49,11 @@ pub(super) struct ParsedRequest<'a> {
     /// Raw value of the `Forwarded:` header (RFC 7239). Same role as
     /// `x_forwarded_for`; both are walked.
     pub(super) forwarded: Option<&'a str>,
+    /// Raw value of the `X-Forwarded-Proto:` header, if present. Only
+    /// trusted when the TCP peer is in `[web].trusted_proxies`; used to
+    /// gate SSO credentials behind HTTPS when
+    /// `[web].sso_require_https = true`.
+    pub(super) x_forwarded_proto: Option<&'a str>,
     pub(super) accepts_gzip: bool,
     /// True when the request advertises `Accept: application/json`. The SPA
     /// `fetch()` wrapper sets this on every call; a browser hitting the URL
@@ -80,6 +85,7 @@ impl<'a> ParsedRequest<'a> {
         let mut authorization = None;
         let mut cookie = None;
         let mut x_forwarded_for = None;
+        let mut x_forwarded_proto = None;
         let mut forwarded = None;
         let mut accepts_gzip = false;
         let mut accepts_json = false;
@@ -98,6 +104,8 @@ impl<'a> ParsedRequest<'a> {
                 cookie = Some(value);
             } else if let Some(value) = strip_header_prefix(line, "X-Forwarded-For") {
                 x_forwarded_for = Some(value);
+            } else if let Some(value) = strip_header_prefix(line, "X-Forwarded-Proto") {
+                x_forwarded_proto = Some(value);
             } else if let Some(value) = strip_header_prefix(line, "Forwarded") {
                 forwarded = Some(value);
             } else if let Some(value) = strip_header_prefix(line, "Accept-Encoding") {
@@ -121,6 +129,7 @@ impl<'a> ParsedRequest<'a> {
             authorization,
             cookie,
             x_forwarded_for,
+            x_forwarded_proto,
             forwarded,
             accepts_gzip,
             accepts_json,

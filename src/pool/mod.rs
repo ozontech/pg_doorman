@@ -5,7 +5,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::{
@@ -35,6 +35,7 @@ pub mod gc;
 pub mod pool_coordinator;
 pub mod retain;
 mod server_pool;
+pub mod startup_resolver;
 
 pub mod fallback;
 
@@ -67,6 +68,13 @@ pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 /// This is atomic and safe and read-optimized.
 /// The pool is recreated dynamically when the config is reloaded.
 pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::default()));
+
+/// Hash of the previous reload's `general.startup_parameters` map. Used by
+/// `ConnectionPool::from_config` to recognize when a SIGHUP changed the
+/// general-level baseline so dynamic auth_query pools can be drained — the
+/// per-pool reuse hash already folds in the baseline, but dynamic pools are
+/// carried over by identifier rather than rebuilt from the same path.
+static PREVIOUS_GENERAL_STARTUP_HASH: AtomicU64 = AtomicU64::new(0);
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
@@ -90,6 +98,37 @@ fn set_client_server_map(csm: ClientServerMap) {
 
 pub fn get_client_server_map() -> Option<ClientServerMap> {
     CLIENT_SERVER_MAP.get().cloned()
+}
+
+/// Stable hash of a per-user auth_query `startup_parameters` overlay.
+/// Used to detect overlay drift after `auth_query` refetches: if the
+/// new row's hash differs from `ConnectionPool::per_user_startup_overlay_hash`,
+/// the dynamic pool is dropped so the next client connection rebuilds
+/// against the new overlay. Accepts both `HashMap` (auth_query cache
+/// shape) and `BTreeMap` (the immutable snapshot stored on the pool)
+/// via a borrowed iterator, normalising key order so the hash is shape-
+/// independent.
+pub(crate) fn per_user_overlay_hash<'a, I>(entries: I) -> u64
+where
+    I: IntoIterator<Item = (&'a String, &'a String)>,
+{
+    use std::hash::{Hash, Hasher};
+    let mut sorted: Vec<(&str, &str)> = entries
+        .into_iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sorted.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Hash that `per_user_overlay_hash` produces for the empty overlay.
+/// Computed once and reused by every static / dedicated-mode pool so
+/// drift comparisons against dynamic pools' real overlay hashes are
+/// shape-stable across the codebase.
+pub(crate) fn empty_overlay_hash() -> u64 {
+    per_user_overlay_hash(std::iter::empty::<(&String, &String)>())
 }
 
 /// Build a `ServerTlsConfig` for a pool, merging pool-level overrides with general defaults.
@@ -155,6 +194,31 @@ pub fn register_dynamic_pool(id: &PoolIdentifier) {
 /// Check if a pool identifier is a dynamic (auth_query passthrough) pool.
 pub fn is_dynamic_pool(id: &PoolIdentifier) -> bool {
     DYNAMIC_POOLS.load().contains(id)
+}
+
+/// Drop a dynamic pool from `POOLS` and `DYNAMIC_POOLS`. No-op for
+/// static pools — overlay drift only applies to auth_query passthrough.
+/// Used by the auth_query cache after a refetch when the new per-user
+/// `startup_parameters` map no longer matches the snapshot frozen in
+/// the live pool: the next client connection rebuilds the dynamic pool
+/// against the new overlay.
+pub fn drop_dynamic_pool(id: &PoolIdentifier) -> bool {
+    if !is_dynamic_pool(id) {
+        return false;
+    }
+    let pools = POOLS.load();
+    let mut new_pools = (**pools).clone();
+    let removed = new_pools.remove(id).is_some();
+    if removed {
+        POOLS.store(Arc::new(new_pools));
+    }
+    let dynamics = DYNAMIC_POOLS.load();
+    if dynamics.contains(id) {
+        let mut new_set = (**dynamics).clone();
+        new_set.remove(id);
+        DYNAMIC_POOLS.store(Arc::new(new_set));
+    }
+    removed
 }
 
 /// Get auth_query state for a database pool.
@@ -250,6 +314,14 @@ pub struct ConnectionPool {
     /// the pool after a RELOAD command
     pub config_hash: u64,
 
+    /// Hash of the per-user auth_query overlay frozen into this pool at
+    /// creation time. After a refetch, the auth_query cache compares the
+    /// new per-user startup_parameters map against this value; a mismatch
+    /// drops the dynamic pool so the next client connection rebuilds
+    /// against the new overlay. Static pools and dedicated-mode shared
+    /// pools both pin this to the empty-map hash.
+    pub per_user_startup_overlay_hash: u64,
+
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
 
@@ -318,8 +390,39 @@ impl ConnectionPool {
             );
         }
 
+        // Hashing each pool's effective config against (Pool, general
+        // startup_parameters baseline) folds general-level GUC changes into
+        // the same reuse decision pg_doorman already uses for pool-level
+        // changes. Without this, a SIGHUP that only edits
+        // `general.startup_parameters` would leave every idle backend
+        // pinned to the previous `reset_val` until the connection rotates
+        // through `lifetime_ms`, so clients would see mixed defaults from
+        // the same pool depending on which backend they got.
+        let general_startup_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            config.general.startup_parameters.hash(&mut hasher);
+            hasher.finish()
+        };
+        // Load only; the hash is not advanced until the new pool map has
+        // been committed at the bottom of from_config. Otherwise a reload
+        // that fails halfway poisons the hash, and the next reload of the
+        // *same* config silently skips the recycle of dynamic pools that
+        // still carry the old reset_val.
+        let previous_general_startup_hash = PREVIOUS_GENERAL_STARTUP_HASH.load(Ordering::Relaxed);
+        // The static defaults to `0`, which collides with the empty-map
+        // hash on a fresh process; treat that special case as "no prior
+        // value" so the first reload never falsely claims a change.
+        let general_startup_parameters_changed = previous_general_startup_hash != 0
+            && previous_general_startup_hash != general_startup_hash;
         for (pool_name, pool_config) in &config.pools {
-            let new_pool_hash_value = pool_config.hash_value();
+            let new_pool_hash_value = {
+                use std::hash::Hasher;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                hasher.write_u64(pool_config.hash_value());
+                hasher.write_u64(general_startup_hash);
+                hasher.finish()
+            };
             let server_tls_config = build_server_tls_for_pool(pool_config, &config.general)?;
 
             // There is one pool per database/user pair.
@@ -422,6 +525,25 @@ impl ConnectionPool {
 
                 let fallback_state = build_fallback_state(pool_name, pool_config, &config.general);
 
+                // Merge general+pool startup_parameters from the same
+                // `config` snapshot we hashed above. ServerPool keeps this
+                // as Arc<BTreeMap> for the rest of its life — the reload
+                // path rebuilds the pool whenever either layer's hash
+                // changes, so the snapshot stays valid until then. Passing
+                // it in explicitly (rather than letting ServerPool::new
+                // call config_arc() again) closes a narrow race where a
+                // second reload between this iteration and constructor
+                // execution would write a different baseline to the pool
+                // than the one the reuse hash captured.
+                let base_startup_parameters = {
+                    let mut merged: std::collections::BTreeMap<String, String> =
+                        config.general.startup_parameters.clone();
+                    for (k, v) in &pool_config.startup_parameters {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                    Arc::new(merged)
+                };
+
                 let manager = ServerPool::new(
                     address.clone(),
                     user.clone(),
@@ -443,6 +565,9 @@ impl ConnectionPool {
                     config.general.query_wait_timeout.as_std(),
                     pool_mode == PoolMode::Session,
                     fallback_state,
+                    base_startup_parameters,
+                    // Static pools carry no per-user auth_query overlay.
+                    Arc::new(std::collections::BTreeMap::new()),
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -471,6 +596,11 @@ impl ConnectionPool {
                     database: pool,
                     address,
                     config_hash: new_pool_hash_value,
+                    // Static and dedicated-mode shared pools carry no
+                    // per-user overlay, so they pin to the empty-map
+                    // hash. Dynamic passthrough pools set this from the
+                    // captured overlay in dynamic.rs.
+                    per_user_startup_overlay_hash: empty_overlay_hash(),
                     original_server_parameters: Arc::new(tokio::sync::Mutex::new(
                         ServerParameters::new(),
                     )),
@@ -514,9 +644,36 @@ impl ConnectionPool {
 
         for (pool_name, pool_config) in &config.pools {
             if let Some(ref aq_config) = pool_config.auth_query {
-                // RELOAD: reuse state when config unchanged (preserves cache, executor, stats)
+                let pool_startup_hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    pool_config.startup_parameters.hash(&mut hasher);
+                    hasher.finish()
+                };
+                // Parent fingerprint folds every other parent input the
+                // dedicated shared pool depends on into one hash:
+                // `pool_config.hash_value()` covers host/port/TLS/
+                // timeouts/fallback/app_name/users; the general
+                // startup hash covers the operator-wide baseline that
+                // also flows into the shared pool's reset_val. A SIGHUP
+                // that changes any of these without touching the
+                // auth_query config still rebuilds the shared pool.
+                let parent_fingerprint = pool_config.hash_value() ^ general_startup_hash;
+                // RELOAD: reuse state when the auth_query config AND
+                // the pool-level startup_parameters AND the parent
+                // fingerprint are unchanged. Any other parent edit
+                // (host/port/TLS/timeouts/fallback/app_name change,
+                // general.startup_parameters edit) must drop the cache
+                // and recycle the shared/dynamic pools: their backends
+                // were started with the old parent inputs as
+                // `reset_val` and TLS identity, and those survive
+                // client-side `RESET ALL` / `DISCARD ALL` unless the
+                // backend is recreated.
                 if let Some(old_state) = old_aq_states_for_reuse.get(pool_name) {
-                    if old_state.config == *aq_config {
+                    if old_state.config == *aq_config
+                        && old_state.pool_startup_hash == pool_startup_hash
+                        && old_state.parent_fingerprint == parent_fingerprint
+                    {
                         info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
                         auth_query_states.insert(pool_name.clone(), old_state.clone());
                         // Still need to ensure shared pool exists in new_pools
@@ -596,6 +753,15 @@ impl ConnectionPool {
                         let fallback_state =
                             build_fallback_state(pool_name, pool_config, &config.general);
 
+                        let base_startup_parameters = {
+                            let mut merged: std::collections::BTreeMap<String, String> =
+                                config.general.startup_parameters.clone();
+                            for (k, v) in &pool_config.startup_parameters {
+                                merged.insert(k.clone(), v.clone());
+                            }
+                            Arc::new(merged)
+                        };
+
                         let manager = ServerPool::new(
                             address.clone(),
                             shared_user.clone(),
@@ -617,6 +783,10 @@ impl ConnectionPool {
                             config.general.query_wait_timeout.as_std(),
                             pool_mode == PoolMode::Session,
                             fallback_state,
+                            base_startup_parameters,
+                            // Dedicated-mode shared pool serves multiple
+                            // dynamic users — no single per-user override.
+                            Arc::new(std::collections::BTreeMap::new()),
                         );
 
                         let queue_strategy = match config.general.server_round_robin {
@@ -650,6 +820,11 @@ impl ConnectionPool {
                             database: pool,
                             address,
                             config_hash: new_pool_hash_value,
+                            // Static and dedicated-mode shared pools carry no
+                            // per-user overlay, so they pin to the empty-map
+                            // hash. Dynamic passthrough pools set this from the
+                            // captured overlay in dynamic.rs.
+                            per_user_startup_overlay_hash: empty_overlay_hash(),
                             original_server_parameters: Arc::new(tokio::sync::Mutex::new(
                                 ServerParameters::new(),
                             )),
@@ -692,6 +867,8 @@ impl ConnectionPool {
                     pool_name.clone(),
                     Arc::new(AuthQueryState::new(
                         aq_config.clone(),
+                        pool_startup_hash,
+                        parent_fingerprint,
                         pool_name.clone(),
                         pool_config.server_host.clone(),
                         pool_config.server_port,
@@ -706,18 +883,40 @@ impl ConnectionPool {
         let old_aq_states = old_aq_states_for_reuse;
         let mut pools_to_remove: Vec<PoolIdentifier> = Vec::new();
 
-        // 1. Compare old vs new auth_query configs
+        // 1. Compare old vs new auth_query configs, plus pool-level
+        //    startup_parameters: either change must drain dynamic pools
+        //    for this pool_name so the next auth_query lookup builds
+        //    fresh backends with the new baseline reset_val.
         for (pool_name, old_state) in old_aq_states.iter() {
-            let new_aq = config
-                .pools
-                .get(pool_name)
-                .and_then(|p| p.auth_query.as_ref());
-            let changed = match new_aq {
+            let new_pool_config = config.pools.get(pool_name);
+            let new_aq = new_pool_config.and_then(|p| p.auth_query.as_ref());
+            let aq_changed = match new_aq {
                 None => true,                          // auth_query removed
                 Some(new) => *new != old_state.config, // config changed
             };
-            if changed {
-                info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+            let new_pool_startup_hash = new_pool_config.map(|p| {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                p.startup_parameters.hash(&mut hasher);
+                hasher.finish()
+            });
+            let new_parent_fingerprint =
+                new_pool_config.map(|p| p.hash_value() ^ general_startup_hash);
+            let pool_startup_changed = new_pool_startup_hash
+                .map(|h| h != old_state.pool_startup_hash)
+                .unwrap_or(false);
+            let parent_fingerprint_changed = new_parent_fingerprint
+                .map(|h| h != old_state.parent_fingerprint)
+                .unwrap_or(false);
+            if aq_changed || pool_startup_changed || parent_fingerprint_changed {
+                let reason = if aq_changed {
+                    "auth_query config changed"
+                } else if pool_startup_changed {
+                    "pool.startup_parameters changed"
+                } else {
+                    "parent pool/general config changed"
+                };
+                info!("[pool: {pool_name}] {reason} — collecting dynamic pools for removal");
                 for id in DYNAMIC_POOLS.load().iter() {
                     if id.db == *pool_name {
                         pools_to_remove.push(id.clone());
@@ -737,6 +936,21 @@ impl ConnectionPool {
                         user.username
                     );
                     pools_to_remove.push(id);
+                }
+            }
+        }
+
+        // 2b. general.startup_parameters changed: drain every dynamic pool
+        //     so the next auth_query lookup builds fresh backends with the
+        //     new baseline. Static pools are already handled by the pool
+        //     reuse hash above, which folds in `general_startup_hash`.
+        if general_startup_parameters_changed {
+            info!(
+                "general.startup_parameters changed on reload — collecting all dynamic pools for recycle"
+            );
+            for id in DYNAMIC_POOLS.load().iter() {
+                if !pools_to_remove.contains(id) {
+                    pools_to_remove.push(id.clone());
                 }
             }
         }
@@ -778,6 +992,11 @@ impl ConnectionPool {
         COORDINATORS.store(Arc::new(coordinators));
         AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
         POOLS.store(Arc::new(new_pools.clone()));
+        // Advance the recycle-watcher hash only after the new state is
+        // published; a failure path above (Err returned via `?`) leaves
+        // PREVIOUS_GENERAL_STARTUP_HASH alone so the next reload still
+        // sees the old value and re-evaluates the change correctly.
+        PREVIOUS_GENERAL_STARTUP_HASH.store(general_startup_hash, Ordering::Relaxed);
         Ok(())
     }
 
@@ -835,6 +1054,18 @@ impl ConnectionPool {
         {
             let conn = match self.database.get().await {
                 Ok(conn) => conn,
+                // PG-side rejection of an operator-supplied startup
+                // parameter must keep its typed shape so the cold auth
+                // path returns the same `ErrorResponse` (real SQLSTATE
+                // and PG message) to the client that the transaction
+                // checkout path already returns through
+                // src/client/transaction.rs. Stringifying the
+                // PoolError here collapses the carried sqlstate/message
+                // into a generic 58000/3D000 — which contradicts the
+                // "rejection forwarded verbatim" contract.
+                Err(PoolError::Backend(err @ Error::ServerStartupParameterRejection { .. })) => {
+                    return Err(err);
+                }
                 Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
             };
             guard.set_from_hashmap(&conn.server_parameters_as_hashmap(), true);
@@ -998,6 +1229,75 @@ pub fn get_coordinator(db: &str) -> Option<Arc<pool_coordinator::PoolCoordinator
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- per_user_overlay_hash tests ---
+
+    #[test]
+    fn per_user_overlay_hash_empty_matches_empty_overlay_hash() {
+        let empty_map = std::collections::HashMap::<String, String>::new();
+        assert_eq!(
+            per_user_overlay_hash(empty_map.iter()),
+            empty_overlay_hash()
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_ignores_input_order() {
+        // HashMap with the same key/value pairs but inserted in different
+        // orders must hash identically. Without the internal sort the
+        // hash would depend on HashMap iteration order, which is
+        // randomized per process and would falsely flag overlay drift on
+        // every refetch.
+        let mut a = std::collections::HashMap::new();
+        a.insert("work_mem".to_string(), "64MB".to_string());
+        a.insert("statement_timeout".to_string(), "30s".to_string());
+        let mut b = std::collections::HashMap::new();
+        b.insert("statement_timeout".to_string(), "30s".to_string());
+        b.insert("work_mem".to_string(), "64MB".to_string());
+        assert_eq!(
+            per_user_overlay_hash(a.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_changes_when_value_changes() {
+        let mut a = std::collections::HashMap::new();
+        a.insert("work_mem".to_string(), "64MB".to_string());
+        let mut b = std::collections::HashMap::new();
+        b.insert("work_mem".to_string(), "128MB".to_string());
+        assert_ne!(
+            per_user_overlay_hash(a.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_changes_when_key_added() {
+        let mut a = std::collections::HashMap::new();
+        a.insert("work_mem".to_string(), "64MB".to_string());
+        let mut b = a.clone();
+        b.insert("statement_timeout".to_string(), "30s".to_string());
+        assert_ne!(
+            per_user_overlay_hash(a.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
+
+    #[test]
+    fn per_user_overlay_hash_matches_across_hashmap_and_btreemap() {
+        // The auth_query cache stores HashMap; the pool freezes a
+        // BTreeMap snapshot. Drift detection compares the two — they
+        // must hash to the same value for identical content.
+        let mut h = std::collections::HashMap::new();
+        h.insert("work_mem".to_string(), "64MB".to_string());
+        let mut b = std::collections::BTreeMap::new();
+        b.insert("work_mem".to_string(), "64MB".to_string());
+        assert_eq!(
+            per_user_overlay_hash(h.iter()),
+            per_user_overlay_hash(b.iter())
+        );
+    }
 
     // --- compute_spare tests ---
 

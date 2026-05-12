@@ -28,10 +28,14 @@ use super::{
 ///
 /// On RELOAD, dynamic pools are dropped (not in config) and recreated
 /// on the next client connection with fresh settings.
+/// `fetched_overlay` is the per-user `startup_parameters` map from the
+/// auth_query row that authenticated this user. Passing it in ties pool
+/// creation to that row instead of reading the cache again.
 pub fn create_dynamic_pool(
     pool_name: &str,
     username: &str,
     backend_auth: Option<BackendAuthMethod>,
+    fetched_overlay: Arc<std::collections::HashMap<String, String>>,
 ) -> Result<ConnectionPool, Error> {
     // Fast path: pool already exists
     if let Some(existing) = get_pool(pool_name, username) {
@@ -122,6 +126,40 @@ pub fn create_dynamic_pool(
 
     let fallback_state = super::build_fallback_state(pool_name, pool_config, &config.general);
 
+    // Merge general+pool startup_parameters baseline from the same config
+    // snapshot. Dynamic auth_query pools follow the same lifecycle as
+    // static pools: rebuilt on RELOAD when the underlying base changes
+    // (see `general_startup_parameters_changed` in pool/mod.rs).
+    let base_startup_parameters = {
+        let mut merged: std::collections::BTreeMap<String, String> =
+            config.general.startup_parameters.clone();
+        for (k, v) in &pool_config.startup_parameters {
+            merged.insert(k.clone(), v.clone());
+        }
+        std::sync::Arc::new(merged)
+    };
+
+    // Convert the caller's HashMap snapshot into the BTreeMap shape
+    // ServerPool stores. The snapshot comes from the auth_query row used
+    // for this login, so TTL expiry or an interleaved refetch cannot
+    // change the overlay while the pool is created. Dedicated-mode pools
+    // should not reach this path, but keep the guard so a future caller
+    // cannot attach a per-user overlay to a shared backend pool.
+    let per_user_startup_overlay: std::sync::Arc<std::collections::BTreeMap<String, String>> = {
+        let is_dedicated = super::get_auth_query_state(pool_name)
+            .map(|state| state.config.is_dedicated_mode())
+            .unwrap_or(false);
+        if is_dedicated || fetched_overlay.is_empty() {
+            std::sync::Arc::new(std::collections::BTreeMap::new())
+        } else {
+            let map: std::collections::BTreeMap<String, String> = fetched_overlay
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            std::sync::Arc::new(map)
+        }
+    };
+
     let manager = ServerPool::new(
         address.clone(),
         user.clone(),
@@ -143,7 +181,15 @@ pub fn create_dynamic_pool(
         config.general.query_wait_timeout.as_std(),
         pool_mode == PoolMode::Session,
         fallback_state,
+        base_startup_parameters,
+        per_user_startup_overlay.clone(),
     );
+
+    // Snapshot the overlay hash before the Arc moves into ServerPool.
+    // The auth_query cache compares the new fetched per-user map against
+    // this value after every refetch; a mismatch drops the dynamic pool
+    // so the next connect rebuilds with the new reset_val.
+    let overlay_hash = super::per_user_overlay_hash(per_user_startup_overlay.iter());
 
     let queue_strategy = match config.general.server_round_robin {
         true => QueueMode::Fifo,
@@ -170,6 +216,7 @@ pub fn create_dynamic_pool(
         database: pool,
         address,
         config_hash: 0, // dynamic pools don't participate in hash-based reload
+        per_user_startup_overlay_hash: overlay_hash,
         original_server_parameters: Arc::new(tokio::sync::Mutex::new(ServerParameters::new())),
         settings: PoolSettings {
             pool_mode,

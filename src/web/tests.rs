@@ -33,6 +33,7 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         sso_config_error: None,
         trusted_proxies: Vec::new(),
         sso_admin_groups_configured: false,
+        sso_require_https: false,
     }
 }
 
@@ -54,6 +55,7 @@ fn opts_with_sso(ui_anonymous: bool) -> WebServerOptions {
         sso_config_error: None,
         trusted_proxies: Vec::new(),
         sso_admin_groups_configured: false,
+        sso_require_https: false,
     }
 }
 

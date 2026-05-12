@@ -18,7 +18,7 @@ SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 
 ### Когда username пула отличается от роли на backend
 
-Когда обращённый к клиенту `username` в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может — нечего пробрасывать. Дайте явные credentials:
+Когда обращённый к клиенту `username` в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может: у pg_doorman нет пароля для backend-роли. Дайте явные credentials:
 
 ```yaml
 users:
@@ -29,7 +29,7 @@ users:
     pool_size: 40
 ```
 
-Это же путь для JWT-аутентификации, где клиент не присылает пароль и пробрасывать нечего.
+Это же путь для JWT-аутентификации, где клиент не присылает пароль.
 
 ```admonish tip title="Где взять хеш пароля"
 `pg_doorman generate --host …` интроспектирует PostgreSQL и собирает конфиг с уже подставленными хешами. Быстрее, чем копировать руками из `pg_shadow`.

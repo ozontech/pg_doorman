@@ -27,6 +27,7 @@ mod duration;
 mod general;
 mod include;
 mod pool;
+pub mod startup_parameters;
 mod talos;
 pub mod tls;
 mod user;
@@ -420,6 +421,13 @@ impl Config {
     pub async fn validate(&mut self) -> Result<(), Error> {
         // Validate Talos
         self.talos.validate().await?;
+
+        // Validate operator-supplied PostgreSQL startup parameters at the
+        // general level; per-pool maps are validated inside `Pool::validate`.
+        startup_parameters::validate(
+            &self.general.startup_parameters,
+            "general.startup_parameters",
+        )?;
 
         if self.general.tls_rate_limit_per_second < 100
             && self.general.tls_rate_limit_per_second != 0

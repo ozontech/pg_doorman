@@ -4,6 +4,7 @@
 //! server connections. It handles connect timeouts, lifetime checks, alive
 //! checks, pause/resume, and reconnect epoch management.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use std::time::Duration;
 use log::{debug, info, warn};
 use tokio::sync::{Notify, Semaphore};
 
+use crate::config::startup_parameters as sp;
 use crate::config::{Address, User};
 use crate::errors::Error;
 use crate::patroni::types::Role;
@@ -19,8 +21,43 @@ use crate::stats::ServerStats;
 use crate::utils::format_duration_ms;
 
 use super::errors::{RecycleError, RecycleResult};
+use super::startup_resolver::ApplicationState;
 use super::types::Metrics;
 use super::ClientServerMap;
+
+/// Decision returned by `ServerPool::classify_startup_parameters`. Used
+/// by the spawn path to drive counter/log side effects and by the
+/// read-only admin/API view to label each entry without touching the
+/// metric. Carries the packet/body byte counts so the caller can log
+/// them without recomputing.
+#[derive(Debug, Clone, Copy)]
+enum BudgetDecision {
+    FullCascade,
+    OverlayDroppedBaselineKept {
+        body_bytes: usize,
+        packet_bytes: usize,
+    },
+    EmptyDueToBudget {
+        reason: BudgetReason,
+        body_bytes: usize,
+        packet_bytes: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BudgetReason {
+    CascadeBudgetExceeded,
+    PacketCapExceeded,
+}
+
+impl BudgetReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            BudgetReason::CascadeBudgetExceeded => "cascade_budget_exceeded",
+            BudgetReason::PacketCapExceeded => "packet_cap_exceeded",
+        }
+    }
+}
 
 /// Wrapper for the connection pool.
 pub struct ServerPool {
@@ -83,6 +120,27 @@ pub struct ServerPool {
 
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
+
+    /// `general.startup_parameters` merged with this pool's
+    /// `pool.startup_parameters` — the baseline that every backend spawn
+    /// from this pool ships in `StartupMessage`, before the optional
+    /// per-user auth_query overlay is applied. Cached once at pool
+    /// construction: the reload path rebuilds the pool whenever either
+    /// layer's hash changes (see `ConnectionPool::from_config`), so this
+    /// view is immutable for the lifetime of the pool object. Shared as
+    /// `Arc` so backend spawns can borrow it without per-call cloning.
+    base_startup_parameters: Arc<std::collections::BTreeMap<String, String>>,
+
+    /// Per-user auth_query overlay captured at pool construction. Dynamic
+    /// passthrough pools populate this from a fresh `cache.get_or_fetch`
+    /// snapshot taken right after auth, so every backend spawn from this
+    /// pool sees the same overlay even when the auth_query cache TTL has
+    /// since expired. Empty for static pools and for the dedicated-mode
+    /// shared pool (which intentionally has no per-user override).
+    /// Refetches that change the overlay are handled by the reload /
+    /// drain logic in `pool/mod.rs`; this field is immutable for the
+    /// lifetime of the pool object.
+    per_user_startup_overlay: Arc<std::collections::BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -128,6 +186,8 @@ impl ServerPool {
         query_wait_timeout: Duration,
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
+        base_startup_parameters: Arc<BTreeMap<String, String>>,
+        per_user_startup_overlay: Arc<BTreeMap<String, String>>,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -149,6 +209,8 @@ impl ServerPool {
             resume_notify: Notify::new(),
             session_mode,
             fallback_state,
+            base_startup_parameters,
+            per_user_startup_overlay,
         }
     }
 
@@ -217,6 +279,12 @@ impl ServerPool {
 
         stats.register(stats.clone());
 
+        // Resolve once for this spawn attempt: the plain attempt and the
+        // optional sslmode=allow TLS retry must see the same parameter set,
+        // otherwise a config RELOAD landing between the two would silently
+        // ship different StartupMessages for the same client request.
+        let startup_parameters = self.resolved_startup_parameters();
+
         let result = startup_with_timeout(
             self.connect_timeout,
             &self.address.host,
@@ -232,22 +300,24 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
+                &startup_parameters,
             ),
         )
         .await;
 
         // libpq sslmode=allow: PostgreSQL has no protocol-level "TLS required"
-        // signal — pg_hba rejects plain connections via FATAL 28000 only after
-        // StartupMessage. The socket is dead after FATAL, so retry needs a fresh
-        // TCP connection. We retry on any startup failure (matching libpq), but
-        // skip retry on transport-level errors (ConnectError, ServerUnavailableError)
-        // since TLS cannot help when the server was never reached.
+        // signal. pg_hba rejects plain connections with FATAL 28000 after the
+        // StartupMessage, and the socket cannot be reused after that. Match
+        // libpq by retrying startup failures over TLS, but skip transport
+        // failures where no PostgreSQL startup response was received.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
         let should_tls_retry = match &result {
             Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
-                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+                Error::ConnectError(_)
+                    | Error::ServerUnavailableError(_, _)
+                    | Error::ServerStartupParameterRejection { .. }
             ),
             _ => false,
         };
@@ -287,6 +357,7 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
+                    &startup_parameters,
                 ),
             )
             .await;
@@ -327,6 +398,248 @@ impl ServerPool {
     /// Returns the address of this pool.
     pub fn address(&self) -> &Address {
         &self.address
+    }
+
+    /// Return the effective startup parameter cascade with the winning
+    /// source layer **and** the application state for each key. Used by
+    /// `SHOW STARTUP_PARAMETERS` and `/api/pools`.
+    ///
+    /// The cascade view comes from the live config and the auth_query
+    /// cache, so it reflects what the operator just edited. The
+    /// application state cross-checks each key against
+    /// `resolved_startup_parameters()` — the same wire-ready map that
+    /// `Server::startup` will ship for the next backend spawn — so the
+    /// admin view can flag keys that look configured but will not
+    /// actually leave the wire:
+    ///
+    /// * `Applied` — same key/value in both views; the next spawn
+    ///   ships it.
+    /// * `DroppedDueToBudget` — the wire map omits the key. The runtime
+    ///   budget/packet check dropped the operator cascade (or the
+    ///   overlay) on the most recent spawn; same will happen on the
+    ///   next one until the operator shrinks the config.
+    /// * `Stale` — the key is in the wire map but with a different
+    ///   value, which means the frozen `base_startup_parameters` /
+    ///   `per_user_startup_overlay` Arc on this pool was captured
+    ///   before the operator's latest edit. RELOAD has not yet
+    ///   recycled the pool (general/pool change) or the auth_query
+    ///   cache has not refetched (per-user change). The next spawn
+    ///   ships the stale value, not the configured one.
+    pub fn effective_startup_parameters_with_sources(
+        &self,
+    ) -> std::collections::BTreeMap<
+        String,
+        (
+            String,
+            super::startup_resolver::ParameterSource,
+            ApplicationState,
+        ),
+    > {
+        let cfg = crate::config::config_arc();
+        let pool_params = cfg
+            .pools
+            .get(&self.address.pool_name)
+            .map(|p| &p.startup_parameters)
+            .cloned()
+            .unwrap_or_default();
+        let auth_query_params: Option<std::collections::HashMap<String, String>> =
+            match super::get_auth_query_state(&self.address.pool_name) {
+                Some(state) if !state.config.is_dedicated_mode() => {
+                    state.peek_startup_parameters(&self.user.username, |m| m.clone())
+                }
+                _ => None,
+            };
+        let configured = super::startup_resolver::resolve_with_sources(
+            &cfg.general.startup_parameters,
+            &pool_params,
+            auth_query_params.as_ref(),
+        );
+        // Use the pure classifier so this admin/API path does not
+        // increment STARTUP_PARAMETERS_DROPPED_TOTAL or emit warn logs
+        // — both are side effects of the spawn path
+        // (resolved_startup_parameters). SHOW polling and /api/pools
+        // page refreshes are safe to call repeatedly.
+        let (wire_cow, _decision) = self.classify_startup_parameters();
+        let wire = wire_cow.as_ref();
+        let mut out: std::collections::BTreeMap<
+            String,
+            (
+                String,
+                super::startup_resolver::ParameterSource,
+                ApplicationState,
+            ),
+        > = configured
+            .into_iter()
+            .map(|(k, (v, src))| {
+                let state = match wire.get(&k) {
+                    Some(wire_v) if wire_v == &v => ApplicationState::Applied,
+                    Some(_) => ApplicationState::Stale,
+                    None => ApplicationState::DroppedDueToBudget,
+                };
+                (k, (v, src, state))
+            })
+            .collect();
+        // Surface wire-only keys: a key that the live config no longer
+        // mentions but that the pool's frozen baseline / overlay still
+        // ships is invisible without this loop. The operator needs to
+        // see that "I deleted plan_cache_mode from pool.startup_parameters
+        // but my backends are still getting force_custom_plan" — that is
+        // exactly the stale snapshot RELOAD has not yet recycled (or that
+        // the auth_query cache has not yet refetched).
+        for (k, wire_v) in wire {
+            if !out.contains_key(k) {
+                let frozen_source = if self.per_user_startup_overlay.contains_key(k) {
+                    super::startup_resolver::ParameterSource::AuthQuery
+                } else {
+                    super::startup_resolver::ParameterSource::Pool
+                };
+                out.insert(
+                    k.clone(),
+                    (wire_v.clone(), frozen_source, ApplicationState::Stale),
+                );
+            }
+        }
+        out
+    }
+
+    /// Resolve the operator-supplied startup_parameters map that this pool
+    /// Pure classifier shared between the spawn path and the read-only
+    /// admin/API views. Returns the wire-ready map and the budget
+    /// decision the runtime would make for this spawn, **without**
+    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL` or emitting warn
+    /// logs. The spawn-side `resolved_startup_parameters` wraps this
+    /// with the counter + log; admin/API callers call this directly so
+    /// `SHOW STARTUP_PARAMETERS` polling cannot inflate the drop counter
+    /// or spam the warn log.
+    fn classify_startup_parameters(
+        &self,
+    ) -> (
+        std::borrow::Cow<'_, BTreeMap<String, String>>,
+        BudgetDecision,
+    ) {
+        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> =
+            if self.per_user_startup_overlay.is_empty() {
+                std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
+            } else {
+                let mut owned = (*self.base_startup_parameters).clone();
+                for (k, v) in self.per_user_startup_overlay.iter() {
+                    owned.insert(k.clone(), v.clone());
+                }
+                std::borrow::Cow::Owned(owned)
+            };
+
+        let username_for_wire = self
+            .user
+            .server_username
+            .as_deref()
+            .unwrap_or(self.user.username.as_str());
+
+        let (packet_bytes, body_bytes) = sp::packet_and_body_bytes(
+            username_for_wire,
+            &self.database,
+            &self.application_name,
+            &merged,
+        );
+
+        let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
+        let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
+        if !over_budget && !over_packet {
+            return (merged, BudgetDecision::FullCascade);
+        }
+
+        // The merged cascade is over a limit. If we have an overlay, try
+        // dropping just the overlay and keep the baseline.
+        let has_overlay = !self.per_user_startup_overlay.is_empty();
+        if has_overlay {
+            let baseline = &*self.base_startup_parameters;
+            let (baseline_packet, baseline_body) = sp::packet_and_body_bytes(
+                username_for_wire,
+                &self.database,
+                &self.application_name,
+                baseline,
+            );
+            if baseline_body <= sp::MAX_OPERATOR_BUDGET
+                && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
+            {
+                return (
+                    std::borrow::Cow::Borrowed(baseline),
+                    BudgetDecision::OverlayDroppedBaselineKept {
+                        body_bytes,
+                        packet_bytes,
+                    },
+                );
+            }
+        }
+
+        let reason = if over_packet {
+            BudgetReason::PacketCapExceeded
+        } else {
+            BudgetReason::CascadeBudgetExceeded
+        };
+        (
+            std::borrow::Cow::Owned(BTreeMap::new()),
+            BudgetDecision::EmptyDueToBudget {
+                reason,
+                body_bytes,
+                packet_bytes,
+            },
+        )
+    }
+
+    /// will hand to `Server::startup` for one backend spawn.
+    ///
+    /// Without a per-user auth_query overlay, this borrows the cached base
+    /// map. With an overlay, it clones the base map and applies the user
+    /// values.
+    ///
+    /// The merged map is checked against the operator budget and the full
+    /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
+    /// no operator-supplied parameters for this backend startup.
+    fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
+        let (map, decision) = self.classify_startup_parameters();
+        match decision {
+            BudgetDecision::FullCascade => map,
+            BudgetDecision::OverlayDroppedBaselineKept {
+                body_bytes,
+                packet_bytes,
+            } => {
+                warn!(
+                    "[{}@{}] auth_query per-user startup_parameters pushes the cascade \
+                     over the operator budget (merged {} bytes, packet {} bytes); \
+                     dropping the per-user overlay and keeping the general/pool \
+                     baseline for this backend spawn",
+                    self.user.username, self.address.pool_name, body_bytes, packet_bytes,
+                );
+                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                    .with_label_values(&[
+                        self.address.pool_name.as_str(),
+                        "auth_query_overlay_oversize",
+                    ])
+                    .inc();
+                map
+            }
+            BudgetDecision::EmptyDueToBudget {
+                reason,
+                body_bytes,
+                packet_bytes,
+            } => {
+                warn!(
+                    "[{}@{}] effective startup_parameters serialize to {} bytes \
+                     (packet {} bytes), exceeding operator budget {} / PG cap {}; \
+                     all operator-supplied parameters dropped for this backend spawn",
+                    self.user.username,
+                    self.address.pool_name,
+                    body_bytes,
+                    packet_bytes,
+                    sp::MAX_OPERATOR_BUDGET,
+                    sp::MAX_STARTUP_PACKET_SIZE,
+                );
+                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                    .with_label_values(&[self.address.pool_name.as_str(), reason.as_str()])
+                    .inc();
+                map
+            }
+        }
     }
 
     /// Establish a fallback connection by iterating through Patroni-discovered
@@ -381,8 +694,8 @@ impl ServerPool {
             (Ok(conn), _) => Ok(conn),
             (Err(err), super::fallback::TargetSource::WhitelistCache) => {
                 // Cached host was stale; wipe it and try with full discovery
-                // exactly once more. Bounded retry — discovery round failure
-                // surfaces directly without a third try.
+                // exactly once more. If discovery fails too, return that
+                // failure without a third attempt.
                 info!(
                     "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
                     self.address.username, self.address.pool_name,
@@ -451,6 +764,15 @@ impl ServerPool {
             }
         };
 
+        // Resolve the startup_parameters cascade once for the whole
+        // fallback round. Without this, a wave of N candidates would
+        // do N×{auth_query peek, BTreeMap clone, validation walk}
+        // for one client checkout — and the merge result is host-
+        // independent, so the per-candidate work was pure waste.
+        // `try_fallback_target` borrows this map for both the plain
+        // attempt and the optional sslmode=allow TLS retry.
+        let startup_parameters_round = self.resolved_startup_parameters();
+
         // Whitelist-cache hit: single target, race-of-one is just a startup.
         if matches!(source, super::fallback::TargetSource::WhitelistCache) {
             let target = match targets.into_iter().next() {
@@ -475,7 +797,10 @@ impl ServerPool {
             crate::web::metrics::FALLBACK_CONNECTIONS_TOTAL
                 .with_label_values(&[&self.address.pool_name])
                 .inc();
-            return match self.try_fallback_target(&target).await {
+            return match self
+                .try_fallback_target(&target, &startup_parameters_round)
+                .await
+            {
                 Ok(server) => {
                     fallback.set_whitelisted(target.host, target.port, target.role);
                     (Ok(server), source)
@@ -506,7 +831,13 @@ impl ServerPool {
                 format_target_list(&sync_targets),
             );
             if let Some(server) = self
-                .race_wave(fallback, &sync_targets, &mut summary, source)
+                .race_wave(
+                    fallback,
+                    &sync_targets,
+                    &mut summary,
+                    source,
+                    &startup_parameters_round,
+                )
                 .await
             {
                 return (Ok(server), source);
@@ -534,7 +865,13 @@ impl ServerPool {
                 format_target_list(&other_targets),
             );
             if let Some(server) = self
-                .race_wave(fallback, &other_targets, &mut summary, source)
+                .race_wave(
+                    fallback,
+                    &other_targets,
+                    &mut summary,
+                    source,
+                    &startup_parameters_round,
+                )
                 .await
             {
                 return (Ok(server), source);
@@ -546,6 +883,17 @@ impl ServerPool {
             "[{}@{}] fallback: all fallback candidates rejected ({summary_str})",
             self.address.username, self.address.pool_name,
         );
+        // If every candidate failed solely on operator-supplied startup
+        // parameter rejection, surface PG's actual sqlstate/message so the
+        // client gets the real error instead of a generic 53300. Healthy
+        // hosts are not blacklisted (mark_unhealthy skips this category),
+        // so the same misconfiguration will keep failing until the
+        // operator fixes the config.
+        if summary.all_startup_parameter_rejection() {
+            if let Some(err) = summary.into_last_err() {
+                return (Err(err), source);
+            }
+        }
         (
             Err(Error::ConnectError(format!(
                 "all fallback candidates rejected ({summary_str})"
@@ -557,14 +905,15 @@ impl ServerPool {
     /// Race `Server::startup` against `targets` in parallel. On first Ok
     /// return `Some(server)` (winner is whitelisted as a side effect). On
     /// full exhaustion mark every loser unhealthy, record reasons into
-    /// `summary`, and return `None` — the caller advances to the next wave
-    /// or surfaces the aggregate.
+    /// `summary`, and return `None`; the caller advances to the next wave or
+    /// returns the aggregate error.
     async fn race_wave(
         &self,
         fallback: &super::fallback::FallbackState,
         targets: &[super::fallback::FallbackTarget],
         summary: &mut FailureSummary,
         source: super::fallback::TargetSource,
+        startup_parameters: &BTreeMap<String, String>,
     ) -> Option<Server> {
         // We only count "we attempted to use fallback" once per wave, on
         // entry — not per candidate. The metric measures fallback usage
@@ -577,7 +926,7 @@ impl ServerPool {
 
         let futures: Vec<futures::future::BoxFuture<'_, Result<Server, Error>>> = targets
             .iter()
-            .map(|t| Box::pin(self.try_fallback_target(t)) as _)
+            .map(|t| Box::pin(self.try_fallback_target(t, startup_parameters)) as _)
             .collect();
 
         match race_first_success(futures).await {
@@ -631,6 +980,7 @@ impl ServerPool {
     async fn try_fallback_target(
         &self,
         target: &super::fallback::FallbackTarget,
+        startup_parameters: &BTreeMap<String, String>,
     ) -> Result<Server, Error> {
         // Use the fallback_connect_timeout for fallback startup deadlines —
         // the same scale as the TCP-probe and per-candidate cooldown window.
@@ -650,6 +1000,13 @@ impl ServerPool {
         ));
         stats.register(stats.clone());
 
+        // `startup_parameters` is resolved once per fallback round by
+        // the caller (`run_fallback_round` / `race_wave`), so a wave
+        // of N candidates does N×0 cascade resolves and merges instead
+        // of N×1. The fallback target's pool name matches `self`, so
+        // the per-pool cascade still applies even though we are talking
+        // to a different physical host than `self.address.host`.
+
         let result = startup_with_timeout(
             fallback_timeout,
             &fallback_address.host,
@@ -665,6 +1022,7 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
+                startup_parameters,
             ),
         )
         .await;
@@ -674,7 +1032,9 @@ impl ServerPool {
         let should_tls_retry = match &result {
             Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
-                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+                Error::ConnectError(_)
+                    | Error::ServerUnavailableError(_, _)
+                    | Error::ServerStartupParameterRejection { .. }
             ),
             _ => false,
         };
@@ -713,6 +1073,7 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
+                    startup_parameters,
                 ),
             )
             .await;
@@ -897,6 +1258,22 @@ impl FailureSummary {
         self.last_err = Some(err);
     }
 
+    /// True when the recorded failures are non-empty and contain only
+    /// `StartupParameterRejection`. Used to decide whether to surface the
+    /// original PG error to the client instead of the aggregate
+    /// "all candidates rejected" wrapper.
+    fn all_startup_parameter_rejection(&self) -> bool {
+        !self.counts.is_empty()
+            && self
+                .counts
+                .keys()
+                .all(|r| matches!(r, super::fallback::FailureReason::StartupParameterRejection))
+    }
+
+    fn into_last_err(self) -> Option<Error> {
+        self.last_err
+    }
+
     fn format(&self) -> String {
         if self.counts.is_empty() {
             return "no candidates".to_string();
@@ -915,12 +1292,12 @@ impl FailureSummary {
 
 /// Race `futures` and return the first `Ok`, together with its index in the
 /// input slice. If every future yields `Err`, return all errors with their
-/// original indices — the caller decides how to surface them (per-host
-/// cooldown, log aggregation). Pending futures are dropped on first
+/// original indices; the caller decides how to use them for per-host cooldown
+/// and log aggregation. Pending futures are dropped on first
 /// success, which cancels the in-flight `Server::startup` for the losing
 /// candidates: their TCP sockets go away under us; the kernel finishes the
-/// half-open handshake asynchronously. This is intentional — the
-/// user-facing requirement is "first successful sync wins", and chasing
+/// half-open handshake asynchronously. The user-facing requirement is
+/// "first successful sync wins", and chasing
 /// graceful disconnect on every loser would gate the winner on the slowest
 /// loser.
 async fn race_first_success<'a, T: 'a, E: 'a>(
@@ -1007,11 +1384,85 @@ mod tests {
         Metrics::new(lifetime_ms, 0, 0)
     }
 
+    fn rejection_err() -> Error {
+        Error::ServerStartupParameterRejection {
+            sqlstate: "22023".to_string(),
+            message: "invalid_value".to_string(),
+            server_identifier: crate::app::errors::ServerIdentifier::new(
+                "alice".to_string(),
+                "db",
+                "pool_a",
+            ),
+        }
+    }
+
+    fn timeout_err() -> Error {
+        Error::ConnectError("server startup timed out after 5s".to_string())
+    }
+
+    #[test]
+    fn all_startup_parameter_rejection_false_when_empty() {
+        let s = FailureSummary::default();
+        assert!(
+            !s.all_startup_parameter_rejection(),
+            "empty summary must not claim everyone rejected on startup parameter"
+        );
+    }
+
+    #[test]
+    fn all_startup_parameter_rejection_true_when_only_rejections() {
+        let mut s = FailureSummary::default();
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        assert!(s.all_startup_parameter_rejection());
+    }
+
+    #[test]
+    fn all_startup_parameter_rejection_false_when_mixed() {
+        let mut s = FailureSummary::default();
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        assert!(
+            !s.all_startup_parameter_rejection(),
+            "a single non-rejection cause must veto the shortcut"
+        );
+    }
+
+    #[test]
+    fn into_last_err_returns_most_recently_recorded() {
+        let mut s = FailureSummary::default();
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        match s.into_last_err() {
+            Some(Error::ServerStartupParameterRejection { sqlstate, .. }) => {
+                assert_eq!(sqlstate, "22023")
+            }
+            other => panic!("expected the last-recorded rejection, got {other:?}"),
+        }
+    }
+
     #[test]
     fn lifetime_exceeded_skipped_when_under_pressure() {
         // A connection well past its budget is kept alive when the caller
-        // signals pressure. This is the whole point of the new flag: a
-        // working connection must not be closed mid-storm.
+        // signals pressure. A working connection must not be closed mid-storm.
         let metrics = metrics_with_lifetime(1);
         thread::sleep(Duration::from_millis(5));
         assert!(lifetime_exceeded(&metrics, true).is_none());
@@ -1048,9 +1499,9 @@ mod tests {
     async fn startup_with_timeout_returns_connect_error_on_deadline() {
         // Simulates a server that opened TCP but never replies to
         // StartupMessage: the inner future never resolves. We expect
-        // `startup_with_timeout` to surface this as `ConnectError`, which is
-        // what callers treat as a transport-level failure (triggers fallback
-        // on the main path; marks the candidate unhealthy on the fallback path).
+        // `startup_with_timeout` to return `ConnectError`, which callers treat
+        // as a transport-level failure (triggers fallback on the main path;
+        // marks the candidate unhealthy on the fallback path).
         let pending = std::future::pending::<Result<Server, Error>>();
         let result =
             startup_with_timeout(Duration::from_millis(20), "1.2.3.4", 5432, pending).await;

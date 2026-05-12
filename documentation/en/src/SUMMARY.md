@@ -30,6 +30,7 @@
 - [Pool Modes](concepts/pool-modes.md)
 - [Pool Coordinator](concepts/pool-coordinator.md)
 - [Anonymous Parse Caching](tutorials/prepared-statements.md)
+- [PostgreSQL startup parameters](tutorials/startup-parameters.md)
 - [Pool Pressure (advanced)](tutorials/pool-pressure.md)
 
 # High Availability

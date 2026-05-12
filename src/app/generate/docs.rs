@@ -261,6 +261,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "hba",
         "pg_hba",
         "pooler_check_query",
+        "startup_parameters",
     ];
 
     for name in &fields {
@@ -291,6 +292,7 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
         "reserve_pool_size",
         "reserve_pool_timeout",
         "min_guaranteed_pool_size",
+        "startup_parameters",
     ];
 
     for name in &fields {
@@ -305,7 +307,7 @@ fn write_auth_query_section(out: &mut String) {
     let _ = writeln!(out, "The `auth_query` section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.\n");
     let _ = writeln!(out, "```yaml\npools:\n  mydb:\n    auth_query:\n      query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"\n      user: \"doorman_auth\"\n      password: \"auth_password\"\n```\n");
     let _ = writeln!(out, "There are two modes of operation:\n");
-    let _ = writeln!(out, "- **Dedicated mode** (`server_user` is set): All dynamically authenticated users share a single connection pool that connects to PostgreSQL as `server_user`. This is the simplest setup and works well when all users need the same backend access.");
+    let _ = writeln!(out, "- **Dedicated mode** (`server_user` is set): all dynamically authenticated users share one backend pool that connects to PostgreSQL as `server_user`. Use it when backend identity does not need to match the client user.");
     let _ = writeln!(out, "- **Passthrough mode** (`server_user` is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.\n");
     let _ = writeln!(out, "Static users (defined in the `users` section) are always checked first. The auth_query is only used when the username is not found among static users.\n");
     let _ = writeln!(out, "```admonish warning title=\"Security Recommendation\"");
@@ -467,6 +469,17 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_auth_query_auth` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_auth_query_auth_total`. |");
     let _ = writeln!(out, "| `pg_doorman_auth_query_executor` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_auth_query_executor_total`. |");
     let _ = writeln!(out, "| `pg_doorman_auth_query_dynamic_pools` | Auth query dynamic pool lifecycle metrics by type and database. Types include: `current` (currently active dynamic pools), `created` (total pools created since startup), `destroyed` (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode. |\n");
+
+    // Configured startup_parameters
+    let _ = writeln!(out, "### Configured startup_parameters\n");
+    let _ = writeln!(
+        out,
+        "These metrics cover two failure points for configured startup parameters. `pg_doorman_backend_startup_parameter_errors_total` counts backend startups PostgreSQL rejected after pg_doorman sent the `StartupMessage`. `pg_doorman_startup_parameters_dropped_total` counts drop events before `StartupMessage`, either because the resolved parameter set was too large or because an auth_query JSON value was invalid.\n"
+    );
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_backend_startup_parameter_errors_total` | Counter by `(pool, sqlstate)`. Increments when PostgreSQL rejects a backend startup and the `ErrorResponse` names a startup parameter sent by pg_doorman. SQLSTATEs with the `57P` prefix are excluded because Patroni-assisted fallback handles those errors. The failing parameter name and username are written to the warning log line, not to labels. pg_doorman first parses the common `parameter \"<name>\"` phrase, then scans the message for any sent key in double quotes. If neither lookup finds a key, the counter is not incremented. |");
+    let _ = writeln!(out, "| `pg_doorman_startup_parameters_dropped_total` | Counter by `(pool, reason)`. Increments when pg_doorman drops startup parameters before sending `StartupMessage`. Reasons: `cascade_budget_exceeded`, `packet_cap_exceeded`, `auth_query_oversize`, `auth_query_overlay_oversize`, `auth_query_bad_type`, `auth_query_invalid_json`, `auth_query_invalid_shape`, `auth_query_invalid_entry`, `dedicated_mode`. |\n");
 
     // Server Metrics
     let _ = writeln!(out, "### Server Metrics\n");

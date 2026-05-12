@@ -15,6 +15,7 @@ fn opts(ui_active: bool, ui_anonymous: bool) -> WebServerOptions {
         sso_config_error: None,
         trusted_proxies: Vec::new(),
         sso_admin_groups_configured: false,
+        sso_require_https: false,
     }
 }
 
@@ -41,6 +42,7 @@ fn req<'a>(method: &'a str, raw_path: &'a str) -> ParsedRequest<'a> {
         authorization: None,
         cookie: None,
         x_forwarded_for: None,
+        x_forwarded_proto: None,
         forwarded: None,
         accepts_gzip: false,
         accepts_json: false,
@@ -57,6 +59,7 @@ fn req_json<'a>(method: &'a str, raw_path: &'a str) -> ParsedRequest<'a> {
         authorization: None,
         cookie: None,
         x_forwarded_for: None,
+        x_forwarded_proto: None,
         forwarded: None,
         accepts_gzip: false,
         accepts_json: true,

@@ -1545,6 +1545,25 @@ impl Pool {
         self.inner.server_pool.is_paused()
     }
 
+    /// Effective merged startup_parameters cascade keyed by parameter, with
+    /// the layer that contributed each winning value. Delegates to
+    /// `ServerPool` so admin `SHOW STARTUP_PARAMETERS` and the
+    /// `/api/pools` JSON share one resolver.
+    pub fn effective_startup_parameters_with_sources(
+        &self,
+    ) -> std::collections::BTreeMap<
+        String,
+        (
+            String,
+            super::startup_resolver::ParameterSource,
+            super::startup_resolver::ApplicationState,
+        ),
+    > {
+        self.inner
+            .server_pool
+            .effective_startup_parameters_with_sources()
+    }
+
     /// Bumps reconnect epoch and drains all idle connections.
     /// Returns the new epoch value.
     pub fn reconnect(&self) -> u32 {
@@ -2081,6 +2100,8 @@ mod tests {
             Duration::from_secs(5),
             false,
             None,
+            Arc::new(std::collections::BTreeMap::new()),
+            Arc::new(std::collections::BTreeMap::new()),
         );
         Pool::builder(server_pool)
             .coordinator(Some(coord))
@@ -2230,6 +2251,8 @@ mod tests {
             Duration::from_secs(5),
             false,
             None,
+            Arc::new(std::collections::BTreeMap::new()),
+            Arc::new(std::collections::BTreeMap::new()),
         );
         let pool = Pool::builder(server_pool)
             .pool_name("test_db".to_string())

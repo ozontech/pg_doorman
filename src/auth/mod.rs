@@ -11,6 +11,7 @@ pub mod talos;
 // Standard library imports
 use std::marker::Unpin;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 // External crate imports
 use crate::auth::hba::CheckResult;
@@ -325,6 +326,22 @@ where
     let server_parameters = match pool.get_server_parameters().await {
         Ok(params) => params,
         Err(err) => {
+            // PG-side rejection of an operator-supplied startup
+            // parameter already carries the real sqlstate and message
+            // from PostgreSQL. Forward them verbatim — same contract
+            // the transaction checkout path in
+            // src/client/transaction.rs honours — instead of collapsing
+            // into the generic 3D000 wrapper.
+            if let Error::ServerStartupParameterRejection {
+                sqlstate,
+                message: pg_message,
+                ..
+            } = &err
+            {
+                error!("[{username_from_parameters}@{pool_name}] PG rejected operator-supplied startup parameter: {pg_message}");
+                error_response(write, pg_message, sqlstate).await?;
+                return Err(err);
+            }
             error!("[{username_from_parameters}@{pool_name}] failed to retrieve server parameters: {err}");
             error_response(
                 write,
@@ -879,6 +896,18 @@ where
             let server_parameters = match pool.get_server_parameters().await {
                 Ok(params) => params,
                 Err(err) => {
+                    // Forward PG-rejected operator startup parameter
+                    // verbatim, same as the static-user path above.
+                    if let Error::ServerStartupParameterRejection {
+                        sqlstate,
+                        message: pg_message,
+                        ..
+                    } = &err
+                    {
+                        error!("[{username}@{pool_name}] auth_query: PG rejected operator-supplied startup parameter: {pg_message}");
+                        error_response(write, pg_message, sqlstate).await?;
+                        return Err(err);
+                    }
                     error!(
                         "[{username}@{pool_name}] auth_query: failed to get server parameters: {err}"
                     );
@@ -908,8 +937,13 @@ where
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
 
-            let mut pool =
-                create_dynamic_pool(pool_name, username, backend_auth).map_err(|err| {
+            // Use the overlay from the same auth_query row that
+            // authenticated this user. That keeps dynamic-pool creation
+            // tied to this login instead of reading the global cache
+            // again while TTL expiry or a concurrent refetch is changing it.
+            let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
+            let mut pool = create_dynamic_pool(pool_name, username, backend_auth, fetched_overlay)
+                .map_err(|err| {
                     error!(
                         "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
                     );
@@ -926,6 +960,16 @@ where
             let server_parameters = match pool.get_server_parameters().await {
                 Ok(params) => params,
                 Err(err) => {
+                    if let Error::ServerStartupParameterRejection {
+                        sqlstate,
+                        message: pg_message,
+                        ..
+                    } = &err
+                    {
+                        error!("[{username}@{pool_name}] auth_query passthrough: PG rejected operator-supplied startup parameter: {pg_message}");
+                        error_response(write, pg_message, sqlstate).await?;
+                        return Err(err);
+                    }
                     error!("[{username}@{pool_name}] auth_query: passthrough pool failed: {err}");
                     error_response(
                         write,
