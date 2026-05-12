@@ -77,7 +77,7 @@ See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md), [`patro
 | LISTEN / NOTIFY pinning in transaction mode | No | No | Experimental |
 | Cross-rule connection cap (`shared_pool`) | No | No | Yes (since 1.5.1) |
 | `PAUSE` / `RESUME` / `RECONNECT` admin commands | Yes | Yes | Yes (since 1.4.1) |
-| Operator-defined PostgreSQL GUCs in backend `StartupMessage` per pool | Yes (`startup_parameters`, three-level cascade `general` → pool → `auth_query` passthrough; survives client `RESET ALL` / `DISCARD ALL`; if PG rejects a parameter the `ErrorResponse` is forwarded to the client unchanged — no hidden retry, no per-key quarantine) | No equivalent cascade/reset contract; selected client startup parameters can be tracked or ignored, but not set by the operator per pool | No (`maintain_params` preserves client-side parameters across rebind; no operator-defined GUCs) |
+| Operator-defined PostgreSQL GUCs in backend `StartupMessage` per pool | Yes (`startup_parameters`, three-level cascade `general` → pool → `auth_query` passthrough; values survive client `RESET ALL` / `DISCARD ALL`; PG startup errors are forwarded unchanged) | No equivalent operator-defined cascade; selected client startup parameters can be tracked or ignored | No (`maintain_params` preserves client-side parameters across rebind; no operator-defined GUCs) |
 
 See [Pool Coordinator](concepts/pool-coordinator.md), [Pool pressure](tutorials/pool-pressure.md).
 

@@ -470,8 +470,8 @@ fields:
         is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).
 
         When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
-        be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
-        timeout when keepalive cannot help (e.g., during active data transmission).
+        be terminated. Use it to avoid 15-16 minute delays caused by TCP retransmission timeout when
+        keepalive cannot help (e.g., during active data transmission).
 
         **Note:** This option is only supported on Linux. On other operating systems, this setting is ignored.
 
@@ -940,7 +940,7 @@ fields:
         ru: |
           Путь к файлу TLS-сертификата для входящих клиентских подключений.
           Должен использоваться вместе с tls_private_key.
-      doc: "The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_private_key`."
+      doc: "Path to the certificate file for TLS connections. Required to enable TLS for incoming client connections. Must be used together with `tls_private_key`."
       default: "None"
 
     tls_private_key:
@@ -951,7 +951,7 @@ fields:
         ru: |
           Путь к файлу приватного ключа TLS для входящих клиентских подключений.
           Должен использоваться вместе с tls_certificate.
-      doc: "The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_certificate`."
+      doc: "Path to the private key file for TLS connections. Required to enable TLS for incoming client connections. Must be used together with `tls_certificate`."
       default: "None"
 
     tls_ca_cert:
@@ -962,7 +962,7 @@ fields:
         ru: |
           Путь к CA-сертификату для верификации клиентских сертификатов.
           Используется с tls_mode = "verify-full"
-      doc: "The file containing the CA certificate to verify the client certificate. This is required when `tls_mode` is set to `verify-full`."
+      doc: "CA certificate file used to verify client certificates. Required when `tls_mode` is set to `verify-full`."
       default: "None"
 
     tls_mode:
@@ -1170,18 +1170,18 @@ fields:
           нулевые байты и размер этого уровня. Слитый каскад проверяется
           снова при запуске бэкенда; если он не помещается в лимит PG
           MAX_STARTUP_PACKET_LENGTH (10000 байт), pg_doorman пропускает
-          GUC, заданные оператором, для этого запуска и пишет warning.
+          GUC, заданные оператором, для этого запуска и пишет предупреждение.
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into the `StartupMessage` of every backend it opens, which means they become `pg_settings.reset_val` for that session and survive any `RESET ALL` / `DISCARD ALL` the client issues.
+        Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each backend `StartupMessage`; PostgreSQL stores them as the session reset defaults, so client `RESET ALL` / `DISCARD ALL` returns to these values.
 
-        Cascade of overrides (more specific wins per key): `general.startup_parameters` is the baseline; `pools.<name>.startup_parameters` overrides per pool; an `auth_query` row in passthrough mode can carry a `startup_parameters` JSON column that overrides per user. Dedicated-mode `auth_query` pools intentionally ignore the per-user column because one shared backend serves multiple roles.
+        Cascade order: `general.startup_parameters`, then `pools.<name>.startup_parameters`, then the optional `startup_parameters` JSON column returned by passthrough `auth_query`. Later layers win per key. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple roles.
 
-        Validation enforced at config load: reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`) are refused; keys must match PG GUC naming (`^[A-Za-z_][A-Za-z0-9_.]*$`); values must not contain null bytes; per-level size must fit the operator budget. The full merged cascade is re-checked at every backend spawn against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) cap; when the merge would not fit, pg_doorman drops all operator-supplied keys for that spawn and logs.
+        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the operator budget. Before each backend startup, pg_doorman checks the full merged cascade against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes); if it does not fit, pg_doorman drops all operator-supplied keys for that startup and logs the event.
 
-        If PostgreSQL rejects a parameter at backend startup, pg_doorman returns the PG `ErrorResponse` to the client unchanged — there is no retry, no per-key quarantine, no silent fallback. The client sees the same SQLSTATE and message it would have seen connecting to PG directly. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are on the corresponding warn log line.
+        If PostgreSQL rejects a parameter at backend startup, pg_doorman returns the PG `ErrorResponse` to the client unchanged. There is no retry with the key removed and no per-key quarantine. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are written to the corresponding warning log line.
 
-        Effective per-pool cascade can be inspected through the admin SQL console (`SHOW STARTUP_PARAMETERS` returns one row per `(pool, key)` with the contributing layer) and through the `/api/pools` REST endpoint that the Web UI consumes.
+        Inspect the effective per-pool cascade with `SHOW STARTUP_PARAMETERS` or the `/api/pools` REST endpoint.
       default: "{} (empty)"
 
   pool:
@@ -1387,7 +1387,7 @@ fields:
         from coordinator eviction. When the coordinator needs to free a connection slot for
         another user, it will not evict connections from a user who is at or below this count.
 
-        This is separate from `min_pool_size` (user-level): `min_pool_size` controls prewarm
+        Separate from `min_pool_size` (user-level): `min_pool_size` controls prewarm
         and replenish (proactively creating connections), while `min_guaranteed_pool_size`
         only affects eviction decisions (never creates connections).
 
@@ -1506,7 +1506,7 @@ fields:
       doc: |
         Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the operator budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
 
-        In the cascade `general` → `pool` → `auth_query`, this layer overrides general per key, and an auth_query passthrough entry overrides this. Dedicated-mode `auth_query` pools ignore the per-user column on purpose. See [`general.startup_parameters`](#startup-parameters) for the full behaviour description and observability surface.
+        In the cascade `general` → `pool` → `auth_query`, this layer overrides `general` per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple users. See [`general.startup_parameters`](#startup-parameters) for validation rules, failure behavior, and observability.
       default: "{} (empty)"
 
   user:
@@ -1637,7 +1637,9 @@ fields:
           Если запрос возвращает ровно один столбец, он используется независимо от имени.
           Используйте $1 как параметр для имени пользователя.
       doc: |
-        SQL query to fetch credentials. Must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name. Extra columns are ignored except for the optional `startup_parameters` text column, which passthrough mode reads as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores that column and logs a warning. Use `$1` as the placeholder for the username parameter.
+        SQL query to fetch credentials. It must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name.
+
+        Extra columns are ignored except for the optional `startup_parameters` text column. In passthrough mode, pg_doorman reads that column as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores it and logs a warning. Use `$1` as the placeholder for the username parameter.
 
         Example: `"SELECT passwd FROM pg_shadow WHERE usename = $1"`
 
@@ -1835,5 +1837,5 @@ fields:
       config:
         en: "Group names that map onto the Admin role."
         ru: "Список групп, которые получают роль Admin (могут управлять пулами)."
-      doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps the SSO surface read-only."
+      doc: "An SSO user whose JWT carries any of these names in sso_groups_claim gets full admin access (POST /api/admin/* allowed). Empty (default) keeps SSO users read-only."
       default: "[]"

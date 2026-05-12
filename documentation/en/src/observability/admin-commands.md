@@ -34,6 +34,7 @@ Admin commands are read with `SHOW <subcommand>` or executed with bare verbs (`P
 | `SHOW LISTS` | Counts by category (databases, users, pools, clients, servers). |
 | `SHOW USERS` | List of users and their pool modes. |
 | `SHOW AUTH_QUERY` | `auth_query` cache hit/miss/refetch rates, auth success/failure, executor errors, dynamic pool counts. |
+| `SHOW STARTUP_PARAMETERS` | Effective `startup_parameters` cascade per pool: parameter, value, and contributing layer. |
 | `SHOW SOCKETS` | TCP and Unix socket counts by state (Linux only — reads `/proc/net/`). |
 | `SHOW LOG_LEVEL` | Current log level. |
 | `SHOW VERSION` | PgDoorman version. |
@@ -67,6 +68,19 @@ mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0    
 - `cl_waiting > 0` means clients are stuck waiting for a backend. Either raise `pool_size` or check for slow queries.
 - `sv_idle` matches free backends; `sv_active` is in-use; `sv_used` is reserved by the coordinator (see below).
 - `maxwait` is the longest current wait in seconds. If it grows beyond `query_wait_timeout`, clients get errors.
+
+### `SHOW STARTUP_PARAMETERS`
+
+```
+user | database | parameter         | value             | source
+app  | mydb     | statement_timeout | 5s                | general
+app  | mydb     | plan_cache_mode   | force_custom_plan | pool
+```
+
+- `source` shows the layer that supplied the winning value: `general`,
+  `pool`, or `auth_query`.
+- The command reports the same effective cascade used for new backend
+  `StartupMessage` packets.
 
 ### `SHOW POOL_COORDINATOR`
 

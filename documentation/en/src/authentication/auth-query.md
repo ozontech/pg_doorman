@@ -28,7 +28,11 @@ pools:
       cache_failure_ttl: "30s"
 ```
 
-The query must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. Extra columns are ignored except for optional `startup_parameters`: passthrough mode reads it as a `text` JSON object with per-user PostgreSQL startup parameters, while dedicated mode ignores it and logs a warning.
+The query must return a column named `passwd` or `password` containing
+the MD5 or SCRAM hash. Extra columns are ignored except for
+`startup_parameters`. In passthrough mode, pg_doorman reads that column
+as a `text` JSON object with per-user PostgreSQL startup parameters.
+Dedicated mode ignores the column and logs a warning.
 
 `user` and `password` are the credentials PgDoorman uses to run the lookup query. They must have permission to read the credential column. Either grant access to a custom view (recommended) or use a user in `pg_read_server_files` group.
 

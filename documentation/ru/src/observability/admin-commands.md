@@ -34,6 +34,7 @@ psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 | `SHOW LISTS` | Счётчики по категориям (databases, users, pools, clients, servers). |
 | `SHOW USERS` | Список пользователей и их режимы пула. |
 | `SHOW AUTH_QUERY` | Кэш `auth_query`: попадания/промахи/перезапросы, успехи/отказы аутентификации, ошибки исполнителя, счётчики динамических пулов. |
+| `SHOW STARTUP_PARAMETERS` | Эффективный каскад `startup_parameters` по каждому пулу: параметр, значение и уровень, который дал итоговое значение. |
 | `SHOW SOCKETS` | Счётчики TCP- и Unix-сокетов по состоянию (только Linux — читает `/proc/net/`). |
 | `SHOW LOG_LEVEL` | Текущий уровень логирования. |
 | `SHOW VERSION` | Версия pg_doorman. |
@@ -67,6 +68,19 @@ mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0    
 - `cl_waiting > 0` означает, что клиенты застряли в ожидании серверного соединения. Либо поднимите `pool_size`, либо проверьте медленные запросы.
 - `sv_idle` соответствует свободным серверным соединениям; `sv_active` — занятым; `sv_used` — зарезервированным координатором (см. ниже).
 - `maxwait` — самое долгое текущее ожидание в секундах. Если оно вырастает за `query_wait_timeout`, клиенты получают ошибки.
+
+### `SHOW STARTUP_PARAMETERS`
+
+```
+user | database | parameter         | value             | source
+app  | mydb     | statement_timeout | 5s                | general
+app  | mydb     | plan_cache_mode   | force_custom_plan | pool
+```
+
+- `source` показывает уровень, который дал итоговое значение:
+  `general`, `pool` или `auth_query`.
+- Команда выводит тот же эффективный каскад, который используется при
+  сборке `StartupMessage` для новых бэкендов.
 
 ### `SHOW POOL_COORDINATOR`
 

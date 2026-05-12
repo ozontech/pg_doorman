@@ -2,35 +2,28 @@
 
 ### 3.9.0
 
-Per-pool PostgreSQL configuration parameters (GUCs) in backend
-`StartupMessage`. The map cascades over three
-levels — `general.startup_parameters`, per-pool overrides, and an
-optional `auth_query` JSON column for per-user values in passthrough
-mode — and the resulting values are written to `pg_settings.reset_val`,
-so they survive client-side `RESET ALL` and `DISCARD ALL`. Among
-mainstream poolers, the full cascade/reset contract is specific to
-pg_doorman: PgBouncer can track or ignore selected client startup
-parameters, Odyssey's `maintain_params` preserves client-side
-parameters across rebind, and PgCat exposes no equivalent.
+Per-pool PostgreSQL startup parameters. pg_doorman can now add
+operator-defined GUCs to each backend `StartupMessage`. Values merge in
+three layers: `general.startup_parameters`, `pools.<name>.startup_parameters`,
+and the optional `startup_parameters` column returned by passthrough
+`auth_query`.
 
-The most common use case is forcing `plan_cache_mode = "force_custom_plan"`
-on a hot OLTP pool affected by a sticky generic plan. The same mechanism
-pins `statement_timeout`, `work_mem`,
-`idle_in_transaction_session_timeout`, or any other GUC that a single
-application needs without touching `postgresql.conf`, `ALTER ROLE`, or
-`ALTER DATABASE`.
+PostgreSQL stores these values as the session reset defaults, so
+client-side `RESET ALL` and `DISCARD ALL` return to the operator value.
+This gives one pool a different `plan_cache_mode`, `statement_timeout`,
+`work_mem`, or `idle_in_transaction_session_timeout` without changing
+`postgresql.conf`, `ALTER ROLE`, or `ALTER DATABASE`.
 
 #### Cascade resolution
 
 - `general.startup_parameters`, `pools.<name>.startup_parameters`, and
   the optional `startup_parameters` text column on an `auth_query` row
-  merge per key, with the more specific level winning. Auth_query in
-  dedicated mode (a shared `server_user`) intentionally ignores the
-  per-user column and logs a one-time warning per pool and username.
-- The merged cascade is resolved lazily on every backend spawn from
-  the live config snapshot, so a `RELOAD` that only changes
-  `general.startup_parameters` takes effect on the next backend
-  without recycling the pool.
+  merge per key. The later layer wins.
+- Dedicated `auth_query` mode uses a shared `server_user`, so
+  pg_doorman ignores the per-user column there and logs one warning per
+  pool and username.
+- A reload that changes startup parameters recycles the affected pools.
+  Idle backends with the old reset defaults are not reused.
 
 #### Validation and protocol safety
 
@@ -39,21 +32,19 @@ application needs without touching `postgresql.conf`, `ALTER ROLE`, or
 - Keys must match the PG GUC naming shape `[A-Za-z_][A-Za-z0-9_.]*`,
   values must not contain null bytes, and each level fits the operator
   budget of `MAX_STARTUP_PACKET_LENGTH - 512` bytes.
-- The full cascade is rechecked at every spawn against PG's 10 000-byte
+- The full cascade is checked before each backend startup against PG's 10 000-byte
   `MAX_STARTUP_PACKET_LENGTH`; if the union would overflow, all
   operator-supplied keys are dropped for that spawn and the event is
-  logged, so the connection still completes with PG defaults instead
-  of failing every client request.
+  logged. That backend starts with PostgreSQL defaults for those keys.
 
 #### Behaviour on PG-side rejection
 
 - If PostgreSQL rejects an operator-supplied startup parameter at
   backend startup, pg_doorman forwards the `ErrorResponse` to the
-  client unchanged. The client receives the same sqlstate and message
-  it would have seen connecting to PG directly — no silent retry, no
-  per-key quarantine, no buffering layer. Operator fixes the
-  parameter in the config; until then every connection through that
-  pool fails the same way.
+  client unchanged. There is no retry with the key removed and no
+  per-key quarantine. Fix the parameter in the config; until then,
+  backend startup for that pool fails with PostgreSQL's own SQLSTATE and
+  message.
 - SQLSTATE class `57P` (server unavailable) keeps mapping to
   `ServerUnavailableError` first so the Patroni-assisted fallback
   path can route around the failed node before the startup-parameter
@@ -67,26 +58,21 @@ application needs without touching `postgresql.conf`, `ALTER ROLE`, or
 
 #### RELOAD coherence
 
-- A SIGHUP that changes `general.startup_parameters` now drains every
-  pool that depends on the baseline: the effective per-pool config
-  hash folds in the baseline, and dynamic `auth_query` pools that
-  carry over the reload are also recycled. Idle backends with the
-  previous `reset_val` no longer stay around to serve `RESET ALL` /
-  `DISCARD ALL` with stale operator defaults.
+- A SIGHUP that changes `general.startup_parameters` drains pools that
+  inherit that baseline. The per-pool config hash includes the general
+  startup map, and carried-over dynamic `auth_query` pools are recycled
+  when the baseline changes.
 
 #### Observability
 
 - `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`
   counts every backend startup rejected by PostgreSQL because of an
   operator-supplied parameter. The failing parameter name and
-  username are on the corresponding warn log line; they are
-  deliberately kept out of the labels so a dynamic `auth_query` pool
-  that mints many roles cannot blow up the series count.
+  username are written to the warning log line, not to metric labels.
 - `SHOW STARTUP_PARAMETERS` (admin SQL console) lists the per-pool
-  effective merged cascade with the layer that contributed each
-  value. `psql` tab completion on `SHOW <TAB>` now offers the new
-  command.
-- The Web UI pool detail page renders the same view in a
+  effective cascade with the layer that supplied each value. `psql` tab
+  completion on `SHOW <TAB>` now includes the command.
+- The Web UI pool detail page shows the same data in a
   "Startup parameters (operator-injected)" section, driven by the
   new `startup_parameters[]` field on `/api/pools`.
 

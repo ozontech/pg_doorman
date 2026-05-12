@@ -1,13 +1,13 @@
 # PostgreSQL startup parameters
 
-Some operators need a few PostgreSQL configuration parameters to apply
-to every backend pg_doorman opens, without touching `postgresql.conf`,
-`ALTER ROLE`, or `ALTER DATABASE`. Three cases recur in practice:
+Use `startup_parameters` when a pool needs PostgreSQL GUC defaults that
+should be set at backend startup, without changing `postgresql.conf`,
+`ALTER ROLE`, or `ALTER DATABASE`.
 
 - A hot OLTP pool is affected by a sticky generic plan after the
   `plan_cache_mode = auto` heuristic flips. Switching the whole role
   to `force_custom_plan` would affect every workload using that role;
-  scoping the change to one pool is what you want.
+  setting it on one pool limits the blast radius.
 - An application that does not set its own `statement_timeout` or
   `idle_in_transaction_session_timeout` and cannot be patched fast
   enough. The DBA needs a server-side default that survives the
@@ -15,8 +15,6 @@ to every backend pg_doorman opens, without touching `postgresql.conf`,
 - A single application that should announce a stable
   `application_name` regardless of what the connecting driver
   negotiates, so `pg_stat_activity` and audit logs stay legible.
-
-`startup_parameters` lets pg_doorman do this from its own config.
 
 ## Configuration
 
@@ -68,7 +66,7 @@ many users, so a per-user override cannot apply.
 The merged map is written into the PostgreSQL `StartupMessage` of
 every backend pg_doorman opens. PG records each entry as the session
 default for that setting (`pg_settings.reset_val` and
-`pg_settings.source = 'session'`), so client-side `RESET ALL` and
+`pg_settings.source = 'client'`), so client-side `RESET ALL` and
 `DISCARD ALL` restore the operator value rather than discarding it.
 Operators get a stable session default without editing
 `postgresql.conf` or running `ALTER ROLE`.
@@ -106,8 +104,8 @@ At every backend spawn pg_doorman re-checks the merged cascade
 against the same cap. Two levels that fit individually can together
 push past it once `auth_query` adds a third layer; when that happens
 pg_doorman drops every operator-supplied key for that one spawn,
-logs the byte counts, and lets the backend connect with PG's own
-defaults rather than failing every connection attempt.
+logs the byte counts, and starts the backend with PostgreSQL defaults
+for those keys.
 
 ## What happens when PG rejects a parameter
 
@@ -117,11 +115,10 @@ unchanged. The client sees the same sqlstate (`22023`,
 `42704`, `42501`, `55P02`, or any other code under the startup family)
 and the same message it would have seen connecting to PG directly.
 
-pg_doorman does not retry the connection without the parameter, does
-not silently strip the key, and does not keep a per-pool quarantine.
-The next client connect runs the same `StartupMessage` and either
-succeeds or fails the same way — fixing the parameter is on the
-operator, not on the pooler.
+pg_doorman does not retry with the parameter removed and does not keep a
+per-pool quarantine. The next client connection sends the same
+`StartupMessage`; fix the config before routing traffic back to that
+pool.
 
 ## Observability
 
@@ -135,29 +132,26 @@ admin> SHOW STARTUP_PARAMETERS;
  shop  | reports  | statement_timeout| 10s               | general
 ```
 
-The Web UI's pool detail page renders the same view in the "Startup
+The Web UI's pool detail page shows the same view in the "Startup
 parameters (operator-injected)" section.
 
-On the Prometheus surface:
+Prometheus exports one counter for PG-side rejections:
 
 - `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`
   counts every backend startup PostgreSQL rejected because of an
   operator-supplied parameter. The failing parameter name and
-  username are on the corresponding warn log line; they are kept out
-  of the labels so dynamic `auth_query` pools cannot blow up the
-  series count.
+  username are written to the warning log line, not to metric labels.
 
-A reasonable starting alert is "non-zero
-`pg_doorman_backend_startup_parameter_errors_total` rate for the
-same pool over a few minutes" — that means every client connect to
-that pool is failing on the same operator GUC and the config needs
-to be fixed.
+Alert on a non-zero
+`pg_doorman_backend_startup_parameter_errors_total` rate for the same
+pool over several minutes. That usually means new backend startups for
+the pool are failing on the same operator GUC.
 
 ## When not to use this
 
 - The application already sets the parameter on every connection.
-  Putting the same value in `startup_parameters` adds a bookkeeping
-  surface for no behavioural change.
+  Duplicating the value in `startup_parameters` adds another config path
+  without changing behavior.
 - Per-transaction tuning (`SET LOCAL`). `startup_parameters` is for
   session defaults; transaction-scoped tuning belongs in the
   application.
@@ -173,5 +167,6 @@ to be fixed.
   `pools.<name>.startup_parameters`.
 - [auth_query](../authentication/auth-query.md): passthrough vs
   dedicated modes, where the `startup_parameters` column is read.
-- [Admin Commands](../observability/admin-commands.md): `SHOW POOLS`.
+- [Admin Commands](../observability/admin-commands.md):
+  `SHOW STARTUP_PARAMETERS`.
 - [Prometheus](../reference/prometheus.md): full metric list.
