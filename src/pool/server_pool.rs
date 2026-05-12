@@ -25,6 +25,40 @@ use super::startup_resolver::ApplicationState;
 use super::types::Metrics;
 use super::ClientServerMap;
 
+/// Decision returned by `ServerPool::classify_startup_parameters`. Used
+/// by the spawn path to drive counter/log side effects and by the
+/// read-only admin/API view to label each entry without touching the
+/// metric. Carries the packet/body byte counts so the caller can log
+/// them without recomputing.
+#[derive(Debug, Clone, Copy)]
+enum BudgetDecision {
+    FullCascade,
+    OverlayDroppedBaselineKept {
+        body_bytes: usize,
+        packet_bytes: usize,
+    },
+    EmptyDueToBudget {
+        reason: BudgetReason,
+        body_bytes: usize,
+        packet_bytes: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BudgetReason {
+    CascadeBudgetExceeded,
+    PacketCapExceeded,
+}
+
+impl BudgetReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            BudgetReason::CascadeBudgetExceeded => "cascade_budget_exceeded",
+            BudgetReason::PacketCapExceeded => "packet_cap_exceeded",
+        }
+    }
+}
+
 /// Wrapper for the connection pool.
 pub struct ServerPool {
     /// Server address.
@@ -420,8 +454,21 @@ impl ServerPool {
             &pool_params,
             auth_query_params.as_ref(),
         );
-        let wire = self.resolved_startup_parameters();
-        configured
+        // Use the pure classifier so this admin/API path does not
+        // increment STARTUP_PARAMETERS_DROPPED_TOTAL or emit warn logs
+        // — both are side effects of the spawn path
+        // (resolved_startup_parameters). SHOW polling and /api/pools
+        // page refreshes are safe to call repeatedly.
+        let (wire_cow, _decision) = self.classify_startup_parameters();
+        let wire = wire_cow.as_ref();
+        let mut out: std::collections::BTreeMap<
+            String,
+            (
+                String,
+                super::startup_resolver::ParameterSource,
+                ApplicationState,
+            ),
+        > = configured
             .into_iter()
             .map(|(k, (v, src))| {
                 let state = match wire.get(&k) {
@@ -431,26 +478,45 @@ impl ServerPool {
                 };
                 (k, (v, src, state))
             })
-            .collect()
+            .collect();
+        // Surface wire-only keys: a key that the live config no longer
+        // mentions but that the pool's frozen baseline / overlay still
+        // ships is invisible without this loop. The operator needs to
+        // see that "I deleted plan_cache_mode from pool.startup_parameters
+        // but my backends are still getting force_custom_plan" — that is
+        // exactly the stale snapshot RELOAD has not yet recycled (or that
+        // the auth_query cache has not yet refetched).
+        for (k, wire_v) in wire {
+            if !out.contains_key(k) {
+                let frozen_source = if self.per_user_startup_overlay.contains_key(k) {
+                    super::startup_resolver::ParameterSource::AuthQuery
+                } else {
+                    super::startup_resolver::ParameterSource::Pool
+                };
+                out.insert(
+                    k.clone(),
+                    (wire_v.clone(), frozen_source, ApplicationState::Stale),
+                );
+            }
+        }
+        out
     }
 
     /// Resolve the operator-supplied startup_parameters map that this pool
-    /// will hand to `Server::startup` for one backend spawn.
-    ///
-    /// Without a per-user auth_query overlay, this borrows the cached base
-    /// map. With an overlay, it clones the base map and applies the user
-    /// values.
-    ///
-    /// The merged map is checked against the operator budget and the full
-    /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
-    /// no operator-supplied parameters for this backend startup.
-    fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
-        // The per-user overlay was captured at pool construction from a
-        // fresh auth_query cache snapshot, so backend spawns are
-        // deterministic even after the cache TTL expires or a refetch
-        // races a spawn. Static pools and dedicated-mode shared pools
-        // pass an empty overlay; they fall through to the borrowed base
-        // map and skip the merge entirely.
+    /// Pure classifier shared between the spawn path and the read-only
+    /// admin/API views. Returns the wire-ready map and the budget
+    /// decision the runtime would make for this spawn, **without**
+    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL` or emitting warn
+    /// logs. The spawn-side `resolved_startup_parameters` wraps this
+    /// with the counter + log; admin/API callers call this directly so
+    /// `SHOW STARTUP_PARAMETERS` polling cannot inflate the drop counter
+    /// or spam the warn log.
+    fn classify_startup_parameters(
+        &self,
+    ) -> (
+        std::borrow::Cow<'_, BTreeMap<String, String>>,
+        BudgetDecision,
+    ) {
         let merged: std::borrow::Cow<'_, BTreeMap<String, String>> =
             if self.per_user_startup_overlay.is_empty() {
                 std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
@@ -462,21 +528,6 @@ impl ServerPool {
                 std::borrow::Cow::Owned(owned)
             };
 
-        // Per-level validation does not see the merged cascade or the
-        // user/database/application_name fields added by the wire layer. Check
-        // both limits here:
-        //
-        // 1. Operator-supplied pairs against the reserved operator budget.
-        // 2. Full StartupMessage size against PG's `MAX_STARTUP_PACKET_LENGTH`.
-        //
-        // When the *merged* cascade overflows, retry with the baseline
-        // alone before falling back to an empty map: it is the per-user
-        // auth_query overlay that operators can grow arbitrarily large
-        // (e.g. a wide row of extension GUCs), while the
-        // general+pool baseline is config-controlled and already
-        // length-checked. Keeping the baseline preserves operator-wide
-        // guardrails such as `statement_timeout` and `lock_timeout` for
-        // a user whose per-row overlay is over budget.
         let username_for_wire = self
             .user
             .server_username
@@ -493,7 +544,7 @@ impl ServerPool {
         let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
         let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
         if !over_budget && !over_packet {
-            return merged;
+            return (merged, BudgetDecision::FullCascade);
         }
 
         // The merged cascade is over a limit. If we have an overlay, try
@@ -510,6 +561,48 @@ impl ServerPool {
             if baseline_body <= sp::MAX_OPERATOR_BUDGET
                 && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
             {
+                return (
+                    std::borrow::Cow::Borrowed(baseline),
+                    BudgetDecision::OverlayDroppedBaselineKept {
+                        body_bytes,
+                        packet_bytes,
+                    },
+                );
+            }
+        }
+
+        let reason = if over_packet {
+            BudgetReason::PacketCapExceeded
+        } else {
+            BudgetReason::CascadeBudgetExceeded
+        };
+        (
+            std::borrow::Cow::Owned(BTreeMap::new()),
+            BudgetDecision::EmptyDueToBudget {
+                reason,
+                body_bytes,
+                packet_bytes,
+            },
+        )
+    }
+
+    /// will hand to `Server::startup` for one backend spawn.
+    ///
+    /// Without a per-user auth_query overlay, this borrows the cached base
+    /// map. With an overlay, it clones the base map and applies the user
+    /// values.
+    ///
+    /// The merged map is checked against the operator budget and the full
+    /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
+    /// no operator-supplied parameters for this backend startup.
+    fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
+        let (map, decision) = self.classify_startup_parameters();
+        match decision {
+            BudgetDecision::FullCascade => map,
+            BudgetDecision::OverlayDroppedBaselineKept {
+                body_bytes,
+                packet_bytes,
+            } => {
                 warn!(
                     "[{}@{}] auth_query per-user startup_parameters pushes the cascade \
                      over the operator budget (merged {} bytes, packet {} bytes); \
@@ -523,34 +616,30 @@ impl ServerPool {
                         "auth_query_overlay_oversize",
                     ])
                     .inc();
-                return std::borrow::Cow::Borrowed(baseline);
+                map
+            }
+            BudgetDecision::EmptyDueToBudget {
+                reason,
+                body_bytes,
+                packet_bytes,
+            } => {
+                warn!(
+                    "[{}@{}] effective startup_parameters serialize to {} bytes \
+                     (packet {} bytes), exceeding operator budget {} / PG cap {}; \
+                     all operator-supplied parameters dropped for this backend spawn",
+                    self.user.username,
+                    self.address.pool_name,
+                    body_bytes,
+                    packet_bytes,
+                    sp::MAX_OPERATOR_BUDGET,
+                    sp::MAX_STARTUP_PACKET_SIZE,
+                );
+                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                    .with_label_values(&[self.address.pool_name.as_str(), reason.as_str()])
+                    .inc();
+                map
             }
         }
-
-        // Either there was no overlay to drop or the baseline alone is
-        // still over budget — fall back to the empty map. The latter
-        // case is an operator-config error in general/pool startup_parameters,
-        // not a per-user issue.
-        let reason = if over_packet {
-            "packet_cap_exceeded"
-        } else {
-            "cascade_budget_exceeded"
-        };
-        warn!(
-            "[{}@{}] effective startup_parameters serialize to {} bytes (packet {} bytes), \
-             exceeding operator budget {} / PG cap {}; all operator-supplied parameters \
-             dropped for this backend spawn",
-            self.user.username,
-            self.address.pool_name,
-            body_bytes,
-            packet_bytes,
-            sp::MAX_OPERATOR_BUDGET,
-            sp::MAX_STARTUP_PACKET_SIZE,
-        );
-        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-            .with_label_values(&[self.address.pool_name.as_str(), reason])
-            .inc();
-        std::borrow::Cow::Owned(BTreeMap::new())
     }
 
     /// Establish a fallback connection by iterating through Patroni-discovered
