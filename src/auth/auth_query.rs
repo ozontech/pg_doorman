@@ -544,7 +544,12 @@ pub struct CacheEntry {
     /// Per-user startup parameters returned by the optional auth_query
     /// `startup_parameters` JSON column. Empty when the column is absent,
     /// empty/NULL, or filtered out in dedicated auth_query mode.
-    pub startup_parameters: std::collections::HashMap<String, String>,
+    ///
+    /// Wrapped in `Arc` so cache hits do not clone the underlying map.
+    /// For a user with a wide row (a dozen extension GUCs) every
+    /// `cache.get_or_fetch` previously paid an `O(map)` clone; the
+    /// `Arc::clone` here is two atomic increments instead.
+    pub startup_parameters: Arc<std::collections::HashMap<String, String>>,
 }
 
 impl CacheEntry {
@@ -555,7 +560,7 @@ impl CacheEntry {
             is_negative: false,
             last_refetch_at: None,
             client_key: None,
-            startup_parameters: std::collections::HashMap::new(),
+            startup_parameters: Arc::new(std::collections::HashMap::new()),
         }
     }
 
@@ -566,7 +571,7 @@ impl CacheEntry {
             is_negative: true,
             last_refetch_at: None,
             client_key: None,
-            startup_parameters: std::collections::HashMap::new(),
+            startup_parameters: Arc::new(std::collections::HashMap::new()),
         }
     }
 
@@ -672,7 +677,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 pool = self.pool_name
             );
         }
-        entry.startup_parameters.clear();
+        entry.startup_parameters = Arc::new(std::collections::HashMap::new());
     }
 
     /// When a fresh auth_query fetch produces a per-user
@@ -774,7 +779,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             Ok(Some((password_hash, startup_params))) => {
                 self.inc(|s| &s.cache_misses);
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.startup_parameters = startup_params;
+                entry.startup_parameters = Arc::new(startup_params);
                 self.dedicated_mode_filter(&mut entry, username);
                 // Publish the fresh entry first so any concurrent
                 // create_dynamic_pool peeks the new overlay, then drop the
@@ -849,7 +854,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         match self.executor.fetch_credentials(username).await {
             Ok(Some((password_hash, startup_params))) => {
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.startup_parameters = startup_params;
+                entry.startup_parameters = Arc::new(startup_params);
                 entry.last_refetch_at = Some(Instant::now());
                 self.dedicated_mode_filter(&mut entry, username);
                 // Insert before drop — see comment in get_or_fetch.
