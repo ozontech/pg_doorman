@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { PageHero } from "../components/PageHero";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -19,10 +20,28 @@ const LEVEL_COLOR: Record<string, string> = {
 
 export default function Logs() {
   const { authHeader } = useAdminAuth();
-  const [level, setLevel] = useState("");
-  const [target, setTarget] = useState("");
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [paused, setPaused] = useState(false);
+  // Filters live in the URL so an operator can paste a triage link into
+  // chat: /logs?level=ERROR&q=53300 lands their teammate on the exact
+  // narrowed view. Pause and auto-scroll are also bookmarkable so a
+  // shared link survives a refresh.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const level = searchParams.get("level") ?? "";
+  const target = searchParams.get("q") ?? "";
+  const autoScroll = searchParams.get("scroll") !== "0";
+  const paused = searchParams.get("paused") === "1";
+  const updateParams = (mut: (sp: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams);
+    mut(next);
+    setSearchParams(next, { replace: true });
+  };
+  const setLevel = (v: string) =>
+    updateParams((sp) => (v ? sp.set("level", v) : sp.delete("level")));
+  const setTarget = (v: string) =>
+    updateParams((sp) => (v ? sp.set("q", v) : sp.delete("q")));
+  const setAutoScroll = (v: boolean) =>
+    updateParams((sp) => (v ? sp.delete("scroll") : sp.set("scroll", "0")));
+  const setPaused = (v: boolean) =>
+    updateParams((sp) => (v ? sp.set("paused", "1") : sp.delete("paused")));
   const [lines, setLines] = useState<LogEntryDto[]>([]);
   const [meta, setMeta] = useState<{
     tap_active: boolean;
@@ -144,7 +163,7 @@ export default function Logs() {
         />
         <button
           type="button"
-          onClick={() => setPaused((p) => !p)}
+          onClick={() => setPaused(!paused)}
           className={`rounded border px-3 py-1 text-sm ${paused ? "border-warning text-warning" : "border-border-strong text-text-muted hover:text-text"}`}
         >
           {paused ? "▶ resume" : "❚❚ pause"}

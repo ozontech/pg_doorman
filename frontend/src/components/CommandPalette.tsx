@@ -50,11 +50,19 @@ export function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpen((v) => !v);
+        return;
+      }
+      // Esc to close when the palette is open. The dialog otherwise
+      // trapped focus inside cmdk's input and the operator had to mouse
+      // out — every other admin tool (Linear, Vercel) closes on Esc.
+      if (e.key === "Escape" && open) {
+        e.preventDefault();
+        setOpen(false);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -74,12 +82,15 @@ export function CommandPalette() {
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Global command palette"
       className="fixed inset-0 z-50 flex items-start justify-center bg-bg/70 pt-[12vh] backdrop-blur-sm"
       onClick={() => setOpen(false)}
     >
       <Command
         label="Global command palette"
-        className="w-[min(640px,calc(100vw-2rem))] overflow-hidden border border-border-strong bg-surface text-text shadow-2xl"
+        className="w-[min(640px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-border-strong bg-surface text-text shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <Command.Input

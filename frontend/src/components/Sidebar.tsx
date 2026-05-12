@@ -8,6 +8,7 @@ import {
   ExternalLink,
   LayoutDashboard,
   ScrollText,
+  Server,
   Settings,
   Users,
   type LucideIcon,
@@ -45,6 +46,7 @@ const NAV: NavItem[] = [
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
   { to: "/pools", label: "Pools", icon: Database },
   { to: "/clients", label: "Clients", icon: Users },
+  { to: "/servers", label: "Servers", icon: Server },
   { to: "/apps", label: "Apps", icon: AppWindow },
   // Caches exposes prepared-statement texts; logs leak SQL through the
   // operator stream. Both are personal-data paths and only Sso/Admin

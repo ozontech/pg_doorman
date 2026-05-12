@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
@@ -129,17 +130,73 @@ function buildQuery(filters: Filters, sort: SortKey, dir: SortDir, offset: numbe
 
 export default function Clients() {
   const { authHeader } = useAdminAuth();
-  const [filters, setFilters] = useState<Filters>({
-    pool: "",
-    database: "",
-    user: "",
-    state: "",
-    appName: "",
-    addr: "",
-  });
-  const [sort, setSort] = useState<SortKey>("queries_total");
-  const [dir, setDir] = useState<SortDir>("desc");
-  const [offset, setOffset] = useState(0);
+  // Filters / sort / pagination live in the URL so an operator can
+  // paste a triage link into Slack: /clients?pool=app@db&state=waiting
+  // lands the teammate on the exact narrowed view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Memoise so the object reference is stable across renders that did
+  // not change a query param — otherwise downstream useMemo / useEffect
+  // hooks that depend on `filters` re-fire on every parent render.
+  const filters: Filters = useMemo(
+    () => ({
+      pool: searchParams.get("pool") ?? "",
+      database: searchParams.get("database") ?? "",
+      user: searchParams.get("user") ?? "",
+      state: searchParams.get("state") ?? "",
+      appName: searchParams.get("appName") ?? "",
+      addr: searchParams.get("addr") ?? "",
+    }),
+    [searchParams],
+  );
+  const sort = (searchParams.get("sort") as SortKey) || "queries_total";
+  const dir = (searchParams.get("dir") as SortDir) || "desc";
+  const offset = Number(searchParams.get("offset") ?? "0") || 0;
+  const writeParams = (mut: (sp: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams);
+    mut(next);
+    setSearchParams(next, { replace: true });
+  };
+  const setFilters = (
+    updater: Filters | ((prev: Filters) => Filters),
+  ) => {
+    const value =
+      typeof updater === "function" ? updater(filters) : updater;
+    writeParams((sp) => {
+      const keys: (keyof Filters)[] = [
+        "pool",
+        "database",
+        "user",
+        "state",
+        "appName",
+        "addr",
+      ];
+      for (const k of keys) {
+        if (value[k]) sp.set(k, value[k]);
+        else sp.delete(k);
+      }
+      sp.delete("offset");
+    });
+  };
+  const setSort = (v: SortKey) =>
+    writeParams((sp) => {
+      if (v !== "queries_total") sp.set("sort", v);
+      else sp.delete("sort");
+      sp.delete("offset");
+    });
+  const setDir = (next: SortDir | ((prev: SortDir) => SortDir)) => {
+    const value = typeof next === "function" ? next(dir) : next;
+    writeParams((sp) => {
+      if (value !== "desc") sp.set("dir", value);
+      else sp.delete("dir");
+    });
+  };
+  const setOffset = (next: number | ((prev: number) => number)) => {
+    const value = typeof next === "function" ? next(offset) : next;
+    writeParams((sp) => {
+      if (value > 0) sp.set("offset", String(value));
+      else sp.delete("offset");
+    });
+  };
 
   const query = useMemo(() => buildQuery(filters, sort, dir, offset), [filters, sort, dir, offset]);
   const fetcher = useCallback(

@@ -55,6 +55,36 @@ export default function Wall() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [navigate]);
+
+  // Request a screen wake lock so the office TV does not blank after the
+  // OS screensaver timeout. The API is best-effort: gated by https in
+  // many browsers, missing on older runtimes, and the OS can still
+  // override. We re-request on visibility change because navigating away
+  // and back releases the previous lock.
+  useEffect(() => {
+    type WakeLockHandle = { release: () => Promise<void> };
+    const nav = navigator as Navigator & {
+      wakeLock?: { request(kind: "screen"): Promise<WakeLockHandle> };
+    };
+    if (!nav.wakeLock) return;
+    let sentinel: WakeLockHandle | null = null;
+    const acquire = async () => {
+      try {
+        sentinel = await nav.wakeLock!.request("screen");
+      } catch {
+        /* permission denied / not https — silent. */
+      }
+    };
+    const onVisibility = () => {
+      if (!document.hidden) acquire();
+    };
+    acquire();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      sentinel?.release().catch(() => {});
+    };
+  }, []);
   const overviewPoll = usePoll<OverviewDto>(
     (signal) => apiGet<OverviewDto>("/api/overview", authHeader, signal),
     POLL_MS,
