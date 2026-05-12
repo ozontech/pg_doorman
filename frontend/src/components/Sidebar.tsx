@@ -56,6 +56,34 @@ interface PrevTotals {
   errors: number;
 }
 
+const PREV_TOTALS_KEY = "pgdoorman.prev.totals";
+
+function loadPrevTotals(): PrevTotals | null {
+  try {
+    const raw = localStorage.getItem(PREV_TOTALS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PrevTotals>;
+    if (
+      typeof parsed.ts !== "number" ||
+      typeof parsed.queries !== "number" ||
+      typeof parsed.errors !== "number"
+    ) {
+      return null;
+    }
+    return parsed as PrevTotals;
+  } catch {
+    return null;
+  }
+}
+
+function savePrevTotals(v: PrevTotals) {
+  try {
+    localStorage.setItem(PREV_TOTALS_KEY, JSON.stringify(v));
+  } catch {
+    /* private mode / quota — no-op. */
+  }
+}
+
 export function Sidebar() {
   const { authHeader, basic, setBasic, ssoToken, setSsoToken, role } =
     useAdminAuth();
@@ -66,7 +94,11 @@ export function Sidebar() {
   const [pools, setPools] = useState<PoolsDto | null>(null);
   const [proc, setProc] = useState<ProcessDto | null>(null);
   const [rate, setRate] = useState<RateState>({ qps: 0, errsPerSec: 0 });
-  const prevRef = useRef<PrevTotals | null>(null);
+  // Seed prev snapshot from localStorage so the first poll after a page
+  // navigation immediately yields a delta — without this the sidebar
+  // (and the operator) saw "0.00 / 0.00" every time they reopened the
+  // tab or jumped between pages.
+  const prevRef = useRef<PrevTotals | null>(loadPrevTotals());
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +127,10 @@ export function Sidebar() {
           };
           if (prev) {
             const dt = (cur.ts - prev.ts) / 1000;
-            if (dt > 0) {
+            // Sanity: only use the persisted prev when it's within the
+            // last 60 s. A stale snapshot (laptop slept, tab closed for
+            // hours) would compute a meaningless rate.
+            if (dt > 0 && dt < 60) {
               setRate({
                 qps: Math.max(0, (cur.queries - prev.queries) / dt),
                 errsPerSec: Math.max(0, (cur.errors - prev.errors) / dt),
@@ -103,6 +138,7 @@ export function Sidebar() {
             }
           }
           prevRef.current = cur;
+          savePrevTotals(cur);
         })
         .catch(() => {});
       apiGet<PoolsDto>("/api/pools", authHeader)
@@ -169,12 +205,13 @@ export function Sidebar() {
       <div className="border-b border-border px-4 py-3">
         <Link
           to="/overview"
-          className="font-mono text-sm font-semibold text-text hover:text-accent"
+          className="font-mono text-sm font-medium leading-none text-text hover:text-accent"
+          aria-label="pg_doorman home"
         >
           pg_doorman
         </Link>
         {version && (
-          <span className="ml-2 font-mono text-[10px] text-text-dim">v{version}</span>
+          <div className="mt-1 font-mono text-[10px] text-text-dim">v{version}</div>
         )}
       </div>
 
@@ -193,10 +230,10 @@ export function Sidebar() {
               <NavLink
                 to={item.to}
                 className={({ isActive }) =>
-                  `block rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  `block border-l-2 px-4 py-2 text-sm font-semibold transition-colors ${
                     isActive
-                      ? "bg-surface-2 text-text"
-                      : "text-text-muted hover:bg-surface-2/60 hover:text-text"
+                      ? "border-accent bg-accent/10 text-text"
+                      : "border-transparent text-text-muted hover:border-border-strong hover:text-text"
                   }`
                 }
               >

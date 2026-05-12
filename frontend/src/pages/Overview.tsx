@@ -4,7 +4,6 @@ import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
 import { Collapsible } from "../components/Collapsible";
 import { DualAxisChart } from "../components/DualAxisChart";
-import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
 import { PageHero } from "../components/PageHero";
 import { MemoryPanel } from "../components/MemoryPanel";
@@ -14,15 +13,9 @@ import { Sparkline } from "../components/Sparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
-import {
-  aggregateHealth,
-  type HealthState,
-  type PoolHistory,
-  type PoolHistoryPoint,
-} from "../lib/thresholds";
+import type { PoolHistoryPoint } from "../lib/thresholds";
 import type { ChartEvent } from "../components/Sparkline";
 import type {
-  AuthQueryDto,
   EventsDto,
   InternerDto,
   OverviewDto,
@@ -36,6 +29,27 @@ import type {
 const POLL_MS = 1500;
 const HISTORY_KEY = "overview";
 const HEATMAP_CELLS = 60;
+const PREV_PROCESS_KEY = "pgdoorman.prev.process";
+
+function loadPrevProcess(): ProcessDto | null {
+  try {
+    const raw = localStorage.getItem(PREV_PROCESS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProcessDto;
+    if (typeof parsed.ts !== "number") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function savePrevProcess(v: ProcessDto) {
+  try {
+    localStorage.setItem(PREV_PROCESS_KEY, JSON.stringify(v));
+  } catch {
+    /* private mode / quota — no-op. */
+  }
+}
 
 interface OverviewSamplePoint {
   ts: number;
@@ -59,8 +73,6 @@ interface RawTotals {
 
 type PoolSnap = Record<string, PoolHistoryPoint>;
 type PoolSatSnap = Record<string, { saturation: number; max_connections: number; label: string }>;
-
-const EMPTY_HEALTH: HealthState = { state: "ok", reason: null, perPool: [] };
 
 export default function Overview() {
   const { authHeader } = useAdminAuth();
@@ -92,10 +104,6 @@ export default function Overview() {
   const coordPoll = usePoll<PoolCoordinatorDto>(
     (signal) => apiGet<PoolCoordinatorDto>("/api/pool_coordinator", authHeader, signal),
     POLL_MS,
-  );
-  const authPoll = usePoll<AuthQueryDto>(
-    (signal) => apiGet<AuthQueryDto>("/api/auth_query", authHeader, signal),
-    3000,
   );
   // Process resources (RSS, CPU, FDs, threads). Slow cadence (3 s) — the
   // process card is informational, not alerting, and these /proc reads are
@@ -267,28 +275,6 @@ export default function Overview() {
     // so the per-pool history retains the threshold-engine fields.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overviewPoll.data?.ts]);
-
-  const poolHistoryForEngine: PoolHistory = useMemo(() => {
-    const map: PoolHistory = new Map();
-    for (const snap of poolErrorsHistory.history) {
-      for (const id of Object.keys(snap)) {
-        const list = map.get(id) ?? [];
-        list.push(snap[id]);
-        map.set(id, list);
-      }
-    }
-    return map;
-  }, [poolErrorsHistory.history]);
-
-  const health = useMemo(() => {
-    if (!overviewPoll.data || !poolsPoll.data) return EMPTY_HEALTH;
-    return aggregateHealth(
-      overviewPoll.data,
-      poolsPoll.data.pools,
-      poolHistoryForEngine,
-      authPoll.data ?? null,
-    );
-  }, [overviewPoll.data, poolsPoll.data, poolHistoryForEngine, authPoll.data]);
 
   const seriesXs = useMemo(
     () => sampleHistory.history.map((s) => s.ts / 1000),
@@ -464,16 +450,9 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Is the pooler healthy right now. The pill is green when no threshold is breached; if it goes amber or red, the chip strip names the breach and the process row confirms the pooler itself is still alive. Use the four signal sparklines to triage: spike on Latency P95 = backend slow; spike on Errors/s = read the SQLSTATE breakdown on Pool detail; spike on Saturation = a pool is full and clients will start waiting."
+        description="Pooler-wide pulse. The sidebar carries the live health, alert count, and rate. Click a Golden signals tile to open the 1-hour panel with p50/p95/p99 and event overlays."
       />
       <div className="mx-auto w-full max-w-[1680px] space-y-6 px-6 py-6">
-        <HealthPill
-          health={health}
-          lastUpdated={overviewPoll.lastUpdated}
-          overview={overviewPoll.data}
-          pools={poolsPoll.data}
-          errorsPerSecond={latest?.errors_per_s ?? null}
-        />
         <ProcessBar process={processPoll.data} onOpenThreads={() => openPanelById("threads")} onOpenRss={() => openPanelById("rss")} />
         <Card
           title="Golden signals"
@@ -938,40 +917,76 @@ function ResourceDetail({
     if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MiB`;
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
   };
+  const socketStats: { label: string; value: string }[] = sockets
+    ? [
+        { label: "tcp established", value: sockets.tcp.established.toString() },
+        { label: "tcp time-wait", value: sockets.tcp.time_wait.toString() },
+        { label: "tcp close-wait", value: sockets.tcp.close_wait.toString() },
+        { label: "tcp listen", value: sockets.tcp.listen.toString() },
+        { label: "tcp6 established", value: sockets.tcp6.established.toString() },
+        { label: "unix connected", value: sockets.unix_stream.connected.toString() },
+      ]
+    : [];
+  const internerStats: { label: string; value: string }[] = interner
+    ? [
+        { label: "named entries", value: interner.named.entries.toLocaleString() },
+        { label: "named bytes", value: fmtBytes(interner.named.bytes) },
+        { label: "anonymous entries", value: interner.anonymous.entries.toLocaleString() },
+        { label: "anonymous bytes", value: fmtBytes(interner.anonymous.bytes) },
+      ]
+    : [];
   return (
-    <div className="grid grid-cols-2 gap-6 px-4 py-4">
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-text">Sockets</h3>
-        {sockets ? (
-          <table className="text-sm tabular">
-            <tbody>
-              <tr><td className="pr-3 text-text-muted">tcp established</td><td>{sockets.tcp.established}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp time-wait</td><td>{sockets.tcp.time_wait}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp close-wait</td><td>{sockets.tcp.close_wait}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp listen</td><td>{sockets.tcp.listen}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp6 established</td><td>{sockets.tcp6.established}</td></tr>
-              <tr><td className="pr-3 text-text-muted">unix-stream connected</td><td>{sockets.unix_stream.connected}</td></tr>
-            </tbody>
-          </table>
-        ) : (
-          <p className="text-sm text-text-dim">linux only — no data on this platform.</p>
-        )}
+    <div className="grid gap-4 px-4 py-4 md:grid-cols-2">
+      <ResourceCard title="Sockets" empty={!sockets} emptyLabel="linux only — no data on this platform.">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+          {socketStats.map((s) => (
+            <StatCell key={s.label} label={s.label} value={s.value} />
+          ))}
+        </div>
+      </ResourceCard>
+      <ResourceCard title="Query interner" empty={!interner} emptyLabel="loading…">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          {internerStats.map((s) => (
+            <StatCell key={s.label} label={s.label} value={s.value} />
+          ))}
+        </div>
+      </ResourceCard>
+    </div>
+  );
+}
+
+function ResourceCard({
+  title,
+  empty,
+  emptyLabel,
+  children,
+}: {
+  title: string;
+  empty: boolean;
+  emptyLabel: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border border-border bg-surface">
+      <div className="border-b border-border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted">
+        {title}
       </div>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-text">Query interner</h3>
-        {interner ? (
-          <table className="text-sm tabular">
-            <tbody>
-              <tr><td className="pr-3 text-text-muted">named entries</td><td>{interner.named.entries}</td></tr>
-              <tr><td className="pr-3 text-text-muted">named bytes</td><td>{fmtBytes(interner.named.bytes)}</td></tr>
-              <tr><td className="pr-3 text-text-muted">anonymous entries</td><td>{interner.anonymous.entries}</td></tr>
-              <tr><td className="pr-3 text-text-muted">anonymous bytes</td><td>{fmtBytes(interner.anonymous.bytes)}</td></tr>
-            </tbody>
-          </table>
-        ) : (
-          <p className="text-sm text-text-dim">loading…</p>
-        )}
+      <div className="p-4">
+        {empty ? <p className="text-sm text-text-dim">{emptyLabel}</p> : children}
       </div>
+    </div>
+  );
+}
+
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wider text-text-dim">
+        {label}
+      </span>
+      <span className="font-mono text-base font-semibold tabular text-text">
+        {value}
+      </span>
     </div>
   );
 }
@@ -996,7 +1011,12 @@ function ProcessBar({
   // recent percentage. Re-renders that don't bring a new ts (a sibling
   // poll updated state) reuse the cached delta instead of nulling it
   // out — without that we'd flicker "sampling…" between every real poll.
-  const prevRef = useRef<ProcessDto | null>(null);
+  // Persist the previous ProcessDto in localStorage so CPU% and per-thread
+  // deltas survive a page navigation. Without this, every reopen of
+  // Overview started with "sampling…" until two snapshots accumulated
+  // again — and the panel never settled while the operator was busy
+  // clicking between pages.
+  const prevRef = useRef<ProcessDto | null>(loadPrevProcess());
   const cachedPctRef = useRef<{
     cpuPct: number | null;
     threadDeltas: { tid: number; name: string; pct: number }[];
@@ -1010,7 +1030,15 @@ function ProcessBar({
     // Same poll snapshot we already computed against — reuse cached values.
     cpuPct = cachedPctRef.current.cpuPct;
     threadDeltas = cachedPctRef.current.threadDeltas;
-  } else if (process && last && last.ts !== process.ts) {
+  } else if (
+    process &&
+    last &&
+    last.ts !== process.ts &&
+    // Drop persisted snapshots that are too old to compute a meaningful
+    // delta (laptop slept, tab closed for hours). 60 s window matches
+    // the sidebar guard.
+    process.ts - last.ts < 60_000
+  ) {
     const dtSec = (process.ts - last.ts) / 1000;
     if (dtSec > 0 && process.cpu_cores > 0) {
       const usDelta =
@@ -1044,6 +1072,7 @@ function ProcessBar({
   if (process && (!last || last.ts !== process.ts)) {
     prevRef.current = process;
     cachedPctRef.current = { cpuPct, threadDeltas, forTs: process.ts };
+    savePrevProcess(process);
   }
 
   if (!process) return null;

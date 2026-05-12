@@ -8,48 +8,55 @@
 @import "@fontsource/geist-sans/latin-400.css";
 @import "@fontsource/geist-sans/latin-500.css";
 @import "@fontsource/geist-sans/latin-600.css";
+@import "@fontsource/geist-sans/latin-700.css";
+@import "@fontsource/geist-sans/latin-800.css";
 @import "@fontsource/jetbrains-mono/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-500.css";
 @import "@fontsource/jetbrains-mono/cyrillic-400.css";
 @import "@fontsource/jetbrains-mono/cyrillic-500.css";
 
 @theme {
-  /* Surface — zinc-tinted dark per the 2026 dev-tools baseline (shadcn,
-     Linear, Vercel). Pure #000 reads clinically harsh next to amber
-     accents; #09090B keeps the trading-terminal feel without the glare. */
-  --color-bg:         #09090b;
-  --color-surface:    #0e0e11;
-  --color-surface-2:  #18181b;
-  --color-surface-3:  #1f1f23;
+  /* Surface — black canvas with visibly lifted cards. The previous step
+     of #050505/#0e0e0e was indistinguishable from the page background;
+     operators reported that everything "tanned to black". The new tier
+     gives each level a real ~5-6 % luminance bump so cards, panels, and
+     popovers read as distinct surfaces without softening the amber. */
+  --color-bg:         #000000;
+  --color-surface:    #141414;
+  --color-surface-2:  #1c1c1c;
+  --color-surface-3:  #262626;
 
-  /* Borders — single hairline tone, never doubled. */
-  --color-border:        #27272a;
-  --color-border-strong: #3f3f46;
+  /* Borders — single hairline tone, never doubled. Brighter than the
+     previous #1f to define edges on cards that now sit on a lit
+     surface; the strong tier picks up active states and hover. */
+  --color-border:        #2a2a2a;
+  --color-border-strong: #4a4a4a;
 
-  /* Text — neutral paper-white on zinc background. */
-  --color-text:       #fafafa;
-  --color-text-muted: #a1a1aa;
-  --color-text-dim:   #71717a;
+  /* Text — paper-white over black; muted tones drift warm so they sit
+     next to amber rather than fight it. */
+  --color-text:       #ffffff;
+  --color-text-muted: #a0a0a0;
+  --color-text-dim:   #6a6a6a;
 
-  /* Accent — Bloomberg amber. Used for call-to-action, focus rings,
-     selection, and the live-tick underline animation below. */
-  --color-accent:       #ffb000;
-  --color-accent-hover: #ffc233;
-  --color-accent-fg:    #09090b;
+  /* Accent — hot amber-orange. The primary surface for live tickers,
+     CTAs, and brand. Hover lifts the same hue to a brighter tier. */
+  --color-accent:       #ff9000;
+  --color-accent-hover: #ffa733;
+  --color-accent-fg:    #000000;
 
-  /* Semantic — high-contrast palette tuned for the zinc surface.
-     Danger steps off the neon-red #ff4d4d in favour of Radix red-9
-     which sits cleaner next to the amber accent. */
+  /* Semantic — high-contrast palette tuned for pure black. Critical is
+     a saturated coral instead of neon red so it pairs with amber
+     without strobing. */
   --color-success: #39d353;
-  --color-warning: #ffb000;
-  --color-danger:  #e5484d;
+  --color-warning: #ff9000;
+  --color-danger:  #ff3b3b;
   --color-info:    #00d4ff;
 
   /* Chart palette (uPlot lines) — distinct hues, no muddy gradients. */
-  --color-chart-1: #ffb000;
+  --color-chart-1: #ff9000;
   --color-chart-2: #00d4ff;
   --color-chart-3: #39d353;
-  --color-chart-4: #e5484d;
+  --color-chart-4: #ff3b3b;
 
   /* Typography. Geist Sans for chrome/prose, JetBrains Mono for numbers
      and identifiers. Both fall back to system mono/sans so a font-load

@@ -333,32 +333,32 @@ function SocketsPanel() {
   }
   const s = poll.data!;
   return (
-    <div className="grid grid-cols-3 gap-6 px-6 py-5">
-      <SocketCard title="TCP">
+    <div className="grid grid-cols-1 gap-6 px-6 py-4 md:grid-cols-3">
+      <SocketGroup title="TCP">
         <KV label="established" value={s.tcp.established} highlight={s.tcp.established === 0 ? "warn" : null} />
         <KV label="time-wait" value={s.tcp.time_wait} />
         <KV label="close-wait" value={s.tcp.close_wait} highlight={s.tcp.close_wait > 0 ? "warn" : null} />
         <KV label="listen" value={s.tcp.listen} />
-      </SocketCard>
-      <SocketCard title="TCP6">
+      </SocketGroup>
+      <SocketGroup title="TCP6">
         <KV label="established" value={s.tcp6.established} />
         <KV label="time-wait" value={s.tcp6.time_wait} />
         <KV label="close-wait" value={s.tcp6.close_wait} />
-      </SocketCard>
-      <SocketCard title="Unix stream">
+      </SocketGroup>
+      <SocketGroup title="Unix stream">
         <KV label="connected" value={s.unix_stream.connected} />
         <KV label="unconnected" value={s.unix_stream.unconnected} />
         <KV label="connecting" value={s.unix_stream.connecting} />
         <KV label="disconnecting" value={s.unix_stream.disconnecting} />
-      </SocketCard>
+      </SocketGroup>
     </div>
   );
 }
 
-function SocketCard({ title, children }: { title: string; children: ReactNode }) {
+function SocketGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="border border-border bg-surface p-4">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-dim">
+    <div>
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-dim">
         {title}
       </div>
       <dl className="space-y-1 text-sm tabular">{children}</dl>

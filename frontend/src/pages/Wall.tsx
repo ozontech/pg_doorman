@@ -7,7 +7,7 @@
 // pulses a red border when any critical signal trips.
 
 import { useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiGet } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
@@ -42,6 +42,19 @@ interface PoolSatSnap {
 
 export default function Wall() {
   const { authHeader } = useAdminAuth();
+  const navigate = useNavigate();
+
+  // ESC out of kiosk: a wall display has no sidebar, so without a hotkey
+  // an operator has to find the "back to console" affordance behind any
+  // OS notifications drifting over the header. Esc is muscle-memory for
+  // "leave full-screen view" across Grafana, k9s, htop.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") navigate("/overview");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [navigate]);
   const overviewPoll = usePoll<OverviewDto>(
     (signal) => apiGet<OverviewDto>("/api/overview", authHeader, signal),
     POLL_MS,
@@ -180,20 +193,24 @@ export default function Wall() {
       )}
 
       <header className="flex items-center justify-between gap-4 border-b border-border bg-bg px-6 py-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.3em] text-text-dim">
-            pg_doorman war room
-          </div>
-          <div className="mt-0.5 font-mono text-lg font-semibold tabular text-text">
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-sm font-medium leading-none text-text">
+            pg_doorman
+          </span>
+          <span className="text-[10px] uppercase tracking-[0.3em] text-text-dim">
+            war room
+          </span>
+          <span className="ml-2 font-mono text-base font-semibold tabular text-text">
             {poolsPoll.data?.pools.length ?? "—"} pools · updated{" "}
             {fmtAge(lastUpdate)}
-          </div>
+          </span>
         </div>
         <Link
           to="/overview"
-          className="border border-border-strong px-3 py-1 text-xs uppercase tracking-wider text-text-muted hover:border-accent hover:text-accent"
+          title="Back to console (Esc)"
+          className="inline-flex items-center gap-2 border-2 border-accent bg-accent px-4 py-2 text-sm font-bold uppercase tracking-wide text-accent-fg transition-colors hover:bg-accent-hover"
         >
-          back to console
+          <span aria-hidden="true">←</span> back · esc
         </Link>
       </header>
 
@@ -396,12 +413,15 @@ function KpiTile({
   sparkColor: string;
   collecting: boolean;
 }) {
+  const isAlert = tone === "text-danger" || tone === "text-warning";
   return (
-    <div className="flex flex-col gap-2 border border-border bg-surface px-4 py-3">
-      <div className="text-[10px] uppercase tracking-[0.3em] text-text-dim">
+    <div
+      className={`flex flex-col gap-2 border border-border bg-surface px-4 py-3 border-l-4 ${isAlert ? "border-l-danger" : "border-l-accent"}`}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-text-muted">
         {label}
       </div>
-      <div className={`font-mono text-3xl font-semibold tabular ${tone}`}>
+      <div className={`font-mono text-4xl font-extrabold leading-none tabular ${tone}`}>
         {value}
       </div>
       <div className="h-6">

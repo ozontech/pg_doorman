@@ -31,7 +31,7 @@ const SEV_LABEL: Record<Severity, string> = {
 };
 
 const SEV_TEXT: Record<Severity, string> = {
-  ok: "text-text-dim",
+  ok: "text-success",
   degraded: "text-warning",
   critical: "text-danger",
 };
