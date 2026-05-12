@@ -4,6 +4,7 @@
 //! server connections. It handles connect timeouts, lifetime checks, alive
 //! checks, pause/resume, and reconnect epoch management.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use std::time::Duration;
 use log::{debug, info, warn};
 use tokio::sync::{Notify, Semaphore};
 
+use crate::config::startup_parameters as sp;
 use crate::config::{Address, User};
 use crate::errors::Error;
 use crate::patroni::types::Role;
@@ -83,6 +85,16 @@ pub struct ServerPool {
 
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
+
+    /// `general.startup_parameters` merged with this pool's
+    /// `pool.startup_parameters` — the baseline that every backend spawn
+    /// from this pool ships in `StartupMessage`, before the optional
+    /// per-user auth_query overlay is applied. Cached once at pool
+    /// construction: the reload path rebuilds the pool whenever either
+    /// layer's hash changes (see `ConnectionPool::from_config`), so this
+    /// view is immutable for the lifetime of the pool object. Shared as
+    /// `Arc` so backend spawns can borrow it without per-call cloning.
+    base_startup_parameters: Arc<std::collections::BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -129,6 +141,23 @@ impl ServerPool {
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
     ) -> ServerPool {
+        // Merge general+pool startup_parameters once at construction. The
+        // reload path rebuilds this pool whenever either layer's hash
+        // changes (see `ConnectionPool::from_config`), so this snapshot
+        // stays valid for the pool's lifetime. Per-user auth_query overlay
+        // is layered on top per spawn inside `resolved_startup_parameters`.
+        let base_startup_parameters = {
+            let cfg = crate::config::config_arc();
+            let mut merged: std::collections::BTreeMap<String, String> =
+                cfg.general.startup_parameters.clone();
+            if let Some(pool_cfg) = cfg.pools.get(&address.pool_name) {
+                for (k, v) in &pool_cfg.startup_parameters {
+                    merged.insert(k.clone(), v.clone());
+                }
+            }
+            Arc::new(merged)
+        };
+
         ServerPool {
             address,
             user: user.clone(),
@@ -149,6 +178,7 @@ impl ServerPool {
             resume_notify: Notify::new(),
             session_mode,
             fallback_state,
+            base_startup_parameters,
         }
     }
 
@@ -238,7 +268,7 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
-                startup_parameters.clone(),
+                &startup_parameters,
             ),
         )
         .await;
@@ -298,7 +328,7 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
-                    startup_parameters,
+                    &startup_parameters,
                 ),
             )
             .await;
@@ -377,44 +407,39 @@ impl ServerPool {
     }
 
     /// Resolve the operator-supplied startup_parameters map that this pool
-    /// will hand to `Server::startup` for one backend spawn. The cascade is
-    /// `general` -> pool -> (optional) auth_query per-user entry, with the
-    /// more specific level winning per key.
+    /// will hand to `Server::startup` for one backend spawn.
     ///
-    /// The general and pool maps are read live from the current config
-    /// snapshot, so a RELOAD that only changes operator-supplied parameters
-    /// can take effect on the next backend spawn without rebuilding the
-    /// pool. The auth_query layer is consulted only when this pool has a
-    /// passthrough auth_query state and a cached entry for the pool's
-    /// username already exists; dedicated mode pools never consult the
-    /// cache here, even though the cache write path already clears the map
-    /// in that mode, because the safety net is cheaper than another bug
-    /// hunt.
-    fn resolved_startup_parameters(&self) -> std::collections::BTreeMap<String, String> {
-        let cfg = crate::config::config_arc();
-        let pool_cfg = cfg.pools.get(&self.address.pool_name);
-
-        let pool_params = pool_cfg
-            .map(|p| &p.startup_parameters)
-            .cloned()
-            .unwrap_or_default();
-
+    /// Fast path (no per-user auth_query overlay): returns
+    /// `Cow::Borrowed(&self.base_startup_parameters)` — zero allocation.
+    /// Slow path (passthrough auth_query with a populated cache entry):
+    /// clones the cached base and layers the per-user overrides on top.
+    ///
+    /// Both paths validate the merged cascade against the operator budget
+    /// and the exact PG `MAX_STARTUP_PACKET_LENGTH`; an overflow returns an
+    /// empty map for this spawn and logs, so the backend connects with PG
+    /// defaults rather than failing every retry.
+    fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
         // Look up the per-user auth_query entry only when the pool runs in
         // passthrough auth_query mode (no shared server_user). In dedicated
         // mode the shared backend serves multiple dynamic users, so no
         // single per-user override could be honoured.
-        let auth_query_params = match super::get_auth_query_state(&self.address.pool_name) {
+        let auth_query_overlay = match super::get_auth_query_state(&self.address.pool_name) {
             Some(state) if !state.config.is_dedicated_mode() => {
                 state.peek_startup_parameters(&self.user.username)
             }
             _ => None,
         };
+        let has_overlay = auth_query_overlay.as_ref().is_some_and(|m| !m.is_empty());
 
-        let merged = super::startup_resolver::resolve(
-            &cfg.general.startup_parameters,
-            &pool_params,
-            auth_query_params.as_ref(),
-        );
+        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> = if has_overlay {
+            let mut owned = (*self.base_startup_parameters).clone();
+            for (k, v) in auth_query_overlay.as_ref().unwrap() {
+                owned.insert(k.clone(), v.clone());
+            }
+            std::borrow::Cow::Owned(owned)
+        } else {
+            std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
+        };
 
         // Per-level validation in `Config::validate` does not see the merged
         // cascade, and the per-level guard does not see the user/database/
@@ -422,7 +447,7 @@ impl ServerPool {
         // checks, in order:
         //
         // 1. Fast path: just the operator-supplied pairs against the
-        //    `MAX_OPERATOR_BUDGET`. This catches cascade overflows without
+        //    operator budget. This catches cascade overflows without
         //    knowing the username/database length.
         // 2. Exact-length check: the full StartupMessage pg_doorman is about
         //    to put on the wire, against PG's `MAX_STARTUP_PACKET_LENGTH`.
@@ -430,12 +455,8 @@ impl ServerPool {
         //    includes the length prefix, version, `user`, effective
         //    `application_name` and `database` so a long `application_name`
         //    cannot slip a near-budget operator set over the cap.
-        //
-        // On overflow drop all operator-supplied keys for this spawn and log;
-        // the backend connects with server defaults rather than failing on
-        // every retry.
-        let body_bytes = crate::config::startup_parameters::serialized_bytes(&merged);
-        if body_bytes > crate::config::startup_parameters::MAX_OPERATOR_BUDGET {
+        let body_bytes = sp::serialized_bytes(&merged);
+        if body_bytes > sp::MAX_OPERATOR_BUDGET {
             warn!(
                 "[{}@{}] effective startup_parameters serialize to {} bytes, exceeding \
                  operator budget {} (PG cap {}); all operator-supplied parameters dropped \
@@ -443,23 +464,23 @@ impl ServerPool {
                 self.user.username,
                 self.address.pool_name,
                 body_bytes,
-                crate::config::startup_parameters::MAX_OPERATOR_BUDGET,
-                crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE,
+                sp::MAX_OPERATOR_BUDGET,
+                sp::MAX_STARTUP_PACKET_SIZE,
             );
-            return std::collections::BTreeMap::new();
+            return std::borrow::Cow::Owned(BTreeMap::new());
         }
         let username_for_wire = self
             .user
             .server_username
             .as_deref()
             .unwrap_or(self.user.username.as_str());
-        let packet_bytes = crate::config::startup_parameters::full_packet_bytes(
+        let packet_bytes = sp::full_packet_bytes(
             username_for_wire,
             &self.database,
             &self.application_name,
             &merged,
         );
-        if packet_bytes > crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE {
+        if packet_bytes > sp::MAX_STARTUP_PACKET_SIZE {
             warn!(
                 "[{}@{}] effective StartupMessage size {} bytes exceeds PG cap {} once \
                  user/database/application_name are included; all operator-supplied \
@@ -467,9 +488,9 @@ impl ServerPool {
                 self.user.username,
                 self.address.pool_name,
                 packet_bytes,
-                crate::config::startup_parameters::MAX_STARTUP_PACKET_SIZE,
+                sp::MAX_STARTUP_PACKET_SIZE,
             );
-            return std::collections::BTreeMap::new();
+            return std::borrow::Cow::Owned(BTreeMap::new());
         }
         merged
     }
@@ -817,7 +838,7 @@ impl ServerPool {
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
-                startup_parameters.clone(),
+                &startup_parameters,
             ),
         )
         .await;
@@ -866,7 +887,7 @@ impl ServerPool {
                     self.prepared_statement_cache_size,
                     self.application_name.clone(),
                     self.session_mode,
-                    startup_parameters,
+                    &startup_parameters,
                 ),
             )
             .await;

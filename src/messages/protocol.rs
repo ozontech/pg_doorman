@@ -7,6 +7,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use md5::{Digest, Md5};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 // Internal crate imports
+use crate::config::startup_parameters::full_packet_bytes;
 use crate::errors::Error;
 use crate::messages::socket::{write_all, write_all_flush};
 use crate::messages::types::DataType;
@@ -178,15 +179,28 @@ pub async fn startup<S>(
 where
     S: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    let mut bytes = BytesMut::new();
+    // Pre-compute the exact wire size so the whole StartupMessage fits in
+    // one allocation and the length prefix can be written in place. The
+    // previous shape (`BytesMut::new()` body, then a second `with_capacity`
+    // copy for the length prefix) paid two allocations and a memcpy per
+    // backend spawn.
+    let total_size = full_packet_bytes(
+        user.as_str(),
+        database,
+        application_name.as_str(),
+        extra_params,
+    );
+    let mut startup = BytesMut::with_capacity(total_size);
 
-    // Protocol version
-    bytes.put_i32(196608); // Version 3.0
+    // Length prefix (includes itself).
+    startup.put_i32(total_size as i32);
+    // Protocol version 3.0.
+    startup.put_i32(196608);
 
-    // User
-    bytes.put(&b"user\0"[..]);
-    bytes.put_slice(user.as_bytes());
-    bytes.put_u8(0);
+    // User.
+    startup.put(&b"user\0"[..]);
+    startup.put_slice(user.as_bytes());
+    startup.put_u8(0);
 
     // Application name. Operator-supplied value in `extra_params` wins over
     // the pg_doorman-managed default.
@@ -194,34 +208,34 @@ where
         .get("application_name")
         .map(String::as_str)
         .unwrap_or(application_name.as_str());
-    bytes.put(&b"application_name\0"[..]);
-    bytes.put_slice(effective_app_name.as_bytes());
-    bytes.put_u8(0);
+    startup.put(&b"application_name\0"[..]);
+    startup.put_slice(effective_app_name.as_bytes());
+    startup.put_u8(0);
 
-    // Database
-    bytes.put(&b"database\0"[..]);
-    bytes.put_slice(database.as_bytes());
-    bytes.put_u8(0);
+    // Database.
+    startup.put(&b"database\0"[..]);
+    startup.put_slice(database.as_bytes());
+    startup.put_u8(0);
 
     // Operator-supplied extras (already-handled application_name is skipped).
     for (key, value) in extra_params {
         if key == "application_name" {
             continue;
         }
-        bytes.put_slice(key.as_bytes());
-        bytes.put_u8(0);
-        bytes.put_slice(value.as_bytes());
-        bytes.put_u8(0);
+        startup.put_slice(key.as_bytes());
+        startup.put_u8(0);
+        startup.put_slice(value.as_bytes());
+        startup.put_u8(0);
     }
 
-    bytes.put_u8(0); // Parameter list terminator
+    // Parameter-list terminator.
+    startup.put_u8(0);
 
-    let len = bytes.len() as i32 + 4i32;
-
-    let mut startup = BytesMut::with_capacity(len as usize);
-
-    startup.put_i32(len);
-    startup.put(bytes);
+    debug_assert_eq!(
+        startup.len(),
+        total_size,
+        "full_packet_bytes drifted from the actual startup serializer"
+    );
 
     match stream.write_all(&startup).await {
         Ok(_) => Ok(()),

@@ -705,8 +705,11 @@ impl Server {
         // may still issue an explicit SET later, but the per-checkout sync
         // from `client.server_parameters` must not silently overwrite an
         // operator-supplied default with a client-side value (e.g. an
-        // application_name baked into a connection string).
-        parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
+        // application_name baked into a connection string). Skip the
+        // retain pass when no operator keys are tracked.
+        if !self.operator_managed_startup_keys.is_empty() {
+            parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
+        }
 
         if parameter_diff.is_empty() {
             return Ok(());
@@ -775,7 +778,7 @@ impl Server {
         server_prepared_statement_cache_size: usize,
         application_name: String,
         session_mode: bool,
-        startup_parameters: std::collections::BTreeMap<String, String>,
+        startup_parameters: &std::collections::BTreeMap<String, String>,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -821,14 +824,12 @@ impl Server {
         let auth_started = Instant::now();
         let mut startup_started: Option<Instant> = None;
 
-        let startup_parameters_sent = startup_parameters;
-
         startup(
             &mut stream,
             username.clone(),
             database,
             application_name.clone(),
-            &startup_parameters_sent,
+            startup_parameters,
         )
         .await?;
 
@@ -962,11 +963,11 @@ impl Server {
                     // error path; the client still receives the PG
                     // sqlstate so the operator sees the same failure
                     // their application would see talking to PG directly.
-                    if !startup_parameters_sent.is_empty() {
+                    if !startup_parameters.is_empty() {
                         if let Some(param_name) =
                             crate::server::startup_error::extract_parameter_name(&msg.message)
                         {
-                            if startup_parameters_sent.contains_key(&param_name) {
+                            if startup_parameters.contains_key(&param_name) {
                                 warn!(
                                     "[{}@{}] PG rejected operator-supplied startup \
                                      parameter=\"{}\" sqlstate={} message=\"{}\"; the \
@@ -1054,8 +1055,16 @@ impl Server {
                         phase_started.elapsed().as_secs_f64(),
                     );
 
+                    // No backing-table allocation for pools that don't use
+                    // the feature: HashSet::new() is empty until the first
+                    // insert. Operators on the typical zero-param path pay
+                    // no per-spawn HashSet cost.
                     let operator_managed_startup_keys: HashSet<String> =
-                        startup_parameters_sent.keys().cloned().collect();
+                        if startup_parameters.is_empty() {
+                            HashSet::new()
+                        } else {
+                            startup_parameters.keys().cloned().collect()
+                        };
 
                     let server = Server {
                         address: address.to_owned(),
