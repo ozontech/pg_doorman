@@ -455,6 +455,9 @@ impl AuthQueryExecutor {
                  exceeding operator budget {max_bytes}; parameters ignored",
                 text.len()
             );
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[pool_name, "auth_query_oversize"])
+                .inc();
             return std::collections::HashMap::new();
         }
         let parsed: serde_json::Value = match serde_json::from_str(text) {
@@ -483,6 +486,9 @@ impl AuthQueryExecutor {
                     probe.insert(k.clone(), s.clone());
                     if let Err(e) = crate::config::startup_parameters::validate(&probe, &scope) {
                         warn!("[{pool_name}] {e}");
+                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                            .with_label_values(&[pool_name, "auth_query_invalid_entry"])
+                            .inc();
                         continue;
                     }
                     out.insert(k, s);
@@ -500,6 +506,9 @@ impl AuthQueryExecutor {
                         "[{username}@{pool_name}] auth_query startup_parameters: value for '{k}' \
                          is {kind}, not string; ignored"
                     );
+                    crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                        .with_label_values(&[pool_name, "auth_query_invalid_entry"])
+                        .inc();
                 }
             }
         }

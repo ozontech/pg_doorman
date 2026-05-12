@@ -957,8 +957,8 @@ impl Server {
                     }
 
                     // Identify the failing parameter. Two-step lookup so the
-                    // counter is not silently zeroed on PostgreSQL servers
-                    // running with non-English `lc_messages`:
+                    // observability does not silently regress on PostgreSQL
+                    // servers running with non-English `lc_messages`:
                     //
                     // 1. Parse the canonical English `parameter "<name>"`
                     //    phrase. Most production fleets keep PG default
@@ -969,37 +969,41 @@ impl Server {
                     //    quotes the parameter name in every locale, even
                     //    when the surrounding prose is translated.
                     //
-                    // When either step finds a sent key, we warn-log with
-                    // the parameter name and increment the per-pool
-                    // counter. The client still receives PG's verbatim
-                    // sqlstate either way; this whole branch is
-                    // observability for the operator, not control flow.
-                    if !startup_parameters.is_empty() {
-                        let matched_key =
-                            crate::server::startup_error::extract_parameter_name(&msg.message)
-                                .filter(|n| startup_parameters.contains_key(n))
-                                .or_else(|| {
-                                    crate::server::startup_error::match_sent_key_in_message(
-                                        &msg.message,
-                                        startup_parameters.keys(),
-                                    )
-                                });
-                        if let Some(param_name) = matched_key {
-                            warn!(
-                                "[{}@{}] PG rejected operator-supplied startup \
-                                 parameter=\"{}\" sqlstate={} message=\"{}\"; the \
-                                 error is being forwarded to the client. Fix the \
-                                 parameter in general/pool/auth_query.",
-                                address.username,
-                                address.pool_name,
-                                param_name,
-                                msg.code,
-                                msg.message,
-                            );
-                            crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
-                                .with_label_values(&[&address.pool_name, &msg.code])
-                                .inc();
-                        }
+                    // When either step finds a sent key, we warn-log,
+                    // increment the per-pool counter, AND return the new
+                    // typed `ServerStartupParameterRejection` so the
+                    // checkout path can forward the PG sqlstate to the
+                    // client verbatim (instead of substituting the generic
+                    // 53300 "pool exhausted" fallback that every other
+                    // server startup failure receives).
+                    let matched_key = if startup_parameters.is_empty() {
+                        None
+                    } else {
+                        crate::server::startup_error::extract_parameter_name(&msg.message)
+                            .filter(|n| startup_parameters.contains_key(n))
+                            .or_else(|| {
+                                crate::server::startup_error::match_sent_key_in_message(
+                                    &msg.message,
+                                    startup_parameters.keys(),
+                                )
+                            })
+                    };
+                    if let Some(param_name) = matched_key {
+                        warn!(
+                            "[{}@{}] PG rejected operator-supplied startup \
+                             parameter=\"{}\" sqlstate={} message=\"{}\"; the \
+                             error is being forwarded to the client. Fix the \
+                             parameter in general/pool/auth_query.",
+                            address.username, address.pool_name, param_name, msg.code, msg.message,
+                        );
+                        crate::web::metrics::BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL
+                            .with_label_values(&[&address.pool_name, &msg.code])
+                            .inc();
+                        return Err(Error::ServerStartupParameterRejection {
+                            sqlstate: msg.code,
+                            message: msg.message,
+                            server_identifier: server_identifier.clone(),
+                        });
                     }
 
                     return Err(Error::ServerStartupError(

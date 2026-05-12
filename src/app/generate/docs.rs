@@ -261,6 +261,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "hba",
         "pg_hba",
         "pooler_check_query",
+        "startup_parameters",
     ];
 
     for name in &fields {
@@ -291,6 +292,7 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
         "reserve_pool_size",
         "reserve_pool_timeout",
         "min_guaranteed_pool_size",
+        "startup_parameters",
     ];
 
     for name in &fields {
@@ -467,6 +469,17 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_auth_query_auth` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_auth_query_auth_total`. |");
     let _ = writeln!(out, "| `pg_doorman_auth_query_executor` | DEPRECATED, removed in 3.10. Gauge mirror of `pg_doorman_auth_query_executor_total`. |");
     let _ = writeln!(out, "| `pg_doorman_auth_query_dynamic_pools` | Auth query dynamic pool lifecycle metrics by type and database. Types include: `current` (currently active dynamic pools), `created` (total pools created since startup), `destroyed` (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode. |\n");
+
+    // Operator-supplied startup_parameters
+    let _ = writeln!(out, "### Operator-supplied startup_parameters\n");
+    let _ = writeln!(
+        out,
+        "Surface PG-side rejections and pre-wire drops of the operator-supplied cascade. Operators set `general.startup_parameters` / `pools.<name>.startup_parameters` or the per-user auth_query column; if PostgreSQL refuses a value (typo, wrong privilege, postmaster-only knob) the rejection lands on `pg_doorman_backend_startup_parameter_errors_total`. The companion `pg_doorman_startup_parameters_dropped_total` flags cases where pg_doorman aborted the cascade before sending it (over-budget, oversize auth_query JSON, bad entry in the JSON object) — same surface, different stage.\n"
+    );
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_backend_startup_parameter_errors_total` | Counter by `(pool, sqlstate)`. Increments once per backend startup where PostgreSQL returned an `ErrorResponse` naming a key pg_doorman sent in `StartupMessage` (operator-supplied cascade). SQLSTATE class `57P` is excluded — those rejections go through `ServerUnavailableError` and the Patroni-assisted fallback path instead. The failing parameter name and username are in the corresponding warn log line; they are kept off the label set so a dynamic auth_query pool cannot inflate Prometheus series count. Identification is best-effort: pg_doorman first parses the canonical English `parameter \"<name>\"` phrase, then falls back to scanning the M-field for any sent key wrapped in double quotes (locale-stable). If both heuristics fail, the counter does not move. |");
+    let _ = writeln!(out, "| `pg_doorman_startup_parameters_dropped_total` | Counter by `(pool, reason)`. Increments when pg_doorman dropped operator-supplied entries *before* the `StartupMessage` went on the wire — the failure mode the `*_errors_total` counter cannot see because PG never had a chance to reject. `reason` values: `cascade_budget_exceeded` (merged map exceeded operator budget), `packet_cap_exceeded` (full packet would exceed PG's `MAX_STARTUP_PACKET_LENGTH`), `auth_query_oversize` (the auth_query text column exceeded the operator budget at parse time), `auth_query_invalid_entry` (one entry failed validation: reserved key, bad GUC name, null byte, non-string value). |\n");
 
     // Server Metrics
     let _ = writeln!(out, "### Server Metrics\n");

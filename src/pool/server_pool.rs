@@ -429,16 +429,16 @@ impl ServerPool {
             }
             _ => None,
         };
-        let has_overlay = auth_query_overlay.as_ref().is_some_and(|m| !m.is_empty());
 
-        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> = if has_overlay {
-            let mut owned = (*self.base_startup_parameters).clone();
-            for (k, v) in auth_query_overlay.as_ref().unwrap() {
-                owned.insert(k.clone(), v.clone());
+        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> = match auth_query_overlay {
+            Some(overlay) if !overlay.is_empty() => {
+                let mut owned = (*self.base_startup_parameters).clone();
+                for (k, v) in &overlay {
+                    owned.insert(k.clone(), v.clone());
+                }
+                std::borrow::Cow::Owned(owned)
             }
-            std::borrow::Cow::Owned(owned)
-        } else {
-            std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
+            _ => std::borrow::Cow::Borrowed(&*self.base_startup_parameters),
         };
 
         // Per-level validation in `Config::validate` does not see the merged
@@ -467,6 +467,9 @@ impl ServerPool {
                 sp::MAX_OPERATOR_BUDGET,
                 sp::MAX_STARTUP_PACKET_SIZE,
             );
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[self.address.pool_name.as_str(), "cascade_budget_exceeded"])
+                .inc();
             return std::borrow::Cow::Owned(BTreeMap::new());
         }
         let username_for_wire = self
@@ -490,6 +493,9 @@ impl ServerPool {
                 packet_bytes,
                 sp::MAX_STARTUP_PACKET_SIZE,
             );
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[self.address.pool_name.as_str(), "packet_cap_exceeded"])
+                .inc();
             return std::borrow::Cow::Owned(BTreeMap::new());
         }
         merged

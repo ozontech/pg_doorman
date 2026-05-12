@@ -21,6 +21,19 @@ pub enum Error {
     /// FATAL with SQLSTATE 57P01/57P02/57P03: backend accepted the connection
     /// but is shutting down or starting up.
     ServerUnavailableError(String, ServerIdentifier),
+    /// PostgreSQL rejected the StartupMessage because of an operator-supplied
+    /// `startup_parameters` entry — typo, bad value, insufficient privilege,
+    /// or postmaster-only knob. Carries the verbatim PG `SQLSTATE` and
+    /// `M`-field so the client receives the PG-native error rather than the
+    /// generic `53300` connection-pool fallback. SQLSTATE class `57P` does
+    /// NOT use this variant — those go through `ServerUnavailableError` to
+    /// drive the Patroni-assisted fallback path before this branch is
+    /// reached.
+    ServerStartupParameterRejection {
+        sqlstate: String,
+        message: String,
+        server_identifier: ServerIdentifier,
+    },
     ServerStartupReadParameters(String),
     BadConfig(String),
     AllServersDown,
@@ -144,6 +157,14 @@ impl std::fmt::Display for Error {
             Error::ServerUnavailableError(error, server_identifier) => {
                 write!(f, "Backend unavailable: {error} for {server_identifier}")
             }
+            Error::ServerStartupParameterRejection {
+                sqlstate,
+                message,
+                server_identifier,
+            } => write!(
+                f,
+                "PostgreSQL rejected operator-supplied startup parameter (sqlstate {sqlstate}): {message} for {server_identifier}"
+            ),
             Error::ServerStartupReadParameters(msg) => {
                 write!(f, "Failed to read server parameters: {msg}")
             }

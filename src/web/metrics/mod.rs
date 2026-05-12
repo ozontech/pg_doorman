@@ -483,6 +483,50 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 /// The parameter name and username are intentionally NOT in the label
 /// set so a dynamic `auth_query` pool that mints per-tenant roles cannot
 /// blow up Prometheus series count by reading user input into labels.
+/// Counts cases where pg_doorman dropped operator-supplied
+/// `startup_parameters` *before* the StartupMessage went on the wire —
+/// the failure mode the per-pool `*_errors_total` counter cannot see
+/// because PG never had a chance to reject. Labels:
+///
+/// * `pool` — `<user>@<database>` identifier.
+/// * `reason` — bounded enum:
+///   * `cascade_budget_exceeded` — the merged general+pool+auth_query
+///     map exceeded the operator budget (`MAX_OPERATOR_BUDGET`, 9 488
+///     bytes). Every operator-supplied key was dropped for that spawn
+///     and the backend got PG defaults instead.
+///   * `packet_cap_exceeded` — the full StartupMessage including user,
+///     application_name and database would exceed PG's
+///     `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes). Same drop-all
+///     behaviour.
+///   * `auth_query_oversize` — the auth_query `startup_parameters`
+///     text column for some username exceeded the operator budget at
+///     parse time, so the per-user overlay is ignored.
+///   * `auth_query_invalid_entry` — an individual entry in the
+///     auth_query JSON failed validation (reserved key, bad GUC name,
+///     null byte, non-string value). Incremented per offending entry.
+///
+/// All four cases also emit a `warn!` log line for human triage; the
+/// counter exists so dashboards and alerts can spot the silent drop
+/// without log scraping.
+pub(crate) static STARTUP_PARAMETERS_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_startup_parameters_dropped_total",
+            "Cumulative count of operator-supplied startup_parameters \
+             entries pg_doorman dropped before sending StartupMessage. \
+             Labels: pool, reason (cascade_budget_exceeded, \
+             packet_cap_exceeded, auth_query_oversize, \
+             auth_query_invalid_entry). Distinct from \
+             pg_doorman_backend_startup_parameter_errors_total which \
+             counts PG-side rejections after StartupMessage.",
+        ),
+        &["pool", "reason"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
