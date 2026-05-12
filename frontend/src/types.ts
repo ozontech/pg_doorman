@@ -94,10 +94,20 @@ export interface PoolDto {
 
 export interface StartupParameter {
   parameter: string;
-  value: string;
+  // Backend omits `value` for anonymous viewers so the public read-only
+  // UI does not leak operator-supplied tenant identifiers, audit tags,
+  // or accidental secrets. Admin and SSO callers receive the full
+  // value. When undefined, render as "***".
+  value?: string;
   // "general" | "pool" | "auth_query" — cascade layer that contributed the
   // winning value.
   source: string;
+  // "applied" | "dropped_due_to_budget" | "stale" — wire-application
+  // state cross-checked against the pool's frozen snapshot. `applied`
+  // means the next backend spawn ships this key/value; the other two
+  // states tell the operator that the pool needs a RELOAD or that the
+  // operator cascade is over the StartupMessage budget.
+  state: string;
 }
 
 export interface PoolsDto {
