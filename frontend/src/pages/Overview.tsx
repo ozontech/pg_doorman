@@ -459,7 +459,7 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Pooler-wide status. The sidebar shows live health, alert count, and rate. Click a Golden signals tile to open the 1-hour panel with p50/p95/p99 and event overlays."
+        description="Live pooler-wide signals. Click a Golden signals tile for the 1-hour panel with p50/p95/p99."
         actions={
           <Link
             to="/wall"
@@ -502,7 +502,7 @@ export default function Overview() {
                 logY
                 syncKey="overview"
                 events={chartEvents}
-                tip="Worst per-pool query p95 across all pools, in milliseconds. Amber dashed line at 100 ms, red at 500 ms. Click the tile for the 1-hour panel with p50/p95/p99."
+                tip="Max query p95 across pools. Warn at 100 ms, crit at 500 ms."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("traffic")}>
@@ -512,7 +512,7 @@ export default function Overview() {
                 series={sigSeries((s) => s.qps)}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Aggregate rate across all pools. The two numbers are queries-per-second (left) and transactions-per-second (right); the sparkline tracks q/s. Footer line spells out which is which."
+                tip="Queries/s on the left, transactions/s on the right. Sparkline tracks q/s."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("errors")}>
@@ -524,7 +524,7 @@ export default function Overview() {
                 crit={10}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Aggregate errors per second across all pools (any non-zero SQLSTATE). Amber at 1/s, red at 10/s. Click the tile for the SQLSTATE breakdown."
+                tip="Aggregate errors/s. Warn at 1/s, crit at 10/s."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("saturation")}>
@@ -536,7 +536,7 @@ export default function Overview() {
                 crit={90}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Highest single-pool saturation right now, in percent of pool_size. Amber at 70 %, red at 90 %. The heatmap below identifies the pool under pressure."
+                tip="Worst pool saturation. Warn at 70 %, crit at 90 %. Heatmap below names the hot pool."
               />
             </ChartLink>
           </div>
