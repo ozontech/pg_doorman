@@ -9,18 +9,36 @@ interface ChartProps {
 
 /**
  * Thin wrapper around uPlot. Re-creates the chart when options change,
- * setData when data changes. The cross-hair sync key, if any, lives on
- * options.cursor.sync — caller controls the group name (we use "overview"
- * for all phase 6a charts so hover tracks across the strip).
+ * setData when data changes, and resizes via ResizeObserver so the canvas
+ * tracks its container — without this the chart kept the 1024 px width
+ * encoded in the per-chart options and left a dead strip on the right
+ * once the page container stretched past max-w-6xl.
  */
 export function Chart({ data, options }: ChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    plotRef.current = new uPlot(options, data, containerRef.current);
+    const container = containerRef.current;
+    if (!container) return;
+    const startWidth = Math.max(container.clientWidth, 1);
+    plotRef.current = new uPlot(
+      { ...options, width: startWidth },
+      data,
+      container,
+    );
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.floor(entry.contentRect.width);
+      if (w > 0 && plotRef.current) {
+        plotRef.current.setSize({
+          width: w,
+          height: options.height ?? plotRef.current.height,
+        });
+      }
+    });
+    ro.observe(container);
     return () => {
+      ro.disconnect();
       plotRef.current?.destroy();
       plotRef.current = null;
     };

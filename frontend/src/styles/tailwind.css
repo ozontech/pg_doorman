@@ -1,70 +1,105 @@
 @import "tailwindcss";
 
-/* Bloomberg-Terminal direction: JetBrains Mono is the only typeface —
-   display, body, numerics. Subset trim: latin + cyrillic, weights 400 +
-   500, woff2 only (`font-bold` aka 700 is not used anywhere in the app —
-   `font-semibold`/600 is the heaviest weight rendered, and the browser
-   synthesises that from 500 with no visible artefacting in this face).
-   Result: 4 woff2 files in the bundle, ~150 KB across all subsets. */
+/* Typography pair: Geist Sans for prose/UI chrome, JetBrains Mono for
+   numerics, identifiers, and code. JetBrains Mono carries the cyrillic
+   subset so a pool name in russian still renders crisp in the mono
+   slots; Geist Sans is latin-only and falls back to JetBrains Mono for
+   any non-latin glyph that lands in body text. */
+@import "@fontsource/geist-sans/latin-400.css";
+@import "@fontsource/geist-sans/latin-500.css";
+@import "@fontsource/geist-sans/latin-600.css";
 @import "@fontsource/jetbrains-mono/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-500.css";
-@import "@fontsource/jetbrains-mono/cyrillic-400.css";
-@import "@fontsource/jetbrains-mono/cyrillic-500.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Surface — Bloomberg-flat. The whole canvas is one plane carved by
-     hairline borders rather than four near-identical near-black layers. */
-  --color-bg:         #000000;
-  --color-surface:    #000000;
-  --color-surface-2:  #0b0b0b;
-  --color-surface-3:  #0b0b0b;
+  /* Light mode is the default. Linear/Vercel/Stripe-flavoured: a near-
+     white canvas, surfaces lifted with a hint of grey, borders thin
+     warm, primary accent is a classic SaaS blue. The .dark overrides
+     below re-skin the same tokens for operators who prefer the kiosk
+     look — none of the page-level styles need to know which mode is
+     active, they read the variables. */
+  --color-bg:         #fafafa;
+  --color-surface:    #ffffff;
+  --color-surface-2:  #f4f4f5;
+  --color-surface-3:  #e4e4e7;
 
-  /* Borders — single hairline tone, never doubled. */
-  --color-border:        #1f1f1f;
-  --color-border-strong: #2a2a2a;
+  --color-border:        #e4e4e7;
+  --color-border-strong: #d4d4d8;
 
-  /* Text — warm paper-white, not bluish. */
-  --color-text:       #e8e3d6;
-  --color-text-muted: #9a9485;
-  --color-text-dim:   #5a564b;
+  --color-text:       #18181b;
+  --color-text-muted: #52525b;
+  --color-text-dim:   #a1a1aa;
 
-  /* Accent — Bloomberg amber. Used for call-to-action, focus rings,
-     selection, and the live-tick underline animation below. */
-  --color-accent:       #ffb000;
-  --color-accent-hover: #ffc233;
-  --color-accent-fg:    #000000;
+  /* Accent — classic SaaS blue. Amber retired from the brand role; if
+     someone wants the Bloomberg amber back it can ride on warning. */
+  --color-accent:       #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-fg:    #ffffff;
 
-  /* Semantic — high-contrast trader palette. */
-  --color-success: #39d353;
-  --color-warning: #ffb000;
-  --color-danger:  #ff4d4d;
-  --color-info:    #00d4ff;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger:  #dc2626;
+  --color-info:    #0891b2;
 
-  /* Chart palette (uPlot lines) — distinct hues, no muddy gradients. */
-  --color-chart-1: #ffb000;
-  --color-chart-2: #00d4ff;
-  --color-chart-3: #39d353;
-  --color-chart-4: #ff4d4d;
+  /* Chart palette (uPlot lines) — readable on a light canvas, distinct
+     hues, no muddy gradients. */
+  --color-chart-1: #2563eb;
+  --color-chart-2: #06b6d4;
+  --color-chart-3: #16a34a;
+  --color-chart-4: #dc2626;
 
-  /* Typography. JetBrains Mono is the only typeface; system fallbacks
-     cover the rare case where the woff2 fails to load. */
-  --font-sans: "JetBrains Mono", ui-monospace, monospace;
+  /* Typography. Geist Sans for chrome/prose, JetBrains Mono for numbers
+     and identifiers. Both fall back to system mono/sans so a font-load
+     failure never strands the operator on an unstyled page. */
+  --font-sans: "Geist Sans", "JetBrains Mono", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --font-size-xs:   11px;
-  --font-size-sm:   13px;
-  --font-size-base: 14px;
-  --font-size-md:   16px;
-  --font-size-lg:   20px;
-  --font-size-xl:   28px;
+  --font-size-xs:   12px;
+  --font-size-sm:   14px;
+  --font-size-base: 15px;
+  --font-size-md:   17px;
+  --font-size-lg:   22px;
+  --font-size-xl:   30px;
 
-  /* Geometry. Bloomberg discipline: zero radius, no shadow, depth via
-     hairlines. Setting --radius-* to 0 collapses every rounded-* class. */
-  --radius-sm: 0;
-  --radius-md: 0;
-  --radius-lg: 0;
-  --radius-xl: 0;
-  --radius-2xl: 0;
-  --radius-3xl: 0;
+  /* Geometry. Modern SaaS uses 6-8 px on cards and 4 px on chips. The
+     full Tailwind radius scale is restored from the Bloomberg zero. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+}
+
+/* Dark-mode overrides. Applied by adding `.dark` to <html>. Toggle is
+   wired in ThemeProvider, persisted in localStorage. */
+.dark {
+  --color-bg:         #0a0a0b;
+  --color-surface:    #131316;
+  --color-surface-2:  #1c1c20;
+  --color-surface-3:  #26262b;
+
+  --color-border:        #2a2a30;
+  --color-border-strong: #404048;
+
+  --color-text:       #fafafa;
+  --color-text-muted: #a1a1aa;
+  --color-text-dim:   #71717a;
+
+  --color-accent:       #60a5fa;
+  --color-accent-hover: #93c5fd;
+  --color-accent-fg:    #0a0a0b;
+
+  --color-success: #4ade80;
+  --color-warning: #f59e0b;
+  --color-danger:  #f87171;
+  --color-info:    #22d3ee;
+
+  --color-chart-1: #60a5fa;
+  --color-chart-2: #22d3ee;
+  --color-chart-3: #4ade80;
+  --color-chart-4: #f87171;
 }
 
 /* Tabular figures helper. JetBrains Mono is tabular by default; the legacy
@@ -73,13 +108,13 @@
   font-variant-numeric: tabular-nums slashed-zero;
 }
 
-/* Focus ring — single hairline amber, no offset. */
+/* Focus ring — primary accent, single line. */
 *:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 0;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
-/* Selection — invert to amber-on-black. */
+/* Selection — accent-on-white. */
 ::selection {
   background: var(--color-accent);
   color: var(--color-accent-fg);
@@ -94,7 +129,7 @@ html {
   scrollbar-gutter: stable;
 }
 
-/* Scrollbar — narrow, monochrome, no rounded thumb. */
+/* Scrollbar — narrow, monochrome, rounded thumb. */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -104,28 +139,51 @@ html {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-strong);
 }
 
+/* Soft elevation for cards. Tailwind's shadow-sm/shadow-md tuned for a
+   light canvas so cards lift off the bg instead of being delineated by
+   a 1 px border alone. .dark variants strip the warm component so the
+   shadow disappears against the matte black canvas. */
+.shadow-card {
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 1px 0 rgb(0 0 0 / 0.03);
+}
+.dark .shadow-card {
+  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.02);
+}
+
+/* Page-transition fade. Applied to the keyed route container so the
+   freshly mounted page eases in over 150 ms instead of snapping. The
+   reduced-motion media query below already disables it for users who
+   asked the browser to keep things still. */
+@keyframes page-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-page-in { animation: page-fade-in 150ms ease-out; }
+
 /* Tick-flash animation. Live cells (numbers retickering each poll cycle)
    wear this for ~160ms after each update so the dashboard feels like a
    tickertape without any actual motion of content. */
-@keyframes tick-amber {
-  0%   { background-color: rgb(255 176 0 / 0.20); }
+@keyframes tick-up-kf {
+  0%   { background-color: rgb(37 99 235 / 0.15); }
   100% { background-color: transparent; }
 }
-@keyframes tick-cyan {
-  0%   { background-color: rgb(0 212 255 / 0.20); }
+@keyframes tick-down-kf {
+  0%   { background-color: rgb(8 145 178 / 0.15); }
   100% { background-color: transparent; }
 }
-.tick-up   { animation: tick-amber 160ms linear; }
-.tick-down { animation: tick-cyan 160ms linear; }
+.tick-up   { animation: tick-up-kf 160ms linear; }
+.tick-down { animation: tick-down-kf 160ms linear; }
 
 @media (prefers-reduced-motion: reduce) {
   .tick-up,
-  .tick-down {
+  .tick-down,
+  .animate-page-in {
     animation: none;
   }
 }

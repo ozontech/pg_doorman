@@ -66,7 +66,7 @@ export function MemoryPanel({ open, onClose }: { open: boolean; onClose: () => v
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">panel</div>
+            <div className="text-[10px] uppercase tracking-wide text-text-dim">panel</div>
             <h2 className="font-mono text-base font-semibold text-text">Process memory breakdown</h2>
           </div>
           <button
@@ -140,14 +140,14 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
     <div className="space-y-6">
       <div className="flex items-baseline justify-between border-b border-border pb-3">
         <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">RSS</div>
+          <div className="text-[10px] uppercase tracking-wide text-text-dim">RSS</div>
           <div className="font-mono text-3xl font-semibold tabular text-text">
             {fmt(data.rss_bytes)}
           </div>
         </div>
         {data.cgroup && (
           <div className="text-right">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">
+            <div className="text-[10px] uppercase tracking-wide text-text-dim">
               cgroup v{data.cgroup.version}
             </div>
             <div className="font-mono text-base text-text">
@@ -162,7 +162,7 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
       </div>
 
       <section>
-        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-text-dim">
+        <div className="mb-2 text-[10px] uppercase tracking-wide text-text-dim">
           breakdown
         </div>
         {/*
@@ -244,7 +244,7 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
 
       {data.jemalloc && (
         <section>
-          <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-text-dim">
+          <div className="mb-2 text-[10px] uppercase tracking-wide text-text-dim">
             jemalloc
           </div>
           <table className="w-full text-xs tabular">
@@ -282,7 +282,7 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
       )}
 
       <section>
-        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-text-dim">
+        <div className="mb-2 text-[10px] uppercase tracking-wide text-text-dim">
           /proc/self/status
         </div>
         <table className="w-full text-xs tabular">
@@ -347,7 +347,7 @@ function Body({ data }: { data: MemoryBreakdownDto }) {
       </section>
 
       <section>
-        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-text-dim">
+        <div className="mb-2 text-[10px] uppercase tracking-wide text-text-dim">
           pg_doorman caches
         </div>
         <table className="w-full text-xs tabular">

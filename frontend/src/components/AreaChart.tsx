@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Options } from "uplot";
 import type uPlot from "uplot";
 import { Chart } from "./Chart";
@@ -30,6 +30,11 @@ export function AreaChart({
   events,
 }: AreaChartProps) {
   const [hover, setHover] = useState<{ ts: number; values: number[] } | null>(null);
+  // Live ref for the admin-events annotations so the draw hook reads the
+  // latest entries without forcing options to re-create on every event
+  // poll — that re-creation tore down the plot every 3 s.
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
   const stacked = useMemo<[number[], ...number[][]]>(() => {
     const xs = data[0];
     const cumulative: number[][] = [];
@@ -100,30 +105,30 @@ export function AreaChart({
             setHover({ ts, values });
           },
         ],
-        draw: events && events.length > 0
-          ? [
-              (u: uPlot) => {
-                const ctx = u.ctx;
-                ctx.save();
-                ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
-                ctx.setLineDash([]);
-                ctx.lineWidth = 1;
-                for (const ev of events) {
-                  const xPx = u.valToPos(ev.ts, "x", true);
-                  if (!Number.isFinite(xPx)) continue;
-                  if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
-                  ctx.beginPath();
-                  ctx.moveTo(xPx, u.bbox.top);
-                  ctx.lineTo(xPx, u.bbox.top + u.bbox.height);
-                  ctx.stroke();
-                }
-                ctx.restore();
-              },
-            ]
-          : [],
+        draw: [
+          (u: uPlot) => {
+            const live = eventsRef.current;
+            if (!live || live.length === 0) return;
+            const ctx = u.ctx;
+            ctx.save();
+            ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
+            ctx.setLineDash([]);
+            ctx.lineWidth = 1;
+            for (const ev of live) {
+              const xPx = u.valToPos(ev.ts, "x", true);
+              if (!Number.isFinite(xPx)) continue;
+              if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
+              ctx.beginPath();
+              ctx.moveTo(xPx, u.bbox.top);
+              ctx.lineTo(xPx, u.bbox.top + u.bbox.height);
+              ctx.stroke();
+            }
+            ctx.restore();
+          },
+        ],
       },
     }),
-    [labels, fills, height, syncKey, events],
+    [labels, fills, height, syncKey],
   );
 
   // Static legend above the canvas. uPlot's built-in legend renders inline
@@ -146,7 +151,16 @@ export function AreaChart({
           </span>
         ))}
       </div>
-      <Chart data={stacked} options={options} />
+      {data[0].length >= 2 ? (
+        <Chart data={stacked} options={options} />
+      ) : (
+        <div
+          style={{ height }}
+          className="flex items-center justify-center text-xs text-text-dim"
+        >
+          collecting samples · {data[0].length}/120
+        </div>
+      )}
       <div className="mt-1 px-2 text-xs text-text-dim tabular">
         {hover ? (
           <span className="flex flex-wrap gap-x-4">

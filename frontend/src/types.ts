@@ -270,6 +270,35 @@ export interface ClientDto {
   current_query_age_ms: number;
 }
 
+export interface ServerDto {
+  server_id: number;
+  process_id: number;
+  database: string;
+  user: string;
+  application_name: string;
+  tls: boolean;
+  state: string;
+  wait: string;
+  age_seconds: number;
+  active_age_ms: number;
+  transactions_total: number;
+  queries_total: number;
+  errors_total: number;
+  bytes_sent: number;
+  bytes_received: number;
+  prepared_hits_total: number;
+  prepared_misses_total: number;
+  prepared_cache_size: number;
+}
+
+export interface ServersDto {
+  ts: number;
+  total: number;
+  limit: number;
+  offset: number;
+  servers: ServerDto[];
+}
+
 export interface ClientsDto {
   ts: number;
   total: number;

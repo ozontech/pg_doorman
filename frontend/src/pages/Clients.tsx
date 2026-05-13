@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
-import type { ClientsDto } from "../types";
+import type { ClientDto, ClientsDto } from "../types";
 
-const POLL_MS = 1500;
+// Slower cadence than the dashboards: a per-client view at 1.5 s made
+// Chrome memory grow under load. Three seconds keeps the page current
+// without forcing hundreds of cell updates per second.
+const POLL_MS = 3000;
 const PAGE_SIZE = 50;
 
 type ClientTotals = Record<string, { queries: number; transactions: number }>;
@@ -15,14 +18,18 @@ type ClientRates = Record<string, { qps: number; tps: number }>;
 
 // Computes per-client qps / tps from the delta between the current /api/clients
 // snapshot and the previous one. Mirrors `useAppRates` on the Apps page;
-// /api/clients only ships lifetime counters, so without this hook the operator
-// has no way to see which client session is busy *right now* short of
-// watching the queries column tick.
+// /api/clients only ships lifetime counters.
 function useClientRates(data: ClientsDto | null): ClientRates {
   const [rates, setRates] = useState<ClientRates>({});
   const prevRef = useRef<{ ts: number; clients: ClientTotals } | null>(null);
   useEffect(() => {
     if (!data) return;
+    // Skip when the snapshot ts has not advanced — React Strict Mode
+    // and parent re-renders can hand us the same data object twice in
+    // a row, and the previous version recomputed a brand-new
+    // ClientRates record on every such pass, which showed up as steady
+    // Chrome memory growth on the Clients tab.
+    if (prevRef.current && prevRef.current.ts === data.ts) return;
     const cur: ClientTotals = {};
     for (const c of data.clients) {
       cur[c.client_id] = {
@@ -31,7 +38,7 @@ function useClientRates(data: ClientsDto | null): ClientRates {
       };
     }
     const prev = prevRef.current;
-    if (prev && prev.ts !== data.ts) {
+    if (prev) {
       const dt = (data.ts - prev.ts) / 1000;
       if (dt > 0) {
         const next: ClientRates = {};
@@ -66,10 +73,7 @@ interface Filters {
 
 const STATE_OPTIONS = ["", "active", "idle", "waiting", "closing"];
 
-// Single labelled text input. Browsers turn the label into a click target for
-// the field, and operators see the placeholder *and* the field name even
-// after they start typing — placeholder-as-label loses the field name the
-// moment you type one character.
+// Single labelled input so the field name remains visible after typing starts.
 function FilterField({
   label,
   value,
@@ -119,17 +123,72 @@ function buildQuery(filters: Filters, sort: SortKey, dir: SortDir, offset: numbe
 
 export default function Clients() {
   const { authHeader } = useAdminAuth();
-  const [filters, setFilters] = useState<Filters>({
-    pool: "",
-    database: "",
-    user: "",
-    state: "",
-    appName: "",
-    addr: "",
-  });
-  const [sort, setSort] = useState<SortKey>("queries_total");
-  const [dir, setDir] = useState<SortDir>("desc");
-  const [offset, setOffset] = useState(0);
+  // Filters, sort, and pagination live in the URL so the current view
+  // can be shared during an incident.
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Memoise so the object reference is stable across renders that did
+  // not change a query param — otherwise downstream useMemo / useEffect
+  // hooks that depend on `filters` re-fire on every parent render.
+  const filters: Filters = useMemo(
+    () => ({
+      pool: searchParams.get("pool") ?? "",
+      database: searchParams.get("database") ?? "",
+      user: searchParams.get("user") ?? "",
+      state: searchParams.get("state") ?? "",
+      appName: searchParams.get("appName") ?? "",
+      addr: searchParams.get("addr") ?? "",
+    }),
+    [searchParams],
+  );
+  const sort = (searchParams.get("sort") as SortKey) || "queries_total";
+  const dir = (searchParams.get("dir") as SortDir) || "desc";
+  const offset = Number(searchParams.get("offset") ?? "0") || 0;
+  const writeParams = (mut: (sp: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams);
+    mut(next);
+    setSearchParams(next, { replace: true });
+  };
+  const setFilters = (
+    updater: Filters | ((prev: Filters) => Filters),
+  ) => {
+    const value =
+      typeof updater === "function" ? updater(filters) : updater;
+    writeParams((sp) => {
+      const keys: (keyof Filters)[] = [
+        "pool",
+        "database",
+        "user",
+        "state",
+        "appName",
+        "addr",
+      ];
+      for (const k of keys) {
+        if (value[k]) sp.set(k, value[k]);
+        else sp.delete(k);
+      }
+      sp.delete("offset");
+    });
+  };
+  const setSort = (v: SortKey) =>
+    writeParams((sp) => {
+      if (v !== "queries_total") sp.set("sort", v);
+      else sp.delete("sort");
+      sp.delete("offset");
+    });
+  const setDir = (next: SortDir | ((prev: SortDir) => SortDir)) => {
+    const value = typeof next === "function" ? next(dir) : next;
+    writeParams((sp) => {
+      if (value !== "desc") sp.set("dir", value);
+      else sp.delete("dir");
+    });
+  };
+  const setOffset = (next: number | ((prev: number) => number)) => {
+    const value = typeof next === "function" ? next(offset) : next;
+    writeParams((sp) => {
+      if (value > 0) sp.set("offset", String(value));
+      else sp.delete("offset");
+    });
+  };
 
   const query = useMemo(() => buildQuery(filters, sort, dir, offset), [filters, sort, dir, offset]);
   const fetcher = useCallback(
@@ -213,13 +272,14 @@ export default function Clients() {
     <section className="flex flex-col">
       <PageHero
         title="Clients"
-        description="Identify a specific client session. Filter by application_name when one app is misbehaving; by addr when you have an IP from pg_stat_activity; by user/database when an account is the suspect. Sort by Q age ms to find a stuck query; by Age s to find a long-lived session; by Errors to find the noisy ones. State = waiting means the client is queued for a backend connection."
-      />
-      <SectionHeader
-        title="Filters"
-        what="Substring filter on pool / database / user / application_name and an exact state match."
-        how="Each filter change jumps you back to page 1."
-        normal="50 rows per page; the count on the right is the filtered total — change a filter to see how it shrinks."
+        help={{
+          definition:
+            "All active client sessions. Use address-level search when you have a client IP. Sort by Q age ms for long-running queries, by Age s for long-lived sessions, and by Errors for error-heavy clients. State = waiting means the client is queued for a backend.",
+          source: "SHOW CLIENTS",
+          related: ["SHOW SERVERS", "pg_stat_activity.client_addr"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
       <div className="flex flex-wrap items-end gap-3 border-b border-border px-6 py-3">
         <FilterField label="pool" value={filters.pool} width="w-32"
@@ -330,7 +390,7 @@ export default function Clients() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Total errors observed for this client. Sort to find the noisy ones — stuck transactions or auth retries.">
+              <InfoLabel tip="Total errors observed for this client. Sort to find sessions with repeated transaction or auth failures.">
                 <span className="cursor-pointer" onClick={() => onSort("errors_total")}>
                   Errors{sortIndicator("errors_total")}
                 </span>
@@ -340,45 +400,17 @@ export default function Clients() {
           </tr>
         </thead>
         <tbody>
-          {visibleClients.map((c) => (
-            <tr key={c.client_id} className="border-b border-border hover:bg-surface-2">
-              <td className="px-3 py-1.5 font-mono text-xs">{c.client_id}</td>
-              <td className="px-3 py-1.5 font-mono text-xs text-text-muted">{c.addr || "—"}</td>
-              <td className="px-3 py-1.5 text-xs">{c.user}@{c.database}</td>
-              <td className="px-3 py-1.5 text-xs text-text-muted">{c.application_name || "—"}</td>
-              <td className="px-3 py-1.5 text-xs">
-                <span className={
-                  c.state === "active" ? "text-success" :
-                  c.state === "waiting" ? "text-warning" :
-                  "text-text-muted"
-                }>
-                  {c.state}
-                </span>
-              </td>
-              <td className="px-3 py-1.5 text-right text-xs text-text-muted">
-                {c.wait && c.wait !== "none" ? (
-                  <span title={`reason: ${c.wait}`}>{c.wait_ms ? `${c.wait_ms} ms` : c.wait}</span>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="px-3 py-1.5 text-right">{c.current_query_age_ms || "—"}</td>
-              <td className="px-3 py-1.5 text-right">{c.age_seconds}</td>
-              <td className="px-3 py-1.5 text-right">
-                {rates[c.client_id] ? rates[c.client_id].qps.toFixed(1) : "—"}
-              </td>
-              <td className="px-3 py-1.5 text-right">
-                {rates[c.client_id] ? rates[c.client_id].tps.toFixed(1) : "—"}
-              </td>
-              <td className="px-3 py-1.5 text-right">{c.queries_total}</td>
-              <td className={`px-3 py-1.5 text-right ${c.errors_total > 0 ? "text-warning" : ""}`}>
-                {c.errors_total}
-              </td>
-              <td className="px-3 py-1.5 text-xs text-text-muted" title={c.tls ? "TLS" : "plaintext"}>
-                {c.tls ? "✓" : ""}
-              </td>
-            </tr>
-          ))}
+          {visibleClients.map((c) => {
+            const r = rates[c.client_id];
+            return (
+              <ClientRow
+                key={c.client_id}
+                client={c}
+                qps={r?.qps ?? null}
+                tps={r?.tps ?? null}
+              />
+            );
+          })}
         </tbody>
       </table>
       <div className="flex items-center gap-2 px-4 py-3">
@@ -403,3 +435,87 @@ export default function Clients() {
     </section>
   );
 }
+
+// Memoised row. /api/clients ships a fresh array every poll, so each `c`
+// reference is new even when the client did not move; default React.memo
+// shallow-compare would never skip. The custom comparator checks the
+// fields that drive the render — anything else (e.g. tls flag flapping)
+// is so rare it is fine to repaint when it changes.
+const ClientRow = memo(
+  function ClientRow({
+    client: c,
+    qps,
+    tps,
+  }: {
+    client: ClientDto;
+    qps: number | null;
+    tps: number | null;
+  }) {
+    return (
+      <tr className="border-b border-border hover:bg-surface-2">
+        <td className="px-3 py-1.5 font-mono text-xs">{c.client_id}</td>
+        <td className="px-3 py-1.5 font-mono text-xs text-text-muted">{c.addr || "—"}</td>
+        <td className="px-3 py-1.5 text-xs">{c.user}@{c.database}</td>
+        <td className="px-3 py-1.5 text-xs text-text-muted">{c.application_name || "—"}</td>
+        <td className="px-3 py-1.5 text-xs">
+          <span
+            className={
+              c.state === "active"
+                ? "text-success"
+                : c.state === "waiting"
+                  ? "text-warning"
+                  : "text-text-muted"
+            }
+          >
+            {c.state}
+          </span>
+        </td>
+        <td className="px-3 py-1.5 text-right text-xs text-text-muted">
+          {c.wait && c.wait !== "none" ? (
+            <span title={`reason: ${c.wait}`}>
+              {c.wait_ms ? `${c.wait_ms} ms` : c.wait}
+            </span>
+          ) : (
+            "—"
+          )}
+        </td>
+        <td className="px-3 py-1.5 text-right">{c.current_query_age_ms || "—"}</td>
+        <td className="px-3 py-1.5 text-right">{c.age_seconds}</td>
+        <td className="px-3 py-1.5 text-right">
+          {qps === null ? "—" : qps.toFixed(1)}
+        </td>
+        <td className="px-3 py-1.5 text-right">
+          {tps === null ? "—" : tps.toFixed(1)}
+        </td>
+        <td className="px-3 py-1.5 text-right">{c.queries_total}</td>
+        <td
+          className={`px-3 py-1.5 text-right ${c.errors_total > 0 ? "text-warning" : ""}`}
+        >
+          {c.errors_total}
+        </td>
+        <td
+          className="px-3 py-1.5 text-xs text-text-muted"
+          title={c.tls ? "TLS" : "plaintext"}
+        >
+          {c.tls ? "✓" : ""}
+        </td>
+      </tr>
+    );
+  },
+  (prev, next) =>
+    prev.client.client_id === next.client.client_id &&
+    prev.client.state === next.client.state &&
+    prev.client.wait === next.client.wait &&
+    prev.client.wait_ms === next.client.wait_ms &&
+    prev.client.current_query_age_ms === next.client.current_query_age_ms &&
+    prev.client.age_seconds === next.client.age_seconds &&
+    prev.client.queries_total === next.client.queries_total &&
+    prev.client.errors_total === next.client.errors_total &&
+    prev.client.application_name === next.client.application_name &&
+    prev.client.user === next.client.user &&
+    prev.client.database === next.client.database &&
+    prev.client.addr === next.client.addr &&
+    prev.client.tls === next.client.tls &&
+    prev.qps === next.qps &&
+    prev.tps === next.tps,
+);

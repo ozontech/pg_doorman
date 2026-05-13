@@ -24,7 +24,24 @@ export default function Caches() {
     <section className="flex flex-col">
       <PageHero
         title="Caches"
-        description="Two caches whose miss rate translates directly into PostgreSQL CPU. Prepared = per-pool statement cache; hit rate below 95 % means you are paying for a Parse on every call. Query cache = process-wide SQL text dedup; growing anonymous bytes with no upper bound means an app is sending unique ad-hoc SQL on every request — fix the app or shrink client_anonymous_prepared_cache_size."
+        help={{
+          definition:
+            "Prepared and query-text caches. Prepared is the per-pool statement cache (hash → DOORMAN_N); pg_doorman remaps anonymous Parse to a named statement so PostgreSQL can reuse plans across clients. Query cache is the process-wide SQL text interner (named + anonymous).",
+          source:
+            "SHOW PREPARED_STATEMENTS · SHOW INTERNER · SHOW INTERNER <N>",
+          formula: "hit rate = hits / (hits + misses)",
+          thresholds: {
+            healthy: "hit rate ≥ 95 %",
+            warn: "< 95 % — raise prepared_statements_cache_size",
+            crit: "< 80 % — most calls pay for Parse",
+          },
+          related: [
+            "SHOW POOLS_MEMORY",
+            "client_anonymous_prepared_cache_size",
+          ],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/tutorials/prepared-statements.html",
+        }}
       />
       <div className="flex items-center gap-1 border-b border-border bg-surface px-6">
         <TabButton active={tab === "prepared"} onClick={() => setTab("prepared")}>Prepared</TabButton>
@@ -81,7 +98,7 @@ type PreparedRefsRates = Record<string, number>;
 // Per-(pool, hash) refs/s — delta of (hits + misses) between consecutive
 // /api/prepared snapshots, divided by the snapshot interval. The hits
 // and misses counters bump on every Parse-time reference, so this rate
-// shows which statements are touched right now versus which sit cold.
+// shows which statements are active now.
 function usePreparedRefsRate(data: PreparedDto | null): PreparedRefsRates {
   const [rates, setRates] = useState<PreparedRefsRates>({});
   const prevRef = useRef<{ ts: number; totals: PreparedRefsTotals } | null>(null);
@@ -110,10 +127,8 @@ function usePreparedRefsRate(data: PreparedDto | null): PreparedRefsRates {
   return rates;
 }
 
-/// Hit-rate sentinel used to keep "no traffic yet" rows below real data
-/// regardless of asc/desc — `hits + misses == 0` rows have nothing to
-/// compare and dragging them to the top would bury the rows operators
-/// actually care about.
+/// Hit-rate sentinel used to keep `hits + misses == 0` rows below rows
+/// with real traffic, regardless of asc/desc.
 const HIT_RATE_NO_DATA = -1;
 
 function hitRateOrSentinel(r: PreparedRowDto): number {
@@ -241,9 +256,20 @@ function PreparedTab() {
     <>
       <SectionHeader
         title="Prepared statements"
-        what="One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip. Click a row to fetch the SQL body."
-        how="Click a row to expand the SQL body — admin credentials required, fetched once per row and kept until you collapse it. Updates every 3 s."
-        normal="Hit rate ≥ 95 % once the pool is warm. If a pool sits below 95 % for several minutes, raise prepared_statements_cache_size. Below 80 % means most queries pay for a Parse — that is a hot-path regression."
+        help={{
+          definition:
+            "One row per (pool, prepared statement). Hits are parse-time cache hits; misses require a PostgreSQL Parse round-trip. Click a row to fetch the SQL body (admin-only, cached until collapse).",
+          source: "SHOW PREPARED_STATEMENTS",
+          formula: "hit rate = hits / (hits + misses)",
+          thresholds: {
+            healthy: "hit rate ≥ 95 % once pool is warm",
+            warn: "< 95 % sustained — raise prepared_statements_cache_size",
+            crit: "< 80 % — most calls pay for Parse",
+          },
+          related: ["SHOW POOLS_MEMORY", "client_anonymous_prepared_cache_size"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/tutorials/prepared-statements.html",
+        }}
       />
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
         <input
@@ -329,7 +355,7 @@ function PreparedTab() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Parse-time references per second over the last poll interval — delta of (hits + misses) divided by the time gap. Sort desc to find the hot statements right now. Empty (—) until the second snapshot arrives.">
+              <InfoLabel tip="Parse-time references per second over the last poll interval: delta of (hits + misses) divided by the time gap. Empty (—) until the second snapshot arrives.">
                 <span className="cursor-pointer hover:text-text" onClick={() => onSort("refs_per_s")}>
                   Refs/s{sortIndicator("refs_per_s")}
                 </span>
@@ -350,7 +376,7 @@ function PreparedTab() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="hits / (hits + misses). Healthy is ≥ 95 % once warm; below 80 % means most queries pay for a Parse on every call.">
+              <InfoLabel tip="hits / (hits + misses). Expected value is ≥ 95 % after warmup; below 80 % means most queries pay for Parse.">
                 <span className="cursor-pointer hover:text-text" onClick={() => onSort("hit_rate")}>
                   Hit rate{sortIndicator("hit_rate")}
                 </span>
@@ -400,7 +426,7 @@ function PreparedTab() {
                       )}
                       {cell.text && (
                         <div className="space-y-2">
-                          <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-text-dim">
+                          <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-text-dim">
                             <span>SQL · {key}</span>
                             <button
                               type="button"
@@ -425,7 +451,7 @@ function PreparedTab() {
         </tbody>
       </table>
       {poll.data.prepared.length === 0 && (
-        <p className="p-4 text-sm text-text-dim">No prepared statements yet. The cache fills as clients send Parse over the wire — open the Clients page to confirm traffic is flowing.</p>
+        <p className="p-4 text-sm text-text-dim">No prepared statements yet. The cache fills as clients send Parse messages; open Clients to confirm traffic.</p>
       )}
       {poll.data.prepared.length > 0 && sorted.length === 0 && (
         <p className="p-4 text-sm text-text-dim">No statements match these filters. Click clear to see them all again.</p>
@@ -440,9 +466,8 @@ function InternerTab() {
     (signal) => apiGet<InternerDto>("/api/interner", authHeader, signal),
     POLL_MS,
   );
-  // Admin-only top-N from /api/interner/top — needed to show *which*
-  // entries dominate the cache. Without it the tab is just two summary
-  // cards and offers no actionable information.
+  // Admin-only top-N from /api/interner/top shows which entries dominate
+  // the cache; the summary alone only gives totals.
   const topPoll = usePoll<InternerTopDto>(
     (signal) => apiGet<InternerTopDto>("/api/interner/top?n=20", authHeader, signal),
     POLL_MS,
@@ -461,9 +486,19 @@ function InternerTab() {
     <>
       <SectionHeader
         title="Query interner"
-        what="Global byte-deduplicated SQL text cache. Named = explicitly prepared statements; anonymous = ad-hoc queries."
-        how="Refreshes every 3 s."
-        normal="Named bytes flat, anonymous bytes climbing without bound = an app is sending one-off SQL on every call. Either fix the app to use prepared statements, or lower client_anonymous_prepared_cache_size to bound the memory."
+        help={{
+          definition:
+            "Process-wide byte-deduplicated SQL text cache. Named = explicitly prepared statements; anonymous = ad-hoc queries with no name (Parse with empty name).",
+          source: "SHOW INTERNER",
+          related: ["SHOW INTERNER <N>", "client_anonymous_prepared_cache_size"],
+          thresholds: {
+            healthy: "named bytes flat",
+            warn: "anonymous bytes keep growing",
+            crit: "anonymous bytes near memory cap — app sends unique SQL each call",
+          },
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/operations/monitoring-interner.html",
+        }}
       />
       <div className="grid grid-cols-2 gap-6 p-6">
         <Card title="Named" entries={poll.data.named.entries} bytes={poll.data.named.bytes} fmtBytes={fmtBytes} />
@@ -471,8 +506,14 @@ function InternerTab() {
       </div>
       <SectionHeader
         title="Top entries by bytes"
-        what="Largest interned SQL texts across both kinds. Useful for spotting outlier statements that bloat the cache."
-        how="Top 20 largest interned statements, admin only. Preview is the first ~120 characters, trimmed at a UTF-8 boundary so the SQL stays readable."
+        help={{
+          definition:
+            "Twenty largest interned SQL texts across both kinds. Large one-off statements here are candidates for parametrisation.",
+          source: "SHOW INTERNER 20",
+          related: ["SHOW INTERNER"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/operations/monitoring-interner.html",
+        }}
       />
       {topPoll.error && (
         <p className="px-6 pb-4 text-sm text-danger">{topPoll.error.message}</p>
@@ -493,7 +534,7 @@ function InternerTab() {
                   </InfoLabel>
                 </th>
                 <th className="px-3 py-2 text-right">
-                  <InfoLabel tip="Bytes the SQL text occupies in the interner. Server has Top 20 sorted desc by this column already.">
+                  <InfoLabel tip="Bytes the SQL text occupies in the interner. The server already returns this Top 20 sorted descending by bytes.">
                     Bytes
                   </InfoLabel>
                 </th>
@@ -560,7 +601,7 @@ function Card({
         </dt>
         <dd className="text-right">{fmtBytes(bytes)}</dd>
         <dt className="text-text-muted">
-          <InfoLabel tip="Total bytes / entries. A useful proxy for SQL shape — small avg = many short statements; large avg = a few big DML / DDL strings dominate.">
+          <InfoLabel tip="Average SQL text size. Small average usually means many short statements; large average means a few big DML / DDL strings dominate.">
             Avg bytes / entry
           </InfoLabel>
         </dt>

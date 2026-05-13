@@ -89,19 +89,63 @@ export function PanelView({
     return [slicedXs, ...sliced] as [number[], ...number[][]];
   }, [data, rangeMs]);
 
+  // Series visibility — Grafana-style legend click: click a series row
+  // to isolate it (hide every other); click the same row again to
+  // restore all. Cmd/Ctrl+click toggles just that one series so the
+  // operator can dim a single noisy band without losing the rest.
+  const [hidden, setHidden] = useState<Set<number>>(new Set());
+  const toggleSeries = (idx: number, isolate: boolean) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (isolate) {
+        // If this series is the only visible one, restore all. Otherwise
+        // hide every other series and show only this one.
+        const totalSeries = windowed.length - 1;
+        const visibleCount = totalSeries - prev.size;
+        const onlyThis = visibleCount === 1 && !prev.has(idx);
+        if (onlyThis) {
+          return new Set();
+        }
+        for (let i = 0; i < totalSeries; i++) {
+          if (i === idx) next.delete(i);
+          else next.add(i);
+        }
+        return next;
+      }
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  // Apply visibility to the line/stackedArea/dualAxis data before stacking.
+  // For line and dualAxis, hidden series become NaN (uPlot breaks the
+  // line on NaN). For stackedArea, hidden contributions become zero so
+  // the visible bands keep their cumulative shape without a hole in the
+  // middle of the stack.
+  const visible = useMemo<[number[], ...number[][]]>(() => {
+    if (hidden.size === 0) return windowed;
+    const xs = windowed[0];
+    const fill = kind === "stackedArea" ? 0 : Number.NaN;
+    const series = windowed.slice(1).map((s, i) =>
+      hidden.has(i) ? s.map(() => fill) : s,
+    );
+    return [xs, ...series] as [number[], ...number[][]];
+  }, [windowed, hidden, kind]);
+
   // Stack for stackedArea: cumulative sum so each series paints on top of
   // the previous. Same trick as AreaChart.tsx.
   const series = useMemo<[number[], ...number[][]]>(() => {
-    if (kind !== "stackedArea") return windowed;
-    const xs = windowed[0];
+    if (kind !== "stackedArea") return visible;
+    const xs = visible[0];
     const cumulative: number[][] = [];
-    for (let i = 1; i < windowed.length; i++) {
+    for (let i = 1; i < visible.length; i++) {
       const prev = cumulative[cumulative.length - 1] ?? new Array(xs.length).fill(0);
-      const next = windowed[i].map((v, idx) => (prev[idx] ?? 0) + v);
+      const next = visible[i].map((v, idx) => (prev[idx] ?? 0) + v);
       cumulative.push(next);
     }
     return [xs, ...cumulative] as [number[], ...number[][]];
-  }, [windowed, kind]);
+  }, [visible, kind]);
 
   // Resize observer — sized against the modal container.
   useEffect(() => {
@@ -300,7 +344,7 @@ export function PanelView({
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">panel</div>
+            <div className="text-[10px] uppercase tracking-wide text-text-dim">panel</div>
             <h2 className="font-mono text-base font-semibold text-text">{title}</h2>
           </div>
           <div className="flex items-center gap-2">
@@ -350,8 +394,11 @@ export function PanelView({
         </div>
 
         <div className="border-t border-border px-4 py-3">
-          <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-text-dim">
-            summary over the visible window
+          <div className="mb-1 flex items-baseline justify-between text-[10px] uppercase tracking-wide text-text-dim">
+            <span>summary over the visible window</span>
+            <span className="normal-case tracking-normal text-text-dim">
+              click row to isolate · ⌘/ctrl-click to toggle
+            </span>
           </div>
           <table className="w-full text-xs tabular">
             <thead className="text-text-muted">
@@ -369,8 +416,16 @@ export function PanelView({
             <tbody>
               {labels.map((l, i) => {
                 const s = summaries[i];
+                const isHidden = hidden.has(i);
                 return (
-                  <tr key={l} className="border-t border-border/50">
+                  <tr
+                    key={l}
+                    onClick={(e) => toggleSeries(i, !(e.metaKey || e.ctrlKey))}
+                    className={`cursor-pointer border-t border-border/50 transition-opacity hover:bg-surface-2 ${
+                      isHidden ? "opacity-40" : ""
+                    }`}
+                    title="Click to isolate · ⌘/Ctrl-click to toggle"
+                  >
                     <td className="py-1" style={{ color: fills?.[i] }}>
                       ● {l}
                     </td>

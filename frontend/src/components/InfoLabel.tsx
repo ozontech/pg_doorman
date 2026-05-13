@@ -35,8 +35,8 @@ export function InfoLabel({
         role="tooltip"
         className="
           pointer-events-none invisible absolute bottom-full left-0 z-30 mb-2
-          w-72 max-w-[20rem] border border-border-strong bg-surface px-3 py-2
-          text-left text-xs leading-snug text-text shadow-xl break-words
+          w-72 max-w-[20rem] rounded-md border border-border-strong bg-surface px-3 py-2
+          text-left text-xs normal-case leading-snug tracking-normal text-text shadow-xl break-words
           opacity-0 transition-opacity duration-100
           group-hover:visible group-hover:opacity-100
         "

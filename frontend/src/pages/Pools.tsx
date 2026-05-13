@@ -5,7 +5,6 @@ import { tip } from "../lib/tooltips";
 import { apiGet } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
@@ -31,7 +30,7 @@ const SEV_LABEL: Record<Severity, string> = {
 };
 
 const SEV_TEXT: Record<Severity, string> = {
-  ok: "text-text-dim",
+  ok: "text-success",
   degraded: "text-warning",
   critical: "text-danger",
 };
@@ -81,10 +80,8 @@ export default function Pools() {
   }, [poll.data?.ts]);
 
   const navigate = useNavigate();
-  // URL-state for filters/sort. Operators can paste "/pools?severity=critical&q=app@db"
-  // straight into Slack during an incident — every control on the page is a
-  // search-param. Local React state mirrors the URL so the inputs stay
-  // responsive while the URL updates on commit.
+  // URL-state for filters/sort so the current view can be shared during
+  // an incident. Local React state mirrors the URL so inputs stay responsive.
   const [searchParams, setSearchParams] = useSearchParams();
   const initialFilters: Filters = {
     query: searchParams.get("q") ?? "",
@@ -200,31 +197,53 @@ export default function Pools() {
     <section className="flex flex-col">
       <PageHero
         title="Pools"
-        description="Find the pool that hurts. Sort by Saturation when a pool is rejecting checkouts; by p95 ms when a query stalls; by Errors when SQLSTATE volume is up. The State column shows degraded when one threshold is breached, critical when two stack. Click any row to see SQLSTATE breakdown, oldest-active query age, and the pause/reconnect controls."
+        help={{
+          definition:
+            "All (user, database) pools. Sort by saturation, p95, waiting, or errors to find the pool under pressure. Click a row to open Pool detail with SQLSTATE breakdown and pause/reconnect controls.",
+          source: "SHOW POOLS · SHOW POOLS_EXTENDED",
+          related: ["SHOW POOL_COORDINATOR", "pg_stat_activity"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
-      <SectionHeader
-        title="Filter & sort"
-        what="Narrow the table by typing a pool fragment (e.g. 'app-' to see only that tenant) or by picking a severity."
-        how="Click a column to sort by it; click again to flip direction. State remains in the URL — you can paste a filter into chat."
-        normal="Default order: most saturated first. During an outage the suspect is usually on the first screen."
-      />
-      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input
           placeholder="filter by id…"
           value={filters.query}
           onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
           className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
         />
-        <select
-          value={filters.severity}
-          onChange={(e) => setFilters((f) => ({ ...f, severity: e.target.value as Filters["severity"] }))}
-          className="rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text"
-        >
-          <option value="all">all severities</option>
-          <option value="ok">ok</option>
-          <option value="degraded">degraded</option>
-          <option value="critical">critical</option>
-        </select>
+        <div className="flex items-center gap-1" role="radiogroup" aria-label="filter by severity">
+          {(["all", "ok", "degraded", "critical"] as const).map((s) => {
+            const active = filters.severity === s;
+            const activeTone =
+              s === "critical"
+                ? "border-danger bg-danger/15 text-danger"
+                : s === "degraded"
+                  ? "border-warning bg-warning/15 text-warning"
+                  : s === "ok"
+                    ? "border-success bg-success/15 text-success"
+                    : "border-accent bg-accent/15 text-accent";
+            return (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() =>
+                  setFilters((f) => ({ ...f, severity: s as Filters["severity"] }))
+                }
+                className={`border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  active
+                    ? activeTone
+                    : "border-border-strong bg-surface-2 text-text-muted hover:text-text"
+                }`}
+              >
+                {s}
+              </button>
+            );
+          })}
+        </div>
         <span className="ml-auto text-xs text-text-dim tabular">
           {filtered.length} of {evaluated.length} pools
         </span>
@@ -233,15 +252,11 @@ export default function Pools() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-4 py-2 text-left">
-              <InfoLabel tip={tip.poolId}>
-                <span className="cursor-pointer" onClick={() => onSort("id")}>
-                  Pool{sortIndicator("id")}
-                </span>
-              </InfoLabel>
+              <span className="cursor-pointer" onClick={() => onSort("id")}>
+                Pool{sortIndicator("id")}
+              </span>
             </th>
-            <th className="px-4 py-2 text-left">
-              <InfoLabel tip={tip.poolMode}>Mode</InfoLabel>
-            </th>
+            <th className="px-4 py-2 text-left">Mode</th>
             <th className="px-4 py-2 text-right">
               <InfoLabel tip={tip.saturation}>
                 <span className="cursor-pointer" onClick={() => onSort("saturation")}>
@@ -276,7 +291,7 @@ export default function Pools() {
               </InfoLabel>
             </th>
             <th className="px-4 py-2 text-left">
-              <InfoLabel tip="Threshold engine verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second.">
+              <InfoLabel tip="Health verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second.">
                 State
               </InfoLabel>
             </th>
@@ -326,7 +341,7 @@ function PoolRowView({
       <td className="px-4 py-2 text-text-muted">{pool.pool_mode}</td>
       <td
         className="px-4 py-2 text-right"
-        title={`active=${pool.active} of max_connections=${pool.max_connections} (${(saturation * 100).toFixed(0)} %). Plus ${pool.connections - pool.active} warm-idle backends still held from prior bursts. Color reflects active / max — above 70 % is amber, above 90 % is red.`}
+        title={`active=${pool.active} of max_connections=${pool.max_connections} (${(saturation * 100).toFixed(0)} %). Plus ${pool.connections - pool.active} warm-idle backends still held from prior bursts. Color reflects active / max: above 70 % is amber, above 90 % is red.`}
       >
         <span
           className={
@@ -344,7 +359,7 @@ function PoolRowView({
           <span title={`Saturation last 60 s — now ${(saturation * 100).toFixed(0)} %.`}>
             <MiniSparkline values={satSeries} stroke={satColor} min={0} max={100} />
           </span>
-          <span title={`Query p95 last 60 s — now ${pool.query_p95_ms} ms. Sustained > 100 ms = degraded backend; > 500 ms = something is stuck.`}>
+          <span title={`Query p95 last 60 s — now ${pool.query_p95_ms} ms. Sustained > 100 ms = degraded backend; > 500 ms usually means a stuck query or transaction.`}>
             <MiniSparkline
               values={p95Series}
               stroke={pool.query_p95_ms > 500 ? "rgb(229 72 77)" : pool.query_p95_ms > 100 ? "rgb(245 165 36)" : "rgb(34 184 207)"}
@@ -368,7 +383,7 @@ function PoolRowView({
       </td>
       <td
         className="px-4 py-2 text-right"
-        title={`Total errors since pg_doorman started. Click the row for the SQLSTATE breakdown — the codes are what you need for triage.`}
+        title={`Total errors since pg_doorman started. Click the row for the SQLSTATE breakdown.`}
       >
         {pool.errors_total}
       </td>
@@ -383,4 +398,3 @@ function PoolRowView({
     </tr>
   );
 }
-

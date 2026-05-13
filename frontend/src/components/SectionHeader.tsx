@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
-import { HelpTip } from "./HelpTip";
+import { HelpTip, type HelpContent } from "./HelpTip";
 
 interface SectionHeaderProps {
   title: string;
-  /** What is rendered in the section. Shown as the first line in the popover. */
+  /** Structured help (preferred — used for new sections). */
+  help?: HelpContent;
+  /** Legacy free-form fields. New code should use `help`. */
   what?: string;
-  /** How / where the data comes from and how often it refreshes. */
   how?: string;
-  /** Threshold or healthy-range note. */
   normal?: string;
   /** Optional right-aligned slot (status pill, last-updated chip, button). */
   right?: ReactNode;
@@ -17,20 +17,22 @@ interface SectionHeaderProps {
 }
 
 /**
- * Section header used above every chart, table, and panel. Shows just the
- * title; full guidance lives in a popover behind the "i" icon so the layout
- * stays clean. The popover answers three questions: what is on screen, how
- * the numbers update, and what counts as healthy.
+ * Section header used above every chart, table, and panel. Shows the
+ * title with an `(i)` icon to the right when help is provided — full
+ * guidance lives in a click-popover with structured operator help:
+ * one-sentence definition, admin SQL source, formula, thresholds with
+ * concrete numbers, related metrics, and a docs link.
  */
 export function SectionHeader({
   title,
+  help,
   what,
   how,
   normal,
   right,
   onTitleClick,
 }: SectionHeaderProps) {
-  const hasHelp = Boolean(what || how || normal);
+  const hasLegacy = !help && Boolean(what || how || normal);
   return (
     <header className="flex items-center gap-3 border-b border-border bg-surface px-6 py-3">
       {onTitleClick ? (
@@ -45,7 +47,9 @@ export function SectionHeader({
       ) : (
         <h2 className="text-sm font-semibold text-text">{title}</h2>
       )}
-      {hasHelp && (
+      {help ? (
+        <HelpTip title={title} help={help} />
+      ) : hasLegacy ? (
         <HelpTip title={title}>
           {what && (
             <p>
@@ -63,7 +67,7 @@ export function SectionHeader({
             </p>
           )}
         </HelpTip>
-      )}
+      ) : null}
       <span aria-hidden className="h-px flex-1 bg-border" />
       {right}
     </header>

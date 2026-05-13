@@ -38,7 +38,7 @@ this gate fired.
 | `ui_anonymous` | When `true`, public API endpoints accept unauthenticated requests. See [Access roles](#access-roles). | `false` |
 | `log_tap_max_entries` | Ring-buffer size for the in-memory log tap behind `/api/logs`. `0` disables the endpoint. | `8192` |
 
-## URL surface
+## URL endpoints
 
 | URL | Required role | Purpose |
 |---|---|---|
@@ -47,7 +47,7 @@ this gate fired.
 | `/metrics` | none | Prometheus exposition format. Unaffected by `ui`. |
 | `GET /api/auth/config` | none | Tells the SPA whether SSO is wired and what role the current request holds. |
 | `GET /api/version`, `/api/overview`, `/api/pools`, `/api/clients`, `/api/servers`, `/api/connections`, `/api/stats`, `/api/databases`, `/api/users`, `/api/auth_query`, `/api/config`, `/api/log_level`, `/api/pool_coordinator`, `/api/pool_scaling`, `/api/sockets`, `/api/prepared`, `/api/interner`, `/api/top/clients`, `/api/top/prepared`, `/api/apps`, `/api/events` | `Anonymous` when `ui_anonymous = true`, otherwise `Sso` | Read-only JSON that mirrors the `SHOW <admin-command>` shape. |
-| `GET /api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | `Sso` | Read-only personal-data endpoints. `/api/logs` activates the in-memory tap on first request and self-disables after 2 minutes without traffic. `/api/top/queries` returns the first ~120 characters of cached SQL text — kept off the public surface because previews can carry literal values and tenant identifiers. |
+| `GET /api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | `Sso` | Read-only personal-data endpoints. `/api/logs` activates the in-memory tap on first request and self-disables after 2 minutes without traffic. `/api/top/queries` returns the first ~120 characters of cached SQL text and is not available anonymously because previews can carry literal values and tenant identifiers. |
 | `POST /api/admin/{reload,pause,resume,reconnect}` | `Admin` | Mutating admin actions. Same semantics as the psql admin protocol. |
 
 ## Access roles
@@ -200,7 +200,7 @@ A typo in the SSO section never knocks the operator console offline. When
 `sso_enabled = true` but the runtime cannot load (missing PEM file, empty
 audience, unparsable PEM), the listener logs the reason at `error` level,
 keeps SSO disabled for that run, and serves only Basic and Anonymous
-requests. The same reason surfaces in two places so an operator notices
+requests. The same reason is shown in two places so an operator notices
 the broken rollout instead of silently falling back:
 
 - `/api/auth/config.sso_config_error` carries a human-readable message.
@@ -285,12 +285,15 @@ Levels:
 
 - `info` — every admin action (`POST /api/admin/*`), every
   personal-data read (`/api/logs`, `/api/prepared/text/*`,
-  `/api/interner/top`, `/api/top/queries`), every non-2xx response,
-  and every authenticated request (Sso or Admin role).
-- `debug` — anonymous successful reads of public APIs and `/metrics`
-  scrapes. Prometheus scrapes every few seconds and the SPA polls
-  the overview / pools endpoints, so keeping these off `info` lets
-  `RUST_LOG=info` stay readable.
+  `/api/interner/top`, `/api/top/queries`), every auth/SSO endpoint
+  (`/api/auth/*`, `/api/sso/*`), and every non-2xx response.
+- `debug` — every other successful 2xx read, anonymous or
+  authenticated. The SPA polls `/api/overview`, `/api/pools`,
+  `/api/clients`, `/api/process` every 1.5–3 s; with the previous
+  rule that every authenticated 2xx was `info`, an operator sitting
+  on the Logs page saw their own polls. Routine reads are logged at
+  `debug`, so `RUST_LOG=info` is limited to admin actions, auth
+  traffic, and failures.
 
 The dedicated `pg_doorman::web::access` target lets operators filter
 the access feed independently of the rest of the logger. The LogTap
@@ -301,7 +304,7 @@ target with one click.
 
 By default `peer` records the TCP address that connected to the
 listener, which is the proxy when pg_doorman sits behind one. List
-the proxy's CIDR in `[web].trusted_proxies` to surface the real
+the proxy's CIDR in `[web].trusted_proxies` to record the real
 client IP:
 
 ```toml
@@ -358,28 +361,125 @@ variants that forward the token via cookie on the shared domain.
 
 ## Pages
 
-The SPA exposes:
+The sidebar has eight routes. **War room** opens from **Overview**.
+Pages that expose SQL text or logs require the `Sso` or `Admin` role
+and are hidden from anonymous users.
 
-- **Overview** — health pill, four golden-signal sparklines (latency
-  p95, traffic, errors/s, saturation), connection breakdown stacked
-  area, pool fill heatmap, dual-axis wait + oldest-active-age, top-5
-  errors per pool, and a collapsed Resource detail panel.
-- **Pools** — sortable table with mini-sparklines per row.
-- **Pool detail** (`/pools/:poolId`) — full per-pool drill-down:
-  SQLSTATE breakdown, oldest-active-age, pause/resume/reconnect
-  controls.
-- **Clients** — paginated table backed by `/api/clients` with
-  server-side filter and sort.
-- **Apps** — one row per `application_name` with err / 1k q ratio.
-- **Caches** — Prepared statement table with hit rate, plus a query
-  interner card (named vs anonymous bytes).
-- **Logs** — live tail of the LogTap with level / target filter and
-  pause / auto-scroll toggles.
-- **Config & state** — collapsed panels covering `[general]` keys,
-  the active log filter, `auth_query` cache, databases, users,
-  sockets, pool scaling, pool coordinator.
-- **War room** (`/wall`) — six oversized tiles for an incident
-  bridge or a wall display.
+### Overview (`/overview`)
+
+Default page for pooler health: main metrics, queues, pool saturation,
+common SQLSTATE codes, and a collapsed resource block. If Patroni
+fallback is active, a banner lists the affected pools.
+
+### Pools (`/pools`)
+
+Table of all `user@database` pools: size, active connections, waiting
+clients, p95, errors, saturation, and fallback state. Selecting a row
+opens **Pool detail**.
+
+### Pool detail (`/pools/:poolId`)
+
+Single-pool view: mode, limits, current connections, TLS, fallback
+state, SQLSTATE counts, PostgreSQL startup parameters, and active
+threshold reasons. Pool actions `PAUSE`, `RESUME`, `RECONNECT`, and
+global `RELOAD` are available here.
+
+### Clients (`/clients`)
+
+Client table with URL filters:
+
+```
+/clients?pool=shop_checkout&state=waiting&user=app
+```
+
+Filters cover pool, database, user, state, `application_name`, and
+peer address. Sorting covers queries, errors, connection age, and
+current-query age. Use it with **Servers** to map a client to a
+PostgreSQL pid.
+
+### Servers (`/servers`)
+
+Backend connections from `SHOW SERVERS`: `server_id`, `process_id`,
+database, user, application, state, active-query age, counters, traffic,
+and TLS. Use a client's `server_id` here to find the pid in
+`pg_stat_activity`.
+
+### Apps (`/apps`)
+
+One row per `application_name`: active clients, qps, tps, totals, and
+`err / 1k q`.
+
+### Caches (`/caches`)
+
+Prepared-statement cache by pool and process-wide SQL-text cache. Both
+can show SQL text, so both require `Sso` or `Admin`.
+
+### Logs (`/logs`)
+
+LogTap stream with URL filters:
+
+```
+/logs?level=ERROR&q=53300
+```
+
+Pause freezes the view only; the server buffer keeps filling. If
+`[web].log_tap_max_entries = 0`, the page reports that log streaming is
+disabled. Access requires `Sso` or `Admin`.
+
+### Config & state (`/config`)
+
+Read-only mirror of `SHOW CONFIG`, `SHOW DATABASES`, `SHOW USERS`,
+`SHOW AUTH_QUERY`, `SHOW LOG_LEVEL`, `SHOW STARTUP_PARAMETERS`,
+`SHOW SOCKETS`, `SHOW POOL_SCALING`, and `SHOW POOL_COORDINATOR`.
+It shows which config keys apply on `RELOAD` and which require restart.
+**Reload config** is available only to `Admin`.
+
+### War room (`/wall`)
+
+Large-screen **Overview**: pool saturation, big metrics, and recent
+admin actions. **Esc** returns to `/overview`.
+
+## Admin actions
+
+The SPA exposes four mutating operations:
+
+| Action       | Scope                  | Where                            | Confirmation |
+|--------------|------------------------|----------------------------------|--------------|
+| `RELOAD`     | every pool             | Config & state · Pool detail     | `RELOAD`     |
+| `PAUSE`      | one `user@database`    | Pool detail                      | database     |
+| `RESUME`     | one `user@database`    | Pool detail, when paused         | database     |
+| `RECONNECT` | one `user@database`    | Pool detail                      | database     |
+
+Semantics match the psql admin protocol. `PAUSE` stops new backend
+checkouts for the pool; in-flight transactions continue. `RESUME`
+allows checkouts again. `RECONNECT` closes idle backends and rejects
+active ones when they return. `RELOAD` re-reads `pg_doorman.toml`;
+pool size shrinks as connections drain.
+
+Typed confirmation protects against accidental `RELOAD` or `PAUSE` on
+the wrong pool. Each action shows a result message, writes an `info`
+access-log line, and appears in the recent admin-event list.
+
+## Keyboard shortcuts
+
+Shortcuts work outside text fields.
+
+| Combo                                | Effect                                      |
+|--------------------------------------|---------------------------------------------|
+| <kbd>⌘ K</kbd> / <kbd>Ctrl K</kbd>   | Search pages and pools.                     |
+| <kbd>?</kbd>                         | Show keyboard shortcuts.                    |
+| <kbd>Esc</kbd>                       | Close help or modal. On `/wall`, go back.   |
+
+## Theme
+
+The sidebar footer has **Light** / **System** / **Dark**. Default is
+**Light**. The choice is stored in `localStorage`.
+
+## In-app help
+
+Metric and section headers have an (i) icon. Help explains what the
+number means, where it comes from, how it is calculated, and which
+thresholds are normal.
 
 ## Building from source
 
@@ -407,7 +507,7 @@ touches `frontend/`.
 `/metrics` is unauthenticated on the same listener that serves the UI.
 This mirrors the historical Prometheus exporter and keeps existing
 scrape configs working. Auth on `/api/*` does **not** propagate to
-`/metrics` — the metrics surface exposes pool names, users, databases,
+`/metrics` — the metrics endpoint exposes pool names, users, databases,
 connection pressure, auth-query state, and workload shape. Either bind
 `[web]` to a private host/port that only your scrape system reaches,
 or front the listener with a proxy that adds auth on `/metrics`

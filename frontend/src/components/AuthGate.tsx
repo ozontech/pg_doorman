@@ -84,7 +84,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setRole(role);
         // /api/auth/config is public, so a null current_user only tells
         // us the request was anonymous. The backend still gates per
-        // path: anonymous can read the public surface when the listener
+        // path: anonymous can read public API endpoints when the listener
         // was started with `[web].ui_anonymous = true`. Re-arm the
         // sign-in modal only when api.ts has seen a real 401 elsewhere
         // (`unauthorizedAt` bumped) and the operator is still anonymous
@@ -265,12 +265,7 @@ function AuthModal({
     onSubmit({ username, password }, remember);
   };
 
-  // Bloomberg-Terminal sign-in surface: full-page, no modal chrome.
-  // The whole canvas reads as a single carved console, with the amber
-  // accent reserved for the primary SSO action and the live status
-  // line at the bottom. We deliberately avoid the gradient/glass
-  // cliché — the rest of the SPA never uses it, and an operator
-  // landing here should feel they are still in the same console.
+  // Sign-in view. Uses the console palette without terminal-style decoration.
   return (
     <div
       role="dialog"
@@ -278,28 +273,19 @@ function AuthModal({
       aria-labelledby="auth-modal-title"
       ref={dialogRef}
       onKeyDown={onKeyDown}
-      className="fixed inset-0 flex min-h-screen items-center justify-center bg-bg px-4 py-8"
+      className="fixed inset-0 flex min-h-screen items-center justify-center bg-bg/95 px-4 py-8 backdrop-blur-sm"
     >
-      <section className="w-full max-w-lg border border-border bg-surface">
-        {/* Amber tick line above the heading: the same accent used on
-            live cells across the dashboard, anchoring the sign-in
-            surface to the rest of the SPA. */}
-        <div className="h-px bg-accent" aria-hidden="true" />
-        <header className="border-b border-border px-8 pb-5 pt-6">
-          <p className="text-xs uppercase tracking-[0.2em] text-text-dim">
-            pg_doorman · operator console
-          </p>
+      <section className="w-full max-w-md border border-border bg-surface">
+        <header className="border-b border-border px-8 pt-7 pb-5">
+          <p className="text-xs text-text-dim">pg_doorman</p>
           <h2
             id="auth-modal-title"
-            className="mt-3 text-xl font-semibold text-text"
+            className="mt-1 text-2xl font-semibold tracking-tight text-text"
           >
-            <span className="text-accent">&gt;</span> authentication required
+            Sign in
           </h2>
           <p className="mt-2 text-sm text-text-muted">
-            Identify yourself to enter the console. SSO opens the
-            corporate identity flow; Local admin uses the
-            <span className="font-mono"> [general] </span>
-            credentials from <span className="font-mono">pg_doorman.toml</span>.
+            Authenticate to open the operator console.
           </p>
         </header>
         <div className="space-y-6 px-8 py-6">
@@ -344,9 +330,7 @@ function AuthModal({
         </div>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-8 py-3 text-xs text-text-dim">
           <TransportChip />
-          <span className="font-mono uppercase tracking-wider">
-            {ssoProxyUrl ? "sso + basic" : "basic only"}
-          </span>
+          <span>{ssoProxyUrl ? "SSO + Basic" : "Basic only"}</span>
         </footer>
       </section>
     </div>
@@ -376,19 +360,18 @@ function SsoBlock({
   }
   return (
     <div>
-      <p className="mb-2 text-xs uppercase tracking-[0.2em] text-text-dim">
-        Single sign-on
-      </p>
       <button
         type="button"
         disabled={redirecting}
         onClick={onRedirect}
-        className="flex h-11 w-full items-center justify-between border border-accent bg-accent px-4 text-sm font-semibold uppercase tracking-wider text-accent-fg transition-colors hover:bg-accent-hover focus-visible:bg-accent-hover disabled:cursor-wait disabled:opacity-70"
+        className="flex h-11 w-full items-center justify-center gap-2 border border-accent bg-accent px-4 text-sm font-semibold text-accent-fg transition-colors hover:bg-accent-hover focus-visible:bg-accent-hover disabled:cursor-wait disabled:opacity-70"
       >
-        <span>{redirecting ? "Redirecting…" : "Sign in via SSO"}</span>
-        <span aria-hidden="true" className="font-mono">
-          {redirecting ? "··" : "→"}
-        </span>
+        <span>{redirecting ? "Redirecting…" : "Continue with SSO"}</span>
+        {!redirecting && (
+          <span aria-hidden="true" className="font-mono">
+            →
+          </span>
+        )}
       </button>
       <p className="mt-2 text-xs leading-relaxed text-text-muted">
         {host ? (
@@ -397,7 +380,7 @@ function SsoBlock({
           </>
         ) : null}
         {ssoAdminPossible
-          ? "Group membership in the JWT decides whether you land in read-only Sso or full Admin."
+          ? "Group membership in the JWT decides whether you get read-only SSO or full admin."
           : "SSO grants read-only access including logs and SQL text."}
       </p>
     </div>
@@ -429,18 +412,16 @@ function BasicBlock({
     <div>
       {ssoVisible && (
         <div
-          className="mb-4 flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-text-dim"
+          className="mb-3 flex items-center gap-3 text-xs text-text-dim"
           aria-hidden="true"
         >
           <span className="h-px flex-1 bg-border" />
-          or use local admin
+          <span>or local admin</span>
           <span className="h-px flex-1 bg-border" />
         </div>
       )}
       {!ssoVisible && (
-        <p className="mb-3 text-xs uppercase tracking-[0.2em] text-text-dim">
-          Local admin
-        </p>
+        <p className="mb-3 text-xs text-text-dim">Local admin</p>
       )}
       {currentBasic && (
         <p
@@ -457,7 +438,7 @@ function BasicBlock({
         <div>
           <label
             htmlFor="auth-username"
-            className="mb-1 block text-xs uppercase tracking-wide text-text-muted"
+            className="mb-1 block text-xs text-text-muted"
           >
             Username
           </label>
@@ -473,7 +454,7 @@ function BasicBlock({
         <div>
           <label
             htmlFor="auth-password"
-            className="mb-1 block text-xs uppercase tracking-wide text-text-muted"
+            className="mb-1 block text-xs text-text-muted"
           >
             Password
           </label>
@@ -497,9 +478,9 @@ function BasicBlock({
         </label>
         <button
           type="submit"
-          className="flex h-11 w-full items-center justify-center border border-border-strong bg-surface-2 text-sm font-semibold uppercase tracking-wider text-text transition-colors hover:bg-surface-3 hover:border-accent focus-visible:border-accent"
+          className="flex h-11 w-full items-center justify-center border border-border-strong bg-surface-2 text-sm font-semibold text-text transition-colors hover:bg-surface-3 hover:border-accent focus-visible:border-accent"
         >
-          Sign in with Basic
+          Sign in
         </button>
       </form>
     </div>
@@ -507,12 +488,8 @@ function BasicBlock({
 }
 
 function TransportChip() {
-  // Read the live protocol so the operator can tell at a glance
-  // whether they are about to hand a Bearer JWT to a plain-HTTP
-  // listener. Falls back to the insecure rendering when `window` is
-  // not present (SSR / test render) — there is no honest signal in
-  // that context, and "http" is the safer default for a chip that
-  // exists to warn about insecure transport.
+  // Read the live protocol so the sign-in form can warn on plain HTTP.
+  // SSR/test renders fall back to the warning state.
   const protocol =
     typeof window !== "undefined" ? window.location.protocol : "";
   const secure = protocol === "https:";
@@ -521,9 +498,9 @@ function TransportChip() {
     : "border-warning/40 text-warning";
   return (
     <span
-      className={`inline-flex items-center gap-2 border px-2 py-1 font-mono uppercase tracking-wider ${className}`}
+      className={`inline-flex items-center gap-2 border px-2 py-1 font-mono ${className}`}
     >
-      <span aria-hidden="true">▌</span>
+      <span className={`h-1.5 w-1.5 rounded-full ${secure ? "bg-success" : "bg-warning"}`} aria-hidden="true" />
       transport · {secure ? "https" : "http"}
     </span>
   );

@@ -1,32 +1,27 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
 import { Collapsible } from "../components/Collapsible";
 import { DualAxisChart } from "../components/DualAxisChart";
-import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
 import { PageHero } from "../components/PageHero";
 import { MemoryPanel } from "../components/MemoryPanel";
 import { PanelView, type PanelKind } from "../components/PanelView";
 import { SectionHeader } from "../components/SectionHeader";
 import { Sparkline } from "../components/Sparkline";
+import { describeSqlstate } from "../lib/sqlstate";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
-import {
-  aggregateHealth,
-  type HealthState,
-  type PoolHistory,
-  type PoolHistoryPoint,
-} from "../lib/thresholds";
+import type { PoolHistoryPoint } from "../lib/thresholds";
 import type { ChartEvent } from "../components/Sparkline";
 import type {
-  AuthQueryDto,
   EventsDto,
   InternerDto,
   OverviewDto,
   PoolCoordinatorDto,
+  PoolDto,
   PoolScalingDto,
   PoolsDto,
   ProcessDto,
@@ -36,6 +31,30 @@ import type {
 const POLL_MS = 1500;
 const HISTORY_KEY = "overview";
 const HEATMAP_CELLS = 60;
+// Host-scoped so two pooler tabs keep separate process baselines.
+const PREV_PROCESS_KEY = `pgdoorman.prev.process.${
+  typeof window !== "undefined" ? window.location.host : "any"
+}`;
+
+function loadPrevProcess(): ProcessDto | null {
+  try {
+    const raw = localStorage.getItem(PREV_PROCESS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProcessDto;
+    if (typeof parsed.ts !== "number") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function savePrevProcess(v: ProcessDto) {
+  try {
+    localStorage.setItem(PREV_PROCESS_KEY, JSON.stringify(v));
+  } catch {
+    /* private mode / quota — no-op. */
+  }
+}
 
 interface OverviewSamplePoint {
   ts: number;
@@ -59,8 +78,6 @@ interface RawTotals {
 
 type PoolSnap = Record<string, PoolHistoryPoint>;
 type PoolSatSnap = Record<string, { saturation: number; max_connections: number; label: string }>;
-
-const EMPTY_HEALTH: HealthState = { state: "ok", reason: null, perPool: [] };
 
 export default function Overview() {
   const { authHeader } = useAdminAuth();
@@ -92,10 +109,6 @@ export default function Overview() {
   const coordPoll = usePoll<PoolCoordinatorDto>(
     (signal) => apiGet<PoolCoordinatorDto>("/api/pool_coordinator", authHeader, signal),
     POLL_MS,
-  );
-  const authPoll = usePoll<AuthQueryDto>(
-    (signal) => apiGet<AuthQueryDto>("/api/auth_query", authHeader, signal),
-    3000,
   );
   // Process resources (RSS, CPU, FDs, threads). Slow cadence (3 s) — the
   // process card is informational, not alerting, and these /proc reads are
@@ -174,11 +187,15 @@ export default function Overview() {
     const ov = overviewPoll.data;
     const pools = poolsPoll.data;
     const prevRaw = rawHistory.history[rawHistory.history.length - 1];
-    // Stale-tab guard: if the gap since the last poll is bigger than five
-    // intervals (browser throttled the timer or the laptop slept), drop the
-    // history. Otherwise the chart bridges the gap with a flat line and
-    // misrepresents the state during the pause as steady-state activity.
-    if (prevRaw && ov.ts - prevRaw.ts > 5 * POLL_MS) {
+    // Stale-tab guard: if the gap since the last poll is bigger than the
+    // window below, the laptop probably slept or the operator left the
+    // tab for an extended time — drop the history so the chart does not
+    // bridge a multi-hour gap with a flat line. The previous 5 × 1.5 s
+    // window (7.5 s) was too aggressive: an operator visiting the war
+    // room for ten seconds and coming back saw every sparkline reset
+    // to "collecting samples · 1/120". 90 s keeps the safety net for
+    // real sleep events while letting brief navigation be invisible.
+    if (prevRaw && ov.ts - prevRaw.ts > 90_000) {
       rawHistory.replace([]);
       sampleHistory.replace([]);
       poolErrorsHistory.replace([]);
@@ -267,28 +284,6 @@ export default function Overview() {
     // so the per-pool history retains the threshold-engine fields.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overviewPoll.data?.ts]);
-
-  const poolHistoryForEngine: PoolHistory = useMemo(() => {
-    const map: PoolHistory = new Map();
-    for (const snap of poolErrorsHistory.history) {
-      for (const id of Object.keys(snap)) {
-        const list = map.get(id) ?? [];
-        list.push(snap[id]);
-        map.set(id, list);
-      }
-    }
-    return map;
-  }, [poolErrorsHistory.history]);
-
-  const health = useMemo(() => {
-    if (!overviewPoll.data || !poolsPoll.data) return EMPTY_HEALTH;
-    return aggregateHealth(
-      overviewPoll.data,
-      poolsPoll.data.pools,
-      poolHistoryForEngine,
-      authPoll.data ?? null,
-    );
-  }, [overviewPoll.data, poolsPoll.data, poolHistoryForEngine, authPoll.data]);
 
   const seriesXs = useMemo(
     () => sampleHistory.history.map((s) => s.ts / 1000),
@@ -464,23 +459,36 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Is the pooler healthy right now. The pill is green when no threshold is breached; if it goes amber or red, the chip strip names the breach and the process row confirms the pooler itself is still alive. Use the four signal sparklines to triage: spike on Latency P95 = backend slow; spike on Errors/s = read the SQLSTATE breakdown on Pool detail; spike on Saturation = a pool is full and clients will start waiting."
+        description="Live pooler-wide signals. Click a Golden signals tile for the 1-hour panel with p50/p95/p99."
+        actions={
+          <Link
+            to="/wall"
+            className="border border-border-strong px-3 py-1.5 text-xs uppercase tracking-wider text-text-muted transition-colors hover:border-accent hover:text-accent"
+            title="Open kiosk view (large KPIs + heatmap)"
+          >
+            war room ↗
+          </Link>
+        }
       />
-      <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
-        <HealthPill
-          health={health}
-          lastUpdated={overviewPoll.lastUpdated}
-          overview={overviewPoll.data}
-          pools={poolsPoll.data}
-          errorsPerSecond={latest?.errors_per_s ?? null}
-        />
+      <div className="mx-auto w-full max-w-[1680px] space-y-6 px-6 py-6">
+        <FallbackBanner pools={poolsPoll.data?.pools ?? []} />
         <ProcessBar process={processPoll.data} onOpenThreads={() => openPanelById("threads")} onOpenRss={() => openPanelById("rss")} />
         <Card
           title="Golden signals"
-          help={{
-            what: "Latency P95, traffic, error rate, and worst saturation.",
-            how: "Three minutes of history (one dot every 1.5 s). Click a card to widen the window to 1h, see p50/p95/p99 over the visible range, and overlay admin events.",
-            normal: "P95 < 100 ms · errors near 0 /s · saturation < 70 %.",
+          helpStructured={{
+            definition:
+              "Four pooler-wide signals: backend query p95, traffic, error rate, and worst-pool saturation.",
+            source: "SHOW STATS · SHOW POOLS (per-pool aggregated)",
+            formula:
+              "p95 = max(query_p95 across pools) · traffic = Δqueries / Δt · errors = Δerrors_total / Δt · saturation = max(active / max_connections)",
+            thresholds: {
+              healthy: "p95 < 100 ms · errors ≈ 0/s · saturation < 70 %",
+              warn: "p95 ≥ 100 ms · errors ≥ 1/s · saturation ≥ 70 %",
+              crit: "p95 ≥ 500 ms · errors ≥ 10/s · saturation ≥ 90 %",
+            },
+            related: ["waiting", "max_active_age_ms", "errors_per_s"],
+            docsHref:
+              "https://ozontech.github.io/pg_doorman/tutorials/overview.html",
           }}
         >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -494,7 +502,7 @@ export default function Overview() {
                 logY
                 syncKey="overview"
                 events={chartEvents}
-                tip="Worst per-pool query p95 across all pools, in milliseconds. Amber dashed line at 100 ms, red at 500 ms. Click the tile for the 1-hour panel with p50/p95/p99."
+                tip="Max query p95 across pools. Warn at 100 ms, crit at 500 ms."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("traffic")}>
@@ -504,7 +512,7 @@ export default function Overview() {
                 series={sigSeries((s) => s.qps)}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Aggregate rate across all pools. The two numbers are queries-per-second (left) and transactions-per-second (right); the sparkline tracks q/s. Footer line spells out which is which."
+                tip="Queries/s on the left, transactions/s on the right. Sparkline tracks q/s."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("errors")}>
@@ -516,7 +524,7 @@ export default function Overview() {
                 crit={10}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Aggregate errors per second across all pools (any non-zero SQLSTATE). Amber at 1/s, red at 10/s. Click the tile for the SQLSTATE breakdown."
+                tip="Aggregate errors/s. Warn at 1/s, crit at 10/s."
               />
             </ChartLink>
             <ChartLink onClick={() => openPanelById("saturation")}>
@@ -528,7 +536,7 @@ export default function Overview() {
                 crit={90}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Highest single-pool saturation right now, in percent of pool_size. Amber at 70 %, red at 90 %. The heatmap below identifies which pool is hot."
+                tip="Worst pool saturation. Warn at 70 %, crit at 90 %. Heatmap below names the hot pool."
               />
             </ChartLink>
           </div>
@@ -536,9 +544,20 @@ export default function Overview() {
         <Card
           title="Connection breakdown ↗"
           onTitleClick={() => openPanelById("conn_breakdown")}
-          help={{
-            what: "Stacked clients in active / idle / waiting state.",
-            how: "Stacked over the 3 min window. No threshold — the shape is the signal. Active rising while idle stays low = good throughput; waiting rising = backends are full and clients are queueing.",
+          helpStructured={{
+            definition:
+              "Stacked client states — active, idle, waiting — across the whole pooler over the last three minutes.",
+            source: "SHOW POOLS · cl_active + cl_idle + cl_waiting",
+            formula:
+              "active = Σ cl_active · idle = Σ cl_idle · waiting = Σ cl_waiting",
+            thresholds: {
+              healthy: "waiting ≈ 0",
+              warn: "waiting > 0 sustained",
+              crit: "waiting > 10 sustained 10 s",
+            },
+            related: ["max_active_age_ms", "wait_p95_ms"],
+            docsHref:
+              "https://ozontech.github.io/pg_doorman/tutorials/pool-pressure.html",
           }}
         >
           <AreaChart
@@ -552,10 +571,19 @@ export default function Overview() {
         {heatmapRows.length > 0 && (
           <Card
             title="Pool fill heatmap"
-            help={{
-              what: "One row per pool, last 90 s of saturation.",
-              how: "Cell color thresholds: green < 70 % · amber 70–89 % · red ≥ 90 %.",
-              normal: "A row that turns amber/red while neighbours stay green points at one specific pool.",
+            helpStructured={{
+              definition:
+                "One row per pool. Each cell is the pool's saturation at a 1.5 s sample over the last 90 s.",
+              source: "SHOW POOLS · cl_active / max_client_conn per pool",
+              formula: "saturation = active / max_connections",
+              thresholds: {
+                healthy: "cells green < 70 %",
+                warn: "amber 70–89 %",
+                crit: "red ≥ 90 %",
+              },
+              related: ["wait_p95_ms", "max_active_age_ms"],
+              docsHref:
+                "https://ozontech.github.io/pg_doorman/tutorials/pool-pressure.html",
             }}
           >
             <Heatmap rows={heatmapRows} />
@@ -564,10 +592,20 @@ export default function Overview() {
         <Card
           title="Wait queue vs oldest active ↗"
           onTitleClick={() => openPanelById("wait_oldest")}
-          help={{
-            what: "Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools.",
-            how: "Both lines move together when traffic is fine. They diverge when one client holds a transaction open and others queue behind it — that is the pattern to look for during a stall.",
-            normal: "Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection.",
+          helpStructured={{
+            definition:
+              "Clients currently queued for a backend vs the oldest in-flight query across pools.",
+            source: "SHOW POOLS · cl_waiting · maxwait_us / 1000",
+            formula:
+              "waiting = Σ cl_waiting · oldest = max(maxwait_us) across pools",
+            thresholds: {
+              healthy: "waiting ≈ 0 · oldest < 30 s",
+              warn: "oldest ≥ 30 s",
+              crit: "oldest ≥ 5 min — stuck transaction",
+            },
+            related: ["wait_p95_ms", "active_clients", "backend_p99"],
+            docsHref:
+              "https://ozontech.github.io/pg_doorman/tutorials/troubleshooting.html",
           }}
         >
           <DualAxisChart
@@ -587,6 +625,7 @@ export default function Overview() {
             events={chartEvents}
           />
         </Card>
+        <SqlstateTopCard pools={poolsPoll.data?.pools ?? []} />
         {top5Errors.labels.length > 0 && (
           <Card
             title="Top pools by error rate ↗"
@@ -640,11 +679,13 @@ export default function Overview() {
 function Card({
   title,
   help,
+  helpStructured,
   children,
   onTitleClick,
 }: {
   title: string;
   help?: { what?: string; how?: string; normal?: string };
+  helpStructured?: import("../components/HelpTip").HelpContent;
   children: ReactNode;
   onTitleClick?: () => void;
 }) {
@@ -658,6 +699,7 @@ function Card({
     <>
       <SectionHeader
         title={title}
+        help={helpStructured}
         what={help?.what}
         how={help?.how}
         normal={help?.normal}
@@ -678,14 +720,14 @@ function Card({
             onTitleClick();
           }
         }}
-        className="cursor-pointer rounded-md border border-border bg-surface transition-colors hover:border-border-strong"
+        className="cursor-pointer rounded-md border border-border bg-surface shadow-card transition-all duration-150 hover:-translate-y-px hover:border-border-strong hover:shadow-md"
         title="Open in panel view (1h history, p50/p95/p99 table)."
       >
         {inner}
       </section>
     );
   }
-  return <section className="rounded-md border border-border bg-surface">{inner}</section>;
+  return <section className="rounded-md border border-border bg-surface shadow-card">{inner}</section>;
 }
 
 // Wrapper that turns a Sparkline card into a button-like region: any click
@@ -925,6 +967,87 @@ function panelDescriptor(
 }
 
 
+// Banner for Patroni-assisted fallback. The DTO has carried fallback_active
+// for releases, but only PoolDetail rendered it; the banner names affected
+// pools and links to the docs.
+// Aggregated SQLSTATE breakdown across all pools. Closes the gap the
+// "Errors / s ↗" tile promised: the tile tooltip claimed it opens a
+// SQLSTATE breakdown but the panel was just a line chart, so the
+// operator had to drill into every pool individually to find the
+// dominant error class. This card sums each pool's errors_by_sqlstate
+// and lists the top ten with describeSqlstate() context.
+function SqlstateTopCard({ pools }: { pools: PoolDto[] }) {
+  const totals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of pools) {
+      const codes = p.errors_by_sqlstate;
+      if (!codes) continue;
+      for (const [code, count] of Object.entries(codes)) {
+        m.set(code, (m.get(code) ?? 0) + count);
+      }
+    }
+    return [...m.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+  }, [pools]);
+  if (totals.length === 0) return null;
+  return (
+    <Card
+      title="Top SQLSTATE codes"
+      helpStructured={{
+        definition:
+          "Aggregated error-code frequency across every pool since pg_doorman started. Open Pool detail for per-pool SQLSTATE counts.",
+        source: "Σ pool.errors_by_sqlstate across SHOW POOLS",
+        related: ["pg_doorman::stats", "pg_stat_activity.last_error"],
+        docsHref:
+          "https://ozontech.github.io/pg_doorman/tutorials/troubleshooting.html",
+      }}
+    >
+      <ul className="space-y-1 px-4 py-3 text-sm tabular">
+        {totals.map(([code, count]) => (
+          <li
+            key={code}
+            className="flex items-baseline justify-between gap-3 border-b border-border/40 py-1 last:border-b-0"
+          >
+            <span className="flex min-w-0 flex-col">
+              <span className="font-mono text-text">{code}</span>
+              <span className="truncate text-xs text-text-dim">
+                {describeSqlstate(code)}
+              </span>
+            </span>
+            <span className="font-mono text-text">{count}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function FallbackBanner({ pools }: { pools: PoolDto[] }) {
+  const inFallback = pools.filter((p) => p.fallback_active);
+  if (inFallback.length === 0) return null;
+  const names = inFallback.map((p) => p.id).join(", ");
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning"
+    >
+      <span className="font-semibold">Patroni fallback active</span> ·{" "}
+      {inFallback.length} pool{inFallback.length === 1 ? "" : "s"} routing to
+      the fallback backend.{" "}
+      <span className="font-mono text-text-muted">{names}</span>.{" "}
+      <a
+        href="https://ozontech.github.io/pg_doorman/tutorials/patroni-assisted-fallback.html"
+        target="_blank"
+        rel="noreferrer noopener"
+        className="underline hover:no-underline"
+      >
+        What is fallback?
+      </a>
+    </div>
+  );
+}
+
 function ResourceDetail({
   sockets,
   interner,
@@ -938,40 +1061,76 @@ function ResourceDetail({
     if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MiB`;
     return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
   };
+  const socketStats: { label: string; value: string }[] = sockets
+    ? [
+        { label: "tcp established", value: sockets.tcp.established.toString() },
+        { label: "tcp time-wait", value: sockets.tcp.time_wait.toString() },
+        { label: "tcp close-wait", value: sockets.tcp.close_wait.toString() },
+        { label: "tcp listen", value: sockets.tcp.listen.toString() },
+        { label: "tcp6 established", value: sockets.tcp6.established.toString() },
+        { label: "unix connected", value: sockets.unix_stream.connected.toString() },
+      ]
+    : [];
+  const internerStats: { label: string; value: string }[] = interner
+    ? [
+        { label: "named entries", value: interner.named.entries.toLocaleString() },
+        { label: "named bytes", value: fmtBytes(interner.named.bytes) },
+        { label: "anonymous entries", value: interner.anonymous.entries.toLocaleString() },
+        { label: "anonymous bytes", value: fmtBytes(interner.anonymous.bytes) },
+      ]
+    : [];
   return (
-    <div className="grid grid-cols-2 gap-6 px-4 py-4">
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-text">Sockets</h3>
-        {sockets ? (
-          <table className="text-sm tabular">
-            <tbody>
-              <tr><td className="pr-3 text-text-muted">tcp established</td><td>{sockets.tcp.established}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp time-wait</td><td>{sockets.tcp.time_wait}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp close-wait</td><td>{sockets.tcp.close_wait}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp listen</td><td>{sockets.tcp.listen}</td></tr>
-              <tr><td className="pr-3 text-text-muted">tcp6 established</td><td>{sockets.tcp6.established}</td></tr>
-              <tr><td className="pr-3 text-text-muted">unix-stream connected</td><td>{sockets.unix_stream.connected}</td></tr>
-            </tbody>
-          </table>
-        ) : (
-          <p className="text-sm text-text-dim">linux only — no data on this platform.</p>
-        )}
+    <div className="grid gap-4 px-4 py-4 md:grid-cols-2">
+      <ResourceCard title="Sockets" empty={!sockets} emptyLabel="linux only — no data on this platform.">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+          {socketStats.map((s) => (
+            <StatCell key={s.label} label={s.label} value={s.value} />
+          ))}
+        </div>
+      </ResourceCard>
+      <ResourceCard title="Query interner" empty={!interner} emptyLabel="loading…">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          {internerStats.map((s) => (
+            <StatCell key={s.label} label={s.label} value={s.value} />
+          ))}
+        </div>
+      </ResourceCard>
+    </div>
+  );
+}
+
+function ResourceCard({
+  title,
+  empty,
+  emptyLabel,
+  children,
+}: {
+  title: string;
+  empty: boolean;
+  emptyLabel: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border border-border bg-surface">
+      <div className="border-b border-border px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+        {title}
       </div>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-text">Query interner</h3>
-        {interner ? (
-          <table className="text-sm tabular">
-            <tbody>
-              <tr><td className="pr-3 text-text-muted">named entries</td><td>{interner.named.entries}</td></tr>
-              <tr><td className="pr-3 text-text-muted">named bytes</td><td>{fmtBytes(interner.named.bytes)}</td></tr>
-              <tr><td className="pr-3 text-text-muted">anonymous entries</td><td>{interner.anonymous.entries}</td></tr>
-              <tr><td className="pr-3 text-text-muted">anonymous bytes</td><td>{fmtBytes(interner.anonymous.bytes)}</td></tr>
-            </tbody>
-          </table>
-        ) : (
-          <p className="text-sm text-text-dim">loading…</p>
-        )}
+      <div className="p-4">
+        {empty ? <p className="text-sm text-text-dim">{emptyLabel}</p> : children}
       </div>
+    </div>
+  );
+}
+
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wider text-text-dim">
+        {label}
+      </span>
+      <span className="font-mono text-base font-semibold tabular text-text">
+        {value}
+      </span>
     </div>
   );
 }
@@ -996,7 +1155,12 @@ function ProcessBar({
   // recent percentage. Re-renders that don't bring a new ts (a sibling
   // poll updated state) reuse the cached delta instead of nulling it
   // out — without that we'd flicker "sampling…" between every real poll.
-  const prevRef = useRef<ProcessDto | null>(null);
+  // Persist the previous ProcessDto in localStorage so CPU% and per-thread
+  // deltas survive a page navigation. Without this, every reopen of
+  // Overview started with "sampling…" until two snapshots accumulated
+  // again — and the panel never settled while the operator was busy
+  // clicking between pages.
+  const prevRef = useRef<ProcessDto | null>(loadPrevProcess());
   const cachedPctRef = useRef<{
     cpuPct: number | null;
     threadDeltas: { tid: number; name: string; pct: number }[];
@@ -1010,7 +1174,15 @@ function ProcessBar({
     // Same poll snapshot we already computed against — reuse cached values.
     cpuPct = cachedPctRef.current.cpuPct;
     threadDeltas = cachedPctRef.current.threadDeltas;
-  } else if (process && last && last.ts !== process.ts) {
+  } else if (
+    process &&
+    last &&
+    last.ts !== process.ts &&
+    // Drop persisted snapshots that are too old to compute a meaningful
+    // delta (laptop slept, tab closed for hours). 60 s window matches
+    // the sidebar guard.
+    process.ts - last.ts < 60_000
+  ) {
     const dtSec = (process.ts - last.ts) / 1000;
     if (dtSec > 0 && process.cpu_cores > 0) {
       const usDelta =
@@ -1044,6 +1216,7 @@ function ProcessBar({
   if (process && (!last || last.ts !== process.ts)) {
     prevRef.current = process;
     cachedPctRef.current = { cpuPct, threadDeltas, forTs: process.ts };
+    savePrevProcess(process);
   }
 
   if (!process) return null;
@@ -1106,7 +1279,7 @@ function ProcessBar({
   return (
     <div className="border border-border bg-surface px-4 py-3">
       <div className="mb-2 flex items-baseline justify-between">
-        <span className="text-[10px] uppercase tracking-[0.2em] text-text-dim">Process</span>
+        <span className="text-[10px] uppercase tracking-wide text-text-dim">Process</span>
         <span className="font-mono text-xs text-text-dim">
           {process.hostname || "host"} · pid {process.pid}
         </span>
@@ -1187,7 +1360,7 @@ function ProcStat({
   const cls = `border border-border bg-surface-2 px-3 py-2 ${onClick ? "cursor-pointer hover:border-border-strong" : ""}`;
   return (
     <div title={hint} className={cls} onClick={onClick} role={onClick ? "button" : undefined}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className="text-[10px] uppercase tracking-wide text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{value}</div>
     </div>
   );
@@ -1211,7 +1384,7 @@ function ProcStatTwoLine({
   const cls = `border border-border bg-surface-2 px-3 py-2 ${onClick ? "cursor-pointer hover:border-border-strong" : ""}`;
   return (
     <div title={hint} className={cls} onClick={onClick} role={onClick ? "button" : undefined}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className="text-[10px] uppercase tracking-wide text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{primary}</div>
       {secondary && <div className="text-[10px] text-text-dim">{secondary}</div>}
     </div>

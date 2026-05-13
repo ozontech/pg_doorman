@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { apiGet } from "../api";
+import { toast } from "sonner";
+import { apiGet, apiPost } from "../api";
 import { Collapsible } from "../components/Collapsible";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
@@ -12,6 +13,7 @@ import type {
   LogLevelDto,
   PoolCoordinatorDto,
   PoolScalingDto,
+  PoolsDto,
   SocketsDto,
   UsersDto,
 } from "../types";
@@ -24,7 +26,16 @@ export default function ConfigState() {
     <section className="flex flex-col">
       <PageHero
         title="Config & state"
-        description="What pg_doorman is actually running with right now. Read-only — same content as SHOW CONFIG / SHOW POOLS over the admin protocol, just queryable from a browser. Use the filter on the config table to confirm a SIGHUP picked up your edit."
+        help={{
+          definition:
+            "Read-only snapshot of the running pg_doorman configuration and state. It mirrors SHOW CONFIG / SHOW DATABASES / SHOW USERS / SHOW POOL_COORDINATOR / SHOW POOL_SCALING in the browser. Compare default vs current after SIGHUP / RELOAD.",
+          source:
+            "SHOW CONFIG · SHOW DATABASES · SHOW USERS · SHOW AUTH_QUERY · SHOW LOG_LEVEL · SHOW STARTUP_PARAMETERS · SHOW SOCKETS · SHOW POOL_SCALING · SHOW POOL_COORDINATOR",
+          related: ["RELOAD", "SIGHUP"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
+        actions={<ReloadButton />}
       />
       <Collapsible id="config-config" title="config" defaultOpen>
         <ConfigPanel />
@@ -41,6 +52,9 @@ export default function ConfigState() {
       <Collapsible id="config-users" title="users">
         <UsersPanel />
       </Collapsible>
+      <Collapsible id="config-startup-parameters" title="startup parameters">
+        <StartupParametersPanel />
+      </Collapsible>
       <Collapsible id="config-sockets" title="sockets">
         <SocketsPanel />
       </Collapsible>
@@ -51,6 +65,93 @@ export default function ConfigState() {
         <PoolCoordinatorPanel />
       </Collapsible>
     </section>
+  );
+}
+
+// Global "Reload config" button. It calls `POST /api/admin/reload` and
+// uses typed confirmation because RELOAD affects every pool.
+function ReloadButton() {
+  const { authHeader, role } = useAdminAuth();
+  const [confirm, setConfirm] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [pending, setPending] = useState(false);
+  if (role !== "admin") return null;
+  const run = async () => {
+    setPending(true);
+    try {
+      await apiPost("/api/admin/reload", authHeader);
+      toast.success("Config reload requested");
+      setConfirm(false);
+      setTyped("");
+    } catch (e) {
+      toast.error(
+        `RELOAD failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirm(true)}
+        className="rounded border border-border-strong px-3 py-1.5 text-xs font-medium text-text-muted hover:border-accent hover:text-accent"
+        title="RELOAD: ask pg_doorman to re-read its TOML config (affects every pool)"
+      >
+        Reload config
+      </button>
+      {confirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-bg/70 backdrop-blur-sm"
+          onClick={() => !pending && setConfirm(false)}
+        >
+          <div
+            className="w-[min(420px,calc(100vw-2rem))] rounded-lg border border-border-strong bg-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold tracking-tight text-text">
+              Reload pg_doorman config?
+            </h2>
+            <p className="mt-2 text-sm text-text-muted">
+              Re-reads the TOML file. Most settings apply on the next backend;
+              pool size shrinks via natural drain. Affects every pool. Type{" "}
+              <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
+                RELOAD
+              </code>{" "}
+              to confirm.
+            </p>
+            <input
+              autoFocus
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="RELOAD"
+              className="mt-3 block h-9 w-full rounded border border-border-strong bg-surface-2 px-2 font-mono text-sm text-text"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setConfirm(false)}
+                className="rounded border border-border-strong px-3 py-1 text-xs text-text-muted hover:text-text disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={pending || typed !== "RELOAD"}
+                onClick={run}
+                className="rounded border border-accent bg-accent px-3 py-1 text-xs font-semibold text-accent-fg hover:bg-accent-hover disabled:opacity-50"
+              >
+                {pending ? "Reloading…" : "Reload"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -175,11 +276,14 @@ function LogLevelPanel() {
         <div className="text-xs uppercase tracking-wide text-text-dim">Active filter</div>
         <div className="mt-1 font-mono text-base text-text">{poll.data?.log_level}</div>
         <p className="mt-3 max-w-2xl text-xs text-text-muted">
-          RUST_LOG-style filter. Change at runtime with{" "}
-          <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`SET log_level = '…'`}</code>{" "}
-          on the admin protocol;{" "}
+          RUST_LOG-style filter. Runtime change is only available over the
+          admin protocol — connect via{" "}
+          <code className="rounded bg-surface px-1.5 py-0.5 font-mono">psql</code>{" "}
+          and run{" "}
+          <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`SET log_level = '…'`}</code>;{" "}
           <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`'default'`}</code>{" "}
-          resets to the startup level.
+          resets to the startup level. The web admin UI does not yet
+          accept this mutation.
         </p>
       </div>
     </PanelShell>
@@ -333,32 +437,32 @@ function SocketsPanel() {
   }
   const s = poll.data!;
   return (
-    <div className="grid grid-cols-3 gap-6 px-6 py-5">
-      <SocketCard title="TCP">
+    <div className="grid grid-cols-1 gap-6 px-6 py-4 md:grid-cols-3">
+      <SocketGroup title="TCP">
         <KV label="established" value={s.tcp.established} highlight={s.tcp.established === 0 ? "warn" : null} />
         <KV label="time-wait" value={s.tcp.time_wait} />
         <KV label="close-wait" value={s.tcp.close_wait} highlight={s.tcp.close_wait > 0 ? "warn" : null} />
         <KV label="listen" value={s.tcp.listen} />
-      </SocketCard>
-      <SocketCard title="TCP6">
+      </SocketGroup>
+      <SocketGroup title="TCP6">
         <KV label="established" value={s.tcp6.established} />
         <KV label="time-wait" value={s.tcp6.time_wait} />
         <KV label="close-wait" value={s.tcp6.close_wait} />
-      </SocketCard>
-      <SocketCard title="Unix stream">
+      </SocketGroup>
+      <SocketGroup title="Unix stream">
         <KV label="connected" value={s.unix_stream.connected} />
         <KV label="unconnected" value={s.unix_stream.unconnected} />
         <KV label="connecting" value={s.unix_stream.connecting} />
         <KV label="disconnecting" value={s.unix_stream.disconnecting} />
-      </SocketCard>
+      </SocketGroup>
     </div>
   );
 }
 
-function SocketCard({ title, children }: { title: string; children: ReactNode }) {
+function SocketGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="border border-border bg-surface p-4">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-dim">
+    <div>
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-text-dim">
         {title}
       </div>
       <dl className="space-y-1 text-sm tabular">{children}</dl>
@@ -386,6 +490,83 @@ function KV({
         {value}
       </dd>
     </div>
+  );
+}
+
+function StartupParametersPanel() {
+  // Reuses /api/pools — each pool already carries its resolved startup
+  // parameters cascade in the same payload that drives the Pools list,
+  // so no extra endpoint is needed for the overview. Slow poll: declared
+  // values change only on SIGHUP and the operator does not need 1.5 s
+  // freshness here.
+  const poll = useEndpoint<PoolsDto>("/api/pools", SLOW_MS);
+  const rows = useMemo(() => {
+    const out: {
+      poolId: string;
+      parameter: string;
+      value: string;
+      source: string;
+      state: string;
+    }[] = [];
+    for (const pool of poll.data?.pools ?? []) {
+      for (const p of pool.startup_parameters ?? []) {
+        out.push({
+          poolId: pool.id,
+          parameter: p.parameter,
+          value: p.value ?? "***",
+          source: p.source,
+          state: p.state ?? "applied",
+        });
+      }
+    }
+    return out;
+  }, [poll.data]);
+  return (
+    <PanelShell loading={!poll.data} error={poll.error}>
+      {rows.length === 0 ? (
+        <p className="px-6 py-4 text-sm text-text-dim">
+          No pool has operator-supplied startup parameters. Configure them under
+          <code className="mx-1 font-mono">[pools.&lt;db&gt;.&lt;user&gt;] startup_parameters</code>
+          or
+          <code className="mx-1 font-mono">[databases.&lt;db&gt;] startup_parameters</code>
+          to override the libpq defaults for new backend connections.
+        </p>
+      ) : (
+        <table className="w-full text-sm tabular">
+          <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-6 py-2 text-left">Pool</th>
+              <th className="px-3 py-2 text-left">Parameter</th>
+              <th className="px-3 py-2 text-left">Value</th>
+              <th className="px-3 py-2 text-left">Source</th>
+              <th className="px-3 py-2 text-left">State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const stateTone =
+                r.state === "applied"
+                  ? "text-text-dim"
+                  : r.state === "dropped_due_to_budget"
+                    ? "text-danger"
+                    : "text-warning";
+              return (
+                <tr
+                  key={`${r.poolId}-${r.parameter}`}
+                  className="border-b border-border/40 hover:bg-surface-2"
+                >
+                  <td className="px-6 py-1.5 font-mono text-xs">{r.poolId}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs">{r.parameter}</td>
+                  <td className="px-3 py-1.5 font-mono text-xs">{r.value}</td>
+                  <td className="px-3 py-1.5 text-xs text-text-muted">{r.source}</td>
+                  <td className={`px-3 py-1.5 text-xs ${stateTone}`}>{r.state}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </PanelShell>
   );
 }
 

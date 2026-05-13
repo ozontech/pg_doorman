@@ -1,15 +1,12 @@
 // /api/apps already aggregated client counters by `application_name` on the
 // backend; the JSON DTO has been there since phase 3d-1 but no frontend
-// page rendered it. This file fixes that — operators looking for "which
-// app holds 30 connections / generates the error spike / churns reconnects"
-// now have a single sortable table instead of grepping the Clients view by
-// application_name substring.
+// page rendered it. This page adds a sortable application-level view instead
+// of making operators filter Clients by application_name.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { InfoLabel } from "../components/InfoLabel";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { AppsDto } from "../types";
@@ -31,8 +28,7 @@ type AppRates = Record<string, { qps: number; tps: number }>;
 
 // Computes per-application qps / tps from the delta between the current
 // `/api/apps` snapshot and the previous one. The endpoint only ships
-// cumulative counters; without this hook the operator could not answer
-// "which app is busy right now" without doing the math by eye.
+// cumulative counters, so the rate is derived in the browser.
 function useAppRates(data: AppsDto | null): AppRates {
   const [rates, setRates] = useState<AppRates>({});
   const prevRef = useRef<{ ts: number; apps: AppTotals } | null>(null);
@@ -131,13 +127,20 @@ export default function Apps() {
     <section className="flex flex-col">
       <PageHero
         title="Apps"
-        description="One row per application_name as reported by clients. clients = currently connected; the totals are cumulative since pg_doorman started. Sort by err/1k q to find apps that fail more often per request — values above 1 are unusual; above 10 means time to look at the app's recent deploy."
-      />
-      <SectionHeader
-        title="Aggregates"
-        what="One row per application_name. clients = currently-connected; the totals are cumulative since the pooler started."
-        how="Sort and filter happen in the browser, on the latest snapshot — no extra request per keystroke."
-        normal="When err/1k q jumps for one app while the rest stay flat, that app is the suspect — start by asking who deployed last."
+        help={{
+          definition:
+            "One row per application_name from the libpq StartupMessage. Use it to see which applications generate traffic and errors. Sort and filter run in the browser on the latest snapshot.",
+          source: "derived from SHOW CLIENTS (group by application_name)",
+          formula: "err / 1k q = errors_total × 1000 / queries_total",
+          thresholds: {
+            healthy: "err / 1k q < 1",
+            warn: "1–10",
+            crit: "> 10 — inspect the app's recent deploy",
+          },
+          related: ["SHOW STATS", "pg_stat_activity.application_name"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/admin-commands.html",
+        }}
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input
@@ -154,14 +157,12 @@ export default function Apps() {
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
             <th className="px-3 py-2 text-left">
-              <InfoLabel tip="application_name as reported by the client at startup (libpq, JDBC, etc.). Use to identify which app is misbehaving.">
-                <span
-                  className="cursor-pointer"
-                  onClick={() => onSort("application_name")}
-                >
-                  application_name{sortIndicator("application_name")}
-                </span>
-              </InfoLabel>
+              <span
+                className="cursor-pointer"
+                onClick={() => onSort("application_name")}
+              >
+                application_name{sortIndicator("application_name")}
+              </span>
             </th>
             <th className="px-3 py-2 text-right">
               <InfoLabel tip="Currently-connected clients with this application_name.">
@@ -171,7 +172,7 @@ export default function Apps() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Sort to find the loudest app right now. Empty on the first tick — needs two snapshots to compute a rate.">
+              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Sort to find the highest-traffic app right now. Empty on the first tick; rate needs two snapshots.">
                 <span className="cursor-pointer" onClick={() => onSort("qps")}>
                   qps{sortIndicator("qps")}
                 </span>
@@ -209,7 +210,7 @@ export default function Apps() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="errors / queries × 1000. Above 1 is unusual; above 10 = look at the app's recent deploy.">
+              <InfoLabel tip="errors / queries × 1000. Above 1 is unusual; above 10 means the app's recent deploy is a good first check.">
                 err / 1k q
               </InfoLabel>
             </th>

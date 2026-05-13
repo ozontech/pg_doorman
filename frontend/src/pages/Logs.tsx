@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../api";
 import { PageHero } from "../components/PageHero";
-import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { LogEntryDto, LogsDto } from "../types";
@@ -20,10 +20,26 @@ const LEVEL_COLOR: Record<string, string> = {
 
 export default function Logs() {
   const { authHeader } = useAdminAuth();
-  const [level, setLevel] = useState("");
-  const [target, setTarget] = useState("");
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [paused, setPaused] = useState(false);
+  // Filters live in the URL so the current log view can be shared.
+  // Pause and auto-scroll are bookmarkable as well.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const level = searchParams.get("level") ?? "";
+  const target = searchParams.get("q") ?? "";
+  const autoScroll = searchParams.get("scroll") !== "0";
+  const paused = searchParams.get("paused") === "1";
+  const updateParams = (mut: (sp: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams);
+    mut(next);
+    setSearchParams(next, { replace: true });
+  };
+  const setLevel = (v: string) =>
+    updateParams((sp) => (v ? sp.set("level", v) : sp.delete("level")));
+  const setTarget = (v: string) =>
+    updateParams((sp) => (v ? sp.set("q", v) : sp.delete("q")));
+  const setAutoScroll = (v: boolean) =>
+    updateParams((sp) => (v ? sp.delete("scroll") : sp.set("scroll", "0")));
+  const setPaused = (v: boolean) =>
+    updateParams((sp) => (v ? sp.set("paused", "1") : sp.delete("paused")));
   const [lines, setLines] = useState<LogEntryDto[]>([]);
   const [meta, setMeta] = useState<{
     tap_active: boolean;
@@ -105,13 +121,19 @@ export default function Logs() {
     <section className="flex h-screen flex-col">
       <PageHero
         title="Logs"
-        description="Live pooler log so you do not need shell on the host. Filter by level to cut volume; type a SQLSTATE (e.g. 53300) to find one error class, #c123 to follow one client, a module name (auth, pool, stats) for one subsystem. The tap stops on its own 2 minutes after the last poll, so leaving the tab open costs nothing."
-      />
-      <SectionHeader
-        title="Stream"
-        what="Newest entries appended below; last 500 lines kept in memory."
-        how={"Pause freezes the view; new lines still arrive in the background once a minute so you do not lose drops while you read."}
-        normal="drops above zero = the buffer overflowed between polls (chatty log, slow browser). Either raise log_tap_max_entries in [web], or narrow the level filter so fewer lines hit the buffer."
+        help={{
+          definition:
+            "Live pooler log stream via LogTap. Filter by SQLSTATE (e.g. 53300), client (#c123), or module (auth, pool, stats). Pause freezes the view; new lines still accumulate in the backend ring buffer. The tap stops 2 minutes after the last reader.",
+          source: "LogTap side-channel · SET log_level = '…' to change verbosity",
+          related: ["SHOW LOG_LEVEL", "journalctl -u pg_doorman"],
+          thresholds: {
+            healthy: "drops = 0",
+            warn: "drops > 0 — buffer overflow",
+            crit: "drops continue — raise [web].log_tap_max_entries or narrow the filter",
+          },
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/observability/json-logging.html",
+        }}
       />
       <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <select
@@ -139,7 +161,7 @@ export default function Logs() {
         />
         <button
           type="button"
-          onClick={() => setPaused((p) => !p)}
+          onClick={() => setPaused(!paused)}
           className={`rounded border px-3 py-1 text-sm ${paused ? "border-warning text-warning" : "border-border-strong text-text-muted hover:text-text"}`}
         >
           {paused ? "▶ resume" : "❚❚ pause"}

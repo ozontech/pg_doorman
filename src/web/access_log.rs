@@ -2,17 +2,20 @@
 //! HTTP response, formatted as logfmt (key=value) so awk / Promtail
 //! parsers pick it up without extra schema work.
 //!
-//! Log level is chosen by the request kind:
+//! Log level is chosen by the request kind, not by who is asking:
 //!
 //!   * `info`  — admin actions (`POST /api/admin/*`), personal-data
 //!     reads (`/api/logs`, `/api/prepared/text/*`, `/api/interner/top`,
-//!     `/api/top/queries`), every non-success response (400/401/403/
-//!     404/5xx), and any request that produced an authenticated
-//!     identity (Sso or Admin role).
-//!   * `debug` — anonymous successful reads of public APIs and
-//!     `/metrics` scrapes. These dominate the request rate (Prometheus
-//!     scrapes every few seconds, the SPA polls overview/pools), so
-//!     keeping them off `info` lets `RUST_LOG=info` stay readable.
+//!     `/api/top/queries`), auth/SSO endpoints (`/api/auth/*`,
+//!     `/api/sso/*`), and every non-success response (400/401/403/
+//!     404/5xx).
+//!   * `debug` — every other successful read, anonymous *or*
+//!     authenticated. The SPA polls /api/overview, /api/pools,
+//!     /api/clients, /api/process at 1.5–3 s; with the previous
+//!     rule that every authenticated 2xx was info, an operator sat
+//!     watching the Logs tab and saw their own polls echo back at
+//!     them. Information-class reads ride on `debug` so
+//!     `RUST_LOG=info` reads as "events that matter".
 //!
 //! The `pg_doorman::web::access` target is dedicated so operators can
 //! filter the access feed independently of the rest of the logger.
@@ -117,15 +120,9 @@ fn status_class(status: u16) -> &'static str {
     }
 }
 
-fn pick_level(path: &str, status: u16, auth: &AuthOutcome) -> log::Level {
+fn pick_level(path: &str, status: u16, _auth: &AuthOutcome) -> log::Level {
     if !(200..300).contains(&status) {
         return log::Level::Info;
-    }
-    if matches!(auth, AuthOutcome::Admin(_) | AuthOutcome::Sso(_)) {
-        return log::Level::Info;
-    }
-    if path == "/metrics" {
-        return log::Level::Debug;
     }
     if is_personal_data_path(path) {
         return log::Level::Info;
@@ -133,6 +130,13 @@ fn pick_level(path: &str, status: u16, auth: &AuthOutcome) -> log::Level {
     if path.starts_with("/api/admin/") {
         return log::Level::Info;
     }
+    if is_auth_endpoint(path) {
+        return log::Level::Info;
+    }
+    // Every other 2xx — anonymous or authenticated — rides on debug.
+    // The SPA polls overview/pools/clients/process every 1.5–3 s and
+    // those reads would otherwise flood the operator-visible info
+    // stream with their own activity.
     log::Level::Debug
 }
 
@@ -141,6 +145,13 @@ fn is_personal_data_path(path: &str) -> bool {
         || path.starts_with("/api/prepared/text/")
         || path == "/api/interner/top"
         || path == "/api/top/queries"
+}
+
+fn is_auth_endpoint(path: &str) -> bool {
+    // Login surface and SSO callbacks stay on info — these are rare
+    // events that we want to see in the steady-state log: who signed
+    // in, when, and through which provider.
+    path.starts_with("/api/auth/") || path.starts_with("/api/sso/")
 }
 
 fn source_str(source: AuthSource) -> &'static str {
@@ -232,9 +243,28 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_read_is_info() {
-        assert_eq!(pick_level("/api/version", 200, &sso()), log::Level::Info);
-        assert_eq!(pick_level("/api/overview", 200, &admin()), log::Level::Info);
+    fn authenticated_read_is_debug() {
+        // Authenticated polls ride on debug along with anonymous ones so
+        // an operator's own SPA traffic does not flood the info stream.
+        assert_eq!(pick_level("/api/version", 200, &sso()), log::Level::Debug);
+        assert_eq!(
+            pick_level("/api/overview", 200, &admin()),
+            log::Level::Debug
+        );
+    }
+
+    #[test]
+    fn auth_endpoints_are_info() {
+        // Login surface and SSO callbacks stay on info — rare events
+        // that should land in the steady-state log.
+        assert_eq!(
+            pick_level("/api/auth/config", 200, &AuthOutcome::Anonymous),
+            log::Level::Info
+        );
+        assert_eq!(
+            pick_level("/api/sso/callback", 200, &AuthOutcome::Anonymous),
+            log::Level::Info
+        );
     }
 
     #[test]
