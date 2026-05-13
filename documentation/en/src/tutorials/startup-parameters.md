@@ -63,10 +63,15 @@ column and logs once per (pool, username): one shared backend serves
 many users, so a per-user override cannot apply.
 
 Changes to a per-user `startup_parameters` row apply to **new** backend
-connections only. Backends that are already checked out keep the values
-captured when their pool was created. On the next client reconnect,
-pg_doorman runs `auth_query` again, reads the updated row, rebuilds the
-dynamic pool, and uses the new values for later backend starts.
+connections, but only after pg_doorman re-reads the row. The
+`auth_query` cache holds positive entries for `auth_query.cache_ttl`
+(default one hour) and on a refresh detects the overlay change and
+drops the dynamic pool so the next login rebuilds it against the new
+values. Until the cache entry expires, reconnecting clients still see
+the old overlay. To force an immediate rollout: lower `cache_ttl` and
+reload the config, restart pg_doorman, or wait for the TTL to elapse.
+Backends that are already checked out keep the values captured when
+their pool was created.
 
 ## What pg_doorman does with the values
 

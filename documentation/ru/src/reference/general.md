@@ -684,9 +684,11 @@ hostnossl all      all    192.168.1.0/24  trust
 протокольные ключи (`user`, `database`, `replication`, `options`,
 `_pq_.*`), имена GUC, нулевые байты и размер этого уровня. Перед каждым
 запуском бэкенда объединённый набор параметров снова проверяется по
-лимиту `MAX_STARTUP_PACKET_LENGTH` PostgreSQL; если он не помещается,
-pg_doorman пропускает операторские параметры для этого запуска и пишет
-предупреждение.
+лимиту `MAX_STARTUP_PACKET_LENGTH` PostgreSQL (10 000 байт). Каскад и
+проверка пакета отклоняют запуск бэкенда с SQLSTATE 53400
+(`configuration_limit_exceeded`); если каскад выходит за бюджет только
+из-за overlay из `auth_query`, pg_doorman сбрасывает этот overlay и
+продолжает с baseline.
 
 Если PostgreSQL отвергает параметр при запуске бэкенда, pg_doorman
 возвращает клиенту `ErrorResponse` PostgreSQL без изменений: повторной
