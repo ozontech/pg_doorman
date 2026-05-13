@@ -16,7 +16,7 @@ general:
   host: "0.0.0.0"
   port: 6432
   admin_username: "admin"
-  admin_password: "admin"
+  admin_password: "change_me_to_a_long_random_secret"
 
 pools:
   mydb:
@@ -25,7 +25,7 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "myuser"
-        password: "mypassword"
+        password: "md5..."  # хеш из pg_shadow / pg_authid
         pool_size: 40
 ```
 
@@ -36,7 +36,7 @@ pools:
 host = "0.0.0.0"
 port = 6432
 admin_username = "admin"
-admin_password = "admin"
+admin_password = "change_me_to_a_long_random_secret"
 
 [pools.mydb]
 server_host = "localhost"
@@ -45,7 +45,7 @@ pool_mode = "transaction"
 
 [[pools.mydb.users]]
 username = "myuser"
-password = "mypassword"
+password = "md5..."  # хеш из pg_shadow / pg_authid
 pool_size = 40
 ```
 
@@ -684,11 +684,10 @@ hostnossl all      all    192.168.1.0/24  trust
 протокольные ключи (`user`, `database`, `replication`, `options`,
 `_pq_.*`), имена GUC, нулевые байты и размер этого уровня. Перед каждым
 запуском бэкенда объединённый набор параметров снова проверяется по
-лимиту `MAX_STARTUP_PACKET_LENGTH` PostgreSQL (10 000 байт). Каскад и
-проверка пакета отклоняют запуск бэкенда с SQLSTATE 53400
-(`configuration_limit_exceeded`); если каскад выходит за бюджет только
-из-за overlay из `auth_query`, pg_doorman сбрасывает этот overlay и
-продолжает с baseline.
+лимиту `MAX_STARTUP_PACKET_LENGTH` PostgreSQL (10 000 байт). Любое
+переполнение отклоняет запуск бэкенда с SQLSTATE 53400
+(`configuration_limit_exceeded`), вместо отправки частичного или пустого
+`StartupMessage`.
 
 Если PostgreSQL отвергает параметр при запуске бэкенда, pg_doorman
 возвращает клиенту `ErrorResponse` PostgreSQL без изменений: повторной

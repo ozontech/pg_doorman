@@ -44,7 +44,7 @@ pub fn generate_prometheus_doc() -> String {
     let mut out = String::with_capacity(8 * 1024);
 
     let _ = writeln!(out, "# Prometheus Settings\n");
-    let _ = writeln!(out, "pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.\n");
+    let _ = writeln!(out, "pg_doorman exposes Prometheus metrics on the `[web]` listener. Enable `/metrics` through `[web]`; the tables below map metric names to the pooler state they report.\n");
     write_prometheus_fields(&mut out, f);
     write_prometheus_metrics_section(&mut out);
 
@@ -99,13 +99,13 @@ fn write_config_examples(out: &mut String) {
     let _ = writeln!(out, "### Example YAML Configuration (Recommended)\n");
     let _ = writeln!(
         out,
-        "```yaml\ngeneral:\n  host: \"0.0.0.0\"\n  port: 6432\n  admin_username: \"admin\"\n  admin_password: \"admin\"\n\npools:\n  mydb:\n    server_host: \"localhost\"\n    server_port: 5432\n    pool_mode: \"transaction\"\n    users:\n      - username: \"myuser\"\n        password: \"mypassword\"\n        pool_size: 40\n```\n"
+        "```yaml\ngeneral:\n  host: \"0.0.0.0\"\n  port: 6432\n  admin_username: \"admin\"\n  admin_password: \"change_me_to_a_long_random_secret\"\n\npools:\n  mydb:\n    server_host: \"localhost\"\n    server_port: 5432\n    pool_mode: \"transaction\"\n    users:\n      - username: \"myuser\"\n        password: \"md5...\"  # hash from pg_shadow / pg_authid\n        pool_size: 40\n```\n"
     );
 
     let _ = writeln!(out, "### Example TOML Configuration (Legacy)\n");
     let _ = writeln!(
         out,
-        "```toml\n[general]\nhost = \"0.0.0.0\"\nport = 6432\nadmin_username = \"admin\"\nadmin_password = \"admin\"\n\n[pools.mydb]\nserver_host = \"localhost\"\nserver_port = 5432\npool_mode = \"transaction\"\n\n[[pools.mydb.users]]\nusername = \"myuser\"\npassword = \"mypassword\"\npool_size = 40\n```\n"
+        "```toml\n[general]\nhost = \"0.0.0.0\"\nport = 6432\nadmin_username = \"admin\"\nadmin_password = \"change_me_to_a_long_random_secret\"\n\n[pools.mydb]\nserver_host = \"localhost\"\nserver_port = 5432\npool_mode = \"transaction\"\n\n[[pools.mydb.users]]\nusername = \"myuser\"\npassword = \"md5...\"  # hash from pg_shadow / pg_authid\npool_size = 40\n```\n"
     );
 }
 
@@ -374,10 +374,10 @@ fn write_user_fields(out: &mut String, f: &FieldsData) {
 fn write_prometheus_fields(out: &mut String, f: &FieldsData) {
     let _ = writeln!(out, "## Enabling the Web Listener\n");
     let _ = writeln!(out, "Both the Prometheus metrics endpoint (`/metrics`) and the optional operator console (the SPA on `/`, `/api/*`) are served by the same `[web]` listener. The legacy `prometheus.*` config keys are accepted as aliases for `web.*`.\n");
-    let _ = writeln!(out, "```yaml\nweb:\n  enabled: true     # Bind the listener (Prometheus only)\n  host: \"0.0.0.0\"\n  port: 9127\n  # Operator console (off by default; see the Web UI guide)\n  ui: false\n  ui_anonymous: false\n```\n");
+    let _ = writeln!(out, "```yaml\nweb:\n  enabled: true     # Bind the HTTP listener for /metrics\n  host: \"0.0.0.0\"\n  port: 9127\n  # Operator console is off by default; see the Web UI guide\n  ui: false\n  ui_anonymous: false\n```\n");
 
     let _ = writeln!(out, "### Configuration Options\n");
-    let _ = writeln!(out, "Full list — including UI-related fields — lives in [Web Settings](web.md). The minimum to expose `/metrics` is:\n");
+    let _ = writeln!(out, "For UI settings, see [Web UI](../guides/web-ui.md). The minimum to expose `/metrics` is:\n");
 
     let _ = writeln!(out, "| Option | Description | Default |");
     let _ = writeln!(out, "|--------|-------------|---------|");

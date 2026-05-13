@@ -6,10 +6,10 @@ A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replaceme
 
 ## Headline features
 
-```admonish success title="Built-in operator dashboard"
-A diagnostic console embedded in the pg_doorman binary, served on the same port as `/metrics`. What it shows: pool saturation tiles, per-pool latency p95/p99 sparklines, errors split by SQLSTATE per pool, top-N stuck queries, jemalloc memory broken into live allocations / fragmentation / internal caches / code-and-libs / stacks / swap, `/proc/self/status` fields with one-line explanations next to the numbers, per-thread tokio-worker CPU, prepared cache attribution, query interner contents, live log tail. Sortable, filterable tables on Pools / Clients / Apps / Caches; live qps and tx-per-second per app and per client.
+```admonish success title="Built-in diagnostic console"
+A diagnostic console embedded in the pg_doorman binary, served on the same port as `/metrics`. It gives operators the incident view that `/metrics` and the psql admin console expose only in pieces: pool saturation, latency percentiles, SQLSTATE breakdowns, long-running queries, prepared-cache and query-interner state, process memory, cgroup limits, per-worker CPU, and a live log tail.
 
-PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy expose `/metrics` and a psql admin console. The dashboard you would build on top of them — Prometheus + Grafana + a memory exporter + a custom panel set — is already in pg_doorman.
+The console is for live diagnosis, not a replacement for long-term Prometheus/Grafana monitoring.
 
 Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when `[web].ui = true` and `general.admin_password` is non-default; a fresh install with the placeholder password keeps the listener at `/metrics` only and logs a `WARN`.
 
@@ -33,7 +33,7 @@ Set `patroni_api_urls` and `fallback_cooldown` in `[general]` and it applies to 
 ```
 
 ```admonish success title="Graceful Binary Upgrade"
-Update PgDoorman during business hours without a maintenance window. Apps don't see reconnect errors, PostgreSQL isn't hit by a wave of `auth`/SCRAM handshakes from simultaneous reconnects, in-flight transactions don't fail.
+Update PgDoorman without stopping the listener. Idle client sessions can move to the new process, which avoids a reconnect wave and reduces repeated `auth`/SCRAM handshakes against PostgreSQL. Clients inside a transaction stay on the old process until they go idle.
 
 On `SIGUSR2` the old process hands each idle client's TCP socket to the new one through `SCM_RIGHTS` — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the `tls-migration` build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.
 

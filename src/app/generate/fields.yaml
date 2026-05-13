@@ -1180,7 +1180,7 @@ fields:
 
         Cascade order: `general.startup_parameters`, then `pools.<name>.startup_parameters`, then the optional `startup_parameters` JSON column returned by passthrough `auth_query`. Later layers win per key. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple roles.
 
-        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes). The cascade and packet-cap gates reject backend startup with SQLSTATE 53400 (`configuration_limit_exceeded`); when only the auth_query overlay tips the cascade over budget, pg_doorman drops that overlay and continues with the baseline.
+        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes). Any overflow rejects backend startup with SQLSTATE 53400 (`configuration_limit_exceeded`) instead of sending a partial or empty `StartupMessage`.
 
         If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's `ErrorResponse` to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are written to the corresponding warning log line.
 
@@ -1508,9 +1508,9 @@ fields:
           бэкенда по лимиту PG MAX_STARTUP_PACKET_LENGTH (10000 байт).
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
-        Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](#startup-parameters): reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
+        Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for [`general.startup_parameters`](general.md#startup_parameters): reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's `MAX_STARTUP_PACKET_LENGTH` (10 000-byte) `StartupMessage` cap.
 
-        In the cascade `general` → `pool` → `auth_query`, this layer overrides `general` per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple users. See [`general.startup_parameters`](#startup-parameters) for validation rules, failure behavior, and observability.
+        In the cascade `general` → `pool` → `auth_query`, this layer overrides `general` per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple users. See [`general.startup_parameters`](general.md#startup_parameters) for validation rules, failure behavior, and observability.
       default: "{} (empty)"
 
   user:
@@ -1748,37 +1748,37 @@ fields:
   web:
     enabled:
       config:
-        en: "Enable Prometheus metrics exporter."
-        ru: "Включить экспорт метрик Prometheus."
-      doc: "Enable or disable the Prometheus metrics exporter."
+        en: "Enable the HTTP listener for /metrics and the optional web UI."
+        ru: "Включить HTTP-сервер для /metrics и опциональной веб-консоли."
+      doc: "Enable the `[web]` HTTP listener. `/metrics` is available when this is true; the operator console also requires `ui = true`."
       default: "false"
 
     host:
       config:
-        en: "Host for the metrics HTTP endpoint."
-        ru: "Адрес HTTP-эндпоинта для метрик."
-      doc: "The host on which the Prometheus metrics exporter will listen."
+        en: "Bind address for the [web] HTTP listener."
+        ru: "Адрес, на котором слушает HTTP-сервер [web]."
+      doc: "Bind address for the `[web]` HTTP listener."
       default: '"0.0.0.0"'
 
     port:
       config:
-        en: "Port for the metrics HTTP endpoint."
-        ru: "Порт HTTP-эндпоинта для метрик."
-      doc: "The port on which the Prometheus metrics exporter will listen."
+        en: "Port for the [web] HTTP listener."
+        ru: "Порт HTTP-сервера [web]."
+      doc: "Port for the `[web]` HTTP listener."
       default: "9127"
 
     ui:
       config:
         en: "Enable the web UI."
-        ru: "Включить веб-интерфейс."
+        ru: "Включить веб-консоль."
       doc: "When true, the web listener also serves the SPA (static assets) and `/api/*` routes alongside `/metrics`. Requires `admin_password` to be set to a non-default value."
       default: "false"
 
     ui_anonymous:
       config:
         en: "Allow unauthenticated access to the public read-only API endpoints."
-        ru: "Разрешить анонимный доступ к публичным read-only API-эндпоинтам."
-      doc: "When true, public read-only routes (overview, pools, clients, config) are accessible without authentication; admin-only routes (logs, prepared statement bodies, interner top, top queries, /api/admin/*) always require basic-auth regardless. Note: the SPA shell on `/` is always served anonymously when `web.ui` is active so the React sign-in modal can render before any browser-native basic-auth dialog."
+        ru: "Разрешить анонимный доступ к публичным API только для чтения."
+      doc: "When true, public read-only routes (overview, pools, clients, config) are accessible without authentication. Routes that expose personal data (`/api/logs`, prepared statement bodies, interner top, top queries) still require Sso or Admin, and `/api/admin/*` requires Admin. The SPA shell on `/` is always served anonymously when `web.ui` is active so the React sign-in modal can render before any browser-native Basic-auth dialog."
       default: "false"
 
     log_tap_max_entries:
@@ -1791,35 +1791,35 @@ fields:
     sso_enabled:
       config:
         en: "Enable JWT-based SSO authentication on the web UI."
-        ru: "Включить JWT-аутентификацию web UI через внешний SSO proxy."
-      doc: "When true, sso_public_key_file and sso_audience must also be set. Misconfigured SSO is logged at error level and the listener stays Basic-only — the operator console never disappears because of an SSO typo."
+        ru: "Включить JWT-аутентификацию веб-консоли через внешний SSO-прокси."
+      doc: "When true, sso_public_key_file and sso_audience must also be set. If SSO is misconfigured, pg_doorman logs the error, exposes the reason through `/api/auth/config` and the SSO config-error metric, and keeps Basic auth available."
       default: "false"
 
     sso_proxy_url:
       config:
         en: "URL of the external SSO proxy used by the SPA for the Sign in via SSO redirect."
-        ru: "URL внешнего SSO proxy для редиректа клиента (кнопка Sign in via SSO во фронтенде)."
+        ru: "URL внешнего SSO-прокси для перехода из веб-консоли."
       doc: "Server-side validation does not depend on this — backend only validates the JWT signature against sso_public_key_file. Used purely by the SPA to send the user agent to the proxy."
       default: "null"
 
     sso_public_key_file:
       config:
         en: "Path to a PEM file with the RSA public key paired with the SSO proxy signing key."
-        ru: "Путь к PEM с RSA public key, которым SSO proxy подписывает JWT."
-      doc: "Read on start and on RELOAD. Required when sso_enabled = true; missing or unreadable file silently demotes SSO to off."
+        ru: "Путь к PEM-файлу с открытым RSA-ключом, которым SSO-прокси подписывает JWT."
+      doc: "Read on start and on RELOAD. Required when sso_enabled = true; a missing or unreadable file logs an error and disables the SSO branch until the config or file is fixed."
       default: "null"
 
     sso_audience:
       config:
         en: "Allowed values of the JWT aud claim."
-        ru: "Список допустимых значений claim aud в JWT."
+        ru: "Список допустимых значений JWT claim `aud`."
       doc: "A token is accepted when its audience matches at least one entry. Required when sso_enabled = true."
       default: "[]"
 
     sso_allowed_users:
       config:
         en: "Allowlist of preferred_username or sub claims."
-        ru: "Allowlist по claim preferred_username или sub. ['*'] (по умолчанию) принимает любого валидного."
+        ru: "Список разрешённых значений JWT claims `preferred_username` или `sub`. `['*']` принимает любой валидный токен."
       doc: "['*'] (the default) accepts every valid JWT; an explicit list restricts access to those usernames only."
       default: '["*"]'
 
@@ -1833,7 +1833,7 @@ fields:
     sso_groups_claim:
       config:
         en: "JWT claim name that carries the user's group memberships."
-        ru: "Имя JWT-claim'а, в котором SSO proxy перечисляет группы пользователя."
+        ru: "Имя JWT claim, в котором SSO-прокси перечисляет группы пользователя."
       doc: "Used together with sso_admin_groups: a JWT whose value at this claim intersects the admin groups list resolves to the Admin role rather than Sso. Default `groups` matches Keycloak / Authelia / oauth2-proxy."
       default: "\"groups\""
 
@@ -1847,6 +1847,6 @@ fields:
     sso_require_https:
       config:
         en: "Reject SSO credentials presented over plain HTTP."
-        ru: "Отклонять SSO credentials, пришедшие по plain HTTP."
+        ru: "Отклонять SSO-учётные данные, пришедшие по обычному HTTP."
       doc: "When true, Bearer/cookie/query SSO tokens are accepted only if the request peer is in trusted_proxies and the proxy forwarded X-Forwarded-Proto: https. Defaults to false so SSO works through a TLS-terminating proxy reaching pg_doorman over a private HTTP leg. Enable on shared networks where the proxy → pg_doorman hop is exposed."
       default: "false"
