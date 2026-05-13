@@ -230,7 +230,7 @@ export default function Wall() {
         <Link
           to="/overview"
           title="Back to console (Esc)"
-          className="inline-flex items-center gap-2 border-2 border-accent bg-accent px-4 py-2 text-sm font-bold uppercase tracking-wide text-accent-fg transition-colors hover:bg-accent-hover"
+          className="inline-flex items-center gap-2 border-2 border-accent bg-accent px-4 py-2 text-sm font-semibold uppercase tracking-wide text-accent-fg transition-colors hover:bg-accent-hover"
         >
           <span aria-hidden="true">←</span> back · esc
         </Link>
@@ -443,7 +443,7 @@ function KpiTile({
       <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
         {label}
       </div>
-      <div className={`font-mono text-4xl font-extrabold leading-none tabular ${tone}`}>
+      <div className={`font-mono text-4xl font-semibold leading-none tabular ${tone}`}>
         {value}
       </div>
       <div className="h-6">
