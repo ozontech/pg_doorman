@@ -21,8 +21,11 @@ cipher state with the `tls-migration` build (Linux, opt-in).
 ## Quick start
 
 ```bash
-# 1. Drop the new binary in place.
-cp pg_doorman_new /usr/bin/pg_doorman
+# 1. Replace the binary atomically. `install` writes to a temporary
+#    file and renames it onto the target, so the inode the running
+#    process is mapped from is not overwritten in place. `cp` modifies
+#    the live inode and risks SIGBUS / SIGSEGV in the running pg_doorman.
+install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
 # 2. Validate the new binary against the live config before triggering
 #    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
@@ -321,14 +324,24 @@ SIGINT triggers binary upgrade in daemon mode or without a TTY (e.g. when spawne
 | Recommended for | systemd, containers, k8s | Legacy deployments |
 
 For zero-downtime upgrades with client migration, run in foreground
-mode. systemd manages the process lifecycle:
+mode. systemd manages the process lifecycle. Use `Type=notify` so the
+unit reaches `active` only after pg_doorman signals readiness, and the
+child process can update `MainPID` to itself during `SIGUSR2` upgrades:
 
 ```ini
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
-ExecReload=/bin/kill -SIGUSR2 $MAINPID
+ExecReload=/bin/kill -SIGHUP $MAINPID
 ```
+
+`NotifyAccess=all` is required because the new process the upgrade
+spawns sends `sd_notify MAINPID=<new_pid>` to systemd. Without it,
+systemd silently rejects the MainPID handoff and keeps tracking the
+dying old PID. `ExecReload=SIGHUP` covers config reload; the binary
+upgrade is triggered by `kill -USR2 $MAINPID` or `UPGRADE;` from the
+admin console.
 
 ## Configuration
 

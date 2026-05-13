@@ -25,8 +25,12 @@ OpenSSL.
 ## Быстрый старт
 
 ```bash
-# 1. Положите новый бинарник на место.
-cp pg_doorman_new /usr/bin/pg_doorman
+# 1. Атомарно замените бинарник. `install` пишет во временный файл и
+#    переименовывает его на целевой путь, поэтому inode, из которого
+#    отображены сегменты работающего процесса, не перезаписывается.
+#    `cp` правит живой inode и может уронить старый pg_doorman через
+#    SIGBUS / SIGSEGV.
+install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
 # 2. Проверьте, что новый бинарник принимает текущий конфиг, до того
 #    как запускать обновление. SIGUSR2 тоже прогоняет `-t` и отменяет
@@ -328,14 +332,25 @@ SHA-256 архива проверяется автоматически.
 | Рекомендуется для | systemd, контейнеры, Kubernetes | Старые установки |
 
 Для обновления без простоя и с миграцией клиентов запускайте PgDoorman
-в foreground-режиме. systemd управляет жизненным циклом процесса:
+в foreground-режиме. systemd управляет жизненным циклом процесса.
+Используйте `Type=notify`, тогда unit становится `active` только после
+сигнала готовности от pg_doorman, а новый процесс при `SIGUSR2`
+обновляет `MainPID` на себя:
 
 ```ini
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
-ExecReload=/bin/kill -SIGUSR2 $MAINPID
+ExecReload=/bin/kill -SIGHUP $MAINPID
 ```
+
+`NotifyAccess=all` обязателен: новый процесс, который порождает
+upgrade, шлёт systemd `sd_notify MAINPID=<new_pid>`. Без `all` systemd
+молча отбрасывает этот сигнал и продолжает считать MainPID-ом
+умирающий старый процесс. `ExecReload=SIGHUP` отвечает за reload
+конфига; обновление бинаря по-прежнему запускается через
+`kill -USR2 $MAINPID` или `UPGRADE;` из админ-консоли.
 
 ## Конфигурация
 
