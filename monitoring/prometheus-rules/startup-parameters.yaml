@@ -9,19 +9,21 @@ groups:
           ) > 0
         for: 1m
         labels:
-          severity: critical
+          severity: warning
           service: pg_doorman
         annotations:
           summary: "pg_doorman: PG rejected configured startup_parameter for pool {{ $labels.pool }} (SQLSTATE {{ $labels.sqlstate }})"
           runbook: |
-            Every new backend for this pool failed: PostgreSQL refused a
-            startup_parameter pg_doorman sent in StartupMessage. The
-            failing key and value are in the warn log line above this
-            alert; SQLSTATE points at the cause (22023 invalid_value,
-            42704 undefined_object, 42501 insufficient_privilege,
-            55P02 cannot_alter_runtime_param). Fix the offending
+            At least one backend startup for this pool failed:
+            PostgreSQL refused a startup_parameter pg_doorman sent in
+            StartupMessage. Metric labels are pool and sqlstate only —
+            this can be one bad auth_query row or pool-wide breakage.
+            Check the warn log line above the alert for the failing key
+            and the affected username, then fix the offending
             startup_parameter in general/pool config or in the
-            auth_query row.
+            auth_query row. SQLSTATE points at the cause (22023
+            invalid_value, 42704 undefined_object, 42501
+            insufficient_privilege, 55P02 cannot_alter_runtime_param).
 
       - alert: PgDoormanStartupParameterCascadeOverflow
         expr: |
@@ -45,22 +47,41 @@ groups:
 
       - alert: PgDoormanStartupParameterOverlayOversize
         expr: |
-          sum by (job, instance, pool, reason) (
-            increase(pg_doorman_startup_parameters_dropped_total{reason=~"auth_query_overlay_oversize|auth_query_oversize"}[5m])
+          sum by (job, instance, pool) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason="auth_query_overlay_oversize"}[5m])
           ) > 0
         for: 1m
         labels:
           severity: warning
           service: pg_doorman
         annotations:
-          summary: "pg_doorman: auth_query startup_parameters row exceeds budget for pool {{ $labels.pool }}"
+          summary: "pg_doorman: auth_query overlay pushes the cascade over budget for pool {{ $labels.pool }} (backend spawn rejected)"
           runbook: |
-            A specific auth_query row holds a startup_parameters
-            payload too large to merge into the cascade. The dynamic
-            pool for that user cannot spawn backends. Inspect the
-            auth_query view for that user and shrink the per-user
-            map, or raise the operator budget if every row is
-            legitimately large.
+            The merged general/pool/auth_query map cannot fit the
+            StartupMessage budget, so pg_doorman returns SQLSTATE 53400
+            and the affected dynamic pool cannot spawn backends.
+            Shrink the per-user startup_parameters auth_query row, the
+            pool baseline, or the general baseline.
+
+      - alert: PgDoormanStartupParameterOverlayRaw
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason="auth_query_oversize"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query startup_parameters row exceeds budget at parse time for pool {{ $labels.pool }} (overlay ignored)"
+          runbook: |
+            The auth_query row for a user returned a
+            startup_parameters payload too large to be a valid
+            StartupMessage overlay. pg_doorman drops the per-user
+            overlay and the affected user authenticates without
+            per-user GUCs — the backend may still spawn with the
+            general/pool baseline. Inspect the auth_query view for the
+            affected user and shrink the row.
 
       - alert: PgDoormanStartupParameterAuthQueryInvalid
         expr: |

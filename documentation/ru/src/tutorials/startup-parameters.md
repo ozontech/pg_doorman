@@ -114,7 +114,7 @@ checkout=> SET plan_cache_mode = 'auto'; RESET ALL; SHOW plan_cache_mode;
 себе может превысить лимит, а слой `auth_query` способен дополнительно
 вытолкнуть ранее помещавшийся каскад за лимит. Любое превышение —
 из-за overlay или из-за baseline — теперь возвращается клиенту как
-PostgreSQL-ошибка с `SQLSTATE 54000` вместо тихой отправки пустого
+PostgreSQL-ошибка с `SQLSTATE 53400` вместо тихой отправки пустого
 или урезанного `StartupMessage`. Размеры байт фиксируются в warn-логе
 при создании пула, а счётчик
 `pg_doorman_startup_parameters_dropped_total` тикает на каждой

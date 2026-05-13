@@ -52,10 +52,11 @@ FROM pg_authid
 WHERE rolname = $1;
 ```
 
-The column must serialize as `text`. If the SQL returns `json` or
-`jsonb`, add an explicit `::text` cast. pg_doorman reads the column
-as `text` and logs a warning for that fetched row when the type does
-not match.
+The column may be `text`, `json`, or `jsonb`; pg_doorman dispatches by
+the column type without requiring a cast. The content must be a JSON
+object whose values are strings. Other PostgreSQL types (or a custom
+domain on top of `jsonb`) log a warning and the per-user overlay is
+ignored.
 
 Dedicated `auth_query` mode (`server_user` set) ignores the per-user
 column and logs once per (pool, username): one shared backend serves
@@ -106,7 +107,7 @@ against the same cap. Layers that fit individually can overflow once
 they are merged: general + pool may already exceed the cap, and an
 `auth_query` overlay can push a previously fitting cascade over the
 limit. Any overflow — overlay-only or baseline-side — is now reported
-as a PostgreSQL-style error (`SQLSTATE 54000`) on the client connection
+as a PostgreSQL-style error (`SQLSTATE 53400`) on the client connection
 instead of silently shipping a partial or empty StartupMessage. The
 warn log line at pool construction records the byte counts; the
 `pg_doorman_startup_parameters_dropped_total` counter ticks for every

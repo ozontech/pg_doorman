@@ -727,7 +727,7 @@ impl ServerPool {
                     ])
                     .inc();
                 Err(Error::ServerStartupParameterRejection {
-                    sqlstate: "54000".to_string(),
+                    sqlstate: "53400".to_string(),
                     message: format!(
                         "auth_query startup_parameters for pool '{}' would exceed the \
                          operator budget (merged body {} bytes, full packet {} bytes; \
@@ -756,7 +756,7 @@ impl ServerPool {
                     .with_label_values(&[self.address.pool_name.as_str(), reason.as_str()])
                     .inc();
                 Err(Error::ServerStartupParameterRejection {
-                    sqlstate: "54000".to_string(),
+                    sqlstate: "53400".to_string(),
                     message: format!(
                         "startup_parameters cascade for pool '{}' does not fit the operator \
                          budget (body {} bytes, full packet {} bytes; operator budget {} bytes, \

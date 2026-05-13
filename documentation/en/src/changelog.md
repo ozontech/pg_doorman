@@ -6,7 +6,7 @@ Follow-up release that hardens `startup_parameters` after 3.9.0
 shipped.
 
 - An over-budget `startup_parameters` cascade now fails the backend
-  spawn with `SQLSTATE 54000` instead of silently sending an empty
+  spawn with `SQLSTATE 53400` instead of silently sending an empty
   StartupMessage. The deterministic `general + pool` overflow is
   refused at config load.
 - The `ParameterStatus` pg_doorman sends a client at the end of
