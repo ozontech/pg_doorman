@@ -101,7 +101,13 @@ fn validate_key(key: &str, scope: &str) -> Result<(), Error> {
             "{scope}: '{key}' is reserved and managed by pg_doorman"
         )));
     }
-    if key.starts_with(RESERVED_PREFIX) {
+    // Case-insensitive prefix check: PG GUC lookup is case-insensitive
+    // and `canonicalize_param_name` lowercases non-tracked keys before
+    // they reach the wire, so `_PQ_.foo` would otherwise pass validation
+    // here and emerge on the wire as `_pq_.foo`.
+    if key.len() >= RESERVED_PREFIX.len()
+        && key.as_bytes()[..RESERVED_PREFIX.len()].eq_ignore_ascii_case(RESERVED_PREFIX.as_bytes())
+    {
         return Err(Error::BadConfig(format!(
             "{scope}: '{key}' uses the reserved '_pq_.' prefix"
         )));
@@ -305,6 +311,30 @@ mod tests {
     fn pq_prefix_rejected() {
         let err = validate(&m(&[("_pq_.fancy_ext", "x")]), "scope").unwrap_err();
         assert!(matches!(err, Error::BadConfig(_)));
+    }
+
+    #[test]
+    fn pq_prefix_rejected_case_insensitive() {
+        // PG GUC lookup is case-insensitive, and `canonicalize_param_name`
+        // lowercases non-tracked keys before they reach the wire. Without
+        // a case-insensitive check the reserved protocol-extension
+        // namespace can be smuggled in as `_PQ_.foo` or `_Pq_.foo` and
+        // emerges on the wire as `_pq_.foo`.
+        for key in ["_PQ_.fancy_ext", "_Pq_.fancy_ext", "_pQ_.FANCY"] {
+            let err = validate(&m(&[(key, "x")]), "scope").unwrap_err();
+            assert!(
+                matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")),
+                "key {key} must be rejected as reserved"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_entry_rejects_pq_prefix_case_insensitive() {
+        // auth_query JSON values flow through `validate_entry`, so the
+        // reserved-prefix guard must cover that path identically.
+        let err = validate_entry("_PQ_.fancy_ext", "x", "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
     }
 
     #[test]
