@@ -11,6 +11,13 @@ URL:            https://github.com/ozontech/pg_doorman
 Source0:        %{name}-%{version}.tar.gz
 Source1:        vendor.tar.gz
 Source2:        rust-%{rust_version}-x86_64-unknown-linux-gnu.tar.gz
+# RHEL/CentOS Stream 7 and 8 ship perl-FindBin / perl-IPC-Cmd only
+# inside modular Perl streams that COPR mock filters out by default,
+# and COPR builders have no network access to `dnf module enable`.
+# The CI workflow vendors the .pm files into this tarball; the build
+# stanza extracts it and points PERL5LIB at the result so the build
+# sees the modules regardless of distro.
+Source3:        perl_modules.tar.gz
 
 BuildRequires:  gcc
 BuildRequires:  gcc-c++
@@ -20,9 +27,7 @@ BuildRequires:  cmake
 BuildRequires:  clang
 BuildRequires:  tar
 BuildRequires:  patch
-BuildRequires:  perl
-BuildRequires:  perl-FindBin
-BuildRequires:  perl-IPC-Cmd
+BuildRequires:  perl-interpreter
 
 Requires:       openssl
 
@@ -39,6 +44,8 @@ This package includes:
 %setup -q -n %{name}-%{version}
 # Extract vendored dependencies
 tar xzf %{SOURCE1}
+# Extract bundled Perl modules (FindBin, IPC::Cmd, ...) — see Source3 comment.
+tar xzf %{SOURCE3} -C %{_builddir}
 
 %build
 # Install Rust toolchain from local tarball (COPR has no network access)
@@ -48,6 +55,9 @@ tar xzf %{SOURCE2} -C %{_builddir}
 %{_builddir}/rust-%{rust_version}-x86_64-unknown-linux-gnu/install.sh --prefix="$RUST_INSTALL_DIR" --without=rust-docs
 
 export PATH="$RUST_INSTALL_DIR/bin:$PATH"
+# Make the bundled pure-Perl modules visible to any build script that
+# pulls them in (openssl-sys' Configure path uses FindBin and IPC::Cmd).
+export PERL5LIB="%{_builddir}/perl_modules${PERL5LIB:+:$PERL5LIB}"
 
 # Configure cargo to use vendored dependencies
 mkdir -p .cargo
