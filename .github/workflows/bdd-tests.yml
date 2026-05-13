@@ -202,6 +202,76 @@ jobs:
             echo "✅ Using freshly built image: ${{ needs.check-image.outputs.image-tag }}"
           fi
 
+  # Compile the BDD test binaries once and stash cargo's registry +
+  # target dir in GHA cache so the 23-way matrix below does not pay a
+  # full `cargo download + compile` per suite. Default features cover
+  # all suites except `tls-migration`, which builds in its own target
+  # subdirectory because of the cargo features-hash. `CARGO_HOME` is
+  # pinned inside `/workspace/.cargo` so the cache stays under
+  # `github.workspace` and no host UID/permission tricks are needed.
+  prebuild-bdd:
+    name: Prebuild BDD test binaries
+    needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cargo
+            target
+          key: ${{ runner.os }}-bdd-cargo-${{ needs.prepare-tests.outputs.image-tag }}-${{ hashFiles('Cargo.lock', 'src/**', 'tests/**', 'build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-bdd-cargo-${{ needs.prepare-tests.outputs.image-tag }}-
+            ${{ runner.os }}-bdd-cargo-
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull test image from GHCR
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+
+      - name: Compile bdd + patroni_proxy_bdd binaries (default features)
+        run: |
+          docker run --rm \
+            --network=host \
+            -e CARGO_NET_RETRY=10 \
+            -e CARGO_HTTP_TIMEOUT=60 \
+            -e CARGO_HOME=/workspace/.cargo \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            sh -c "cargo test --test bdd --no-run && cargo test --test patroni_proxy_bdd --no-run"
+
+      - name: Compile bdd binary (tls-migration feature)
+        run: |
+          docker run --rm \
+            --network=host \
+            -e CARGO_NET_RETRY=10 \
+            -e CARGO_HTTP_TIMEOUT=60 \
+            -e CARGO_HOME=/workspace/.cargo \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            cargo test --features tls-migration --test bdd --no-run
+
   # Single matrixed job replaces the 21 nearly-identical per-language /
   # per-suite jobs that used to live here. Each suite differs only in
   # the cargo command it runs; share everything else. See the cargo
@@ -210,8 +280,8 @@ jobs:
   # sensitive lifecycle scenarios).
   bdd-tests:
     name: 'BDD: ${{ matrix.suite.name }}'
-    needs: prepare-tests
-    if: always() && needs.prepare-tests.result == 'success'
+    needs: [ prepare-tests, prebuild-bdd ]
+    if: always() && needs.prepare-tests.result == 'success' && needs.prebuild-bdd.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -254,6 +324,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Restore cargo cache from prebuild
+        # Same key shape as prebuild-bdd. Restore-keys fall back to any
+        # earlier prebuild for this image tag, then to any prebuild on
+        # this OS, so a matrix entry never starts from a cold cargo.
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cargo
+            target
+          key: ${{ runner.os }}-bdd-cargo-${{ needs.prepare-tests.outputs.image-tag }}-${{ hashFiles('Cargo.lock', 'src/**', 'tests/**', 'build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-bdd-cargo-${{ needs.prepare-tests.outputs.image-tag }}-
+            ${{ runner.os }}-bdd-cargo-
 
       - name: Log in to Container Registry
         # Even when test-runner is currently a public package, the BDD
@@ -312,6 +396,7 @@ jobs:
               --network=host \
               -e CARGO_NET_RETRY=10 \
               -e CARGO_HTTP_TIMEOUT=60 \
+              -e CARGO_HOME=/workspace/.cargo \
               -v ${{ github.workspace }}:/workspace \
               -w /workspace \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
