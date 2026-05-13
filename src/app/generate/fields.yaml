@@ -1641,7 +1641,7 @@ fields:
       doc: |
         SQL query to fetch credentials. It must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name.
 
-        Extra columns are ignored except for the optional `startup_parameters` text column. In passthrough mode, pg_doorman reads that column as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores it and logs a warning. Use `$1` as the placeholder for the username parameter.
+        Extra columns are ignored except for the optional `startup_parameters` column. The column may be `text`, `json`, or `jsonb`; pg_doorman dispatches by the column type and the content must be a JSON object whose values are strings. Custom domains over `jsonb` are not accepted without an explicit cast. In passthrough mode, the map applies as per-user startup parameters. Dedicated mode ignores it and logs a warning. Use `$1` as the placeholder for the username parameter.
 
         Example: `"SELECT passwd FROM pg_shadow WHERE usename = $1"`
 

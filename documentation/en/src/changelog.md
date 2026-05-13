@@ -4,6 +4,15 @@
 
 Follow-up fixes for `startup_parameters` after the 3.9.0 release.
 
+Upgrade notes for operators monitoring 3.9.0:
+
+- The pg_doorman-side budget rejection now returns `SQLSTATE 53400`
+  (`configuration_limit_exceeded`) instead of `54000`. Alert rules
+  and log filters keyed on `54000` need to switch.
+- `PgDoormanStartupParameterPgRejection` is now `severity: warning`
+  (was `critical` in 3.9.0). Cascade-overflow stays `critical`. Review
+  the Alertmanager / on-call routing if you key on severity to page.
+
 - If the resolved `startup_parameters` set exceeds the startup packet
   budget, backend startup now fails with `SQLSTATE 53400`. A
   deterministic `general + pool` overflow is rejected at config load.

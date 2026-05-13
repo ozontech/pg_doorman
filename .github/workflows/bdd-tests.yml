@@ -250,6 +250,7 @@ jobs:
           - { name: "Server TLS",                        cargo: "test --test bdd -- --tags @server-tls" }
           - { name: "TLS migration (vendored OpenSSL)",  cargo: "test --features tls-migration --test bdd -- --tags @tls-migration" }
           - { name: "Startup parameters",                cargo: "test --test bdd -- --tags @startup-parameters" }
+          - { name: "Web UI",                            cargo: "test --test bdd -- --tags @web-ui" }
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

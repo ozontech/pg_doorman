@@ -65,6 +65,19 @@ pub fn validate(map: &BTreeMap<String, String>, scope: &str) -> Result<(), Error
         validate_key(k, scope)?;
         validate_value(k, v, scope)?;
     }
+    // PG GUC names are case-insensitive. Two keys that collapse to the
+    // same canonical form would silently lose one entry to BTreeMap
+    // iteration order in the cascade merge — reject the configuration
+    // instead and tell the operator which two keys clash.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for k in map.keys() {
+        let canonical = crate::server::parameters::canonicalize_param_name(k.clone());
+        if let Some(existing) = seen.insert(canonical.clone(), k.clone()) {
+            return Err(Error::BadConfig(format!(
+                "{scope}: '{existing}' and '{k}' both refer to PG GUC '{canonical}'; keep one"
+            )));
+        }
+    }
     validate_total_size(map, scope)
 }
 

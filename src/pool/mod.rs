@@ -1201,6 +1201,23 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
         .cloned()
 }
 
+/// Cheap focused lookup of the canonicalised operator-managed key set
+/// for a `(db, user)` pool. Used by the client startup path to filter
+/// `StartupMessage` parameters without cloning the whole
+/// `ConnectionPool` — the previous `get_pool().cloned()` path cloned
+/// `Address`, `PoolSettings`, `User` (every string field), `Arc`s and
+/// counters per authenticated connect, even when the operator set no
+/// startup_parameters. The returned `Arc` is the same one the spawn
+/// path consumes, so reads stay zero-copy.
+pub fn get_operator_managed_startup_keys(
+    db: &str,
+    user: &str,
+) -> Option<Arc<std::collections::HashSet<String>>> {
+    (*(*POOLS.load()))
+        .get(&PoolIdentifier::new(db, user))
+        .map(|p| p.database.server_pool().operator_managed_startup_keys())
+}
+
 /// Get pool-level configuration by database name.
 /// Returns the Pool config if the database exists in configuration.
 /// Used by auth_query to find auth_query config when user is not in static config.

@@ -468,7 +468,8 @@ impl Config {
                 .application_name
                 .as_deref()
                 .unwrap_or("pg_doorman");
-            let validate_user_identity = |display_user: &str,
+            let validate_user_identity = |display_kind: &str,
+                                          display_user: &str,
                                           server_username: &str|
              -> Result<(), Error> {
                 let (packet_bytes, _body_bytes) = startup_parameters::packet_and_body_bytes(
@@ -480,9 +481,9 @@ impl Config {
                 if packet_bytes > startup_parameters::MAX_STARTUP_PACKET_SIZE {
                     return Err(Error::BadConfig(format!(
                         "merged general + pools.{pool_name}.startup_parameters: full StartupMessage \
-                         for user '{display_user}' is {packet_bytes} bytes, exceeding the PG cap of \
-                         {} bytes (user/database/application_name overhead included); reduce \
-                         general or pool startup_parameters",
+                         for {display_kind} '{display_user}' is {packet_bytes} bytes, exceeding \
+                         the PG cap of {} bytes (user/database/application_name overhead \
+                         included); reduce general or pool startup_parameters",
                         startup_parameters::MAX_STARTUP_PACKET_SIZE,
                     )));
                 }
@@ -493,14 +494,16 @@ impl Config {
                     .server_username
                     .as_deref()
                     .unwrap_or(user.username.as_str());
-                validate_user_identity(&user.username, server_username)?;
+                validate_user_identity("user", &user.username, server_username)?;
             }
             // Dedicated auth_query mode opens one shared backend
             // connection identified by `auth_query.server_user`; that
             // identity must fit the packet just like a static user.
+            // Use a distinct display kind so operators don't waste time
+            // hunting for the name in `pool_config.users`.
             if let Some(aq) = pool_config.auth_query.as_ref() {
                 if let Some(shared_user) = aq.server_user.as_deref() {
-                    validate_user_identity(shared_user, shared_user)?;
+                    validate_user_identity("auth_query server_user", shared_user, shared_user)?;
                 }
             }
         }

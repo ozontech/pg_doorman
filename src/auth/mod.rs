@@ -977,8 +977,8 @@ where
             // authenticated this user. That keeps dynamic-pool creation
             // tied to this login instead of reading the global cache
             // again while TTL expiry or a concurrent refetch is changing it.
-            let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
-            let fetched_overlay_hash = cache_entry.startup_parameters_hash;
+            let fetched_overlay = Arc::clone(cache_entry.startup_overlay.map());
+            let fetched_overlay_hash = cache_entry.startup_overlay.hash();
             let mut pool = create_dynamic_pool(
                 pool_name,
                 username,

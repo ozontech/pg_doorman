@@ -386,8 +386,8 @@ where
         // applies the same filter on checkout, so this aligns the two
         // client views. Iterate directly into `set_param` to avoid an
         // intermediate `HashMap` allocation on every connection.
-        let operator_keys = crate::pool::get_pool(&pool_name, &client_identifier.username)
-            .map(|p| p.database.server_pool().operator_managed_startup_keys());
+        let operator_keys =
+            crate::pool::get_operator_managed_startup_keys(&pool_name, &client_identifier.username);
         match operator_keys {
             Some(keys) if !keys.is_empty() => {
                 for (key, value) in &parameters {

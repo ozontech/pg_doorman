@@ -1021,14 +1021,16 @@ impl ServerPool {
             "[{}@{}] fallback: all fallback candidates rejected ({summary_str})",
             self.address.username, self.address.pool_name,
         );
-        // If every candidate failed solely on operator-supplied startup
-        // parameter rejection, surface PG's actual sqlstate/message so the
-        // client gets the real error instead of a generic 53300. Healthy
-        // hosts are not blacklisted (mark_unhealthy skips this category),
-        // so the same misconfiguration will keep failing until the
-        // operator fixes the config.
-        if summary.all_startup_parameter_rejection() {
-            if let Some(err) = summary.into_last_err() {
+        // If at least one fallback candidate reached PG's StartupMessage
+        // stage and got rejected for an operator-supplied startup
+        // parameter, surface PG's actual sqlstate/message. The
+        // misconfiguration is host-independent — every other reachable
+        // candidate would fail the same way once we got past transport
+        // issues — and healthy hosts are not blacklisted on this reason,
+        // so wrapping it in 53300 would just rewrite the actionable
+        // error.
+        if summary.has_startup_parameter_rejection() {
+            if let Some(err) = summary.into_startup_rejection() {
                 return (Err(err), source);
             }
         }
@@ -1389,19 +1391,61 @@ fn is_backend_unreachable(err: &Error) -> bool {
 #[derive(Default)]
 struct FailureSummary {
     last_err: Option<Error>,
+    /// The first `ServerStartupParameterRejection` observed in the
+    /// round. PG rejection of an operator startup_parameter is a
+    /// host-independent config error: even one PG candidate that
+    /// reached the StartupMessage stage and rejected the cascade
+    /// means the same SQLSTATE/message will repeat on every other
+    /// reachable PG. Mixed-failure rounds with one PG rejection plus
+    /// transport failures on the rest must still surface the PG
+    /// error so the operator sees the actionable cause.
+    typed_startup_rejection: Option<Error>,
     counts: std::collections::HashMap<super::fallback::FailureReason, u32>,
 }
 
 impl FailureSummary {
     fn record(&mut self, err: Error, reason: super::fallback::FailureReason) {
         *self.counts.entry(reason).or_insert(0) += 1;
+        if matches!(
+            reason,
+            super::fallback::FailureReason::StartupParameterRejection
+        ) && self.typed_startup_rejection.is_none()
+        {
+            // Clone the rejection — the original moves into `last_err`
+            // so the aggregate `format()` and surrounding code keep
+            // working unchanged.
+            if let Error::ServerStartupParameterRejection {
+                sqlstate,
+                message,
+                server_identifier,
+            } = &err
+            {
+                self.typed_startup_rejection = Some(Error::ServerStartupParameterRejection {
+                    sqlstate: sqlstate.clone(),
+                    message: message.clone(),
+                    server_identifier: server_identifier.clone(),
+                });
+            }
+        }
         self.last_err = Some(err);
     }
 
-    /// True when the recorded failures are non-empty and contain only
-    /// `StartupParameterRejection`. Used to decide whether to surface the
-    /// original PG error to the client instead of the aggregate
-    /// "all candidates rejected" wrapper.
+    /// Was at least one fallback candidate rejected by PG specifically
+    /// for an operator-supplied startup_parameter? Mixed-failure rounds
+    /// use this to keep the typed PG error from being wrapped in the
+    /// generic transport-aggregate message.
+    fn has_startup_parameter_rejection(&self) -> bool {
+        self.typed_startup_rejection.is_some()
+    }
+
+    fn into_startup_rejection(self) -> Option<Error> {
+        self.typed_startup_rejection
+    }
+
+    /// Kept for the legacy "every failure was rejection" tests. The
+    /// production path uses `has_startup_parameter_rejection` and only
+    /// needs the typed copy retained separately.
+    #[cfg(test)]
     fn all_startup_parameter_rejection(&self) -> bool {
         !self.counts.is_empty()
             && self
@@ -1410,6 +1454,7 @@ impl FailureSummary {
                 .all(|r| matches!(r, super::fallback::FailureReason::StartupParameterRejection))
     }
 
+    #[cfg(test)]
     fn into_last_err(self) -> Option<Error> {
         self.last_err
     }
@@ -1576,8 +1621,34 @@ mod tests {
         );
         assert!(
             !s.all_startup_parameter_rejection(),
-            "a single non-rejection cause must veto the shortcut"
+            "a single non-rejection cause must veto the all-rejection shortcut"
         );
+        // But the typed rejection must still be retained so a mixed
+        // round of transport failures + one PG rejection surfaces the
+        // PG SQLSTATE/message instead of the generic aggregate.
+        assert!(
+            s.has_startup_parameter_rejection(),
+            "a single PG rejection must be retained even alongside transport failures"
+        );
+    }
+
+    #[test]
+    fn into_startup_rejection_returns_first_typed_rejection() {
+        let mut s = FailureSummary::default();
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        match s.into_startup_rejection() {
+            Some(Error::ServerStartupParameterRejection { sqlstate, .. }) => {
+                assert_eq!(sqlstate, "22023")
+            }
+            other => panic!("expected the retained rejection, got {other:?}"),
+        }
     }
 
     #[test]

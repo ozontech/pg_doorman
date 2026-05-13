@@ -17,6 +17,7 @@ use log::{debug, error, info, warn};
 use crate::utils::format_elapsed;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
+use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{Client, NoTls};
 
 use crate::config::{AuthQueryConfig, Duration};
@@ -28,6 +29,46 @@ use crate::stats::auth_query::AuthQueryStats;
 /// Usernames exceeding this are rejected without caching to prevent
 /// memory exhaustion from very long usernames.
 const MAX_USERNAME_LEN: usize = 63;
+
+/// Marker string the custom `LimitedJson` decoder embeds in its error
+/// message when a `json`/`jsonb` row exceeds `MAX_OPERATOR_BUDGET`. The
+/// outer `try_get` error has to stay generic (`Box<dyn Error>`), so the
+/// auth_query reader matches on this substring to decide between
+/// `auth_query_oversize` (operator footgun) and `auth_query_bad_type`
+/// (decoder failure on unexpected wire bytes).
+const LIMITED_JSON_OVERSIZE_TAG: &str = "auth_query startup_parameters oversize";
+
+/// Custom `FromSql` wrapper for `json`/`jsonb` columns that enforces
+/// `MAX_OPERATOR_BUDGET` on the raw wire bytes BEFORE `serde_json` walks
+/// the value tree. Without this, a malicious or accidentally large
+/// `jsonb` row on the auth_query path would force pg_doorman to
+/// allocate and parse the full tree on every cache miss, even though
+/// the result is later rejected by the size gate inside
+/// `parse_startup_parameters_value`. The text decoder already has this
+/// pre-parse gate; this wrapper closes the asymmetry for jsonb.
+struct LimitedJson(serde_json::Value);
+
+impl<'a> FromSql<'a> for LimitedJson {
+    fn from_sql(
+        ty: &Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        let budget = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
+        if raw.len() > budget {
+            return Err(format!(
+                "{LIMITED_JSON_OVERSIZE_TAG}: raw column is {} bytes, exceeding operator budget {budget}",
+                raw.len()
+            )
+            .into());
+        }
+        let value = <serde_json::Value as FromSql>::from_sql(ty, raw)?;
+        Ok(LimitedJson(value))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::JSON | Type::JSONB)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // PasswordFetcher trait (allows mocking AuthQueryExecutor in unit tests)
@@ -399,7 +440,6 @@ impl AuthQueryExecutor {
         username: &str,
         pool_name: &str,
     ) -> std::collections::HashMap<String, String> {
-        use tokio_postgres::types::Type;
         let column = row
             .columns()
             .iter()
@@ -409,19 +449,39 @@ impl AuthQueryExecutor {
         };
         let col_type = column.type_();
         if matches!(*col_type, Type::JSON | Type::JSONB) {
-            match row.try_get::<_, Option<serde_json::Value>>("startup_parameters") {
-                Ok(Some(value)) => Self::parse_startup_parameters_value(value, username, pool_name),
+            // The custom `LimitedJson` wrapper enforces the
+            // `MAX_OPERATOR_BUDGET` cap on the raw wire bytes from PG
+            // before `serde_json` walks the tree. Without this gate the
+            // text path (which checks `text.len()` before
+            // `from_str`) and the json/jsonb path diverge: a malicious
+            // or accidentally oversize `jsonb` row would still force
+            // pg_doorman to materialise the full `Value` tree before
+            // discarding it.
+            match row.try_get::<_, Option<LimitedJson>>("startup_parameters") {
+                Ok(Some(LimitedJson(value))) => {
+                    Self::parse_startup_parameters_value(value, username, pool_name)
+                }
                 Ok(None) => std::collections::HashMap::new(),
                 Err(json_err) => {
-                    warn!(
-                        "[{username}@{pool_name}] auth_query startup_parameters column has type \
-                         `{ty}` but pg_doorman could not decode it as json: {json_err}. \
-                         Per-user parameters are ignored for this row.",
-                        ty = col_type.name()
-                    );
-                    crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                        .with_label_values(&[pool_name, "auth_query_bad_type"])
-                        .inc();
+                    if json_err.to_string().contains(LIMITED_JSON_OVERSIZE_TAG) {
+                        warn!(
+                            "[{username}@{pool_name}] auth_query startup_parameters: {json_err}; \
+                             parameters ignored"
+                        );
+                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                            .with_label_values(&[pool_name, "auth_query_oversize"])
+                            .inc();
+                    } else {
+                        warn!(
+                            "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                             `{ty}` but pg_doorman could not decode it as json: {json_err}. \
+                             Per-user parameters are ignored for this row.",
+                            ty = col_type.name()
+                        );
+                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                            .with_label_values(&[pool_name, "auth_query_bad_type"])
+                            .inc();
+                    }
                     std::collections::HashMap::new()
                 }
             }
@@ -585,6 +645,47 @@ impl AuthQueryExecutor {
 // CacheEntry
 // ---------------------------------------------------------------------------
 
+/// Immutable snapshot of a user's auth_query overlay: the wire map plus
+/// the precomputed hash the dynamic-pool fast path consumes. The two
+/// values move together by contract — direct field writes risk drift
+/// (e.g. swapping the map without touching the hash), so the struct
+/// only exposes accessors and constructors. Cheap to clone because the
+/// inner `Arc<HashMap>` is shared.
+#[derive(Clone, Debug)]
+pub struct StartupOverlay {
+    map: Arc<std::collections::HashMap<String, String>>,
+    hash: u64,
+}
+
+impl StartupOverlay {
+    pub fn empty() -> Self {
+        Self {
+            map: Arc::new(std::collections::HashMap::new()),
+            hash: crate::pool::empty_overlay_hash(),
+        }
+    }
+
+    pub fn from_map(map: std::collections::HashMap<String, String>) -> Self {
+        let hash = crate::pool::per_user_overlay_hash(map.iter());
+        Self {
+            map: Arc::new(map),
+            hash,
+        }
+    }
+
+    pub fn map(&self) -> &Arc<std::collections::HashMap<String, String>> {
+        &self.map
+    }
+
+    pub fn hash(&self) -> u64 {
+        self.hash
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
 /// Single cache entry for a username's credentials.
 #[derive(Clone, Debug)]
 pub struct CacheEntry {
@@ -602,20 +703,12 @@ pub struct CacheEntry {
     /// None for MD5 users or before first SCRAM auth.
     pub client_key: Option<Vec<u8>>,
     /// Per-user startup parameters returned by the optional auth_query
-    /// `startup_parameters` JSON column. Empty when the column is absent,
-    /// empty/NULL, or filtered out in dedicated auth_query mode.
-    ///
-    /// Wrapped in `Arc` so cache hits do not clone the underlying map.
-    /// For a user with a wide row (a dozen extension GUCs) every
-    /// `cache.get_or_fetch` previously paid an `O(map)` clone; the
-    /// `Arc::clone` here is two atomic increments instead.
-    pub startup_parameters: Arc<std::collections::HashMap<String, String>>,
-    /// Precomputed `per_user_overlay_hash(startup_parameters)` so the
-    /// dynamic-pool fast path can compare against the live pool's
-    /// `per_user_startup_overlay_hash` without re-running the sort +
-    /// SipHash on every login. Recomputed only when
-    /// `set_startup_parameters` runs (cache miss / refetch).
-    pub startup_parameters_hash: u64,
+    /// `startup_parameters` JSON column, paired with their overlay hash.
+    /// The map is empty (and hash is `empty_overlay_hash()`) when the
+    /// column is absent, empty/NULL, or filtered out in dedicated
+    /// auth_query mode. `StartupOverlay` keeps map and hash from
+    /// drifting — mutate via [`Self::set_startup_overlay`].
+    pub startup_overlay: StartupOverlay,
 }
 
 impl CacheEntry {
@@ -626,8 +719,7 @@ impl CacheEntry {
             is_negative: false,
             last_refetch_at: None,
             client_key: None,
-            startup_parameters: Arc::new(std::collections::HashMap::new()),
-            startup_parameters_hash: crate::pool::empty_overlay_hash(),
+            startup_overlay: StartupOverlay::empty(),
         }
     }
 
@@ -638,21 +730,17 @@ impl CacheEntry {
             is_negative: true,
             last_refetch_at: None,
             client_key: None,
-            startup_parameters: Arc::new(std::collections::HashMap::new()),
-            startup_parameters_hash: crate::pool::empty_overlay_hash(),
+            startup_overlay: StartupOverlay::empty(),
         }
     }
 
-    /// Update both the map and its hash in one shot. Direct field
-    /// writes risk drifting the hash out of sync with the map; route
-    /// every refetch / mutation through this setter instead.
-    pub fn set_startup_parameters(
+    /// Replace the overlay with one built from the given map; the new
+    /// hash is computed inside the constructor.
+    pub fn set_startup_overlay(
         &mut self,
         startup_parameters: std::collections::HashMap<String, String>,
     ) {
-        self.startup_parameters_hash =
-            crate::pool::per_user_overlay_hash(startup_parameters.iter());
-        self.startup_parameters = Arc::new(startup_parameters);
+        self.startup_overlay = StartupOverlay::from_map(startup_parameters);
     }
 
     fn is_expired(&self, cache_ttl: &Duration, cache_failure_ttl: &Duration) -> bool {
@@ -735,7 +823,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     /// apply them. Drop the parsed map before it reaches downstream code
     /// and warn once per (pool, username) so the operator notices.
     fn dedicated_mode_filter(&self, entry: &mut CacheEntry, username: &str) {
-        if !self.is_dedicated || entry.startup_parameters.is_empty() {
+        if !self.is_dedicated || entry.startup_overlay.is_empty() {
             return;
         }
         // One increment per drop event (a single fetched row whose
@@ -757,7 +845,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 pool = self.pool_name
             );
         }
-        entry.set_startup_parameters(std::collections::HashMap::new());
+        entry.set_startup_overlay(std::collections::HashMap::new());
     }
 
     /// When a fresh auth_query fetch produces a per-user
@@ -859,7 +947,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             Ok(Some((password_hash, startup_params))) => {
                 self.inc(|s| &s.cache_misses);
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.set_startup_parameters(startup_params);
+                entry.set_startup_overlay(startup_params);
                 self.dedicated_mode_filter(&mut entry, username);
                 // Publish the fresh entry first so any concurrent
                 // create_dynamic_pool peeks the new overlay, then drop the
@@ -869,7 +957,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 // create_dynamic_pool would rebuild against that stale
                 // map and immediately drift again.
                 self.entries.insert(username.to_string(), entry.clone());
-                self.drop_dynamic_pool_if_overlay_drifted(username, &entry.startup_parameters);
+                self.drop_dynamic_pool_if_overlay_drifted(username, entry.startup_overlay.map());
                 Ok(Some(entry))
             }
             Ok(None) => {
@@ -934,12 +1022,12 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         match self.executor.fetch_credentials(username).await {
             Ok(Some((password_hash, startup_params))) => {
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.set_startup_parameters(startup_params);
+                entry.set_startup_overlay(startup_params);
                 entry.last_refetch_at = Some(Instant::now());
                 self.dedicated_mode_filter(&mut entry, username);
                 // Insert before drop — see comment in get_or_fetch.
                 self.entries.insert(username.to_string(), entry.clone());
-                self.drop_dynamic_pool_if_overlay_drifted(username, &entry.startup_parameters);
+                self.drop_dynamic_pool_if_overlay_drifted(username, entry.startup_overlay.map());
                 Ok(Some(entry))
             }
             Ok(None) => {
@@ -999,7 +1087,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         if entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
             return None;
         }
-        Some(f(&entry.startup_parameters))
+        Some(f(entry.startup_overlay.map()))
     }
 
     /// Number of cached entries (for metrics/admin).
@@ -1512,7 +1600,7 @@ mod tests {
         // because the backend identity is shared in dedicated mode.
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
         assert!(
-            entry.startup_parameters.is_empty(),
+            entry.startup_overlay.is_empty(),
             "params must be cleared in dedicated mode"
         );
 
@@ -1521,7 +1609,7 @@ mod tests {
         // tracker still holds exactly one entry after a second miss-and-fill.
         cache.invalidate("alice");
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
-        assert!(entry.startup_parameters.is_empty());
+        assert!(entry.startup_overlay.is_empty());
         assert_eq!(cache.dedicated_warnings.len(), 1);
 
         // clear() resets the warning tracker so a config reload re-arms it.
@@ -1538,7 +1626,11 @@ mod tests {
         let cache = make_cache(fetcher.clone(), &config);
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
         assert_eq!(
-            entry.startup_parameters.get("work_mem").map(String::as_str),
+            entry
+                .startup_overlay
+                .map()
+                .get("work_mem")
+                .map(String::as_str),
             Some("64MB")
         );
     }
