@@ -4,7 +4,7 @@
 //! server connections. It handles connect timeouts, lifetime checks, alive
 //! checks, pause/resume, and reconnect epoch management.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -57,6 +57,107 @@ impl BudgetReason {
             BudgetReason::PacketCapExceeded => "packet_cap_exceeded",
         }
     }
+}
+
+/// Precompute the wire-ready `startup_parameters` map for a pool and
+/// the budget classification reported on each backend start. Called
+/// once from `ServerPool::new`; saves the startup path from
+/// cloning the BTreeMap, re-running `packet_and_body_bytes`, and
+/// re-evaluating the overlay-drop branch on every checkout.
+///
+/// Cases follow `classify_startup_parameters`:
+/// 1. Empty overlay + budget OK → reuse the base `Arc`.
+/// 2. Non-empty overlay + budget OK → allocate the merged map once.
+/// 3. Merged over budget but baseline fits → reuse the base `Arc` and
+///    log the drop once. The backend start path rejects this decision.
+/// 4. Nothing fits → empty map, log the drop.
+fn build_resolved_startup(
+    base: &Arc<BTreeMap<String, String>>,
+    overlay: &Arc<BTreeMap<String, String>>,
+    server_username: &str,
+    database: &str,
+    application_name: &str,
+    pool_name: &str,
+    client_username: &str,
+) -> (Arc<BTreeMap<String, String>>, BudgetDecision) {
+    // PostgreSQL GUC names are case-insensitive, but `general` and
+    // `pool` are deserialised as opaque maps with exact-case keys. A
+    // pool that sets `TimeZone = "UTC"` over a
+    // `general.timezone = "Europe/Berlin"` would otherwise ship both
+    // rows in `StartupMessage` and let backend-side merge order decide
+    // which wins. Canonicalise every key here so the merged view, the
+    // baseline-only fallback, and the admin/API read model all agree
+    // on the GUC name PostgreSQL will use.
+    let canonical_base: BTreeMap<String, String> = base
+        .iter()
+        .map(|(k, v)| {
+            (
+                crate::server::parameters::canonicalize_param_name(k.clone()),
+                v.clone(),
+            )
+        })
+        .collect();
+    let merged: BTreeMap<String, String> = if overlay.is_empty() {
+        canonical_base.clone()
+    } else {
+        let mut m = canonical_base.clone();
+        for (k, v) in overlay.iter() {
+            m.insert(
+                crate::server::parameters::canonicalize_param_name(k.clone()),
+                v.clone(),
+            );
+        }
+        m
+    };
+    let (packet_bytes, body_bytes) =
+        sp::packet_and_body_bytes(server_username, database, application_name, &merged);
+    let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
+    let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
+    if !over_budget && !over_packet {
+        return (Arc::new(merged), BudgetDecision::FullCascade);
+    }
+
+    // Merged cascade is over a limit. Try the canonical baseline-only.
+    if !overlay.is_empty() {
+        let (baseline_packet, baseline_body) =
+            sp::packet_and_body_bytes(server_username, database, application_name, &canonical_base);
+        if baseline_body <= sp::MAX_OPERATOR_BUDGET
+            && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
+        {
+            warn!(
+                "[{client_username}@{pool_name}] auth_query per-user startup_parameters pushes the cascade \
+                 over the operator budget (merged {body_bytes} bytes, packet {packet_bytes} bytes); \
+                 backend spawns will be rejected until the overlay or baseline shrinks"
+            );
+            return (
+                Arc::new(canonical_base),
+                BudgetDecision::OverlayDroppedBaselineKept {
+                    body_bytes,
+                    packet_bytes,
+                },
+            );
+        }
+    }
+
+    let reason = if over_packet {
+        BudgetReason::PacketCapExceeded
+    } else {
+        BudgetReason::CascadeBudgetExceeded
+    };
+    warn!(
+        "[{client_username}@{pool_name}] effective startup_parameters serialize to {body_bytes} bytes \
+         (packet {packet_bytes} bytes), exceeding operator budget {} / PG cap {}; \
+         backend spawns will be rejected until general/pool startup_parameters shrink",
+        sp::MAX_OPERATOR_BUDGET, sp::MAX_STARTUP_PACKET_SIZE,
+    );
+    (
+        Arc::new(BTreeMap::new()),
+        BudgetDecision::EmptyDueToBudget {
+            reason,
+            body_bytes,
+            packet_bytes,
+        },
+    )
 }
 
 /// Wrapper for the connection pool.
@@ -121,16 +222,6 @@ pub struct ServerPool {
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
 
-    /// `general.startup_parameters` merged with this pool's
-    /// `pool.startup_parameters` — the baseline that every backend spawn
-    /// from this pool ships in `StartupMessage`, before the optional
-    /// per-user auth_query overlay is applied. Cached once at pool
-    /// construction: the reload path rebuilds the pool whenever either
-    /// layer's hash changes (see `ConnectionPool::from_config`), so this
-    /// view is immutable for the lifetime of the pool object. Shared as
-    /// `Arc` so backend spawns can borrow it without per-call cloning.
-    base_startup_parameters: Arc<std::collections::BTreeMap<String, String>>,
-
     /// Per-user auth_query overlay captured at pool construction. Dynamic
     /// passthrough pools populate this from a fresh `cache.get_or_fetch`
     /// snapshot taken right after auth, so every backend spawn from this
@@ -141,6 +232,30 @@ pub struct ServerPool {
     /// drain logic in `pool/mod.rs`; this field is immutable for the
     /// lifetime of the pool object.
     per_user_startup_overlay: Arc<std::collections::BTreeMap<String, String>>,
+
+    /// Canonicalized GUC names this pool injects through
+    /// `startup_parameters` (general + pool + auth_query overlay). The
+    /// backend startup path (`Server::startup`) uses this set so that
+    /// `sync_parameters` on checkout does not let a client value overwrite
+    /// the operator default. The client startup path filters the
+    /// `StartupMessage` parameters against the same set before sending
+    /// `ParameterStatus`, so a driver sees the same value PG will use for
+    /// the session. Built once per pool and shared as `Arc`.
+    operator_managed_startup_keys: Arc<HashSet<String>>,
+
+    /// Wire-ready merged startup map, precomputed at pool creation. The
+    /// spawn path used to recompute this on every backend create — clone
+    /// the baseline, merge the auth_query overlay, recheck the budget.
+    /// `base_startup_parameters` and `per_user_startup_overlay` are
+    /// immutable for the pool's lifetime, so the merge is too: every call
+    /// can hand out an `Arc` to the same map instead of cloning a
+    /// 50-entry BTreeMap and re-running `packet_and_body_bytes`.
+    resolved_startup_map: Arc<BTreeMap<String, String>>,
+
+    /// Budget classification for `resolved_startup_map`. Precomputed
+    /// together with the map so the spawn path skips the re-validation
+    /// walk on every backend create.
+    resolved_startup_decision: BudgetDecision,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -189,6 +304,26 @@ impl ServerPool {
         base_startup_parameters: Arc<BTreeMap<String, String>>,
         per_user_startup_overlay: Arc<BTreeMap<String, String>>,
     ) -> ServerPool {
+        let operator_managed_startup_keys = Arc::new(
+            base_startup_parameters
+                .keys()
+                .chain(per_user_startup_overlay.keys())
+                .map(|k| crate::server::parameters::canonicalize_param_name(k.clone()))
+                .collect::<HashSet<String>>(),
+        );
+        let server_username = user
+            .server_username
+            .as_deref()
+            .unwrap_or(user.username.as_str());
+        let (resolved_startup_map, resolved_startup_decision) = build_resolved_startup(
+            &base_startup_parameters,
+            &per_user_startup_overlay,
+            server_username,
+            database,
+            &application_name,
+            address.pool_name.as_str(),
+            user.username.as_str(),
+        );
         ServerPool {
             address,
             user: user.clone(),
@@ -209,9 +344,16 @@ impl ServerPool {
             resume_notify: Notify::new(),
             session_mode,
             fallback_state,
-            base_startup_parameters,
             per_user_startup_overlay,
+            operator_managed_startup_keys,
+            resolved_startup_map,
+            resolved_startup_decision,
         }
+    }
+
+    /// See `operator_managed_startup_keys` field.
+    pub fn operator_managed_startup_keys(&self) -> Arc<HashSet<String>> {
+        self.operator_managed_startup_keys.clone()
     }
 
     /// Attempts to create a new connection.
@@ -272,18 +414,22 @@ impl ServerPool {
             self.address.host,
             self.address.port,
         );
+        // Resolve before any `ServerStats` is registered. The budget
+        // preflight can return `ServerStartupParameterRejection`; if we
+        // had already published the stats entry via `stats.register`,
+        // the `?` exit would leak that entry in `sv_login` forever
+        // because the disconnect path runs only after the spawn
+        // attempt produces a result. The resolved map and the TLS
+        // retry share the same Arc, so the plain attempt and the
+        // sslmode=allow retry still see one parameter set.
+        let startup_parameters = self.resolved_startup_parameters()?;
+
         let stats = Arc::new(ServerStats::new(
             self.address.clone(),
             crate::utils::clock::now(),
         ));
 
         stats.register(stats.clone());
-
-        // Resolve once for this spawn attempt: the plain attempt and the
-        // optional sslmode=allow TLS retry must see the same parameter set,
-        // otherwise a config RELOAD landing between the two would silently
-        // ship different StartupMessages for the same client request.
-        let startup_parameters = self.resolved_startup_parameters();
 
         let result = startup_with_timeout(
             self.connect_timeout,
@@ -301,6 +447,7 @@ impl ServerPool {
                 self.application_name.clone(),
                 self.session_mode,
                 &startup_parameters,
+                self.operator_managed_startup_keys.clone(),
             ),
         )
         .await;
@@ -358,6 +505,7 @@ impl ServerPool {
                     self.application_name.clone(),
                     self.session_mode,
                     &startup_parameters,
+                    self.operator_managed_startup_keys.clone(),
                 ),
             )
             .await;
@@ -459,8 +607,20 @@ impl ServerPool {
         // — both are side effects of the spawn path
         // (resolved_startup_parameters). SHOW polling and /api/pools
         // page refreshes are safe to call repeatedly.
-        let (wire_cow, _decision) = self.classify_startup_parameters();
+        let (wire_cow, decision) = self.classify_startup_parameters();
         let wire = wire_cow.as_ref();
+        // If an auth_query overlay would push the cascade over budget,
+        // every overlay key is dropped due to budget, even when the
+        // baseline carries the same key with another value. Both
+        // over-budget decisions reject backend startup, so the admin/API
+        // view must show that no configured key reaches PostgreSQL.
+        // Reporting those keys as `Applied` or `Stale` would point the
+        // operator at RELOAD/refetch, which cannot fix a budget failure.
+        let cascade_rejected = matches!(
+            decision,
+            BudgetDecision::OverlayDroppedBaselineKept { .. }
+                | BudgetDecision::EmptyDueToBudget { .. }
+        );
         let mut out: std::collections::BTreeMap<
             String,
             (
@@ -471,10 +631,14 @@ impl ServerPool {
         > = configured
             .into_iter()
             .map(|(k, (v, src))| {
-                let state = match wire.get(&k) {
-                    Some(wire_v) if wire_v == &v => ApplicationState::Applied,
-                    Some(_) => ApplicationState::Stale,
-                    None => ApplicationState::DroppedDueToBudget,
+                let state = if cascade_rejected {
+                    ApplicationState::DroppedDueToBudget
+                } else {
+                    match wire.get(&k) {
+                        Some(wire_v) if wire_v == &v => ApplicationState::Applied,
+                        Some(_) => ApplicationState::Stale,
+                        None => ApplicationState::DroppedDueToBudget,
+                    }
                 };
                 (k, (v, src, state))
             })
@@ -486,6 +650,11 @@ impl ServerPool {
         // but my backends are still getting force_custom_plan" — that is
         // exactly the stale snapshot RELOAD has not yet recycled (or that
         // the auth_query cache has not yet refetched).
+        let wire_state = if cascade_rejected {
+            ApplicationState::DroppedDueToBudget
+        } else {
+            ApplicationState::Stale
+        };
         for (k, wire_v) in wire {
             if !out.contains_key(k) {
                 let frozen_source = if self.per_user_startup_overlay.contains_key(k) {
@@ -493,96 +662,28 @@ impl ServerPool {
                 } else {
                     super::startup_resolver::ParameterSource::Pool
                 };
-                out.insert(
-                    k.clone(),
-                    (wire_v.clone(), frozen_source, ApplicationState::Stale),
-                );
+                out.insert(k.clone(), (wire_v.clone(), frozen_source, wire_state));
             }
         }
         out
     }
 
-    /// Resolve the operator-supplied startup_parameters map that this pool
     /// Pure classifier shared between the spawn path and the read-only
     /// admin/API views. Returns the wire-ready map and the budget
     /// decision the runtime would make for this spawn, **without**
-    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL` or emitting warn
-    /// logs. The spawn-side `resolved_startup_parameters` wraps this
-    /// with the counter + log; admin/API callers call this directly so
-    /// `SHOW STARTUP_PARAMETERS` polling cannot inflate the drop counter
-    /// or spam the warn log.
+    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL`. Both fields are
+    /// precomputed at pool construction (`build_resolved_startup`), so
+    /// every call hands back a borrow of the cached `Arc` instead of
+    /// cloning and re-validating the merge.
     fn classify_startup_parameters(
         &self,
     ) -> (
         std::borrow::Cow<'_, BTreeMap<String, String>>,
         BudgetDecision,
     ) {
-        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> =
-            if self.per_user_startup_overlay.is_empty() {
-                std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
-            } else {
-                let mut owned = (*self.base_startup_parameters).clone();
-                for (k, v) in self.per_user_startup_overlay.iter() {
-                    owned.insert(k.clone(), v.clone());
-                }
-                std::borrow::Cow::Owned(owned)
-            };
-
-        let username_for_wire = self
-            .user
-            .server_username
-            .as_deref()
-            .unwrap_or(self.user.username.as_str());
-
-        let (packet_bytes, body_bytes) = sp::packet_and_body_bytes(
-            username_for_wire,
-            &self.database,
-            &self.application_name,
-            &merged,
-        );
-
-        let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
-        let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
-        if !over_budget && !over_packet {
-            return (merged, BudgetDecision::FullCascade);
-        }
-
-        // The merged cascade is over a limit. If we have an overlay, try
-        // dropping just the overlay and keep the baseline.
-        let has_overlay = !self.per_user_startup_overlay.is_empty();
-        if has_overlay {
-            let baseline = &*self.base_startup_parameters;
-            let (baseline_packet, baseline_body) = sp::packet_and_body_bytes(
-                username_for_wire,
-                &self.database,
-                &self.application_name,
-                baseline,
-            );
-            if baseline_body <= sp::MAX_OPERATOR_BUDGET
-                && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
-            {
-                return (
-                    std::borrow::Cow::Borrowed(baseline),
-                    BudgetDecision::OverlayDroppedBaselineKept {
-                        body_bytes,
-                        packet_bytes,
-                    },
-                );
-            }
-        }
-
-        let reason = if over_packet {
-            BudgetReason::PacketCapExceeded
-        } else {
-            BudgetReason::CascadeBudgetExceeded
-        };
         (
-            std::borrow::Cow::Owned(BTreeMap::new()),
-            BudgetDecision::EmptyDueToBudget {
-                reason,
-                body_bytes,
-                packet_bytes,
-            },
+            std::borrow::Cow::Borrowed(&*self.resolved_startup_map),
+            self.resolved_startup_decision,
         )
     }
 
@@ -593,51 +694,75 @@ impl ServerPool {
     /// values.
     ///
     /// The merged map is checked against the operator budget and the full
-    /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
-    /// no operator-supplied parameters for this backend startup.
-    fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
+    /// PostgreSQL startup-packet limit. Any overflow, whether caused by
+    /// the auth_query overlay, the general/pool baseline, or the full
+    /// StartupMessage, becomes a PG-style
+    /// `ServerStartupParameterRejection`. That gives the client a clear
+    /// error instead of silently dropping configured startup parameters.
+    fn resolved_startup_parameters(
+        &self,
+    ) -> Result<std::borrow::Cow<'_, BTreeMap<String, String>>, Error> {
         let (map, decision) = self.classify_startup_parameters();
         match decision {
-            BudgetDecision::FullCascade => map,
+            BudgetDecision::FullCascade => Ok(map),
             BudgetDecision::OverlayDroppedBaselineKept {
                 body_bytes,
                 packet_bytes,
             } => {
-                warn!(
-                    "[{}@{}] auth_query per-user startup_parameters pushes the cascade \
-                     over the operator budget (merged {} bytes, packet {} bytes); \
-                     dropping the per-user overlay and keeping the general/pool \
-                     baseline for this backend spawn",
-                    self.user.username, self.address.pool_name, body_bytes, packet_bytes,
-                );
                 crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
                     .with_label_values(&[
                         self.address.pool_name.as_str(),
                         "auth_query_overlay_oversize",
                     ])
                     .inc();
-                map
+                Err(Error::ServerStartupParameterRejection {
+                    sqlstate: "53400".to_string(),
+                    message: format!(
+                        "auth_query startup_parameters for pool '{}' would exceed the \
+                         operator budget (merged body {} bytes, full packet {} bytes; \
+                         operator budget {} bytes, PG StartupMessage cap {} bytes). \
+                         Reduce the per-user startup_parameters row, the pool baseline, \
+                         or the general baseline.",
+                        self.address.pool_name,
+                        body_bytes,
+                        packet_bytes,
+                        sp::MAX_OPERATOR_BUDGET,
+                        sp::MAX_STARTUP_PACKET_SIZE,
+                    ),
+                    server_identifier: crate::app::errors::ServerIdentifier::new(
+                        self.user.username.clone(),
+                        &self.database,
+                        &self.address.pool_name,
+                    ),
+                })
             }
             BudgetDecision::EmptyDueToBudget {
                 reason,
                 body_bytes,
                 packet_bytes,
             } => {
-                warn!(
-                    "[{}@{}] effective startup_parameters serialize to {} bytes \
-                     (packet {} bytes), exceeding operator budget {} / PG cap {}; \
-                     all operator-supplied parameters dropped for this backend spawn",
-                    self.user.username,
-                    self.address.pool_name,
-                    body_bytes,
-                    packet_bytes,
-                    sp::MAX_OPERATOR_BUDGET,
-                    sp::MAX_STARTUP_PACKET_SIZE,
-                );
                 crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
                     .with_label_values(&[self.address.pool_name.as_str(), reason.as_str()])
                     .inc();
-                map
+                Err(Error::ServerStartupParameterRejection {
+                    sqlstate: "53400".to_string(),
+                    message: format!(
+                        "startup_parameters cascade for pool '{}' does not fit the operator \
+                         budget (body {} bytes, full packet {} bytes; operator budget {} bytes, \
+                         PG StartupMessage cap {} bytes). Reduce general or pool \
+                         startup_parameters.",
+                        self.address.pool_name,
+                        body_bytes,
+                        packet_bytes,
+                        sp::MAX_OPERATOR_BUDGET,
+                        sp::MAX_STARTUP_PACKET_SIZE,
+                    ),
+                    server_identifier: crate::app::errors::ServerIdentifier::new(
+                        self.user.username.clone(),
+                        &self.database,
+                        &self.address.pool_name,
+                    ),
+                })
             }
         }
     }
@@ -690,25 +815,34 @@ impl ServerPool {
         };
 
         let (result, source) = self.run_fallback_round(fallback).await;
-        match (result, source) {
-            (Ok(conn), _) => Ok(conn),
-            (Err(err), super::fallback::TargetSource::WhitelistCache) => {
-                // Cached host was stale; wipe it and try with full discovery
-                // exactly once more. If discovery fails too, return that
-                // failure without a third attempt.
-                info!(
-                    "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
-                    self.address.username, self.address.pool_name,
-                );
-                fallback.clear_whitelist();
-                let (retry_result, _) = self.run_fallback_round(fallback).await;
-                retry_result.map_err(|e2| {
-                    Error::ConnectError(format!(
-                        "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
-                    ))
-                })
-            }
-            (Err(err), super::fallback::TargetSource::Discovery) => Err(err),
+        match result {
+            Ok(conn) => Ok(conn),
+            // The startup_parameters preflight is host-independent. If it
+            // rejected the cascade, every candidate would fail with the
+            // same SQLSTATE until the operator fixes the config. Return
+            // the rejection unchanged so the client sees the PG-style
+            // error, and skip the whitelist clear so a healthy whitelist
+            // is not wiped because of a configuration bug.
+            Err(err @ Error::ServerStartupParameterRejection { .. }) => Err(err),
+            Err(err) => match source {
+                super::fallback::TargetSource::WhitelistCache => {
+                    // Cached host was stale; wipe it and try with full
+                    // discovery exactly once more. If discovery fails
+                    // too, return that failure without a third attempt.
+                    info!(
+                        "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
+                        self.address.username, self.address.pool_name,
+                    );
+                    fallback.clear_whitelist();
+                    let (retry_result, _) = self.run_fallback_round(fallback).await;
+                    retry_result.map_err(|e2| {
+                        Error::ConnectError(format!(
+                            "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
+                        ))
+                    })
+                }
+                super::fallback::TargetSource::Discovery => Err(err),
+            },
         }
     }
 
@@ -770,8 +904,12 @@ impl ServerPool {
         // for one client checkout — and the merge result is host-
         // independent, so the per-candidate work was pure waste.
         // `try_fallback_target` borrows this map for both the plain
-        // attempt and the optional sslmode=allow TLS retry.
-        let startup_parameters_round = self.resolved_startup_parameters();
+        // attempt and the optional sslmode=allow TLS retry. An
+        // over-budget cascade fails the whole fallback round here.
+        let startup_parameters_round = match self.resolved_startup_parameters() {
+            Ok(map) => map,
+            Err(err) => return (Err(err), source),
+        };
 
         // Whitelist-cache hit: single target, race-of-one is just a startup.
         if matches!(source, super::fallback::TargetSource::WhitelistCache) {
@@ -883,14 +1021,16 @@ impl ServerPool {
             "[{}@{}] fallback: all fallback candidates rejected ({summary_str})",
             self.address.username, self.address.pool_name,
         );
-        // If every candidate failed solely on operator-supplied startup
-        // parameter rejection, surface PG's actual sqlstate/message so the
-        // client gets the real error instead of a generic 53300. Healthy
-        // hosts are not blacklisted (mark_unhealthy skips this category),
-        // so the same misconfiguration will keep failing until the
-        // operator fixes the config.
-        if summary.all_startup_parameter_rejection() {
-            if let Some(err) = summary.into_last_err() {
+        // If at least one fallback candidate reached PG's StartupMessage
+        // stage and got rejected for an operator-supplied startup
+        // parameter, surface PG's actual sqlstate/message. The
+        // misconfiguration is host-independent — every other reachable
+        // candidate would fail the same way once we got past transport
+        // issues — and healthy hosts are not blacklisted on this reason,
+        // so wrapping it in 53300 would just rewrite the actionable
+        // error.
+        if summary.has_startup_parameter_rejection() {
+            if let Some(err) = summary.into_startup_rejection() {
                 return (Err(err), source);
             }
         }
@@ -1023,6 +1163,7 @@ impl ServerPool {
                 self.application_name.clone(),
                 self.session_mode,
                 startup_parameters,
+                self.operator_managed_startup_keys.clone(),
             ),
         )
         .await;
@@ -1074,6 +1215,7 @@ impl ServerPool {
                     self.application_name.clone(),
                     self.session_mode,
                     startup_parameters,
+                    self.operator_managed_startup_keys.clone(),
                 ),
             )
             .await;
@@ -1249,19 +1391,61 @@ fn is_backend_unreachable(err: &Error) -> bool {
 #[derive(Default)]
 struct FailureSummary {
     last_err: Option<Error>,
+    /// The first `ServerStartupParameterRejection` observed in the
+    /// round. PG rejection of an operator startup_parameter is a
+    /// host-independent config error: even one PG candidate that
+    /// reached the StartupMessage stage and rejected the cascade
+    /// means the same SQLSTATE/message will repeat on every other
+    /// reachable PG. Mixed-failure rounds with one PG rejection plus
+    /// transport failures on the rest must still surface the PG
+    /// error so the operator sees the actionable cause.
+    typed_startup_rejection: Option<Error>,
     counts: std::collections::HashMap<super::fallback::FailureReason, u32>,
 }
 
 impl FailureSummary {
     fn record(&mut self, err: Error, reason: super::fallback::FailureReason) {
         *self.counts.entry(reason).or_insert(0) += 1;
+        if matches!(
+            reason,
+            super::fallback::FailureReason::StartupParameterRejection
+        ) && self.typed_startup_rejection.is_none()
+        {
+            // Clone the rejection — the original moves into `last_err`
+            // so the aggregate `format()` and surrounding code keep
+            // working unchanged.
+            if let Error::ServerStartupParameterRejection {
+                sqlstate,
+                message,
+                server_identifier,
+            } = &err
+            {
+                self.typed_startup_rejection = Some(Error::ServerStartupParameterRejection {
+                    sqlstate: sqlstate.clone(),
+                    message: message.clone(),
+                    server_identifier: server_identifier.clone(),
+                });
+            }
+        }
         self.last_err = Some(err);
     }
 
-    /// True when the recorded failures are non-empty and contain only
-    /// `StartupParameterRejection`. Used to decide whether to surface the
-    /// original PG error to the client instead of the aggregate
-    /// "all candidates rejected" wrapper.
+    /// Was at least one fallback candidate rejected by PG specifically
+    /// for an operator-supplied startup_parameter? Mixed-failure rounds
+    /// use this to keep the typed PG error from being wrapped in the
+    /// generic transport-aggregate message.
+    fn has_startup_parameter_rejection(&self) -> bool {
+        self.typed_startup_rejection.is_some()
+    }
+
+    fn into_startup_rejection(self) -> Option<Error> {
+        self.typed_startup_rejection
+    }
+
+    /// Kept for the legacy "every failure was rejection" tests. The
+    /// production path uses `has_startup_parameter_rejection` and only
+    /// needs the typed copy retained separately.
+    #[cfg(test)]
     fn all_startup_parameter_rejection(&self) -> bool {
         !self.counts.is_empty()
             && self
@@ -1270,6 +1454,7 @@ impl FailureSummary {
                 .all(|r| matches!(r, super::fallback::FailureReason::StartupParameterRejection))
     }
 
+    #[cfg(test)]
     fn into_last_err(self) -> Option<Error> {
         self.last_err
     }
@@ -1436,8 +1621,34 @@ mod tests {
         );
         assert!(
             !s.all_startup_parameter_rejection(),
-            "a single non-rejection cause must veto the shortcut"
+            "a single non-rejection cause must veto the all-rejection shortcut"
         );
+        // But the typed rejection must still be retained so a mixed
+        // round of transport failures + one PG rejection surfaces the
+        // PG SQLSTATE/message instead of the generic aggregate.
+        assert!(
+            s.has_startup_parameter_rejection(),
+            "a single PG rejection must be retained even alongside transport failures"
+        );
+    }
+
+    #[test]
+    fn into_startup_rejection_returns_first_typed_rejection() {
+        let mut s = FailureSummary::default();
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        s.record(
+            rejection_err(),
+            super::super::fallback::FailureReason::StartupParameterRejection,
+        );
+        match s.into_startup_rejection() {
+            Some(Error::ServerStartupParameterRejection { sqlstate, .. }) => {
+                assert_eq!(sqlstate, "22023")
+            }
+            other => panic!("expected the retained rejection, got {other:?}"),
+        }
     }
 
     #[test]

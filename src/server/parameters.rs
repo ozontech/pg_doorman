@@ -8,25 +8,35 @@ static TRACKED_PARAMETERS: Lazy<HashSet<String>> = Lazy::new(|| {
     let mut set = HashSet::new();
     set.insert("client_encoding".to_string());
     set.insert("DateStyle".to_string());
+    set.insert("IntervalStyle".to_string());
     set.insert("TimeZone".to_string());
     set.insert("standard_conforming_strings".to_string());
     set.insert("application_name".to_string());
     set
 });
 
-/// Canonicalise a PostgreSQL session parameter name so that startup-time
-/// lowercase forms (`timezone`, `datestyle`) match the
-/// `ParameterStatus` casing PG sends back (`TimeZone`, `DateStyle`).
-/// Used both by `ServerParameters::set_param` (where it has lived since
-/// day one) and by `Server::startup` when it captures the operator-
-/// managed key set: without the canonical form, `sync_parameters`
-/// filters by exact-string match and a client startup value reported
-/// as `TimeZone` would overwrite an operator value set as `timezone`.
+/// Canonicalise a PostgreSQL session parameter name. PG GUC lookups are
+/// case-insensitive, so pg_doorman needs one normalised form per name
+/// for every internal compare-by-key path (operator_managed key set,
+/// cascade merge, dynamic-pool overlay hash, admin/Web read model). The
+/// rule:
+///
+/// * Tracked parameters (`TRACKED_PARAMETERS`) return their fixed
+///   spelling — the same casing PG reports back in `ParameterStatus`.
+///   This keeps `sync_parameters` aligned with what the client expects
+///   to see at the wire.
+/// * Every other GUC is folded to ASCII lower case. PG itself accepts
+///   any casing, but the cascade and admin views need a stable form so
+///   `general.work_mem` plus `pool.Work_Mem` collapse to one entry
+///   instead of shipping both rows in `StartupMessage`.
 pub fn canonicalize_param_name(key: String) -> String {
-    if key == "timezone" {
-        "TimeZone".to_string()
-    } else if key == "datestyle" {
-        "DateStyle".to_string()
+    for tracked in TRACKED_PARAMETERS.iter() {
+        if key.eq_ignore_ascii_case(tracked) {
+            return tracked.clone();
+        }
+    }
+    if key.chars().any(|c| c.is_ascii_uppercase()) {
+        key.to_ascii_lowercase()
     } else {
         key
     }
@@ -141,5 +151,65 @@ impl From<&ServerParameters> for BytesMut {
         }
 
         bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonicalize_param_name;
+
+    #[test]
+    fn canonicalize_timezone_matches_any_case() {
+        assert_eq!(canonicalize_param_name("timezone".to_string()), "TimeZone");
+        assert_eq!(canonicalize_param_name("TIMEZONE".to_string()), "TimeZone");
+        assert_eq!(canonicalize_param_name("TimeZone".to_string()), "TimeZone");
+        assert_eq!(canonicalize_param_name("TimezONE".to_string()), "TimeZone");
+    }
+
+    #[test]
+    fn canonicalize_datestyle_matches_any_case() {
+        assert_eq!(
+            canonicalize_param_name("datestyle".to_string()),
+            "DateStyle"
+        );
+        assert_eq!(
+            canonicalize_param_name("DATESTYLE".to_string()),
+            "DateStyle"
+        );
+        assert_eq!(
+            canonicalize_param_name("DateStyle".to_string()),
+            "DateStyle"
+        );
+    }
+
+    #[test]
+    fn canonicalize_intervalstyle_matches_any_case() {
+        assert_eq!(
+            canonicalize_param_name("intervalstyle".to_string()),
+            "IntervalStyle"
+        );
+        assert_eq!(
+            canonicalize_param_name("INTERVALSTYLE".to_string()),
+            "IntervalStyle"
+        );
+    }
+
+    #[test]
+    fn canonicalize_lowercases_non_tracked_keys() {
+        // PG GUC lookup is case-insensitive, so untracked names must
+        // collapse to one canonical form too, otherwise a `work_mem`
+        // baseline and a `Work_Mem` pool override become two rows on
+        // the wire instead of one cascaded value.
+        assert_eq!(canonicalize_param_name("work_mem".to_string()), "work_mem");
+        assert_eq!(canonicalize_param_name("Work_Mem".to_string()), "work_mem");
+        assert_eq!(canonicalize_param_name("WORK_MEM".to_string()), "work_mem");
+        assert_eq!(
+            canonicalize_param_name("statement_timeout".to_string()),
+            "statement_timeout"
+        );
+        assert_eq!(
+            canonicalize_param_name("Statement_Timeout".to_string()),
+            "statement_timeout"
+        );
     }
 }

@@ -219,12 +219,13 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
-      # GitHub-hosted runners share CPU under heavy matrix fan-out, and
-      # the timing-sensitive scenarios (sleep-based retain/lifetime
-      # waits, SCRAM passthrough reconnect) lose their margin when 20+
-      # BDD jobs run in parallel. Cap concurrency so each suite gets a
-      # less contested runner.
-      max-parallel: 4
+      # Six concurrent suites is the cap this matrix was tuned for.
+      # GitHub-hosted runners share CPU under heavy fan-out; with 20+
+      # BDD jobs in parallel, the sleep-based lifecycle tests and the
+      # SCRAM passthrough reconnect tests lost timing margin. This cap
+      # keeps those suites stable while reducing total wall time versus
+      # the previous limit of four.
+      max-parallel: 6
       matrix:
         suite:
           - { name: "Go",                                cargo: "test --test bdd -- --tags @go" }
@@ -249,6 +250,7 @@ jobs:
           - { name: "Server TLS",                        cargo: "test --test bdd -- --tags @server-tls" }
           - { name: "TLS migration (vendored OpenSSL)",  cargo: "test --features tls-migration --test bdd -- --tags @tls-migration" }
           - { name: "Startup parameters",                cargo: "test --test bdd -- --tags @startup-parameters" }
+          - { name: "Web UI",                            cargo: "test --test bdd -- --tags @web-ui" }
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

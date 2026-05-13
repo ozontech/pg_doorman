@@ -31,18 +31,30 @@ fn is_startup_parameter_key(key: &str) -> bool {
     key.contains(".startup_parameters.") || key.starts_with("startup_parameters.")
 }
 
-/// Bind-address fields require a restart; everything else takes effect on
-/// the next backend or `RELOAD`. Listed precisely so the UI can render
-/// the right "restart_required" pill instead of marking everything
-/// reloadable.
-const IMMUTABLES: &[&str] = &["host", "port", "connect_timeout"];
+/// Listener bind fields and runtime-construction fields require a
+/// restart; most other fields take effect on `RELOAD` or on the next
+/// backend. The list uses full flattened keys because `/api/config`
+/// emits paths such as `general.host` and `web.host`.
+/// `worker_threads`, `unix_socket_dir`, and `backlog` shape the Tokio
+/// runtime and listener socket at process start; SIGHUP cannot rebuild
+/// those.
+const IMMUTABLES: &[&str] = &[
+    "general.host",
+    "general.port",
+    "general.worker_threads",
+    "general.unix_socket_dir",
+    "general.backlog",
+    "web.host",
+    "web.port",
+];
 
-/// Flatten a serde JSON value into dotted keys → string values. Operators
-/// have asked for a coverage-complete `/api/config` so they can verify
-/// TLS / auth_query / pool sizing / prepared cache / web settings during
-/// an incident — the previous hand-written `From<&Config>` only exposed
-/// host/port/connect_timeout/idle_timeout/shutdown_timeout plus pool
-/// users/mode, which DBA P3#7 (codex review) flagged as too thin.
+fn is_immutable_key(key: &str) -> bool {
+    IMMUTABLES.contains(&key)
+}
+
+/// Flatten a serde JSON value into dotted keys → string values. This
+/// keeps `/api/config` broad enough for incident checks across TLS,
+/// auth_query, pool sizing, prepared cache, and web settings.
 fn flatten_json(prefix: &str, value: &serde_json::Value, out: &mut HashMap<String, String>) {
     match value {
         serde_json::Value::Object(map) => {
@@ -97,10 +109,9 @@ pub(crate) fn collect_config(reveal_startup_values: bool) -> ConfigDto {
     }
     flat.retain(|k, _| !is_internal_key(k));
 
-    // Diff against `Config::default()` so the UI can show what is at
-    // its built-in default vs. what an operator changed via the config
-    // file. The defaults map is computed once per request — cheap, and
-    // a stable comparison surface for codex DBA P3#7.
+    // Diff against `Config::default()` so the UI can show what is still
+    // at the built-in default and what changed in the config file. The
+    // defaults map is small enough to compute once per request.
     let mut defaults: HashMap<String, String> = HashMap::new();
     if let Ok(value) = serde_json::to_value(crate::config::Config::default()) {
         flatten_json("", &value, &mut defaults);
@@ -117,11 +128,7 @@ pub(crate) fn collect_config(reveal_startup_values: bool) -> ConfigDto {
                 .get(&key)
                 .map(|d| if mask { "***".to_string() } else { d.clone() })
                 .unwrap_or_else(|| "-".to_string());
-            let changeable = if IMMUTABLES.iter().any(|c| *c == key) {
-                "no"
-            } else {
-                "yes"
-            };
+            let changeable = if is_immutable_key(&key) { "no" } else { "yes" };
             let doc = lookup_doc(&key);
             ConfigEntry {
                 key,
@@ -232,6 +239,33 @@ mod tests {
         assert!(!super::is_secret_key("not_a_secret_check"));
     }
 
+    #[test]
+    fn is_immutable_key_matches_bind_addresses() {
+        assert!(super::is_immutable_key("general.host"));
+        assert!(super::is_immutable_key("general.port"));
+        assert!(super::is_immutable_key("web.host"));
+        assert!(super::is_immutable_key("web.port"));
+    }
+
+    #[test]
+    fn is_immutable_key_matches_runtime_construction_fields() {
+        assert!(super::is_immutable_key("general.worker_threads"));
+        assert!(super::is_immutable_key("general.unix_socket_dir"));
+        assert!(super::is_immutable_key("general.backlog"));
+    }
+
+    #[test]
+    fn is_immutable_key_rejects_reloadable_fields() {
+        assert!(!super::is_immutable_key("general.idle_timeout"));
+        assert!(!super::is_immutable_key("general.shutdown_timeout"));
+        assert!(!super::is_immutable_key("general.connect_timeout"));
+        assert!(!super::is_immutable_key("pools.app_db.server_host"));
+        assert!(!super::is_immutable_key("pools.app_db.users.0.username"));
+        // Bare segment must not match a flattened key.
+        assert!(!super::is_immutable_key("host"));
+        assert!(!super::is_immutable_key("port"));
+    }
+
     /// Coverage check: the previous implementation only exposed
     /// host/port/connect_timeout/idle_timeout/shutdown_timeout plus
     /// pool users/mode. The flattened serde view now surfaces every
@@ -242,9 +276,8 @@ mod tests {
         let dto = super::collect_config(true);
         let keys: std::collections::HashSet<&str> =
             dto.config.iter().map(|e| e.key.as_str()).collect();
-        // Spot-check four orthogonal areas DBA P3#7 called out:
-        // TLS server-side, prepared cache size, web listener, shutdown
-        // timeout.
+        // Spot-check independent areas: core listener, shutdown timeout,
+        // server-side TLS, and web listener.
         assert!(keys.contains("general.host"), "{keys:?}");
         assert!(keys.contains("general.shutdown_timeout"), "{keys:?}");
         assert!(keys.contains("general.server_tls_mode"), "{keys:?}");

@@ -151,3 +151,21 @@ Feature: Web UI listener
       curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/logs | grep -c 'pg_doorman::web::access' || echo 0
       """
     Then the command should succeed
+
+  # Bind-address fields require a restart; most other fields take effect
+  # on RELOAD or on the next backend. /api/config must mark the flattened
+  # bind-address keys as immutable so the SPA shows restart_required for
+  # the right rows.
+  Scenario: /api/config marks bind-address fields as restart-required
+    When I run shell command:
+      """
+      curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/config | \
+        grep -oE '"key":"(general|web)\.(host|port)"[^}]*"changeable":"[^"]*"' | sort -u
+      """
+    Then the command should succeed
+    # Each bind-address key must appear with changeable=no.
+    And output contains "\"key\":\"general.host\""
+    And output contains "\"key\":\"general.port\""
+    And output contains "\"key\":\"web.host\""
+    And output contains "\"key\":\"web.port\""
+    And output contains "\"changeable\":\"no\""

@@ -122,3 +122,25 @@ groups:
             minutes. Common causes: SSO operators trying admin paths
             (403), expired tokens reaching API after silent refresh failed,
             broken proxy adding malformed Authorization headers.
+
+      - alert: PgDoormanWebSsoInsecureTransport
+        expr: |
+          sum by (job, instance) (
+            clamp_min(
+              rate(pg_doorman_web_sso_validation_errors_total{reason="insecure_transport"}[5m]),
+              0
+            )
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: SSO requests rejected over insecure transport on {{ $labels.instance }}"
+          runbook: |
+            sso_require_https is enabled, and pg_doorman received an
+            SSO credential on a request it classified as plain HTTP.
+            Usually either the TLS-terminating proxy is missing from
+            trusted_proxies, so X-Forwarded-Proto is ignored, or the
+            client is really using HTTP. Check trusted_proxies, the
+            proxy's X-Forwarded-Proto header, and the client URL.

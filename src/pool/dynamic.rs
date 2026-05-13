@@ -36,17 +36,36 @@ pub fn create_dynamic_pool(
     username: &str,
     backend_auth: Option<BackendAuthMethod>,
     fetched_overlay: Arc<std::collections::HashMap<String, String>>,
+    fetched_overlay_hash: u64,
 ) -> Result<ConnectionPool, Error> {
-    // Fast path: pool already exists
+    // Fast path: pool already exists. The cache-side refetch path
+    // already drops the live pool when an auth_query refetch changes
+    // the overlay (see `drop_dynamic_pool_if_overlay_drifted`), but a
+    // concurrent login can still arrive after the cache published the
+    // fresh entry yet before the drop fires, or with a fetched_overlay
+    // newer than what the live pool was frozen with. Check the overlay
+    // hash here too so that login rebuilds the pool against the
+    // current snapshot instead of inheriting a stale one. The hash is
+    // precomputed on `CacheEntry`, so the fast path skips the sort +
+    // SipHash on every login.
     if let Some(existing) = get_pool(pool_name, username) {
-        // Update backend_auth (credentials may have changed)
-        if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
-            debug!(
-                "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
-            );
-            *ba_lock.write() = new_ba.clone();
+        if existing.per_user_startup_overlay_hash == fetched_overlay_hash {
+            if let (Some(ref ba_lock), Some(new_ba)) =
+                (&existing.address.backend_auth, &backend_auth)
+            {
+                debug!(
+                    "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
+                );
+                *ba_lock.write() = new_ba.clone();
+            }
+            return Ok(existing);
         }
-        return Ok(existing);
+        let identifier = super::PoolIdentifier::new(pool_name, username);
+        if super::drop_dynamic_pool(&identifier) {
+            info!(
+                "[{username}@{pool_name}] auth_query: per-user startup_parameters overlay drift on login — dynamic pool dropped, rebuilding"
+            );
+        }
     }
 
     let config = get_config();
@@ -130,14 +149,12 @@ pub fn create_dynamic_pool(
     // snapshot. Dynamic auth_query pools follow the same lifecycle as
     // static pools: rebuilt on RELOAD when the underlying base changes
     // (see `general_startup_parameters_changed` in pool/mod.rs).
-    let base_startup_parameters = {
-        let mut merged: std::collections::BTreeMap<String, String> =
-            config.general.startup_parameters.clone();
-        for (k, v) in &pool_config.startup_parameters {
-            merged.insert(k.clone(), v.clone());
-        }
-        std::sync::Arc::new(merged)
-    };
+    let base_startup_parameters = std::sync::Arc::new(
+        crate::config::startup_parameters::cascade_canonical_keys(&[
+            &config.general.startup_parameters,
+            &pool_config.startup_parameters,
+        ]),
+    );
 
     // Convert the caller's HashMap snapshot into the BTreeMap shape
     // ServerPool stores. The snapshot comes from the auth_query row used
@@ -185,11 +202,12 @@ pub fn create_dynamic_pool(
         per_user_startup_overlay.clone(),
     );
 
-    // Snapshot the overlay hash before the Arc moves into ServerPool.
     // The auth_query cache compares the new fetched per-user map against
     // this value after every refetch; a mismatch drops the dynamic pool
-    // so the next connect rebuilds with the new reset_val.
-    let overlay_hash = super::per_user_overlay_hash(per_user_startup_overlay.iter());
+    // so the next connect rebuilds with the new reset_val. The caller
+    // already has the hash precomputed on the `CacheEntry`, so we reuse
+    // it instead of re-running per_user_overlay_hash on the same map.
+    let overlay_hash = fetched_overlay_hash;
 
     let queue_strategy = match config.general.server_round_robin {
         true => QueueMode::Fifo,
@@ -248,15 +266,28 @@ pub fn create_dynamic_pool(
     let current = POOLS.load();
     let mut new_pools = (**current).clone();
 
-    // Re-check after clone (another thread may have created it)
+    // Re-check after clone (another thread may have created it). The
+    // fast path at the top of this function already validates the
+    // overlay hash; do the same here so the slow path doesn't reuse a
+    // pool another login built with a stale `startup_parameters`
+    // snapshot. Without this compare, two concurrent logins after an
+    // auth_query row update can race: one wins the slow path with the
+    // new overlay, the other finds the loser's `existing` and inherits
+    // the stale `reset_val` until TTL or RELOAD.
     if let Some(existing) = new_pools.get(&identifier) {
-        if let (Some(ref ba_lock), Some(ref new_ba)) = (
-            &existing.address.backend_auth,
-            &conn_pool.address.backend_auth,
-        ) {
-            *ba_lock.write() = new_ba.read().clone();
+        if existing.per_user_startup_overlay_hash == overlay_hash {
+            if let (Some(ref ba_lock), Some(ref new_ba)) = (
+                &existing.address.backend_auth,
+                &conn_pool.address.backend_auth,
+            ) {
+                *ba_lock.write() = new_ba.read().clone();
+            }
+            return Ok(existing.clone());
         }
-        return Ok(existing.clone());
+        info!(
+            "[{username}@{pool_name}] auth_query: per-user startup_parameters overlay drift on slow-path race — replacing concurrently-built pool"
+        );
+        new_pools.remove(&identifier);
     }
 
     let auth_method = match &conn_pool.address.backend_auth {

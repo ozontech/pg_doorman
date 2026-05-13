@@ -173,15 +173,6 @@ pub struct Server {
     operator_managed_startup_keys: Arc<HashSet<String>>,
 }
 
-/// Shared empty key set so pools that don't use `startup_parameters`
-/// hand every backend the same `Arc<HashSet>` instead of allocating a
-/// new empty `HashSet` per spawn.
-fn empty_operator_keys() -> Arc<HashSet<String>> {
-    static EMPTY: once_cell::sync::Lazy<Arc<HashSet<String>>> =
-        once_cell::sync::Lazy::new(|| Arc::new(HashSet::new()));
-    EMPTY.clone()
-}
-
 impl std::fmt::Display for Server {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
@@ -781,6 +772,7 @@ impl Server {
         application_name: String,
         session_mode: bool,
         startup_parameters: &std::collections::BTreeMap<String, String>,
+        operator_managed_startup_keys: Arc<HashSet<String>>,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -1057,36 +1049,6 @@ impl Server {
                         "startup",
                         phase_started.elapsed().as_secs_f64(),
                     );
-
-                    // The empty case is a shared `Arc<HashSet>` static, so
-                    // pools that don't use the feature pay zero allocation
-                    // per spawn. The non-empty case still allocates once per
-                    // spawn — the caller in pool/server_pool.rs knows the
-                    // map shape but does not currently pass an already-Arc'd
-                    // HashSet through, and lifting the construction up there
-                    // is a larger refactor than this commit warrants.
-                    let operator_managed_startup_keys: Arc<HashSet<String>> = if startup_parameters
-                        .is_empty()
-                    {
-                        empty_operator_keys()
-                    } else {
-                        // Canonicalize every operator key the same way
-                        // ServerParameters::set_param does on the
-                        // sync_parameters path. Without this an operator
-                        // value configured as `timezone` would not match
-                        // a client-startup value reported as `TimeZone`
-                        // in compare_params(), letting the client
-                        // override the operator default. See codex
-                        // MED #7 (fresh review).
-                        Arc::new(
-                            startup_parameters
-                                .keys()
-                                .map(|k| {
-                                    crate::server::parameters::canonicalize_param_name(k.clone())
-                                })
-                                .collect(),
-                        )
-                    };
 
                     let server = Server {
                         address: address.to_owned(),
