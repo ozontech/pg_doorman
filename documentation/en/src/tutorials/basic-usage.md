@@ -21,7 +21,7 @@ Arguments:
 Options:
   -l, --log-level <LOG_LEVEL>    [env: LOG_LEVEL=] [default: INFO]
   -F, --log-format <LOG_FORMAT>  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
-  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
+  -n, --no-color                 force colors off in the log output
   -d, --daemon                   run as daemon [env: DAEMON=]
   -h, --help                     Print help
   -V, --version                  Print version
@@ -34,7 +34,7 @@ Options:
 | `-d`, `--daemon` | Run in the background. Without this option, the process will run in the foreground.<br><br>In daemon mode, setting `daemon_pid_file` and `syslog_prog_name` is required. No log messages will be written to stderr after going into the background. |
 | `-l`, `--log-level` | Set log level: `INFO`, `DEBUG`, or `WARN`. |
 | `-F`, `--log-format` | Set log format. Possible values: `text`, `structured`, `debug`. |
-| `-n`, `--no-color` | Disable colors in the log output. |
+| `-n`, `--no-color` | Force colors off in the log output. Colors are also auto-disabled when stderr is not a TTY (under systemd, the journal pipe is not a terminal) and when the `NO_COLOR` environment variable is set to any non-empty value. |
 | `-V`, `--version` | Show version information. |
 | `-h`, `--help` | Show help information. |
 
