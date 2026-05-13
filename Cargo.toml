@@ -68,7 +68,11 @@ iota = { version = "0.2.3" }
 pin-project-lite = "0.2.16"
 pam-client = { version =  "0.5.0", optional = true }
 postgres = "0.19.10"
-tokio-postgres = "0.7"
+# `with-serde_json-1` lets `Row::try_get` decode `json`/`jsonb` columns
+# directly into `serde_json::Value`. Used by the auth_query startup_parameters
+# parser so operators can return a native `jsonb` column without a `::text`
+# cast (codex review MED #3).
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 postgres-native-tls = "0.5.1"
 flate2 = "1.0.28"
 sd-notify = "0.4"

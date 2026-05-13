@@ -23,9 +23,15 @@ static TRACKED_PARAMETERS: Lazy<HashSet<String>> = Lazy::new(|| {
 /// filters by exact-string match and a client startup value reported
 /// as `TimeZone` would overwrite an operator value set as `timezone`.
 pub fn canonicalize_param_name(key: String) -> String {
-    if key == "timezone" {
+    // PostgreSQL GUC names are case-insensitive, so a client startup
+    // value labelled `TIMEZONE` or `DateStyle` and an operator default
+    // configured as `timezone` must collapse to the same canonical
+    // string. Exact `==` lowercase would let a mixed-case client value
+    // slip past `operator_managed_startup_keys` and overwrite the
+    // operator default.
+    if key.eq_ignore_ascii_case("timezone") {
         "TimeZone".to_string()
-    } else if key == "datestyle" {
+    } else if key.eq_ignore_ascii_case("datestyle") {
         "DateStyle".to_string()
     } else {
         key

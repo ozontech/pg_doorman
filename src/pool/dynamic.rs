@@ -37,16 +37,33 @@ pub fn create_dynamic_pool(
     backend_auth: Option<BackendAuthMethod>,
     fetched_overlay: Arc<std::collections::HashMap<String, String>>,
 ) -> Result<ConnectionPool, Error> {
-    // Fast path: pool already exists
+    // Fast path: pool already exists. The cache-side refetch path
+    // already drops the live pool when an auth_query refetch changes
+    // the overlay (see `drop_dynamic_pool_if_overlay_drifted`), but a
+    // concurrent login can still arrive after the cache published the
+    // fresh entry yet before the drop fires, or with a fetched_overlay
+    // newer than what the live pool was frozen with. Check the overlay
+    // hash here too so that login rebuilds the pool against the
+    // current snapshot instead of inheriting a stale one.
     if let Some(existing) = get_pool(pool_name, username) {
-        // Update backend_auth (credentials may have changed)
-        if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
-            debug!(
-                "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
-            );
-            *ba_lock.write() = new_ba.clone();
+        let new_overlay_hash = super::per_user_overlay_hash(fetched_overlay.iter());
+        if existing.per_user_startup_overlay_hash == new_overlay_hash {
+            if let (Some(ref ba_lock), Some(new_ba)) =
+                (&existing.address.backend_auth, &backend_auth)
+            {
+                debug!(
+                    "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
+                );
+                *ba_lock.write() = new_ba.clone();
+            }
+            return Ok(existing);
         }
-        return Ok(existing);
+        let identifier = super::PoolIdentifier::new(pool_name, username);
+        if super::drop_dynamic_pool(&identifier) {
+            info!(
+                "[{username}@{pool_name}] auth_query: per-user startup_parameters overlay drift on login — dynamic pool dropped, rebuilding"
+            );
+        }
     }
 
     let config = get_config();

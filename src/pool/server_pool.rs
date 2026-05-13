@@ -485,8 +485,24 @@ impl ServerPool {
         // — both are side effects of the spawn path
         // (resolved_startup_parameters). SHOW polling and /api/pools
         // page refreshes are safe to call repeatedly.
-        let (wire_cow, _decision) = self.classify_startup_parameters();
+        let (wire_cow, decision) = self.classify_startup_parameters();
         let wire = wire_cow.as_ref();
+        // When the auth_query overlay was dropped because it would
+        // push the cascade over budget, every key from the overlay is
+        // "dropped due to budget" even if the baseline happens to
+        // carry the same key with a different value. Without this the
+        // admin view classified those keys as `Stale`, sending
+        // operators to chase a RELOAD/refetch race that is not the
+        // cause (codex review MED #6).
+        let overlay_dropped = matches!(decision, BudgetDecision::OverlayDroppedBaselineKept { .. });
+        let overlay_keys: std::collections::BTreeSet<&str> = if overlay_dropped {
+            self.per_user_startup_overlay
+                .keys()
+                .map(String::as_str)
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
         let mut out: std::collections::BTreeMap<
             String,
             (
@@ -497,10 +513,14 @@ impl ServerPool {
         > = configured
             .into_iter()
             .map(|(k, (v, src))| {
-                let state = match wire.get(&k) {
-                    Some(wire_v) if wire_v == &v => ApplicationState::Applied,
-                    Some(_) => ApplicationState::Stale,
-                    None => ApplicationState::DroppedDueToBudget,
+                let state = if overlay_dropped && overlay_keys.contains(k.as_str()) {
+                    ApplicationState::DroppedDueToBudget
+                } else {
+                    match wire.get(&k) {
+                        Some(wire_v) if wire_v == &v => ApplicationState::Applied,
+                        Some(_) => ApplicationState::Stale,
+                        None => ApplicationState::DroppedDueToBudget,
+                    }
                 };
                 (k, (v, src, state))
             })

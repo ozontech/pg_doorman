@@ -403,21 +403,31 @@ impl AuthQueryExecutor {
         let Some(column) = column else {
             return std::collections::HashMap::new();
         };
+        // Decode order: text first (the documented contract), then
+        // `json`/`jsonb` via `serde_json::Value`. A natural auth_query
+        // schema often stores per-user GUCs as `jsonb`, and requiring
+        // a `::text` cast for that case bites operators who modelled
+        // the column naturally.
         let raw: Option<String> = match row.try_get::<_, Option<String>>("startup_parameters") {
             Ok(v) => v,
-            Err(e) => {
-                warn!(
-                    "[{username}@{pool_name}] auth_query startup_parameters column has type \
-                     `{ty}` but pg_doorman reads it as `text`: {e}. If the SELECT returns \
-                     json or jsonb, add `::text` (for example: \
-                     `jsonb_build_object(...)::text AS startup_parameters`); per-user \
-                     parameters are ignored for this row.",
-                    ty = column.type_().name()
-                );
-                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                    .with_label_values(&[pool_name, "auth_query_bad_type"])
-                    .inc();
-                return std::collections::HashMap::new();
+            Err(text_err) => {
+                match row.try_get::<_, Option<serde_json::Value>>("startup_parameters") {
+                    Ok(Some(value)) => Some(value.to_string()),
+                    Ok(None) => None,
+                    Err(json_err) => {
+                        warn!(
+                            "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                             `{ty}` but pg_doorman reads it as `text` or `json`/`jsonb`: \
+                             text decode error: {text_err}; json decode error: {json_err}. \
+                             Per-user parameters are ignored for this row.",
+                            ty = column.type_().name()
+                        );
+                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                            .with_label_values(&[pool_name, "auth_query_bad_type"])
+                            .inc();
+                        return std::collections::HashMap::new();
+                    }
+                }
             }
         };
         Self::parse_startup_parameters_text(raw.as_deref(), username, pool_name)
