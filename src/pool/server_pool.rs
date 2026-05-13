@@ -81,39 +81,35 @@ fn build_resolved_startup(
     pool_name: &str,
     client_username: &str,
 ) -> (Arc<BTreeMap<String, String>>, BudgetDecision) {
-    if overlay.is_empty() {
-        let (packet_bytes, body_bytes) =
-            sp::packet_and_body_bytes(server_username, database, application_name, base);
-        let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
-        let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
-        if !over_budget && !over_packet {
-            return (Arc::clone(base), BudgetDecision::FullCascade);
+    // PostgreSQL GUC names are case-insensitive, but `general` and
+    // `pool` are deserialised as opaque maps with exact-case keys. A
+    // pool that sets `TimeZone = "UTC"` over a
+    // `general.timezone = "Europe/Berlin"` would otherwise ship both
+    // rows in `StartupMessage` and let backend-side merge order decide
+    // which wins. Canonicalise every key here so the merged view, the
+    // baseline-only fallback, and the admin/API read model all agree
+    // on the GUC name PostgreSQL will use.
+    let canonical_base: BTreeMap<String, String> = base
+        .iter()
+        .map(|(k, v)| {
+            (
+                crate::server::parameters::canonicalize_param_name(k.clone()),
+                v.clone(),
+            )
+        })
+        .collect();
+    let merged: BTreeMap<String, String> = if overlay.is_empty() {
+        canonical_base.clone()
+    } else {
+        let mut m = canonical_base.clone();
+        for (k, v) in overlay.iter() {
+            m.insert(
+                crate::server::parameters::canonicalize_param_name(k.clone()),
+                v.clone(),
+            );
         }
-        let reason = if over_packet {
-            BudgetReason::PacketCapExceeded
-        } else {
-            BudgetReason::CascadeBudgetExceeded
-        };
-        warn!(
-            "[{client_username}@{pool_name}] effective startup_parameters serialize to {body_bytes} bytes \
-             (packet {packet_bytes} bytes), exceeding operator budget {} / PG cap {}; \
-             backend spawns will be rejected until general/pool startup_parameters shrink",
-            sp::MAX_OPERATOR_BUDGET, sp::MAX_STARTUP_PACKET_SIZE,
-        );
-        return (
-            Arc::new(BTreeMap::new()),
-            BudgetDecision::EmptyDueToBudget {
-                reason,
-                body_bytes,
-                packet_bytes,
-            },
-        );
-    }
-
-    let mut merged = (**base).clone();
-    for (k, v) in overlay.iter() {
-        merged.insert(k.clone(), v.clone());
-    }
+        m
+    };
     let (packet_bytes, body_bytes) =
         sp::packet_and_body_bytes(server_username, database, application_name, &merged);
     let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
@@ -122,22 +118,26 @@ fn build_resolved_startup(
         return (Arc::new(merged), BudgetDecision::FullCascade);
     }
 
-    // Merged cascade is over a limit. Try baseline-only.
-    let (baseline_packet, baseline_body) =
-        sp::packet_and_body_bytes(server_username, database, application_name, base);
-    if baseline_body <= sp::MAX_OPERATOR_BUDGET && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE {
-        warn!(
-            "[{client_username}@{pool_name}] auth_query per-user startup_parameters pushes the cascade \
-             over the operator budget (merged {body_bytes} bytes, packet {packet_bytes} bytes); \
-             backend spawns will be rejected until the overlay or baseline shrinks"
-        );
-        return (
-            Arc::clone(base),
-            BudgetDecision::OverlayDroppedBaselineKept {
-                body_bytes,
-                packet_bytes,
-            },
-        );
+    // Merged cascade is over a limit. Try the canonical baseline-only.
+    if !overlay.is_empty() {
+        let (baseline_packet, baseline_body) =
+            sp::packet_and_body_bytes(server_username, database, application_name, &canonical_base);
+        if baseline_body <= sp::MAX_OPERATOR_BUDGET
+            && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
+        {
+            warn!(
+                "[{client_username}@{pool_name}] auth_query per-user startup_parameters pushes the cascade \
+                 over the operator budget (merged {body_bytes} bytes, packet {packet_bytes} bytes); \
+                 backend spawns will be rejected until the overlay or baseline shrinks"
+            );
+            return (
+                Arc::new(canonical_base),
+                BudgetDecision::OverlayDroppedBaselineKept {
+                    body_bytes,
+                    packet_bytes,
+                },
+            );
+        }
     }
 
     let reason = if over_packet {
@@ -415,21 +415,22 @@ impl ServerPool {
             self.address.host,
             self.address.port,
         );
+        // Resolve before any `ServerStats` is registered. The budget
+        // preflight can return `ServerStartupParameterRejection`; if we
+        // had already published the stats entry via `stats.register`,
+        // the `?` exit would leak that entry in `sv_login` forever
+        // because the disconnect path runs only after the spawn
+        // attempt produces a result. The resolved map and the TLS
+        // retry share the same Arc, so the plain attempt and the
+        // sslmode=allow retry still see one parameter set.
+        let startup_parameters = self.resolved_startup_parameters()?;
+
         let stats = Arc::new(ServerStats::new(
             self.address.clone(),
             crate::utils::clock::now(),
         ));
 
         stats.register(stats.clone());
-
-        // Resolve once for this spawn attempt: the plain attempt and the
-        // optional sslmode=allow TLS retry must see the same parameter set,
-        // otherwise a config RELOAD landing between the two would silently
-        // ship different StartupMessages for the same client request.
-        // A budget-exceeded cascade returns
-        // `ServerStartupParameterRejection` here so the client sees a
-        // PG-style error instead of a silently degraded session.
-        let startup_parameters = self.resolved_startup_parameters()?;
 
         let result = startup_with_timeout(
             self.connect_timeout,

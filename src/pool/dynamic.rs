@@ -265,15 +265,28 @@ pub fn create_dynamic_pool(
     let current = POOLS.load();
     let mut new_pools = (**current).clone();
 
-    // Re-check after clone (another thread may have created it)
+    // Re-check after clone (another thread may have created it). The
+    // fast path at the top of this function already validates the
+    // overlay hash; do the same here so the slow path doesn't reuse a
+    // pool another login built with a stale `startup_parameters`
+    // snapshot. Without this compare, two concurrent logins after an
+    // auth_query row update can race: one wins the slow path with the
+    // new overlay, the other finds the loser's `existing` and inherits
+    // the stale `reset_val` until TTL or RELOAD.
     if let Some(existing) = new_pools.get(&identifier) {
-        if let (Some(ref ba_lock), Some(ref new_ba)) = (
-            &existing.address.backend_auth,
-            &conn_pool.address.backend_auth,
-        ) {
-            *ba_lock.write() = new_ba.read().clone();
+        if existing.per_user_startup_overlay_hash == overlay_hash {
+            if let (Some(ref ba_lock), Some(ref new_ba)) = (
+                &existing.address.backend_auth,
+                &conn_pool.address.backend_auth,
+            ) {
+                *ba_lock.write() = new_ba.read().clone();
+            }
+            return Ok(existing.clone());
         }
-        return Ok(existing.clone());
+        info!(
+            "[{username}@{pool_name}] auth_query: per-user startup_parameters overlay drift on slow-path race — replacing concurrently-built pool"
+        );
+        new_pools.remove(&identifier);
     }
 
     let auth_method = match &conn_pool.address.backend_auth {
