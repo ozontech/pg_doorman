@@ -428,6 +428,29 @@ impl Config {
             &self.general.startup_parameters,
             "general.startup_parameters",
         )?;
+        // H3: catch the deterministic `general + pool` overflow at config
+        // load time so the runtime never sees a misconfigured pool. Only
+        // the size gate runs here — per-level reserved-key and shape
+        // checks already fired during general/pool validation, and we do
+        // not want to surface those twice with a different scope label.
+        // The optional auth_query overlay is still checked at backend
+        // spawn because it comes from PG, not the config file.
+        for (pool_name, pool_config) in &self.pools {
+            let mut merged = self.general.startup_parameters.clone();
+            for (k, v) in &pool_config.startup_parameters {
+                merged.insert(k.clone(), v.clone());
+            }
+            let merged_size = startup_parameters::serialized_bytes(&merged);
+            if merged_size > startup_parameters::MAX_OPERATOR_BUDGET {
+                return Err(Error::BadConfig(format!(
+                    "merged general + pools.{pool_name}.startup_parameters: serialized \
+                     size {merged_size} bytes exceeds operator budget {} (PG \
+                     StartupMessage cap is {} bytes; reduce general or pool startup_parameters)",
+                    startup_parameters::MAX_OPERATOR_BUDGET,
+                    startup_parameters::MAX_STARTUP_PACKET_SIZE,
+                )));
+            }
+        }
 
         if self.general.tls_rate_limit_per_second < 100
             && self.general.tls_rate_limit_per_second != 0

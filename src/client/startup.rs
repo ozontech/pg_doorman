@@ -377,8 +377,32 @@ where
         )
         .await?;
 
-        // Update the parameters to merge what the application sent and what's originally on the server
-        server_parameters.set_from_hashmap(&parameters, false);
+        // Update the parameters to merge what the application sent and what's originally on the server.
+        // Operator-managed startup_parameters must win over the client
+        // packet, otherwise ParameterStatus reports the client value
+        // while the backend keeps the operator default — a protocol-
+        // visible mismatch. The backend's sync_parameters already
+        // applies the same filter on checkout, so this aligns the two
+        // sides on the client view.
+        let operator_keys = crate::pool::get_pool(&pool_name, &client_identifier.username)
+            .map(|p| p.database.server_pool().operator_managed_startup_keys());
+        match operator_keys {
+            Some(keys) if !keys.is_empty() => {
+                let filtered: std::collections::HashMap<String, String> = parameters
+                    .iter()
+                    .filter(|(k, _)| {
+                        !keys.contains(&crate::server::parameters::canonicalize_param_name(
+                            (*k).clone(),
+                        ))
+                    })
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                server_parameters.set_from_hashmap(&filtered, false);
+            }
+            _ => {
+                server_parameters.set_from_hashmap(&parameters, false);
+            }
+        }
         let mut buf = BytesMut::new();
         {
             let mut auth_ok = BytesMut::with_capacity(9);

@@ -4,7 +4,7 @@
 //! server connections. It handles connect timeouts, lifetime checks, alive
 //! checks, pause/resume, and reconnect epoch management.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -141,6 +141,16 @@ pub struct ServerPool {
     /// drain logic in `pool/mod.rs`; this field is immutable for the
     /// lifetime of the pool object.
     per_user_startup_overlay: Arc<std::collections::BTreeMap<String, String>>,
+
+    /// Canonicalized GUC names this pool injects through
+    /// `startup_parameters` (general + pool + auth_query overlay). The
+    /// backend startup path (`Server::startup`) uses this set so that
+    /// `sync_parameters` on checkout does not let a client value overwrite
+    /// the operator default. The client startup path filters the
+    /// `StartupMessage` parameters against the same set before sending
+    /// `ParameterStatus`, so a driver sees the same value PG will use for
+    /// the session. Built once per pool and shared as `Arc`.
+    operator_managed_startup_keys: Arc<HashSet<String>>,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -189,6 +199,13 @@ impl ServerPool {
         base_startup_parameters: Arc<BTreeMap<String, String>>,
         per_user_startup_overlay: Arc<BTreeMap<String, String>>,
     ) -> ServerPool {
+        let operator_managed_startup_keys = Arc::new(
+            base_startup_parameters
+                .keys()
+                .chain(per_user_startup_overlay.keys())
+                .map(|k| crate::server::parameters::canonicalize_param_name(k.clone()))
+                .collect::<HashSet<String>>(),
+        );
         ServerPool {
             address,
             user: user.clone(),
@@ -211,7 +228,13 @@ impl ServerPool {
             fallback_state,
             base_startup_parameters,
             per_user_startup_overlay,
+            operator_managed_startup_keys,
         }
+    }
+
+    /// See `operator_managed_startup_keys` field.
+    pub fn operator_managed_startup_keys(&self) -> Arc<HashSet<String>> {
+        self.operator_managed_startup_keys.clone()
     }
 
     /// Attempts to create a new connection.
@@ -283,7 +306,10 @@ impl ServerPool {
         // optional sslmode=allow TLS retry must see the same parameter set,
         // otherwise a config RELOAD landing between the two would silently
         // ship different StartupMessages for the same client request.
-        let startup_parameters = self.resolved_startup_parameters();
+        // A budget-exceeded cascade returns
+        // `ServerStartupParameterRejection` here so the client sees a
+        // PG-style error instead of a silently degraded session.
+        let startup_parameters = self.resolved_startup_parameters()?;
 
         let result = startup_with_timeout(
             self.connect_timeout,
@@ -593,12 +619,20 @@ impl ServerPool {
     /// values.
     ///
     /// The merged map is checked against the operator budget and the full
-    /// PostgreSQL startup-packet limit. On overflow, pg_doorman logs and sends
-    /// no operator-supplied parameters for this backend startup.
-    fn resolved_startup_parameters(&self) -> std::borrow::Cow<'_, BTreeMap<String, String>> {
+    /// PostgreSQL startup-packet limit. Any overflow — either the
+    /// auth_query overlay alone, the general/pool baseline, or the full
+    /// StartupMessage — is surfaced as a PG-style
+    /// `ServerStartupParameterRejection` so the client sees a real error
+    /// and the operator notices the budget miss. Silent degradation
+    /// (drop overlay, drop everything) used to hide misconfigured
+    /// auth_query rows and over-large general/pool maps; codex review
+    /// HIGH #3 flagged that as a protocol-visible bug.
+    fn resolved_startup_parameters(
+        &self,
+    ) -> Result<std::borrow::Cow<'_, BTreeMap<String, String>>, Error> {
         let (map, decision) = self.classify_startup_parameters();
         match decision {
-            BudgetDecision::FullCascade => map,
+            BudgetDecision::FullCascade => Ok(map),
             BudgetDecision::OverlayDroppedBaselineKept {
                 body_bytes,
                 packet_bytes,
@@ -606,8 +640,8 @@ impl ServerPool {
                 warn!(
                     "[{}@{}] auth_query per-user startup_parameters pushes the cascade \
                      over the operator budget (merged {} bytes, packet {} bytes); \
-                     dropping the per-user overlay and keeping the general/pool \
-                     baseline for this backend spawn",
+                     rejecting this backend spawn so the client sees the budget miss \
+                     instead of silently losing the overlay",
                     self.user.username, self.address.pool_name, body_bytes, packet_bytes,
                 );
                 crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
@@ -616,7 +650,26 @@ impl ServerPool {
                         "auth_query_overlay_oversize",
                     ])
                     .inc();
-                map
+                Err(Error::ServerStartupParameterRejection {
+                    sqlstate: "54000".to_string(),
+                    message: format!(
+                        "auth_query startup_parameters for pool '{}' would exceed the \
+                         operator budget (merged body {} bytes, full packet {} bytes; \
+                         operator budget {} bytes, PG StartupMessage cap {} bytes). \
+                         Reduce the per-user startup_parameters row, the pool baseline, \
+                         or the general baseline.",
+                        self.address.pool_name,
+                        body_bytes,
+                        packet_bytes,
+                        sp::MAX_OPERATOR_BUDGET,
+                        sp::MAX_STARTUP_PACKET_SIZE,
+                    ),
+                    server_identifier: crate::app::errors::ServerIdentifier::new(
+                        self.user.username.clone(),
+                        &self.database,
+                        &self.address.pool_name,
+                    ),
+                })
             }
             BudgetDecision::EmptyDueToBudget {
                 reason,
@@ -626,7 +679,7 @@ impl ServerPool {
                 warn!(
                     "[{}@{}] effective startup_parameters serialize to {} bytes \
                      (packet {} bytes), exceeding operator budget {} / PG cap {}; \
-                     all operator-supplied parameters dropped for this backend spawn",
+                     rejecting backend spawn",
                     self.user.username,
                     self.address.pool_name,
                     body_bytes,
@@ -637,7 +690,30 @@ impl ServerPool {
                 crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
                     .with_label_values(&[self.address.pool_name.as_str(), reason.as_str()])
                     .inc();
-                map
+                // `map` is intentionally discarded — the prior fail-open
+                // behaviour shipped an empty StartupMessage and let the
+                // session run without the operator's defaults. That is
+                // exactly the silent degradation H3 wants gone.
+                let _ = map;
+                Err(Error::ServerStartupParameterRejection {
+                    sqlstate: "54000".to_string(),
+                    message: format!(
+                        "startup_parameters cascade for pool '{}' does not fit the operator \
+                         budget (body {} bytes, full packet {} bytes; operator budget {} bytes, \
+                         PG StartupMessage cap {} bytes). Reduce general or pool \
+                         startup_parameters.",
+                        self.address.pool_name,
+                        body_bytes,
+                        packet_bytes,
+                        sp::MAX_OPERATOR_BUDGET,
+                        sp::MAX_STARTUP_PACKET_SIZE,
+                    ),
+                    server_identifier: crate::app::errors::ServerIdentifier::new(
+                        self.user.username.clone(),
+                        &self.database,
+                        &self.address.pool_name,
+                    ),
+                })
             }
         }
     }
@@ -770,8 +846,12 @@ impl ServerPool {
         // for one client checkout — and the merge result is host-
         // independent, so the per-candidate work was pure waste.
         // `try_fallback_target` borrows this map for both the plain
-        // attempt and the optional sslmode=allow TLS retry.
-        let startup_parameters_round = self.resolved_startup_parameters();
+        // attempt and the optional sslmode=allow TLS retry. An
+        // over-budget cascade fails the whole fallback round here.
+        let startup_parameters_round = match self.resolved_startup_parameters() {
+            Ok(map) => map,
+            Err(err) => return (Err(err), source),
+        };
 
         // Whitelist-cache hit: single target, race-of-one is just a startup.
         if matches!(source, super::fallback::TargetSource::WhitelistCache) {
