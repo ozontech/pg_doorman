@@ -49,18 +49,27 @@ pub fn create_dynamic_pool(
     // precomputed on `CacheEntry`, so the fast path skips the sort +
     // SipHash on every login.
     if let Some(existing) = get_pool(pool_name, username) {
-        if existing.per_user_startup_overlay_hash == fetched_overlay_hash {
-            if let (Some(ref ba_lock), Some(new_ba)) =
-                (&existing.address.backend_auth, &backend_auth)
-            {
-                debug!(
-                    "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
-                );
-                *ba_lock.write() = new_ba.clone();
+        let identifier = super::PoolIdentifier::new(pool_name, username);
+        let live_hash = existing.per_user_startup_overlay_hash;
+        let is_dyn = super::is_dynamic_pool(&identifier);
+        if !should_rebuild_for_overlay_drift(live_hash, fetched_overlay_hash, is_dyn) {
+            // Hash matches, or the live pool is static and the empty
+            // baseline does not match an auth_query overlay — either
+            // way the existing pool wins. Refresh `backend_auth` only
+            // on hash match: a password rotation between cache
+            // fetches still applies, but a static pool is left alone.
+            if live_hash == fetched_overlay_hash {
+                if let (Some(ref ba_lock), Some(new_ba)) =
+                    (&existing.address.backend_auth, &backend_auth)
+                {
+                    debug!(
+                        "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
+                    );
+                    *ba_lock.write() = new_ba.clone();
+                }
             }
             return Ok(existing);
         }
-        let identifier = super::PoolIdentifier::new(pool_name, username);
         if super::drop_dynamic_pool(&identifier) {
             info!(
                 "[{username}@{pool_name}] auth_query: per-user startup_parameters overlay drift on login — dynamic pool dropped, rebuilding"
@@ -275,12 +284,20 @@ pub fn create_dynamic_pool(
     // new overlay, the other finds the loser's `existing` and inherits
     // the stale `reset_val` until TTL or RELOAD.
     if let Some(existing) = new_pools.get(&identifier) {
-        if existing.per_user_startup_overlay_hash == overlay_hash {
-            if let (Some(ref ba_lock), Some(ref new_ba)) = (
-                &existing.address.backend_auth,
-                &conn_pool.address.backend_auth,
-            ) {
-                *ba_lock.write() = new_ba.read().clone();
+        let live_hash = existing.per_user_startup_overlay_hash;
+        let is_dyn = super::is_dynamic_pool(&identifier);
+        if !should_rebuild_for_overlay_drift(live_hash, overlay_hash, is_dyn) {
+            // Same reasoning as the fast path: refresh backend_auth
+            // only when the live pool is a hash-matching dynamic. A
+            // static pool registered concurrently with the in-flight
+            // dynamic-pool build is preserved unchanged.
+            if live_hash == overlay_hash {
+                if let (Some(ref ba_lock), Some(ref new_ba)) = (
+                    &existing.address.backend_auth,
+                    &conn_pool.address.backend_auth,
+                ) {
+                    *ba_lock.write() = new_ba.read().clone();
+                }
             }
             return Ok(existing.clone());
         }
@@ -331,4 +348,47 @@ pub fn create_dynamic_pool(
     }
 
     Ok(conn_pool)
+}
+
+/// Decide whether `create_dynamic_pool` should replace an existing
+/// `(pool, user)` entry in `POOLS`. Hash drift alone is not enough —
+/// a static pool registered for the same identifier (during a config
+/// reload race with an in-flight auth_query login) keeps the empty
+/// overlay hash, and replacing it would silently swap the operator's
+/// configured backend auth/startup-parameters for the auth_query
+/// passthrough version. Rebuild only when the live pool is dynamic.
+fn should_rebuild_for_overlay_drift(live_hash: u64, fetched_hash: u64, is_dynamic: bool) -> bool {
+    live_hash != fetched_hash && is_dynamic
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_rebuild_for_overlay_drift;
+
+    #[test]
+    fn overlay_drift_reuses_on_hash_match() {
+        let h = 0x1234_5678_9abc_def0_u64;
+        assert!(!should_rebuild_for_overlay_drift(h, h, true));
+        assert!(!should_rebuild_for_overlay_drift(h, h, false));
+    }
+
+    #[test]
+    fn overlay_drift_rebuilds_dynamic_on_hash_mismatch() {
+        assert!(should_rebuild_for_overlay_drift(0xAAAA, 0xBBBB, true));
+    }
+
+    #[test]
+    fn overlay_drift_preserves_static_on_hash_mismatch() {
+        // A static pool registered during reload races with an
+        // in-flight auth_query login that fetched a non-empty overlay.
+        // The live pool's hash is `empty_overlay_hash()`; the fetched
+        // hash is non-empty. Static-overrides-dynamic must hold, so
+        // the existing pool wins and is not replaced.
+        let empty = crate::pool::empty_overlay_hash();
+        let fetched = 0xBEEF_0000_0000_0001_u64;
+        assert_ne!(empty, fetched);
+        assert!(!should_rebuild_for_overlay_drift(
+            empty, fetched, /*is_dynamic=*/ false
+        ));
+    }
 }
