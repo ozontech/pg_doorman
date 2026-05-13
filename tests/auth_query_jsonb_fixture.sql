@@ -1,8 +1,6 @@
--- Fixture for the codex MED #3 BDD scenario that exercises
--- `auth_query` returning the per-user startup_parameters column as
--- native `jsonb` instead of `text`. Before MED #3, the only supported
--- shape was `::text` cast — a `jsonb` column tripped the type-mismatch
--- decoder path and was silently dropped.
+-- Fixture for auth_query rows that return per-user startup_parameters
+-- as native jsonb. This covers the path where pg_doorman decodes the
+-- column by PostgreSQL type instead of requiring a ::text cast.
 
 DROP TABLE IF EXISTS auth_users_jsonb;
 CREATE TABLE auth_users_jsonb (

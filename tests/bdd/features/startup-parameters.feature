@@ -553,11 +553,9 @@ Feature: Per-pool startup_parameters
     And the command output should contain "statement_timeout|10s|general|applied"
     And the command output should contain "plan_cache_mode|force_custom_plan|pool|applied"
 
-  # codex MED #3: a natural auth_query schema with a `jsonb` column
-  # for `startup_parameters` used to be silently dropped because
-  # `try_get::<_, Option<String>>` failed on the type mismatch. The
-  # fallback now decodes through `serde_json::Value` so the per-user
-  # GUC applies without requiring a `::text` cast in the SELECT.
+  # A common auth_query schema stores startup_parameters as jsonb.
+  # pg_doorman must decode that column directly, without forcing the
+  # operator to add a ::text cast to the SELECT.
   Scenario: auth_query startup_parameters from a jsonb column applies without ::text cast
     Given PostgreSQL started with pg_hba.conf:
       """

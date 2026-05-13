@@ -136,12 +136,11 @@ groups:
           severity: warning
           service: pg_doorman
         annotations:
-          summary: "pg_doorman: SSO requests rejected because the transport looks like plain HTTP on {{ $labels.instance }}"
+          summary: "pg_doorman: SSO requests rejected over insecure transport on {{ $labels.instance }}"
           runbook: |
-            sso_require_https is on and pg_doorman saw an SSO request it
-            judged plain HTTP. Two likely causes: the TLS-terminating
-            proxy is not in trusted_proxies (so X-Forwarded-Proto is
-            ignored), or the client is actually hitting plain HTTP and
-            the deployment lost its TLS hop. Check trusted_proxies
-            CIDRs, the proxy's X-Forwarded-Proto header, and the
-            client's URL scheme.
+            sso_require_https is enabled, and pg_doorman received an
+            SSO credential on a request it classified as plain HTTP.
+            Usually either the TLS-terminating proxy is missing from
+            trusted_proxies, so X-Forwarded-Proto is ignored, or the
+            client is really using HTTP. Check trusted_proxies, the
+            proxy's X-Forwarded-Proto header, and the client URL.

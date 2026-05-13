@@ -152,13 +152,10 @@ Feature: Web UI listener
       """
     Then the command should succeed
 
-  # Bind-address fields require a restart; everything else takes effect
-  # on the next backend or RELOAD. The /api/config response now flags
-  # the restart-required keys precisely so the SPA can render the pill
-  # correctly. Before codex MED #5 the immutable list was bare segments
-  # like "host" which never matched the flattened keys the resolver
-  # returns ("general.host", "web.host"), so every field looked
-  # reloadable.
+  # Bind-address fields require a restart; most other fields take effect
+  # on RELOAD or on the next backend. /api/config must mark the flattened
+  # bind-address keys as immutable so the SPA shows restart_required for
+  # the right rows.
   Scenario: /api/config marks bind-address fields as restart-required
     When I run shell command:
       """
@@ -166,8 +163,7 @@ Feature: Web UI listener
         grep -oE '"key":"(general|web)\.(host|port)"[^}]*"changeable":"[^"]*"' | sort -u
       """
     Then the command should succeed
-    # Each immutable bind-address key must appear with changeable=no.
-    # Whatever else surrounds the pair inside the entry is irrelevant.
+    # Each bind-address key must appear with changeable=no.
     And output contains "\"key\":\"general.host\""
     And output contains "\"key\":\"general.port\""
     And output contains "\"key\":\"web.host\""

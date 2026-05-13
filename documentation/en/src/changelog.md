@@ -2,33 +2,28 @@
 
 ### 3.9.1
 
-Follow-up release that hardens `startup_parameters` after 3.9.0
-shipped.
+Follow-up fixes for `startup_parameters` after the 3.9.0 release.
 
-- An over-budget `startup_parameters` cascade now fails the backend
-  spawn with `SQLSTATE 53400` instead of silently sending an empty
-  StartupMessage. The deterministic `general + pool` overflow is
-  refused at config load.
-- The `ParameterStatus` pg_doorman sends a client at the end of
-  startup no longer overrides operator-managed GUC names; the wire
-  view and the backend's `sync_parameters` view agree.
-- `auth_query` correctness: a successful MD5 refetch rebuilds the
-  dynamic pool from the refreshed row, a concurrent login no
-  longer inherits a stale per-user overlay through the
-  `create_dynamic_pool` fast path, and the reader accepts a native
-  `json`/`jsonb` column without a `::text` cast.
-- `/api/config` and `/api/pools` reveal literal startup_parameter
-  values only to the `Admin` role; SSO is treated like anonymous.
-  The same response flags `general.host`, `general.port`,
-  `web.host`, `web.port` as restart-required so the SPA pill
-  renders correctly.
-- New Prometheus alert rules cover PG-side rejection, cascade
-  overflow, malformed auth_query columns, the dedicated-mode drop
-  signal, and the `sso_require_https` insecure-transport gate.
-- The merged startup map, the budget classification, and the
-  canonicalised operator-key set are precomputed once per pool;
-  backend spawns hand out a borrow on the cached `Arc` instead of
-  cloning per checkout.
+- If the resolved `startup_parameters` set exceeds the startup packet
+  budget, backend startup now fails with `SQLSTATE 53400`. A
+  deterministic `general + pool` overflow is rejected at config load.
+- The final `ParameterStatus` messages sent to the client no longer
+  overwrite operator-managed GUC names, so the client-visible values
+  match the backend checkout state.
+- `auth_query` now rebuilds a dynamic pool after a successful MD5
+  refetch, rejects the stale-overlay race in `create_dynamic_pool`, and
+  accepts native `json`/`jsonb` startup_parameter columns without a
+  `::text` cast.
+- `/api/config` and `/api/pools` show literal startup_parameter values
+  only to `Admin`; SSO readers get the masked view. `/api/config` also
+  marks `general.host`, `general.port`, `web.host`, and `web.port` as
+  restart-required.
+- Prometheus rules now cover PostgreSQL-side rejection, budget overflow,
+  malformed auth_query columns, dedicated-mode drops, and rejected SSO
+  credentials sent over insecure transport.
+- Each pool now precomputes the merged startup map, budget decision, and
+  canonical operator-key set. Backend checkout reuses those cached
+  values instead of cloning and recalculating the map each time.
 
 ### 3.9.0
 

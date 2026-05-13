@@ -62,12 +62,11 @@ Dedicated `auth_query` mode (`server_user` set) ignores the per-user
 column and logs once per (pool, username): one shared backend serves
 many users, so a per-user override cannot apply.
 
-Operator-side changes to the per-user `startup_parameters` row apply
-to **new** backend connections only. Already-checked-out backends keep
-the snapshot pg_doorman froze when their pool was created — the next
-client reconnect (which goes through `auth_query` again) picks up the
-fresh row and rebuilds the dynamic pool, after which new spawns ship
-the updated values.
+Changes to a per-user `startup_parameters` row apply to **new** backend
+connections only. Backends that are already checked out keep the values
+captured when their pool was created. On the next client reconnect,
+pg_doorman runs `auth_query` again, reads the updated row, rebuilds the
+dynamic pool, and uses the new values for later backend starts.
 
 ## What pg_doorman does with the values
 
@@ -109,16 +108,15 @@ At config load:
   budget: `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes) minus 512 bytes
   reserved for pg_doorman-managed keys.
 
-Before each backend spawn pg_doorman checks the resolved parameter set
-against the same cap. Layers that fit individually can overflow once
-they are merged: general + pool may already exceed the cap, and an
-`auth_query` overlay can push a previously fitting cascade over the
-limit. Any overflow — overlay-only or baseline-side — is now reported
-as a PostgreSQL-style error (`SQLSTATE 53400`) on the client connection
-instead of silently shipping a partial or empty StartupMessage. The
-warn log line at pool construction records the byte counts; the
-`pg_doorman_startup_parameters_dropped_total` counter ticks for every
-rejected backend spawn.
+Before each backend start, pg_doorman checks the resolved parameter set
+against the same cap. Layers that fit individually can exceed the limit
+after merging: `general + pool` can already be too large, and an
+`auth_query` row can push a valid baseline over the limit. Any overflow
+now returns a PostgreSQL-style error (`SQLSTATE 53400`) to the client
+instead of sending a partial or empty `StartupMessage`. The warning log
+records the byte counts, and
+`pg_doorman_startup_parameters_dropped_total` increments for each
+rejected backend start.
 
 ## What happens when PG rejects a parameter
 

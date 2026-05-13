@@ -377,15 +377,15 @@ where
         )
         .await?;
 
-        // Update the parameters to merge what the application sent and what's originally on the server.
+        // Merge the startup parameters sent by the client with the
+        // server defaults.
         // Operator-managed startup_parameters must win over the client
         // packet, otherwise ParameterStatus reports the client value
         // while the backend keeps the operator default — a protocol-
         // visible mismatch. The backend's sync_parameters already
         // applies the same filter on checkout, so this aligns the two
-        // sides on the client view. Iterate directly into
-        // `set_param` to skip the intermediate `HashMap` allocation a
-        // connect storm would otherwise pay per client.
+        // client views. Iterate directly into `set_param` to avoid an
+        // intermediate `HashMap` allocation on every connection.
         let operator_keys = crate::pool::get_pool(&pool_name, &client_identifier.username)
             .map(|p| p.database.server_pool().operator_managed_startup_keys());
         match operator_keys {

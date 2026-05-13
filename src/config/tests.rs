@@ -1687,9 +1687,9 @@ fn check_hba_legacy_empty_allows_unix() {
 
 #[test]
 fn check_hba_legacy_list_bypassed_for_unix() {
-    // Reproduces the "silent privilege expansion" case from review: the
-    // operator restricts TCP access with a CIDR whitelist, but Unix clients
-    // must still be allowed because the legacy list has no transport concept.
+    // The legacy CIDR allowlist applies only to TCP clients. Unix socket
+    // clients must still be allowed because the legacy list has no
+    // transport concept.
     let mut general = General::default();
     general.hba = vec!["10.0.0.0/8".parse().unwrap()];
 
@@ -2077,11 +2077,9 @@ async fn reject_reserved_in_pool_startup_parameters() {
 
 #[tokio::test]
 async fn reject_merged_general_pool_startup_parameters_overflow() {
-    // Two layers that fit on their own but overflow once merged trip the
-    // H3 config-load gate. Without it the runtime fail-close (also H3)
-    // would catch the bytes per spawn, but the operator sees the budget
-    // miss right at `pg_doorman -t` instead of after the first client
-    // tries to connect.
+    // Two layers can fit on their own and still overflow once merged.
+    // Config validation should catch that at `pg_doorman -t`, before the
+    // first client tries to connect.
     let mut cfg = Config::default();
     cfg.general.tls_rate_limit_per_second = 0;
     let filler = "x".repeat(4800);

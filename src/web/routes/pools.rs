@@ -5,12 +5,10 @@ use crate::web::routes::collect::collect_pools;
 use crate::web::server::Response;
 
 pub(crate) fn handle_pools(role: Role) -> Response {
-    // Only Admin reads the literal startup_parameter values. SSO is
-    // treated like anonymous for this surface so a wide
-    // `sso_allowed_users` list does not become a side channel for
-    // tenant routing tags, audit identifiers, or accidental secrets
-    // operators sometimes drop into startup_parameters (codex review
-    // MED #4).
+    // Only Admin reads literal startup_parameter values. SSO is treated
+    // like anonymous here so a broad `sso_allowed_users` list does not
+    // expose tenant routing tags, audit identifiers, or accidental
+    // secrets stored in startup_parameters.
     let reveal_startup_values = role >= Role::Admin;
     Response::ok_json(&collect_pools(reveal_startup_values))
 }

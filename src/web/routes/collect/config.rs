@@ -31,15 +31,13 @@ fn is_startup_parameter_key(key: &str) -> bool {
     key.contains(".startup_parameters.") || key.starts_with("startup_parameters.")
 }
 
-/// Listener-bind and runtime-construction fields require a restart;
-/// everything else takes effect on the next backend or `RELOAD`. Listed
-/// as full flattened keys so the UI renders the right "restart_required"
-/// pill — the previous bare `["host", "port", "connect_timeout"]` table
-/// never matched against flattened keys like `general.host` or
-/// `web.host`, so nothing was marked immutable (codex review MED #5).
-/// `worker_threads`, `unix_socket_dir`, and `backlog` shape the tokio
-/// runtime and the listener socket at process start; a SIGHUP cannot
-/// rebuild those.
+/// Listener bind fields and runtime-construction fields require a
+/// restart; most other fields take effect on `RELOAD` or on the next
+/// backend. The list uses full flattened keys because `/api/config`
+/// emits paths such as `general.host` and `web.host`.
+/// `worker_threads`, `unix_socket_dir`, and `backlog` shape the Tokio
+/// runtime and listener socket at process start; SIGHUP cannot rebuild
+/// those.
 const IMMUTABLES: &[&str] = &[
     "general.host",
     "general.port",
@@ -54,12 +52,9 @@ fn is_immutable_key(key: &str) -> bool {
     IMMUTABLES.contains(&key)
 }
 
-/// Flatten a serde JSON value into dotted keys → string values. Operators
-/// have asked for a coverage-complete `/api/config` so they can verify
-/// TLS / auth_query / pool sizing / prepared cache / web settings during
-/// an incident — the previous hand-written `From<&Config>` only exposed
-/// host/port/connect_timeout/idle_timeout/shutdown_timeout plus pool
-/// users/mode, which DBA P3#7 (codex review) flagged as too thin.
+/// Flatten a serde JSON value into dotted keys → string values. This
+/// keeps `/api/config` broad enough for incident checks across TLS,
+/// auth_query, pool sizing, prepared cache, and web settings.
 fn flatten_json(prefix: &str, value: &serde_json::Value, out: &mut HashMap<String, String>) {
     match value {
         serde_json::Value::Object(map) => {
@@ -114,10 +109,9 @@ pub(crate) fn collect_config(reveal_startup_values: bool) -> ConfigDto {
     }
     flat.retain(|k, _| !is_internal_key(k));
 
-    // Diff against `Config::default()` so the UI can show what is at
-    // its built-in default vs. what an operator changed via the config
-    // file. The defaults map is computed once per request — cheap, and
-    // a stable comparison surface for codex DBA P3#7.
+    // Diff against `Config::default()` so the UI can show what is still
+    // at the built-in default and what changed in the config file. The
+    // defaults map is small enough to compute once per request.
     let mut defaults: HashMap<String, String> = HashMap::new();
     if let Ok(value) = serde_json::to_value(crate::config::Config::default()) {
         flatten_json("", &value, &mut defaults);
@@ -282,9 +276,8 @@ mod tests {
         let dto = super::collect_config(true);
         let keys: std::collections::HashSet<&str> =
             dto.config.iter().map(|e| e.key.as_str()).collect();
-        // Spot-check four orthogonal areas DBA P3#7 called out:
-        // TLS server-side, prepared cache size, web listener, shutdown
-        // timeout.
+        // Spot-check independent areas: core listener, shutdown timeout,
+        // server-side TLS, and web listener.
         assert!(keys.contains("general.host"), "{keys:?}");
         assert!(keys.contains("general.shutdown_timeout"), "{keys:?}");
         assert!(keys.contains("general.server_tls_mode"), "{keys:?}");
