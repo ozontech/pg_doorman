@@ -42,14 +42,16 @@ install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 #    touching the running server.
 /usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Trigger the upgrade. Under systemd `Type=notify` the unit
-#    delivers SIGUSR2 to the tracked MainPID; this picks the single
-#    correct process even when other pg_doorman instances or stale
-#    child processes are running on the host. Direct
+# 3. Trigger the upgrade. With `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
+#    in the unit, `systemctl reload` runs the full binary upgrade
+#    (config validated by `pg_doorman -t` first, then state migrated,
+#    then old process drained). systemd delivers the signal to the
+#    tracked MainPID, so this targets the single correct process even
+#    when other pg_doorman instances are running on the host. Direct
 #    `kill -USR2 $(pgrep -f /usr/bin/pg_doorman)` works but matches by
-#    command line and can target every instance on the host at once,
-#    which is why packaged installs go through systemctl.
-sudo systemctl kill -s SIGUSR2 pg_doorman.service
+#    command line and can hit every instance, which is why packaged
+#    installs go through systemctl.
+sudo systemctl reload pg_doorman.service
 
 # 4. Verify: systemd tracks the new MainPID (Type=notify receives
 #    `MAINPID=<new_pid>` from the child during the handoff). Active
@@ -356,39 +358,50 @@ child process can update `MainPID` to itself during `SIGUSR2` upgrades:
 ```ini
 [Service]
 Type=notify
-# NotifyAccess=all lets the child process spawned by SIGUSR2 reach
-# systemd's notify socket and hand off MainPID; without it, systemd
-# silently keeps tracking the dying old PID.
-NotifyAccess=all
+# `exec` is enough: the child process that takes over on SIGUSR2 is
+# spawned through Command::spawn (fork + execve), which puts it in
+# scope for sd_notify. `all` works too, but exec narrows the notify
+# surface to what pg_doorman actually uses.
+NotifyAccess=exec
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
-ExecReload=/bin/kill -SIGHUP $MAINPID
-# Survive a crash, but back off so a restart loop does not amplify a
-# bad release. on-failure ignores intentional `systemctl stop`.
-Restart=on-failure
+# `systemctl reload` triggers a full binary upgrade (config validated,
+# state migrated, old process drained). pg_doorman's SIGUSR2 path runs
+# `pg_doorman -t` first and aborts the reload if the config is broken,
+# so this is safe to wire as the reload signal.
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+# `systemctl stop` sends SIGTERM to the main pid for a graceful drain.
+ExecStop=/bin/kill -SIGTERM $MAINPID
+# Always restart: bring the pooler back even after a manual stop.
+# Match the typical PostgreSQL-side HA expectation that the pool is
+# never down on the host.
+Restart=always
 RestartSec=5s
 # pg_doorman is connection-heavy: each client + each backend uses an
-# fd, plus internal pipes. The default soft limit of 1024 is the first
-# wall hit in production.
-LimitNOFILE=1048576
-# Run as a non-privileged service account that owns
-# /var/run/pg_doorman and the PID file. Avoid root if the listener
-# uses a port above 1024.
-User=pg_doorman
-Group=pg_doorman
-# kill-control: SIGUSR2 must reach both the parent and any children
-# during an upgrade, and the final SIGTERM at stop must reach the
-# leader directly. mixed delivers the stop signal to the main pid and
-# the cleanup signal to the cgroup.
-KillMode=mixed
-TimeoutStopSec=120
+# fd, plus internal pipes. 65536 covers most OLTP pools; size it from
+# `general.pool_size * num_pools` plus a few thousand for clients.
+LimitNOFILE=65536
+# Run as a non-privileged service account that owns the PID file. On
+# many deployments postgres already exists; reusing it keeps file
+# ownership consistent with PostgreSQL itself.
+User=postgres
+Group=postgres
+# Surface logs in journalctl under `pg-pooler` instead of the binary
+# name; convenient for `journalctl -u pg_doorman -t pg-pooler`.
+SyslogIdentifier=pg-pooler
+TimeoutStopSec=30s
 ```
 
-`ExecReload=SIGHUP` covers config reload; the binary upgrade itself is
-triggered separately by `systemctl kill -s SIGUSR2 pg_doorman.service`
-or by `UPGRADE;` from the admin console. Adjust `TimeoutStopSec` to
-match the value of `shutdown_timeout` in your `pg_doorman.yaml`, plus
-a small margin, so systemd does not SIGKILL the process before the
-drain finishes.
+`systemctl reload pg_doorman` drives the binary upgrade: pg_doorman
+runs `-t` on the new binary, aborts the reload if the config is bad,
+otherwise spawns the new process and drains the old one. `UPGRADE;`
+from the admin console reaches the same code path. Tune
+`TimeoutStopSec` so it covers `shutdown_timeout` in
+`pg_doorman.yaml` plus a small margin; otherwise systemd SIGKILLs the
+old process before the drain finishes.
+
+Production deployments often layer resource controls on top of the
+above: `MemoryMax=`, `Nice=-15`, `CPUAffinity=2,3,4,5,6,7,8,9`. These
+are workload-specific and orthogonal to the upgrade contract.
 
 ## Configuration
 
@@ -561,9 +574,11 @@ Before rolling out binary upgrade to production:
       both processes use the same certificate and key files
 - [ ] Test the upgrade in staging: open a session, trigger SIGUSR2,
       verify the session continues working
-- [ ] Verify the systemd unit is `Type=notify` with `NotifyAccess=all`,
-      `ExecReload=/bin/kill -SIGHUP $MAINPID` for config reload, and a
-      `TimeoutStopSec` that covers `shutdown_timeout` plus margin
+- [ ] Verify the systemd unit is `Type=notify` with
+      `NotifyAccess=exec`, `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
+      (so `systemctl reload` runs a full binary upgrade with config
+      validation), and a `TimeoutStopSec` that covers
+      `shutdown_timeout` plus margin
 - [ ] Monitor logs for migration errors after the first production
       upgrade
 - [ ] Confirm old process exits (check PID file or `pgrep`)
