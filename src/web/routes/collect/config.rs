@@ -31,13 +31,24 @@ fn is_startup_parameter_key(key: &str) -> bool {
     key.contains(".startup_parameters.") || key.starts_with("startup_parameters.")
 }
 
-/// Bind-address fields require a restart; everything else takes effect
-/// on the next backend or `RELOAD`. Listed as full flattened keys so the
-/// UI renders the right "restart_required" pill — the previous bare
-/// `["host", "port", "connect_timeout"]` table never matched against
-/// flattened keys like `general.host` or `web.host`, so nothing was
-/// marked immutable (codex review MED #5).
-const IMMUTABLES: &[&str] = &["general.host", "general.port", "web.host", "web.port"];
+/// Listener-bind and runtime-construction fields require a restart;
+/// everything else takes effect on the next backend or `RELOAD`. Listed
+/// as full flattened keys so the UI renders the right "restart_required"
+/// pill — the previous bare `["host", "port", "connect_timeout"]` table
+/// never matched against flattened keys like `general.host` or
+/// `web.host`, so nothing was marked immutable (codex review MED #5).
+/// `worker_threads`, `unix_socket_dir`, and `backlog` shape the tokio
+/// runtime and the listener socket at process start; a SIGHUP cannot
+/// rebuild those.
+const IMMUTABLES: &[&str] = &[
+    "general.host",
+    "general.port",
+    "general.worker_threads",
+    "general.unix_socket_dir",
+    "general.backlog",
+    "web.host",
+    "web.port",
+];
 
 fn is_immutable_key(key: &str) -> bool {
     IMMUTABLES.contains(&key)
@@ -240,6 +251,13 @@ mod tests {
         assert!(super::is_immutable_key("general.port"));
         assert!(super::is_immutable_key("web.host"));
         assert!(super::is_immutable_key("web.port"));
+    }
+
+    #[test]
+    fn is_immutable_key_matches_runtime_construction_fields() {
+        assert!(super::is_immutable_key("general.worker_threads"));
+        assert!(super::is_immutable_key("general.unix_socket_dir"));
+        assert!(super::is_immutable_key("general.backlog"));
     }
 
     #[test]

@@ -429,12 +429,15 @@ impl Config {
             "general.startup_parameters",
         )?;
         // H3: catch the deterministic `general + pool` overflow at config
-        // load time so the runtime never sees a misconfigured pool. Only
+        // load time so the runtime never sees a misconfigured pool. Per
+        // user, mirror the full-packet check the runtime runs in
+        // `build_resolved_startup` so a config whose body fits but whose
+        // `user`/`database`/`application_name` push the StartupMessage
+        // over `MAX_STARTUP_PACKET_LENGTH` fails `pg_doorman -t`. Only
         // the size gate runs here — per-level reserved-key and shape
-        // checks already fired during general/pool validation, and we do
-        // not want to surface those twice with a different scope label.
-        // The optional auth_query overlay is still checked at backend
-        // spawn because it comes from PG, not the config file.
+        // checks already fired during general/pool validation. The
+        // optional auth_query overlay is still checked at backend spawn
+        // because it comes from PG, not the config file.
         for (pool_name, pool_config) in &self.pools {
             let mut merged = self.general.startup_parameters.clone();
             for (k, v) in &pool_config.startup_parameters {
@@ -449,6 +452,33 @@ impl Config {
                     startup_parameters::MAX_OPERATOR_BUDGET,
                     startup_parameters::MAX_STARTUP_PACKET_SIZE,
                 )));
+            }
+            let server_database = pool_config
+                .server_database
+                .as_deref()
+                .unwrap_or(pool_name.as_str());
+            let application_name = pool_config.application_name.as_deref().unwrap_or("");
+            for user in &pool_config.users {
+                let server_username = user
+                    .server_username
+                    .as_deref()
+                    .unwrap_or(user.username.as_str());
+                let (packet_bytes, _body_bytes) = startup_parameters::packet_and_body_bytes(
+                    server_username,
+                    server_database,
+                    application_name,
+                    &merged,
+                );
+                if packet_bytes > startup_parameters::MAX_STARTUP_PACKET_SIZE {
+                    return Err(Error::BadConfig(format!(
+                        "merged general + pools.{pool_name}.startup_parameters: full StartupMessage \
+                         for user '{}' is {packet_bytes} bytes, exceeding the PG cap of {} bytes \
+                         (user/database/application_name overhead included); reduce general or \
+                         pool startup_parameters",
+                        user.username,
+                        startup_parameters::MAX_STARTUP_PACKET_SIZE,
+                    )));
+                }
             }
         }
 

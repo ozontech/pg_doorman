@@ -617,15 +617,18 @@ impl ServerPool {
         // admin view classified those keys as `Stale`, sending
         // operators to chase a RELOAD/refetch race that is not the
         // cause (codex review MED #6).
-        let overlay_dropped = matches!(decision, BudgetDecision::OverlayDroppedBaselineKept { .. });
-        let overlay_keys: std::collections::BTreeSet<&str> = if overlay_dropped {
-            self.per_user_startup_overlay
-                .keys()
-                .map(String::as_str)
-                .collect()
-        } else {
-            std::collections::BTreeSet::new()
-        };
+        // `OverlayDroppedBaselineKept` and `EmptyDueToBudget` both
+        // produce `ServerStartupParameterRejection` on every backend
+        // spawn now (codex H3). The admin/API view must report that
+        // intent: no configured key reaches PG, no matter whether the
+        // baseline alone would have fit. Marking baseline keys
+        // `Applied` because they happen to match the wire map sends
+        // operators to chase a RELOAD that cannot help.
+        let cascade_rejected = matches!(
+            decision,
+            BudgetDecision::OverlayDroppedBaselineKept { .. }
+                | BudgetDecision::EmptyDueToBudget { .. }
+        );
         let mut out: std::collections::BTreeMap<
             String,
             (
@@ -636,7 +639,7 @@ impl ServerPool {
         > = configured
             .into_iter()
             .map(|(k, (v, src))| {
-                let state = if overlay_dropped && overlay_keys.contains(k.as_str()) {
+                let state = if cascade_rejected {
                     ApplicationState::DroppedDueToBudget
                 } else {
                     match wire.get(&k) {
@@ -655,6 +658,11 @@ impl ServerPool {
         // but my backends are still getting force_custom_plan" — that is
         // exactly the stale snapshot RELOAD has not yet recycled (or that
         // the auth_query cache has not yet refetched).
+        let wire_state = if cascade_rejected {
+            ApplicationState::DroppedDueToBudget
+        } else {
+            ApplicationState::Stale
+        };
         for (k, wire_v) in wire {
             if !out.contains_key(k) {
                 let frozen_source = if self.per_user_startup_overlay.contains_key(k) {
@@ -662,10 +670,7 @@ impl ServerPool {
                 } else {
                     super::startup_resolver::ParameterSource::Pool
                 };
-                out.insert(
-                    k.clone(),
-                    (wire_v.clone(), frozen_source, ApplicationState::Stale),
-                );
+                out.insert(k.clone(), (wire_v.clone(), frozen_source, wire_state));
             }
         }
         out
