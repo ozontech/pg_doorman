@@ -84,7 +84,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setRole(role);
         // /api/auth/config is public, so a null current_user only tells
         // us the request was anonymous. The backend still gates per
-        // path: anonymous can read the public surface when the listener
+        // path: anonymous can read public API endpoints when the listener
         // was started with `[web].ui_anonymous = true`. Re-arm the
         // sign-in modal only when api.ts has seen a real 401 elsewhere
         // (`unauthorizedAt` bumped) and the operator is still anonymous
@@ -265,12 +265,7 @@ function AuthModal({
     onSubmit({ username, password }, remember);
   };
 
-  // Sign-in surface. A modal section on a zinc-tinted overlay; the same
-  // accent and surface tokens as the rest of the console, but without the
-  // CLI cookies of the previous revision (no `>` prefix, no oversize
-  // uppercase eyebrow, no decorative tick bars). Operators landing here
-  // should feel they are about to enter an admin console, not a 90s
-  // terminal.
+  // Sign-in view. Uses the console palette without terminal-style decoration.
   return (
     <div
       role="dialog"
@@ -385,7 +380,7 @@ function SsoBlock({
           </>
         ) : null}
         {ssoAdminPossible
-          ? "Group membership in the JWT decides whether you land in read-only SSO or full admin."
+          ? "Group membership in the JWT decides whether you get read-only SSO or full admin."
           : "SSO grants read-only access including logs and SQL text."}
       </p>
     </div>
@@ -493,12 +488,8 @@ function BasicBlock({
 }
 
 function TransportChip() {
-  // Read the live protocol so the operator can tell at a glance
-  // whether they are about to hand a Bearer JWT to a plain-HTTP
-  // listener. Falls back to the insecure rendering when `window` is
-  // not present (SSR / test render) — there is no honest signal in
-  // that context, and "http" is the safer default for a chip that
-  // exists to warn about insecure transport.
+  // Read the live protocol so the sign-in form can warn on plain HTTP.
+  // SSR/test renders fall back to the warning state.
   const protocol =
     typeof window !== "undefined" ? window.location.protocol : "";
   const secure = protocol === "https:";

@@ -28,7 +28,7 @@ export default function ConfigState() {
         title="Config & state"
         help={{
           definition:
-            "Read-only snapshot of what pg_doorman is running with right now. Same content as SHOW CONFIG / SHOW DATABASES / SHOW USERS / SHOW POOL_COORDINATOR / SHOW POOL_SCALING — just queryable from the browser. Compare default vs current after a SIGHUP / RELOAD to confirm the edit took effect.",
+            "Read-only snapshot of the running pg_doorman configuration and state. It mirrors SHOW CONFIG / SHOW DATABASES / SHOW USERS / SHOW POOL_COORDINATOR / SHOW POOL_SCALING in the browser. Compare default vs current after SIGHUP / RELOAD.",
           source:
             "SHOW CONFIG · SHOW DATABASES · SHOW USERS · SHOW AUTH_QUERY · SHOW LOG_LEVEL · SHOW STARTUP_PARAMETERS · SHOW SOCKETS · SHOW POOL_SCALING · SHOW POOL_COORDINATOR",
           related: ["RELOAD", "SIGHUP"],
@@ -68,11 +68,8 @@ export default function ConfigState() {
   );
 }
 
-// Global "Reload config" button — calls `POST /api/admin/reload`, which
-// asks pg_doorman to re-read the TOML file. The button lives in the
-// Config page hero so an operator finishing a TOML edit can verify the
-// change without navigating into a pool. A typed confirmation prevents
-// fat-fingering during incidents — RELOAD touches every pool.
+// Global "Reload config" button. It calls `POST /api/admin/reload` and
+// uses typed confirmation because RELOAD affects every pool.
 function ReloadButton() {
   const { authHeader, role } = useAdminAuth();
   const [confirm, setConfirm] = useState(false);
@@ -83,7 +80,7 @@ function ReloadButton() {
     setPending(true);
     try {
       await apiPost("/api/admin/reload", authHeader);
-      toast.success("RELOAD dispatched · re-read pg_doorman.toml");
+      toast.success("Config reload requested");
       setConfirm(false);
       setTyped("");
     } catch (e) {
@@ -285,7 +282,7 @@ function LogLevelPanel() {
           and run{" "}
           <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`SET log_level = '…'`}</code>;{" "}
           <code className="rounded bg-surface px-1.5 py-0.5 font-mono">{`'default'`}</code>{" "}
-          resets to the startup level. The web admin surface does not yet
+          resets to the startup level. The web admin UI does not yet
           accept this mutation.
         </p>
       </div>

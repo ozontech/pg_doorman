@@ -1,9 +1,7 @@
 // /api/apps already aggregated client counters by `application_name` on the
 // backend; the JSON DTO has been there since phase 3d-1 but no frontend
-// page rendered it. This file fixes that — operators looking for "which
-// app holds 30 connections / generates the error spike / churns reconnects"
-// now have a single sortable table instead of grepping the Clients view by
-// application_name substring.
+// page rendered it. This page adds a sortable application-level view instead
+// of making operators filter Clients by application_name.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
@@ -30,8 +28,7 @@ type AppRates = Record<string, { qps: number; tps: number }>;
 
 // Computes per-application qps / tps from the delta between the current
 // `/api/apps` snapshot and the previous one. The endpoint only ships
-// cumulative counters; without this hook the operator could not answer
-// "which app is busy right now" without doing the math by eye.
+// cumulative counters, so the rate is derived in the browser.
 function useAppRates(data: AppsDto | null): AppRates {
   const [rates, setRates] = useState<AppRates>({});
   const prevRef = useRef<{ ts: number; apps: AppTotals } | null>(null);
@@ -132,13 +129,13 @@ export default function Apps() {
         title="Apps"
         help={{
           definition:
-            "One row per application_name from the libpq StartupMessage. Tenant-level view — which app is generating traffic and errors. Sort + filter happen browser-side on the latest snapshot.",
+            "One row per application_name from the libpq StartupMessage. Use it to see which applications generate traffic and errors. Sort and filter run in the browser on the latest snapshot.",
           source: "derived from SHOW CLIENTS (group by application_name)",
           formula: "err / 1k q = errors_total × 1000 / queries_total",
           thresholds: {
             healthy: "err / 1k q < 1",
             warn: "1–10",
-            crit: "> 10 — check the app's recent deploy",
+            crit: "> 10 — inspect the app's recent deploy",
           },
           related: ["SHOW STATS", "pg_stat_activity.application_name"],
           docsHref:
@@ -175,7 +172,7 @@ export default function Apps() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Sort to find the loudest app right now. Empty on the first tick — needs two snapshots to compute a rate.">
+              <InfoLabel tip="Queries per second over the last poll interval (~1.5 s). Sort to find the highest-traffic app right now. Empty on the first tick; rate needs two snapshots.">
                 <span className="cursor-pointer" onClick={() => onSort("qps")}>
                   qps{sortIndicator("qps")}
                 </span>
@@ -213,7 +210,7 @@ export default function Apps() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="errors / queries × 1000. Above 1 is unusual; above 10 = look at the app's recent deploy.">
+              <InfoLabel tip="errors / queries × 1000. Above 1 is unusual; above 10 means the app's recent deploy is a good first check.">
                 err / 1k q
               </InfoLabel>
             </th>

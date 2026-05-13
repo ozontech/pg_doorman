@@ -9,16 +9,16 @@ const SHORTCUTS: { group: string; items: Shortcut[] }[] = [
   {
     group: "Navigation",
     items: [
-      { keys: ["⌘", "K"], description: "Open command palette · jump to page or pool" },
+      { keys: ["⌘", "K"], description: "Open command palette" },
       { keys: ["⌃", "K"], description: "Same on non-Mac" },
-      { keys: ["?"], description: "Show this help" },
-      { keys: ["Esc"], description: "Close popovers · exit war room" },
+      { keys: ["?"], description: "Show keyboard shortcuts" },
+      { keys: ["Esc"], description: "Close popovers or exit war room" },
     ],
   },
   {
     group: "War room",
     items: [
-      { keys: ["Esc"], description: "Back to console from /wall" },
+      { keys: ["Esc"], description: "Return to console from /wall" },
     ],
   },
 ];

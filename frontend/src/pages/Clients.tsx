@@ -7,11 +7,9 @@ import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { ClientDto, ClientsDto } from "../types";
 
-// Slower cadence than the dashboards: a per-client view at 1.5 s caused
-// Chrome to balloon in memory — 50 rows × 13 cells re-rendered every poll,
-// plus a full ClientRates record allocated each time. 3 s is still
-// "live" enough for the operator scanning sessions during an incident,
-// without making the GC chase 650 DOM updates per second.
+// Slower cadence than the dashboards: a per-client view at 1.5 s made
+// Chrome memory grow under load. Three seconds keeps the page current
+// without forcing hundreds of cell updates per second.
 const POLL_MS = 3000;
 const PAGE_SIZE = 50;
 
@@ -20,9 +18,7 @@ type ClientRates = Record<string, { qps: number; tps: number }>;
 
 // Computes per-client qps / tps from the delta between the current /api/clients
 // snapshot and the previous one. Mirrors `useAppRates` on the Apps page;
-// /api/clients only ships lifetime counters, so without this hook the operator
-// has no way to see which client session is busy *right now* short of
-// watching the queries column tick.
+// /api/clients only ships lifetime counters.
 function useClientRates(data: ClientsDto | null): ClientRates {
   const [rates, setRates] = useState<ClientRates>({});
   const prevRef = useRef<{ ts: number; clients: ClientTotals } | null>(null);
@@ -31,8 +27,8 @@ function useClientRates(data: ClientsDto | null): ClientRates {
     // Skip when the snapshot ts has not advanced — React Strict Mode
     // and parent re-renders can hand us the same data object twice in
     // a row, and the previous version recomputed a brand-new
-    // ClientRates record on every such pass. That allocation pressure
-    // showed up as a steady Chrome memory growth on the Clients tab.
+    // ClientRates record on every such pass, which showed up as steady
+    // Chrome memory growth on the Clients tab.
     if (prevRef.current && prevRef.current.ts === data.ts) return;
     const cur: ClientTotals = {};
     for (const c of data.clients) {
@@ -77,10 +73,7 @@ interface Filters {
 
 const STATE_OPTIONS = ["", "active", "idle", "waiting", "closing"];
 
-// Single labelled text input. Browsers turn the label into a click target for
-// the field, and operators see the placeholder *and* the field name even
-// after they start typing — placeholder-as-label loses the field name the
-// moment you type one character.
+// Single labelled input so the field name remains visible after typing starts.
 function FilterField({
   label,
   value,
@@ -130,9 +123,8 @@ function buildQuery(filters: Filters, sort: SortKey, dir: SortDir, offset: numbe
 
 export default function Clients() {
   const { authHeader } = useAdminAuth();
-  // Filters / sort / pagination live in the URL so an operator can
-  // paste a triage link into Slack: /clients?pool=app@db&state=waiting
-  // lands the teammate on the exact narrowed view.
+  // Filters, sort, and pagination live in the URL so the current view
+  // can be shared during an incident.
   const [searchParams, setSearchParams] = useSearchParams();
   // Memoise so the object reference is stable across renders that did
   // not change a query param — otherwise downstream useMemo / useEffect
@@ -282,7 +274,7 @@ export default function Clients() {
         title="Clients"
         help={{
           definition:
-            "All active client sessions. Address-level search for a stuck or noisy session: sort by Q age ms to find frozen queries, by Age s for long-lived sessions, by Errors for the loud ones. State = waiting means the client is queued for a backend.",
+            "All active client sessions. Use address-level search when you have a client IP. Sort by Q age ms for long-running queries, by Age s for long-lived sessions, and by Errors for error-heavy clients. State = waiting means the client is queued for a backend.",
           source: "SHOW CLIENTS",
           related: ["SHOW SERVERS", "pg_stat_activity.client_addr"],
           docsHref:
@@ -398,7 +390,7 @@ export default function Clients() {
               </InfoLabel>
             </th>
             <th className="px-3 py-2 text-right">
-              <InfoLabel tip="Total errors observed for this client. Sort to find the noisy ones — stuck transactions or auth retries.">
+              <InfoLabel tip="Total errors observed for this client. Sort to find sessions with repeated transaction or auth failures.">
                 <span className="cursor-pointer" onClick={() => onSort("errors_total")}>
                   Errors{sortIndicator("errors_total")}
                 </span>

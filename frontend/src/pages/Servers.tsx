@@ -85,7 +85,7 @@ export default function Servers() {
         title="Servers"
         help={{
           definition:
-            "All backend PostgreSQL connections the pooler currently holds. Pair with Clients to map a stuck query (#cN) to the backend pid that runs it (server_id → process_id). bytes_sent/recv shows which backend is moving traffic.",
+            "All backend PostgreSQL connections currently held by the pooler. Use it with Clients to map a client (#cN) to the backend pid running its query (server_id → process_id). bytes_sent/recv shows traffic per backend.",
           source: "SHOW SERVERS",
           related: ["SHOW CLIENTS", "pg_stat_activity.pid"],
           docsHref:

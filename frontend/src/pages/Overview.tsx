@@ -459,7 +459,7 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Pooler-wide pulse. The sidebar carries the live health, alert count, and rate. Click a Golden signals tile to open the 1-hour panel with p50/p95/p99 and event overlays."
+        description="Pooler-wide status. The sidebar shows live health, alert count, and rate. Click a Golden signals tile to open the 1-hour panel with p50/p95/p99 and event overlays."
         actions={
           <Link
             to="/wall"
@@ -477,7 +477,7 @@ export default function Overview() {
           title="Golden signals"
           helpStructured={{
             definition:
-              "Four operator-grade signals: backend query p95, traffic, error rate, and worst-pool saturation.",
+              "Four pooler-wide signals: backend query p95, traffic, error rate, and worst-pool saturation.",
             source: "SHOW STATS · SHOW POOLS (per-pool aggregated)",
             formula:
               "p95 = max(query_p95 across pools) · traffic = Δqueries / Δt · errors = Δerrors_total / Δt · saturation = max(active / max_connections)",
@@ -536,7 +536,7 @@ export default function Overview() {
                 crit={90}
                 syncKey="overview"
                 events={chartEvents}
-                tip="Highest single-pool saturation right now, in percent of pool_size. Amber at 70 %, red at 90 %. The heatmap below identifies which pool is hot."
+                tip="Highest single-pool saturation right now, in percent of pool_size. Amber at 70 %, red at 90 %. The heatmap below identifies the pool under pressure."
               />
             </ChartLink>
           </div>
@@ -967,12 +967,9 @@ function panelDescriptor(
 }
 
 
-// Banner that surfaces Patroni-assisted fallback when any pool is
-// routing to the fallback backend. The DTO has carried fallback_active
-// for releases but only PoolDetail rendered it as a KV pair — operators
-// during a Patroni failover had to click into each pool to find out
-// where they were. The banner names the affected pools and links to
-// the docs.
+// Banner for Patroni-assisted fallback. The DTO has carried fallback_active
+// for releases, but only PoolDetail rendered it; the banner names affected
+// pools and links to the docs.
 // Aggregated SQLSTATE breakdown across all pools. Closes the gap the
 // "Errors / s ↗" tile promised: the tile tooltip claimed it opens a
 // SQLSTATE breakdown but the panel was just a line chart, so the
@@ -999,7 +996,7 @@ function SqlstateTopCard({ pools }: { pools: PoolDto[] }) {
       title="Top SQLSTATE codes"
       helpStructured={{
         definition:
-          "Aggregated error-code frequency across every pool since pg_doorman started. Click a row's pool to drill into per-pool SQLSTATE counts in Pool detail.",
+          "Aggregated error-code frequency across every pool since pg_doorman started. Open Pool detail for per-pool SQLSTATE counts.",
         source: "Σ pool.errors_by_sqlstate across SHOW POOLS",
         related: ["pg_doorman::stats", "pg_stat_activity.last_error"],
         docsHref:

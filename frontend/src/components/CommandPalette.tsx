@@ -18,9 +18,7 @@ import type { PoolDto, PoolsDto } from "../types";
 
 // Global Cmd+K palette. Opens on ⌘/Ctrl-K from anywhere, narrows
 // across pages and pools by substring match, and navigates on Enter.
-// Pools are fetched once when the dialog opens and refreshed on each
-// open — the operator searching for a pool wants the latest list, not
-// what the SPA loaded when the page mounted.
+// Pools are fetched whenever the dialog opens so the list is current.
 interface PageEntry {
   label: string;
   to: string;
@@ -29,12 +27,12 @@ interface PageEntry {
 }
 
 const PAGES: PageEntry[] = [
-  { label: "Overview", to: "/overview", icon: LayoutDashboard, hint: "global pulse" },
+  { label: "Overview", to: "/overview", icon: LayoutDashboard, hint: "health overview" },
   { label: "Pools", to: "/pools", icon: Database, hint: "saturation / errors / waiting" },
   { label: "Clients", to: "/clients", icon: Users, hint: "active sessions" },
   { label: "Apps", to: "/apps", icon: AppWindow, hint: "by application_name" },
-  { label: "Caches", to: "/caches", icon: Boxes, hint: "prepared cache (sso+)" },
-  { label: "Logs", to: "/logs", icon: ScrollText, hint: "live stream (sso+)" },
+  { label: "Caches", to: "/caches", icon: Boxes, hint: "prepared statements" },
+  { label: "Logs", to: "/logs", icon: ScrollText, hint: "live logs" },
   { label: "Config", to: "/config", icon: Settings, hint: "config & state" },
   { label: "War room", to: "/wall", icon: Tv, hint: "kiosk view" },
 ];
@@ -52,9 +50,7 @@ export function CommandPalette() {
         setOpen((v) => !v);
         return;
       }
-      // Esc to close when the palette is open. The dialog otherwise
-      // trapped focus inside cmdk's input and the operator had to mouse
-      // out — every other admin tool (Linear, Vercel) closes on Esc.
+      // Esc closes the palette while focus is inside cmdk's input.
       if (e.key === "Escape" && open) {
         e.preventDefault();
         setOpen(false);
@@ -148,7 +144,7 @@ export function CommandPalette() {
           )}
         </Command.List>
         <div className="border-t border-border bg-surface-2 px-4 py-2 text-[10px] text-text-dim">
-          ↑↓ navigate · enter to open · esc to close
+          ↑↓ navigate · Enter opens · Esc closes
         </div>
       </Command>
     </div>

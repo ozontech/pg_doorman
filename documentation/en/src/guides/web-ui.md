@@ -38,7 +38,7 @@ this gate fired.
 | `ui_anonymous` | When `true`, public API endpoints accept unauthenticated requests. See [Access roles](#access-roles). | `false` |
 | `log_tap_max_entries` | Ring-buffer size for the in-memory log tap behind `/api/logs`. `0` disables the endpoint. | `8192` |
 
-## URL surface
+## URL endpoints
 
 | URL | Required role | Purpose |
 |---|---|---|
@@ -47,7 +47,7 @@ this gate fired.
 | `/metrics` | none | Prometheus exposition format. Unaffected by `ui`. |
 | `GET /api/auth/config` | none | Tells the SPA whether SSO is wired and what role the current request holds. |
 | `GET /api/version`, `/api/overview`, `/api/pools`, `/api/clients`, `/api/servers`, `/api/connections`, `/api/stats`, `/api/databases`, `/api/users`, `/api/auth_query`, `/api/config`, `/api/log_level`, `/api/pool_coordinator`, `/api/pool_scaling`, `/api/sockets`, `/api/prepared`, `/api/interner`, `/api/top/clients`, `/api/top/prepared`, `/api/apps`, `/api/events` | `Anonymous` when `ui_anonymous = true`, otherwise `Sso` | Read-only JSON that mirrors the `SHOW <admin-command>` shape. |
-| `GET /api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | `Sso` | Read-only personal-data endpoints. `/api/logs` activates the in-memory tap on first request and self-disables after 2 minutes without traffic. `/api/top/queries` returns the first ~120 characters of cached SQL text — kept off the public surface because previews can carry literal values and tenant identifiers. |
+| `GET /api/logs`, `/api/prepared/text/{hash}`, `/api/interner/top`, `/api/top/queries` | `Sso` | Read-only personal-data endpoints. `/api/logs` activates the in-memory tap on first request and self-disables after 2 minutes without traffic. `/api/top/queries` returns the first ~120 characters of cached SQL text and is not available anonymously because previews can carry literal values and tenant identifiers. |
 | `POST /api/admin/{reload,pause,resume,reconnect}` | `Admin` | Mutating admin actions. Same semantics as the psql admin protocol. |
 
 ## Access roles
@@ -200,7 +200,7 @@ A typo in the SSO section never knocks the operator console offline. When
 `sso_enabled = true` but the runtime cannot load (missing PEM file, empty
 audience, unparsable PEM), the listener logs the reason at `error` level,
 keeps SSO disabled for that run, and serves only Basic and Anonymous
-requests. The same reason surfaces in two places so an operator notices
+requests. The same reason is shown in two places so an operator notices
 the broken rollout instead of silently falling back:
 
 - `/api/auth/config.sso_config_error` carries a human-readable message.
@@ -291,9 +291,9 @@ Levels:
   authenticated. The SPA polls `/api/overview`, `/api/pools`,
   `/api/clients`, `/api/process` every 1.5–3 s; with the previous
   rule that every authenticated 2xx was `info`, an operator sitting
-  on the Logs page saw their own polls echo back at them. Routine
-  reads ride on `debug` so `RUST_LOG=info` reads as "events that
-  matter".
+  on the Logs page saw their own polls. Routine reads are logged at
+  `debug`, so `RUST_LOG=info` is limited to admin actions, auth
+  traffic, and failures.
 
 The dedicated `pg_doorman::web::access` target lets operators filter
 the access feed independently of the rest of the logger. The LogTap
@@ -304,7 +304,7 @@ target with one click.
 
 By default `peer` records the TCP address that connected to the
 listener, which is the proxy when pg_doorman sits behind one. List
-the proxy's CIDR in `[web].trusted_proxies` to surface the real
+the proxy's CIDR in `[web].trusted_proxies` to record the real
 client IP:
 
 ```toml
@@ -362,15 +362,15 @@ variants that forward the token via cookie on the shared domain.
 ## Pages
 
 The sidebar lists eight routes; **War room** is reached from the
-Overview hero, not from the nav. Pages that surface SQL text or log
-lines are gated to `Sso` and `Admin` — the sidebar hides their links
-for anonymous viewers.
+Overview hero, not from the nav. Pages that show SQL text or log lines
+are gated to `Sso` and `Admin` — the sidebar hides their links for
+anonymous viewers.
 
 ### Overview (`/overview`)
 
 The default landing page. Polls `/api/overview` and `/api/pools` every
-1.5 s. The header carries a health pill (OK / DEGRADED / CRITICAL)
-plus a button into the **War room** kiosk.
+1.5 s. The header shows the health state (OK / DEGRADED / CRITICAL)
+and a button that opens **War room**.
 
 Tiles on the page:
 
@@ -381,9 +381,9 @@ Tiles on the page:
   When the cooldown clears and pools return to the primary, the
   banner disappears on the next poll.
 - **Golden-signal sparklines** — query p95, qps, errors/s,
-  saturation. Each tile carries a structured popover with definition,
+  saturation. Each tile has a structured help popover with definition,
   source (the matching `SHOW` admin command), formula, thresholds,
-  and a link into the docs.
+  and a docs link.
 - **Connection breakdown** — stacked area: active / idle / waiting
   clients across all pools.
 - **Pool saturation heatmap** — one row per pool, 60 cells back,
@@ -392,14 +392,14 @@ Tiles on the page:
   clients on one axis, age of the longest-running query on the other.
 - **Top SQLSTATE codes** — aggregated error-code frequency across
   every pool since pg_doorman started. Each row shows the SQLSTATE,
-  a short description, and the count. Click a row's pool link to drop
-  into per-pool numbers in **Pool detail**.
+  a short description, and the count. Open **Pool detail** for
+  per-pool counts.
 - **Resource detail (collapsed)** — process RSS, CPU, FDs, tokio
-  thread balance, sockets, query interner. Off by default since the
-  card is informational rather than alerting.
+  thread balance, sockets, query interner. Collapsed by default; it is
+  diagnostic detail, not an alert.
 
-Admin actions are not on this page — they live next to the pool they
-target. See [Admin actions](#admin-actions).
+Admin actions are on the pages that own their scope. See
+[Admin actions](#admin-actions).
 
 Reads `SHOW POOLS`, `SHOW STATS`, `SHOW POOL_COORDINATOR`,
 `SHOW POOL_SCALING`, `SHOW INTERNER`, `SHOW SOCKETS`. See the
@@ -410,7 +410,7 @@ Reads `SHOW POOLS`, `SHOW STATS`, `SHOW POOL_COORDINATOR`,
 Sortable table of every pool the daemon knows about. One row per
 `user@database`. Columns: capacity, active, waiting, query p95, error
 rate, saturation, fallback flag, plus a per-row mini-sparkline so a
-ramping pool is visible without opening the detail page. Click a row
+ramping pool is visible without opening the detail page. Select a row
 to open **Pool detail**.
 
 ### Pool detail (`/pools/:poolId`)
@@ -438,8 +438,8 @@ Full drill-down for one pool. The hero shows a paused badge when
 - **Pool scaling** — backend creates, gate waits, budget exhaustions,
   anticipation hits, fallback creates. See
   [Pool Pressure (advanced)](../tutorials/pool-pressure.md).
-- **Threshold reasons** — which thresholds the page-wide health
-  engine is firing for this pool right now.
+- **Threshold reasons** — the health checks currently active for this
+  pool.
 
 The page hosts the per-pool **Admin actions** bar: PAUSE, RESUME,
 RECONNECT, plus the global RELOAD. See [Admin actions](#admin-actions).
@@ -447,7 +447,8 @@ RECONNECT, plus the global RELOAD. See [Admin actions](#admin-actions).
 ### Clients (`/clients`)
 
 Paginated, polled view of every client connected to the pooler.
-Filters live in the URL so a triage link pastes cleanly into chat:
+Filters live in the URL, so the current view can be copied into an
+incident channel:
 
 ```
 /clients?pool=shop_checkout&state=waiting&user=app
@@ -455,12 +456,13 @@ Filters live in the URL so a triage link pastes cleanly into chat:
 
 Filters: pool, database, user, state (active / idle / waiting /
 closing), `application_name`, peer address. Sortable by queries,
-errors, age, current-query age. Reads `SHOW CLIENTS`. Pairs with
-**Servers** for the client → backend hop — match `#cNNN` to a
+errors, age, current-query age. Reads `SHOW CLIENTS`. Use it with
+**Servers** to follow the client → backend hop: match `#cNNN` to a
 `process_id`.
 
 The page polls every 3 s and uses `React.memo` on rows: per-client
-view at 1.5 s ballooned Chrome memory under hundreds of sessions.
+polling at 1.5 s kept Chrome memory growing under hundreds of
+sessions.
 
 ### Servers (`/servers`)
 
@@ -471,8 +473,8 @@ shows `server_id`, `process_id` (the PostgreSQL pid), the
 user@database pair, application, state, active-query age, queries
 and errors served, bytes sent/received, and TLS flag.
 
-Use this together with **Clients** to map a stuck query — pick the
-`server_id` shown on the client row, jump here, and use the pid in
+Use this together with **Clients** to map a stuck query: take the
+`server_id` from the client row, open this page, and look up the pid in
 `pg_stat_activity`.
 
 ### Apps (`/apps`)
@@ -491,18 +493,18 @@ Two tabs:
 - **Query cache** — process-wide SQL text interner (named +
   anonymous bytes). Reads `SHOW INTERNER` and `SHOW INTERNER <N>`.
 
-Both tabs surface SQL text and are personal-data paths: the sidebar
+Both tabs show SQL text and are personal-data paths: the sidebar
 link is hidden for anonymous viewers, and the API endpoint returns
 `401` without the `Sso` or `Admin` role.
 
 ### Logs (`/logs`)
 
 Live tail of the LogTap side-channel. The tap activates on the first
-`/api/logs` request and self-disables after 2 minutes without
-traffic, so a closed tab does not keep the ring buffer warm.
+`/api/logs` request and self-disables after 2 minutes without traffic,
+so a closed tab does not keep the ring buffer active.
 
 Filters live in the URL: `level`, `q` (substring), `paused`, `scroll`.
-A triage link survives a refresh and pastes cleanly into chat:
+The filtered URL survives refresh and can be shared:
 
 ```
 /logs?level=ERROR&q=53300
@@ -514,7 +516,7 @@ the tap opened. Personal-data path: `Sso` / `Admin` only.
 
 If `[web].log_tap_max_entries = 0`, the page renders an instruction
 panel instead of an empty stream — log streaming is off in the
-running config until the operator raises that value and restarts.
+running config until that value is raised and pg_doorman is restarted.
 
 ### Config & state (`/config`)
 
@@ -524,30 +526,28 @@ Read-only mirror of `SHOW CONFIG`, `SHOW DATABASES`, `SHOW USERS`,
 section is a collapsible panel.
 
 The "startup parameters" panel lists every pool × override pair from
-the cascade — useful when verifying a fresh TOML edit before reloading.
+the cascade — useful when checking a TOML change before reloading.
 The Reload-able column on the config panel marks which keys take
 effect on `RELOAD` versus which require a restart.
 
-A global **Reload config** button sits in the page hero (admin role
-only). It triggers the same `POST /api/admin/reload` the psql admin
-console exposes, behind a typed `RELOAD` confirmation. See
+A global **Reload config** button is in the page header (admin role
+only). It sends the same `POST /api/admin/reload` as the psql admin
+console, behind a typed `RELOAD` confirmation. See
 [Admin actions](#admin-actions).
 
 ### War room (`/wall`)
 
-Kiosk view of the same Overview data, sized for an ops-area wall
-display. The sidebar and helper popovers are gone; six oversized KPI
-tiles (max p95, errors/s, max saturation, waiting, oldest active,
-pool count) sit under a full-width pool saturation heatmap. A red
-border pulses across the whole page when any signal trips its
-critical threshold. Recent admin events run along the bottom so a
-metric spike correlates to the action that caused it.
+Large-screen view of the Overview data. The sidebar and helper
+popovers are hidden; six KPI tiles (max p95, errors/s, max saturation,
+waiting, oldest active, pool count) sit under a full-width pool
+saturation heatmap. A red border pulses when any signal crosses its
+critical threshold. Recent admin events are listed at the bottom so a
+metric spike can be matched with the action that preceded it.
 
 The page acquires a `navigator.wakeLock("screen")` so the TV does
-not blank, and exits to `/overview` on **Esc**. Reached from the
-Overview hero ("Open war room") rather than the sidebar — the war
-room is the same data in a different form, not a separate
-destination.
+not blank, and exits to `/overview` on **Esc**. It opens from the
+Overview header ("Open war room") because it is the Overview data in a
+large-screen layout.
 
 ## Admin actions
 
@@ -569,19 +569,17 @@ running. `RESUME` re-enables checkouts. `RECONNECT` drops idle
 backends and refuses active ones when they return — use it after a
 PostgreSQL role or grant change so cached connections pick the new
 state up. `RELOAD` re-reads `pg_doorman.toml`; pool sizes shrink via
-natural drain. The typed confirmation guards against fat-fingering
-during an incident, since `RELOAD` touches every pool and a wrong
-pool name on `PAUSE` can stop traffic an operator did not intend to
-stop.
+natural drain. Typed confirmation prevents accidental clicks during an
+incident: `RELOAD` touches every pool, and `PAUSE` on the wrong pool
+can stop unrelated traffic.
 
-Every successful click raises a top-right toast — "RELOAD
-dispatched · re-read pg_doorman.toml", "PAUSE applied to
-`<db>`", and so on. Failures render an error toast with the response
-body. Admin actions also write `info`-level lines to the access log
-(`auth_role=admin auth_source=basic|sso`) and bump the admin-event
-ring so the **Overview** charts paint a vertical annotation at the
-moment the action fired, and **War room** lists it under "Recent
-admin events".
+After a successful action, the UI shows a top-right toast, for example
+"Config reload requested" or "PAUSE applied to `<db>`". Failures show
+an error toast with the response body. Admin
+actions also write `info`-level lines to the access log
+(`auth_role=admin auth_source=basic|sso`) and append to the
+admin-event buffer. **Overview** marks the action with a vertical
+annotation; **War room** lists it under "Recent admin events".
 
 ## Keyboard shortcuts
 
@@ -590,12 +588,12 @@ in-app shortcut list.
 
 | Combo              | Effect                                                                |
 |--------------------|-----------------------------------------------------------------------|
-| <kbd>⌘ K</kbd> / <kbd>Ctrl K</kbd> | Open the command palette: jump to any page, narrow to a pool by id, database, or user, hit **Enter**. |
+| <kbd>⌘ K</kbd> / <kbd>Ctrl K</kbd> | Open the command palette: jump to a page or find a pool by id, database, or user, then press **Enter**. |
 | <kbd>?</kbd>       | Open the keyboard shortcut modal.                                     |
-| <kbd>Esc</kbd>     | Close any popover / modal. On `/wall` returns to **Overview**.        |
+| <kbd>Esc</kbd>     | Close a popover or modal. On `/wall`, return to **Overview**.         |
 
-The command palette polls `/api/pools` whenever it opens, so the
-list it filters is fresh, not whatever loaded when the page mounted.
+The command palette polls `/api/pools` whenever it opens, so the pool
+list is up to date instead of coming from page load.
 
 ## Theme
 
@@ -605,15 +603,14 @@ opt-in. The choice persists in `localStorage`. **System** tracks the
 OS / browser preference and switches automatically when the OS
 flips between light and dark mode.
 
-The palette uses Geist Sans for chrome and JetBrains Mono for
+The palette uses Geist Sans for interface text and JetBrains Mono for
 numeric and identifier columns; accent is `#2563eb` on light,
 `#60a5fa` on dark.
 
 ## In-app help
 
 Every metric tile and section header carries a small (i) icon next
-to the title. Click or hover to open a popover with the same
-structure on every panel:
+to the title. Click or hover to open a help popover:
 
 - **Definition** — one sentence on what the metric is.
 - **Source** — the admin SQL command behind the number, e.g. `SHOW
@@ -624,17 +621,15 @@ structure on every panel:
   console.
 - **Open in docs** — link into this guide or one of the tutorials.
 
-The popover is the same shape on every page so an operator who
-has learned it on **Overview** does not relearn it on **Pool detail**
-or **Caches**.
+The layout is consistent across pages, so the same fields mean the
+same thing on **Overview**, **Pool detail**, and **Caches**.
 
 ## Toasts
 
-Sonner Toaster sits in the top-right corner. Admin actions and
-non-fatal errors raise toasts there; the rest of the page never
-blocks waiting for confirmation. Each toast lives 4 s. The Toaster
-follows the active theme so the colours match the console rather
-than the OS default.
+The UI shows Sonner toasts in the top-right corner. Admin actions and
+non-fatal errors use them; the rest of the page keeps running while
+the message is visible. Each toast stays on screen for 4 s. The
+Toaster follows the active theme.
 
 ## Building from source
 
@@ -662,7 +657,7 @@ touches `frontend/`.
 `/metrics` is unauthenticated on the same listener that serves the UI.
 This mirrors the historical Prometheus exporter and keeps existing
 scrape configs working. Auth on `/api/*` does **not** propagate to
-`/metrics` — the metrics surface exposes pool names, users, databases,
+`/metrics` — the metrics endpoint exposes pool names, users, databases,
 connection pressure, auth-query state, and workload shape. Either bind
 `[web]` to a private host/port that only your scrape system reaches,
 or front the listener with a proxy that adds auth on `/metrics`

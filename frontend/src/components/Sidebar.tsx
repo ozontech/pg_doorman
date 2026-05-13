@@ -49,17 +49,12 @@ const NAV: NavItem[] = [
   { to: "/clients", label: "Clients", icon: Users },
   { to: "/servers", label: "Servers", icon: Server },
   { to: "/apps", label: "Apps", icon: AppWindow },
-  // Caches exposes prepared-statement texts; logs leak SQL through the
-  // operator stream. Both are personal-data paths and only Sso/Admin
-  // roles can fetch them — hide the links for anonymous viewers.
+  // Caches and logs expose SQL text, so anonymous viewers do not get links.
   { to: "/caches", label: "Caches", icon: Boxes, personal: true },
   { to: "/logs", label: "Logs", icon: ScrollText, personal: true },
   { to: "/config", label: "Config", icon: Settings },
-  // War room (/wall) intentionally omitted from the sidebar. It is a
-  // kiosk view of the same Overview data, reached from the Overview
-  // hero ("Open war room" button). Surfacing it as a top-level link
-  // duplicated the operator's mental model and pushed the nav past
-  // 7±2 entries.
+  // War room (/wall) is reached from Overview because it is the same data
+  // in a large-screen layout.
 ];
 
 // 3 s tick: signals visible on every page, not incident-grade. Backend
@@ -223,10 +218,7 @@ export function Sidebar() {
 
   const hottest: HottestDatabaseDto | null = overview?.hottest_database ?? null;
 
-  // Kiosk mode: the war-room route hides every piece of chrome (sidebar
-  // included) so a wall display has nothing but signals. Operators reach
-  // /wall by clicking the nav link, the page itself renders a back-out
-  // affordance.
+  // Wall mode hides the sidebar; the page renders its own back control.
   if (location.pathname === "/wall") return null;
 
   return (
@@ -423,7 +415,7 @@ function SignalsBlock({
 
       {hottest && (
         <div className="border-t border-border/60 pt-2 text-[11px] text-text-dim">
-          <div className="text-[10px] uppercase tracking-wider">hottest db</div>
+          <div className="text-[10px] uppercase tracking-wider">busiest db</div>
           <div
             className="mt-0.5 truncate font-mono text-text"
             title={hottest.name}
@@ -460,11 +452,7 @@ function SignalRow({
   );
 }
 
-// Persistent transport indicator. Previously the http/https warning
-// surfaced only inside the sign-in modal; once an operator was past
-// login they had no visible signal that a Bearer JWT was flying over
-// plain HTTP. A single hairline row in the sidebar footer makes the
-// state always-readable.
+// Persistent transport indicator in the sidebar footer.
 function TransportLine() {
   const protocol =
     typeof window !== "undefined" ? window.location.protocol : "";
@@ -476,8 +464,8 @@ function TransportLine() {
       }`}
       title={
         secure
-          ? "Connection is HTTPS — credentials and admin actions ride encrypted."
-          : "Connection is plain HTTP — credentials and admin actions ride in the clear. Use HTTPS in production."
+          ? "Connection is HTTPS; credentials and admin actions are encrypted in transit."
+          : "Connection is plain HTTP; credentials and admin actions are sent in the clear. Use HTTPS in production."
       }
     >
       <span

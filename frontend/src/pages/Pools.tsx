@@ -80,10 +80,8 @@ export default function Pools() {
   }, [poll.data?.ts]);
 
   const navigate = useNavigate();
-  // URL-state for filters/sort. Operators can paste "/pools?severity=critical&q=app@db"
-  // straight into Slack during an incident — every control on the page is a
-  // search-param. Local React state mirrors the URL so the inputs stay
-  // responsive while the URL updates on commit.
+  // URL-state for filters/sort so the current view can be shared during
+  // an incident. Local React state mirrors the URL so inputs stay responsive.
   const [searchParams, setSearchParams] = useSearchParams();
   const initialFilters: Filters = {
     query: searchParams.get("q") ?? "",
@@ -201,7 +199,7 @@ export default function Pools() {
         title="Pools"
         help={{
           definition:
-            "All (user, database) pools. Triage entry point — sort by saturation / p95 / waiting / errors to find the pool that hurts. Click a row to drill into Pool detail with SQLSTATE breakdown and pause/reconnect controls.",
+            "All (user, database) pools. Sort by saturation, p95, waiting, or errors to find the pool under pressure. Click a row to open Pool detail with SQLSTATE breakdown and pause/reconnect controls.",
           source: "SHOW POOLS · SHOW POOLS_EXTENDED",
           related: ["SHOW POOL_COORDINATOR", "pg_stat_activity"],
           docsHref:
@@ -293,7 +291,7 @@ export default function Pools() {
               </InfoLabel>
             </th>
             <th className="px-4 py-2 text-left">
-              <InfoLabel tip="Threshold engine verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second.">
+              <InfoLabel tip="Health verdict: ok / degraded / critical based on saturation, p95, waiting, and errors per second.">
                 State
               </InfoLabel>
             </th>
@@ -343,7 +341,7 @@ function PoolRowView({
       <td className="px-4 py-2 text-text-muted">{pool.pool_mode}</td>
       <td
         className="px-4 py-2 text-right"
-        title={`active=${pool.active} of max_connections=${pool.max_connections} (${(saturation * 100).toFixed(0)} %). Plus ${pool.connections - pool.active} warm-idle backends still held from prior bursts. Color reflects active / max — above 70 % is amber, above 90 % is red.`}
+        title={`active=${pool.active} of max_connections=${pool.max_connections} (${(saturation * 100).toFixed(0)} %). Plus ${pool.connections - pool.active} warm-idle backends still held from prior bursts. Color reflects active / max: above 70 % is amber, above 90 % is red.`}
       >
         <span
           className={
@@ -361,7 +359,7 @@ function PoolRowView({
           <span title={`Saturation last 60 s — now ${(saturation * 100).toFixed(0)} %.`}>
             <MiniSparkline values={satSeries} stroke={satColor} min={0} max={100} />
           </span>
-          <span title={`Query p95 last 60 s — now ${pool.query_p95_ms} ms. Sustained > 100 ms = degraded backend; > 500 ms = something is stuck.`}>
+          <span title={`Query p95 last 60 s — now ${pool.query_p95_ms} ms. Sustained > 100 ms = degraded backend; > 500 ms usually means a stuck query or transaction.`}>
             <MiniSparkline
               values={p95Series}
               stroke={pool.query_p95_ms > 500 ? "rgb(229 72 77)" : pool.query_p95_ms > 100 ? "rgb(245 165 36)" : "rgb(34 184 207)"}
@@ -385,7 +383,7 @@ function PoolRowView({
       </td>
       <td
         className="px-4 py-2 text-right"
-        title={`Total errors since pg_doorman started. Click the row for the SQLSTATE breakdown — the codes are what you need for triage.`}
+        title={`Total errors since pg_doorman started. Click the row for the SQLSTATE breakdown.`}
       >
         {pool.errors_total}
       </td>
@@ -400,4 +398,3 @@ function PoolRowView({
     </tr>
   );
 }
-

@@ -1,10 +1,6 @@
-// War-room route. A wall-mounted view of the pooler designed for a TV in
-// the operations area: chrome (sidebar, page hero, helper popovers) is
-// gone, the heatmap takes the top half so a saturated row stands out at
-// 5 m across the room, six KPI tiles run beneath it with a 90 s sparkline
-// under each number, and recent admin events sit at the bottom so a spike
-// can be correlated to the operator action that triggered it. The page
-// pulses a red border when any critical signal trips.
+// Wall-mounted pooler view for an operations display. It hides the normal
+// chrome, puts the saturation heatmap first, shows six KPI tiles, and lists
+// recent admin events below the metrics.
 
 import { useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -45,10 +41,7 @@ export default function Wall() {
   const { authHeader } = useAdminAuth();
   const navigate = useNavigate();
 
-  // ESC out of kiosk: a wall display has no sidebar, so without a hotkey
-  // an operator has to find the "back to console" affordance behind any
-  // OS notifications drifting over the header. Esc is muscle-memory for
-  // "leave full-screen view" across Grafana, k9s, htop.
+  // Esc leaves the wall view; there is no sidebar on this route.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") navigate("/overview");
@@ -94,9 +87,7 @@ export default function Wall() {
     (signal) => apiGet<PoolsDto>("/api/pools", authHeader, signal),
     POLL_MS,
   );
-  // Admin-only — silently drops to null for anonymous viewers. The
-  // events feed simply does not render in that case; the KPI strip and
-  // heatmap above are the load-bearing surfaces.
+  // Admin-only; anonymous viewers simply do not see the event feed.
   const eventsPoll = usePoll<EventsDto>(
     (signal) => apiGet<EventsDto>("/api/events", authHeader, signal),
     3000,
@@ -477,5 +468,5 @@ function tone(
   return "text-text";
 }
 
-// Formatters live in `lib/format` so every page reads the same shape
-// for the same quantity. See lib/format.ts.
+// Formatters live in `lib/format` so quantities use the same display
+// rules across pages.

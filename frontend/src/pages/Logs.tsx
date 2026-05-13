@@ -20,10 +20,8 @@ const LEVEL_COLOR: Record<string, string> = {
 
 export default function Logs() {
   const { authHeader } = useAdminAuth();
-  // Filters live in the URL so an operator can paste a triage link into
-  // chat: /logs?level=ERROR&q=53300 lands their teammate on the exact
-  // narrowed view. Pause and auto-scroll are also bookmarkable so a
-  // shared link survives a refresh.
+  // Filters live in the URL so the current log view can be shared.
+  // Pause and auto-scroll are bookmarkable as well.
   const [searchParams, setSearchParams] = useSearchParams();
   const level = searchParams.get("level") ?? "";
   const target = searchParams.get("q") ?? "";
@@ -125,13 +123,13 @@ export default function Logs() {
         title="Logs"
         help={{
           definition:
-            "Live pooler log stream via LogTap. Filter by SQLSTATE (e.g. 53300), client (#c123), or module (auth, pool, stats). Pause freezes the view; new lines accumulate in the backend ring buffer. The tap stops 2 minutes after the last reader.",
+            "Live pooler log stream via LogTap. Filter by SQLSTATE (e.g. 53300), client (#c123), or module (auth, pool, stats). Pause freezes the view; new lines still accumulate in the backend ring buffer. The tap stops 2 minutes after the last reader.",
           source: "LogTap side-channel · SET log_level = '…' to change verbosity",
           related: ["SHOW LOG_LEVEL", "journalctl -u pg_doorman"],
           thresholds: {
             healthy: "drops = 0",
             warn: "drops > 0 — buffer overflow",
-            crit: "drops sustained — raise [web].log_tap_max_entries or narrow filter",
+            crit: "drops continue — raise [web].log_tap_max_entries or narrow the filter",
           },
           docsHref:
             "https://ozontech.github.io/pg_doorman/observability/json-logging.html",
