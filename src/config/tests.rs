@@ -2074,3 +2074,37 @@ async fn reject_reserved_in_pool_startup_parameters() {
         other => panic!("expected BadConfig, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn reject_merged_general_pool_startup_parameters_overflow() {
+    // Two layers that fit on their own but overflow once merged trip the
+    // H3 config-load gate. Without it the runtime fail-close (also H3)
+    // would catch the bytes per spawn, but the operator sees the budget
+    // miss right at `pg_doorman -t` instead of after the first client
+    // tries to connect.
+    let mut cfg = Config::default();
+    cfg.general.tls_rate_limit_per_second = 0;
+    let filler = "x".repeat(4800);
+    cfg.general
+        .startup_parameters
+        .insert("aaa_big".to_string(), filler.clone());
+    let mut pool = Pool::default();
+    pool.startup_parameters
+        .insert("bbb_big".to_string(), filler);
+    pool.users.push(User {
+        username: "u".to_string(),
+        password: "p".to_string(),
+        pool_size: 1,
+        ..User::default()
+    });
+    cfg.pools.insert("p".to_string(), pool);
+    let err = cfg.validate().await.unwrap_err();
+    match err {
+        Error::BadConfig(msg) => assert!(
+            msg.contains("merged general + pools.p.startup_parameters")
+                && msg.contains("exceeds operator budget"),
+            "unexpected message: {msg}"
+        ),
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}

@@ -149,3 +149,41 @@ impl From<&ServerParameters> for BytesMut {
         bytes
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::canonicalize_param_name;
+
+    #[test]
+    fn canonicalize_timezone_matches_any_case() {
+        assert_eq!(canonicalize_param_name("timezone".to_string()), "TimeZone");
+        assert_eq!(canonicalize_param_name("TIMEZONE".to_string()), "TimeZone");
+        assert_eq!(canonicalize_param_name("TimeZone".to_string()), "TimeZone");
+        assert_eq!(canonicalize_param_name("TimezONE".to_string()), "TimeZone");
+    }
+
+    #[test]
+    fn canonicalize_datestyle_matches_any_case() {
+        assert_eq!(
+            canonicalize_param_name("datestyle".to_string()),
+            "DateStyle"
+        );
+        assert_eq!(
+            canonicalize_param_name("DATESTYLE".to_string()),
+            "DateStyle"
+        );
+        assert_eq!(
+            canonicalize_param_name("DateStyle".to_string()),
+            "DateStyle"
+        );
+    }
+
+    #[test]
+    fn canonicalize_passes_through_other_keys() {
+        assert_eq!(
+            canonicalize_param_name("application_name".to_string()),
+            "application_name"
+        );
+        assert_eq!(canonicalize_param_name("FooBar".to_string()), "FooBar");
+    }
+}
