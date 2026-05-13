@@ -13,6 +13,7 @@ import { MiniSparkline } from "../components/MiniSparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
 import { usePoll } from "../hooks/usePoll";
+import { fmtAge, fmtClock, fmtMs, fmtRate } from "../lib/format";
 import type { EventsDto, OverviewDto, PoolsDto } from "../types";
 
 const POLL_MS = 1500;
@@ -476,44 +477,5 @@ function tone(
   return "text-text";
 }
 
-function fmtMs(n: number | undefined): string {
-  if (n === undefined) return "—";
-  if (n > 0 && n < 1) return `${n.toFixed(2)}ms`;
-  if (n < 10) return `${n.toFixed(1)}ms`;
-  if (n < 1000) return `${Math.round(n)}ms`;
-  if (n < 10_000) return `${(n / 1000).toFixed(1)}s`;
-  if (n < 60_000) return `${Math.round(n / 1000)}s`;
-  if (n < 3_600_000) {
-    const m = Math.floor(n / 60_000);
-    const s = Math.floor((n % 60_000) / 1000);
-    return `${m}m${s.toString().padStart(2, "0")}s`;
-  }
-  const h = Math.floor(n / 3_600_000);
-  const m = Math.floor((n % 3_600_000) / 60_000);
-  return `${h}h${m.toString().padStart(2, "0")}m`;
-}
-
-function fmtRate(n: number | undefined): string {
-  if (n === undefined) return "—";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 10_000) return `${(n / 1000).toFixed(0)}k`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  if (n >= 10) return n.toFixed(0);
-  return n.toFixed(2);
-}
-
-function fmtAge(ts: number | null): string {
-  if (!ts) return "—";
-  const ageSec = Math.round((Date.now() - ts) / 1000);
-  if (ageSec < 5) return "now";
-  if (ageSec < 60) return `${ageSec}s ago`;
-  return `${Math.round(ageSec / 60)}m ago`;
-}
-
-function fmtClock(tsMs: number): string {
-  const d = new Date(tsMs);
-  return `${d.getHours().toString().padStart(2, "0")}:${d
-    .getMinutes()
-    .toString()
-    .padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
-}
+// Formatters live in `lib/format` so every page reads the same shape
+// for the same quantity. See lib/format.ts.

@@ -4,6 +4,7 @@ import { apiGet } from "../api";
 import { PageHero } from "../components/PageHero";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
+import { fmtBytes, fmtMs } from "../lib/format";
 import type { ServersDto } from "../types";
 
 const POLL_MS = 3000;
@@ -17,21 +18,6 @@ interface Filters {
 }
 
 const STATE_OPTIONS = ["", "active", "idle", "used", "login"];
-
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MiB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
-}
-
-function fmtMs(n: number): string {
-  if (n < 1000) return `${n} ms`;
-  if (n < 60_000) return `${(n / 1000).toFixed(1)} s`;
-  const m = Math.floor(n / 60_000);
-  const s = Math.floor((n % 60_000) / 1000);
-  return `${m}m ${s}s`;
-}
 
 export default function Servers() {
   const { authHeader } = useAdminAuth();

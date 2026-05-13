@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
+import { fmtRate, fmtUptime } from "../lib/format";
 import { getSsoTokenUsername } from "../lib/jwt";
 import { ThemeToggle } from "./ThemeToggle";
 import { aggregateHealth } from "../lib/thresholds";
@@ -229,7 +230,7 @@ export function Sidebar() {
   if (location.pathname === "/wall") return null;
 
   return (
-    <nav className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-border bg-surface">
+    <nav className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-surface md:flex">
       <div className="border-b border-border px-4 py-3">
         <Link
           to="/overview"
@@ -488,20 +489,4 @@ function TransportLine() {
   );
 }
 
-function fmtRate(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 10_000) return `${(n / 1000).toFixed(0)}k`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  if (n >= 10) return n.toFixed(0);
-  return n.toFixed(2);
-}
-
-function fmtUptime(s: number): string {
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ${m % 60}m`;
-  const d = Math.floor(h / 24);
-  return `${d}d ${h % 24}h`;
-}
+// fmtRate / fmtUptime were duplicated here; both moved to lib/format.
