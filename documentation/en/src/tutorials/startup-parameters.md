@@ -92,21 +92,25 @@ At config load:
 - Keys must match PG GUC naming `^[A-Za-z_][A-Za-z0-9_.]*$`. Namespaced
   names like `auto_explain.log_min_duration` are accepted; arbitrary
   punctuation is not.
-- Reserved keys (`user`, `database`, `replication`, `options`, and
-  anything starting with `_pq_.`) are refused. pg_doorman manages
-  them itself or PG treats them specially in the StartupMessage.
+- Reserved keys (`user`, `database`, `replication`, `options`, `role`,
+  `session_authorization`, and anything starting with `_pq_.`) are
+  refused. pg_doorman manages them itself or PG treats them specially in
+  the StartupMessage.
 - Values must not contain null bytes.
 - Each level (general or per-pool) must fit within the startup-parameter
   budget: `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes) minus 512 bytes
   reserved for pg_doorman-managed keys.
 
 Before each backend spawn pg_doorman checks the resolved parameter set
-against the same cap. Two layers that fit on their own can overflow once
-`auth_query` adds a third layer. If only the `auth_query` layer pushes
-the set over the cap, pg_doorman drops that layer and keeps the
-general/pool baseline. If the baseline itself or the full startup packet
-does not fit, pg_doorman skips all configured parameters for that
-spawn and logs the byte counts.
+against the same cap. Layers that fit individually can overflow once
+they are merged: general + pool may already exceed the cap, and an
+`auth_query` overlay can push a previously fitting cascade over the
+limit. Any overflow — overlay-only or baseline-side — is now reported
+as a PostgreSQL-style error (`SQLSTATE 54000`) on the client connection
+instead of silently shipping a partial or empty StartupMessage. The
+warn log line at pool construction records the byte counts; the
+`pg_doorman_startup_parameters_dropped_total` counter ticks for every
+rejected backend spawn.
 
 ## What happens when PG rejects a parameter
 

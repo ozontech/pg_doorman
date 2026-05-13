@@ -265,12 +265,8 @@ function AuthModal({
     onSubmit({ username, password }, remember);
   };
 
-  // Bloomberg-Terminal sign-in surface: full-page, no modal chrome.
-  // The whole canvas reads as a single carved console, with the amber
-  // accent reserved for the primary SSO action and the live status
-  // line at the bottom. We deliberately avoid the gradient/glass
-  // cliché — the rest of the SPA never uses it, and an operator
-  // landing here should feel they are still in the same console.
+  // Full-screen sign-in panel that keeps focus inside the auth flow
+  // and matches the dashboard's flat console styling.
   return (
     <div
       role="dialog"
@@ -297,9 +293,11 @@ function AuthModal({
           </h2>
           <p className="mt-2 text-sm text-text-muted">
             Identify yourself to enter the console. SSO opens the
-            corporate identity flow; Local admin uses the
-            <span className="font-mono"> [general] </span>
-            credentials from <span className="font-mono">pg_doorman.toml</span>.
+            corporate identity flow. Local admin uses
+            <span className="font-mono"> [general].admin_username </span>
+            and
+            <span className="font-mono"> [general].admin_password </span>
+            from the active config.
           </p>
         </header>
         <div className="space-y-6 px-8 py-6">
@@ -449,8 +447,8 @@ function BasicBlock({
         >
           That user/password was rejected. Recheck{" "}
           <span className="font-mono">[general].admin_username</span> and{" "}
-          <span className="font-mono">[general].admin_password</span> in{" "}
-          <span className="font-mono">pg_doorman.toml</span>.
+          <span className="font-mono">[general].admin_password</span> in the
+          active config file.
         </p>
       )}
       <form onSubmit={onSubmit} className="space-y-3">

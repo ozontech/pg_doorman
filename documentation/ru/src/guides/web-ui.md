@@ -130,7 +130,7 @@ SSO опциональный. По умолчанию (`[web].sso_enabled = fals
 | `sso_groups_claim` | Имя JWT-claim, в котором лежат группы пользователя. Читается вместе с `sso_admin_groups`. | `"groups"` |
 | `sso_admin_groups` | Группы, которые поднимают SSO-пользователя до `Admin`. Пустой список оставляет каждый SSO-логин на роли `Sso` только для чтения. | `[]` |
 | `sso_require_https` | Отклонять Bearer/cookie/query SSO-credentials, пришедшие по plain HTTP. Запрос считается защищённым только если TCP-peer входит в `trusted_proxies` и прокси прислал `X-Forwarded-Proto: https`. По умолчанию выключено, чтобы SSO продолжал работать в схеме «TLS терминирует прокси → pg_doorman слушает HTTP во внутренней сети». | `false` |
-| `trusted_proxies` | CIDR доверенных обратных прокси (используется для `X-Forwarded-For` / `Forwarded` / `X-Forwarded-Proto`). Пустой список — доверять только непосредственному TCP-peer. См. [Журнал доступа](#журнал-доступа). | `[]` |
+| `trusted_proxies` | CIDR доверенных обратных прокси (используется для `X-Forwarded-For` / `Forwarded` / `X-Forwarded-Proto`). Пустой список означает, что forwarded-заголовки игнорируются, а в логах используется непосредственный TCP-peer. Если `sso_require_https = true` работает за TLS-terminating proxy, добавьте CIDR этого proxy, чтобы доверять `X-Forwarded-Proto: https`. См. [Журнал доступа](#журнал-доступа). | `[]` |
 
 ### Поднятие SSO-пользователя до Admin через claim с группами
 

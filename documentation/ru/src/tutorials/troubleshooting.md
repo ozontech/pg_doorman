@@ -18,7 +18,7 @@ SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 
 ### Когда username пула отличается от роли на backend
 
-Когда обращённый к клиенту `username` в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может: у pg_doorman нет пароля для backend-роли. Дайте явные credentials:
+Когда `username`, под которым клиент подключается к pg_doorman, не совпадает с реальной ролью PostgreSQL, passthrough работать не может: у pg_doorman нет пароля для backend-роли. Укажите явные credentials:
 
 ```yaml
 users:

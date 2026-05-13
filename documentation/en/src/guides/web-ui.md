@@ -130,7 +130,7 @@ proxy:
 | `sso_groups_claim` | Name of the JWT claim that carries the user's group memberships. Read together with `sso_admin_groups`. | `"groups"` |
 | `sso_admin_groups` | Group names that promote an SSO user to `Admin`. Empty keeps every SSO login at the read-only `Sso` role. | `[]` |
 | `sso_require_https` | Reject Bearer/cookie/query SSO credentials presented over plain HTTP. The listener treats a request as secure only when the TCP peer is in `trusted_proxies` and `X-Forwarded-Proto: https` is forwarded. Defaults to off so SSO keeps working through a TLS-terminating proxy that reaches pg_doorman over a private HTTP leg. | `false` |
-| `trusted_proxies` | CIDR ranges trusted to set `X-Forwarded-For` / `Forwarded` / `X-Forwarded-Proto`. Empty trusts only the listener's own peer. See [Access log](#access-log). | `[]` |
+| `trusted_proxies` | CIDR ranges trusted to set `X-Forwarded-For` / `Forwarded` / `X-Forwarded-Proto`. Empty means forwarded headers are ignored and the TCP peer is used as-is. If `sso_require_https = true` runs behind a TLS-terminating proxy, include that proxy CIDR so `X-Forwarded-Proto: https` is trusted. See [Access log](#access-log). | `[]` |
 
 ### Promoting SSO users to Admin via group claim
 
