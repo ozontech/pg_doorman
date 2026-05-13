@@ -2,108 +2,33 @@
 
 ### 3.9.1
 
-Follow-up release that closes the protocol-correctness and
-operability gaps codex review surfaced after 3.9.0 shipped.
-All changes are confined to `startup_parameters`, the auth_query
-passthrough cache, the Web UI's read-only endpoints, and the
-backend startup path; the configuration shape is unchanged.
+Follow-up release that hardens `startup_parameters` after 3.9.0
+shipped.
 
-#### Protocol correctness
-
-- The startup_parameters cascade no longer silently degrades. If
-  the operator-supplied map cannot fit the StartupMessage budget,
-  pg_doorman now returns a PostgreSQL-style `ServerStartupParameterRejection`
-  (`SQLSTATE 54000`) to the client and refuses the backend spawn.
-  Config validation rejects the deterministic `general + pool`
-  overflow at load time so the runtime never sees a misconfigured
-  pool. Previously oversize overlays were dropped and an empty
-  StartupMessage went on the wire; sessions ran without the
-  expected per-pool or per-user defaults.
-- The `ParameterStatus` that a client receives at the end of the
-  authentication handshake now matches the value PostgreSQL will
-  actually use for the session. The startup-time filter drops any
-  client key the operator has configured under
-  `general.startup_parameters`, `pools.<name>.startup_parameters`,
-  or the auth_query per-user overlay before the merge with the
-  server-reported parameters. The backend's `sync_parameters`
-  already applied the same filter on checkout; the two views now
-  agree.
-- The `TimeZone` and `DateStyle` GUC names are matched case-
-  insensitively when pg_doorman decides whether the operator has
-  claimed them. A client sending `TIMEZONE` or `DateStyle` no
-  longer slips past the filter and overwrites the operator
-  default.
-
-#### auth_query correctness
-
-- An MD5 password mismatch that succeeds on the cache refetch now
-  swaps the refetched cache snapshot into the local view before
-  the dynamic pool is built. Before the fix the new pool inherited
-  the rotated client password but the stale backend credential
-  and the stale per-user `startup_parameters` map.
-- The dynamic-pool fast path inside `create_dynamic_pool` now
-  compares the incoming overlay hash against the live pool's
-  frozen hash. On a drift the pool is dropped and rebuilt so a
-  concurrent login cannot inherit a stale per-user
-  `startup_parameters` snapshot after an auth_query row was
-  updated.
-- The auth_query reader accepts a native `json` or `jsonb`
-  `startup_parameters` column without requiring a `::text` cast.
-  Falling back to `serde_json::Value` keeps the existing string
-  decoder path as the primary contract.
-
-#### Web UI and observability
-
-- `/api/config` and `/api/pools` now reveal the literal
-  startup_parameter values only to the `Admin` role. SSO callers
-  are treated like anonymous viewers for these endpoints, so a
-  broad `sso_allowed_users` list cannot leak tenant routing tags,
-  audit identifiers, or accidental secrets through the read-only
-  surface.
-- `/api/config` flags `general.host`, `general.port`, `web.host`,
-  and `web.port` as restart-required. The previous bare-segment
-  matcher never compared positively against the flattened keys
-  the response carries, so every field was rendered as reloadable.
-- `SHOW STARTUP_PARAMETERS` and `/api/pools` now classify keys
-  that came from an oversize auth_query overlay as
-  `dropped_due_to_budget` rather than `stale` when the baseline
-  carries the same key. Operators no longer chase a RELOAD/refetch
-  race when the real cause is the per-user overlay needing to
-  shrink.
-- New Prometheus alert rules cover the failure surfaces added in
-  3.9.0: `PgDoormanStartupParameterPgRejection`,
-  `PgDoormanStartupParameterCascadeOverflow`,
-  `PgDoormanStartupParameterOverlayOversize`,
-  `PgDoormanStartupParameterAuthQueryInvalid`,
-  `PgDoormanStartupParameterDedicatedDrops`, and
-  `PgDoormanWebSsoInsecureTransport` for the SSO transport-gate
-  regression.
-
-#### Performance
-
-- `ServerPool` precomputes the wire-ready merge of base and
-  per-user `startup_parameters` and the budget classification at
-  pool creation. Backend spawns hand out a borrow on the cached
-  `Arc<BTreeMap>` instead of cloning the map and re-running the
-  validation walk per checkout. Static pools share the same `Arc`
-  the config layer already holds.
-- The canonicalised set of operator-managed GUC names is built
-  once per pool and shared with the backend startup path. The
-  previous code allocated a fresh `HashSet<String>` for every
-  spawn.
-
-#### Documentation and CI
-
-- Reserved-key documentation now lists `role` and
-  `session_authorization` (already refused in code).
-- The Russian tutorials gained the missing
-  `pg_doorman_startup_parameters_dropped_total` bullet and lost
-  the imaginary "startup family" SQLSTATE phrasing.
-- The Web UI guide explains how empty `trusted_proxies` interacts
-  with `sso_require_https` behind a TLS-terminating proxy.
-- The BDD test matrix runs at `max-parallel: 6` (up from 4) so
-  the 22-suite fan-out completes faster on GHA without measurable
-  flake increase on the sleep-heavy lifecycle suites.
+- An over-budget `startup_parameters` cascade now fails the backend
+  spawn with `SQLSTATE 54000` instead of silently sending an empty
+  StartupMessage. The deterministic `general + pool` overflow is
+  refused at config load.
+- The `ParameterStatus` pg_doorman sends a client at the end of
+  startup no longer overrides operator-managed GUC names; the wire
+  view and the backend's `sync_parameters` view agree.
+- `auth_query` correctness: a successful MD5 refetch rebuilds the
+  dynamic pool from the refreshed row, a concurrent login no
+  longer inherits a stale per-user overlay through the
+  `create_dynamic_pool` fast path, and the reader accepts a native
+  `json`/`jsonb` column without a `::text` cast.
+- `/api/config` and `/api/pools` reveal literal startup_parameter
+  values only to the `Admin` role; SSO is treated like anonymous.
+  The same response flags `general.host`, `general.port`,
+  `web.host`, `web.port` as restart-required so the SPA pill
+  renders correctly.
+- New Prometheus alert rules cover PG-side rejection, cascade
+  overflow, malformed auth_query columns, the dedicated-mode drop
+  signal, and the `sso_require_https` insecure-transport gate.
+- The merged startup map, the budget classification, and the
+  canonicalised operator-key set are precomputed once per pool;
+  backend spawns hand out a borrow on the cached `Arc` instead of
+  cloning per checkout.
 
 ### 3.9.0
 
