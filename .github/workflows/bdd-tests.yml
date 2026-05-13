@@ -40,11 +40,21 @@ jobs:
           echo "Computed image tag: flake-${FLAKE_HASH}"
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        # ghcr.io occasionally times out on the auth handshake under
+        # GHA load (Client.Timeout exceeded while awaiting headers).
+        # docker/login-action runs once; wrap docker login in
+        # nick-fields/retry so a transient handshake failure does not
+        # take out the whole BDD job.
+        uses: nick-fields/retry@v3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: 3
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Check if image exists in registry
         id: check-exists
@@ -125,11 +135,21 @@ jobs:
           echo "Image built successfully for ${{ matrix.arch }}"
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        # ghcr.io occasionally times out on the auth handshake under
+        # GHA load (Client.Timeout exceeded while awaiting headers).
+        # docker/login-action runs once; wrap docker login in
+        # nick-fields/retry so a transient handshake failure does not
+        # take out the whole BDD job.
+        uses: nick-fields/retry@v3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: 3
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Load and push arch-specific image
         run: |
@@ -150,11 +170,21 @@ jobs:
       packages: write
     steps:
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        # ghcr.io occasionally times out on the auth handshake under
+        # GHA load (Client.Timeout exceeded while awaiting headers).
+        # docker/login-action runs once; wrap docker login in
+        # nick-fields/retry so a transient handshake failure does not
+        # take out the whole BDD job.
+        uses: nick-fields/retry@v3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: 3
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Create and push multi-arch manifest
         # Only the hash-tagged manifest is published. The image is
@@ -234,11 +264,21 @@ jobs:
             ${{ runner.os }}-bdd-cargo-
 
       - name: Log in to Container Registry
-        uses: docker/login-action@v3
+        # ghcr.io occasionally times out on the auth handshake under
+        # GHA load (Client.Timeout exceeded while awaiting headers).
+        # docker/login-action runs once; wrap docker login in
+        # nick-fields/retry so a transient handshake failure does not
+        # take out the whole BDD job.
+        uses: nick-fields/retry@v3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: 3
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Pull test image from GHCR
         uses: nick-fields/retry@v3
@@ -343,12 +383,20 @@ jobs:
         # Even when test-runner is currently a public package, the BDD
         # jobs depend on `docker pull` succeeding. Without explicit
         # login they would silently break if the package visibility
-        # ever flips to private.
-        uses: docker/login-action@v3
+        # ever flips to private. Wrapped in nick-fields/retry because
+        # ghcr.io's auth endpoint occasionally times out under GHA
+        # load (Client.Timeout exceeded while awaiting headers) and the
+        # base docker/login-action does not retry on its own.
+        uses: nick-fields/retry@v3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: 3
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Pull test image from GHCR
         uses: nick-fields/retry@v3
