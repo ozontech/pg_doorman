@@ -677,17 +677,19 @@ pub(crate) static QUERY_INTERNER_EVICTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::ne
 });
 
 /// Counter for cases where pg_doorman returns SQLSTATE 26000 because an
-/// anonymous prepared statement has been evicted from the interner before
-/// the next Bind. A persistently non-zero rate signals either too short a
-/// query_interner_anon_idle_ttl_seconds or a client pattern that depends
-/// on cross-batch unnamed prepared statements.
+/// anonymous prepared statement state is no longer available when a
+/// later Bind/Describe refers to it. A persistently non-zero rate can
+/// come from client Anonymous LRU churn, RESET INTERNER, interner TTL
+/// eviction, or a driver pattern that depends on cross-batch unnamed
+/// prepared statements.
 pub(crate) static QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     let counter = IntCounter::new(
         "pg_doorman_query_interner_synthetic_misses_total",
-        "Times pg_doorman returned 26000 because an anonymous interner entry \
-         expired or was evicted before the next Bind referencing it. \
-         Sustained non-zero rate signals TTL too short or a driver \
-         depending on cross-batch unnamed prepared statements.",
+        "Times pg_doorman returned 26000 because anonymous prepared-statement \
+         state was no longer available when a later Bind or Describe referenced \
+         it. Causes include client Anonymous LRU churn, RESET INTERNER, interner \
+         TTL eviction, or a driver depending on cross-batch unnamed prepared \
+         statements.",
     )
     .unwrap();
     REGISTRY.register(Box::new(counter.clone())).unwrap();
@@ -919,7 +921,7 @@ pub(crate) static SHOW_SERVERS_PREPARED_HITS: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_servers_prepared_hits",
-            "Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with pg_doorman_servers_prepared_misses to derive hit ratio.",
+            "Live aggregate of prepared-statement cache hits across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use pg_doorman_servers_prepared_hits_total for rates.",
         ),
         &["user", "database"],
     )
@@ -934,7 +936,7 @@ pub(crate) static SHOW_SERVERS_PREPARED_MISSES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_servers_prepared_misses",
-            "Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger server_prepared_statement_cache_size.",
+            "Live aggregate of prepared-statement cache misses across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use pg_doorman_servers_prepared_misses_total for rates.",
         ),
         &["user", "database"],
     )

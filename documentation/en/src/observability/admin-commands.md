@@ -12,7 +12,7 @@ Or via `psql` connection string:
 psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 ```
 
-Admin commands are read with `SHOW <subcommand>` or executed with bare verbs (`PAUSE`, `RESUME`, `RECONNECT`, `RELOAD`, `SHUTDOWN`, `SET <param> = <value>`).
+Admin commands are read with `SHOW <subcommand>` or executed with bare verbs (`PAUSE`, `RESUME`, `RECONNECT`, `RELOAD`, `SHUTDOWN`, `RESET INTERNER`, `SET <param> = <value>`).
 
 ## SHOW commands
 
@@ -27,6 +27,8 @@ Admin commands are read with `SHOW <subcommand>` or executed with bare verbs (`P
 | `SHOW POOL_COORDINATOR` | Pool Coordinator state per database: current connections, reserve usage, eviction count. See [Pool Coordinator](../concepts/pool-coordinator.md). |
 | `SHOW POOL_SCALING` | Anticipation/burst metrics: in-flight creates, gate waits, anticipation notifies/timeouts. |
 | `SHOW PREPARED_STATEMENTS` | Cached prepared statements per pool: hash, name, query text, hit count. |
+| `SHOW INTERNER` | Query interner summary: entry count and bytes for named and anonymous halves. |
+| `SHOW INTERNER <N>` | Top N interned query texts by byte size, with hash, kind, idle age, and SQL preview. |
 | `SHOW CLIENTS` | Active clients: ID, database, user, app name, address, TLS state, transaction/query/error counts, age. |
 | `SHOW SERVERS` | Active backend connections: server ID, backend PID, database, user, TLS, state, transaction/query counts, prepare cache hits/misses, bytes. |
 | `SHOW CONNECTIONS` | Connection counts by type: total, errors, TLS, plain, cancel. |
@@ -50,8 +52,9 @@ Admin commands are read with `SHOW <subcommand>` or executed with bare verbs (`P
 | `RESUME` / `RESUME <database>` | Resume after `PAUSE`. |
 | `RECONNECT` / `RECONNECT <database>` | Force-recycle backend connections (close idle, drain active). New connections come from PostgreSQL. |
 | `RELOAD` | Same as `SIGHUP` — reload config from disk. |
-| `SHUTDOWN` | Same as `SIGTERM` — graceful shutdown. |
+| `SHUTDOWN` | Sends `SIGINT` to the current process. See [Signals](../operations/signals.md) before using it in daemon mode. |
 | `KILL <database>` | Drop all clients connected to a specific pool. |
+| `RESET INTERNER` | Clear named and anonymous query interner entries. Diagnostic command; active clients re-Parse on next reuse. |
 | `SET log_level = '<level>'` | Change runtime log level (`error`, `warn`, `info`, `debug`, `trace`). |
 
 `PAUSE`/`RESUME` are useful during failovers or maintenance windows. `RECONNECT` after rotating credentials in `pg_authid` ensures backends use the new password.

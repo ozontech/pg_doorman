@@ -112,7 +112,7 @@ See [General settings reference](reference/general.md), [Pool settings reference
 | `SHOW POOL_COORDINATOR` / `SHOW POOL_SCALING` / `SHOW SOCKETS` | Yes | No | No |
 | `SHOW PREPARED_STATEMENTS` | Yes | No | No |
 | `SHOW INTERNER` (per-kind entries / bytes / preview) | Yes | No | No |
-| Bounded prepared-statement cache (TTL on anonymous, per-client LRU split) | Yes | No (named only, unbounded `max_prepared_statements`) | No |
+| Bounded prepared-statement cache (TTL on anonymous, per-client LRU split) | Yes | Named only, bounded by `max_prepared_statements`; no anonymous cache | No |
 | `SHOW HOSTS` (host CPU/memory) | No | No | Yes |
 | `SHOW RULES` (dump effective routing) | No | No | Yes |
 | Server-side TLS connection metrics (handshake duration, errors, active count) | Yes | No | No |

@@ -110,8 +110,32 @@ pg_doorman экспортирует следующие метрики:
 
 | Метрика | Описание |
 |---------|----------|
-| `pg_doorman_servers_prepared_hits` | Совокупное число попаданий в кеш prepared statements по всем бэкендам пула, с лейблами `user` и `database`. Используется вместе с `pg_doorman_servers_prepared_misses` для расчёта доли попаданий. |
-| `pg_doorman_servers_prepared_misses` | Совокупное число промахов prepared statements по всем бэкендам пула, с лейблами `user` и `database`. Устойчивая ненулевая скорость означает, что запросы часто готовятся заново или кеш `server_prepared_statement_cache_size` слишком мал. |
+| `pg_doorman_servers_prepared_hits` | Текущая сумма попаданий в кеш prepared statements по активным бэкендам пула, с лейблами `user` и `database`. Gauge может уменьшаться при ротации бэкендов; для `rate()` используйте `pg_doorman_servers_prepared_hits_total`. |
+| `pg_doorman_servers_prepared_misses` | Текущая сумма промахов prepared statements по активным бэкендам пула, с лейблами `user` и `database`. Gauge может уменьшаться при ротации бэкендов; для `rate()` используйте `pg_doorman_servers_prepared_misses_total`. |
+| `pg_doorman_servers_prepared_hits_total` | Накопительный счётчик попаданий в кеш prepared statements по всем бэкендам пула, с лейблами `user` и `database`. Используйте `rate()` для скорости попаданий. |
+| `pg_doorman_servers_prepared_misses_total` | Накопительный счётчик промахов prepared statements по всем бэкендам пула, с лейблами `user` и `database`. Устойчивая ненулевая скорость означает, что запросы часто готовятся заново или кеш `server_prepared_statements_cache_size` слишком мал. |
+
+### Метрики клиентского кеша prepared statements
+
+Клиентский кеш prepared statements делится на неограниченную Named-таблицу и Anonymous LRU, ограниченный `client_anonymous_prepared_cache_size`. Если этот параметр не задан, используется итоговый `prepared_statements_cache_size`.
+
+| Метрика | Описание |
+|---------|----------|
+| `pg_doorman_clients_prepared_named_entries` | Gauge с лейблами `user` и `database`. Сумма Named-записей по кешам всех подключённых клиентов. Named-записи не имеют верхнего лимита и живут до отключения клиента или `DEALLOCATE`. Устойчивый рост часто означает, что драйвер или ORM создаёт новые имена statement на каждый запрос. |
+| `pg_doorman_clients_prepared_anonymous_entries` | Gauge с лейблами `user` и `database`. Сумма Anonymous-записей по кешам всех подключённых клиентов. Anonymous-часть каждого клиента ограничена `client_anonymous_prepared_cache_size`, поэтому значение приближается максимум к `connected_clients * cache_size`. |
+| `pg_doorman_clients_prepared_anonymous_evictions_total` | Накопительный счётчик вытеснений из Anonymous LRU, с лейблами `user` и `database`. Устойчивая ненулевая скорость означает, что `client_anonymous_prepared_cache_size` мал для нагрузки и LRU вытесняет записи быстрее, чем приложение успевает их повторно использовать. |
+
+### Метрики query interner
+
+Query interner общий для процесса. У этих метрик нет лейблов пула, пользователя или базы; для привязки к нагрузке смотрите метрики prepared statements выше и WARN-строки о synthetic miss.
+
+| Метрика | Описание |
+|---------|----------|
+| `pg_doorman_query_interner_entries` | Gauge по `kind` (`named` или `anonymous`). Число интернированных текстов запросов. Обновляется один раз за проход GC. |
+| `pg_doorman_query_interner_bytes` | Gauge по `kind` (`named` или `anonymous`). Суммарный объём интернированных текстов запросов в байтах. Обновляется один раз за проход GC. |
+| `pg_doorman_query_interner_evictions_total` | Counter по `kind` и `reason` (`gc_passive` или `ttl_expired`). Named-записи удаляются, когда их больше не держит ни один кеш вне interner; anonymous-записи удаляются после idle TTL. |
+| `pg_doorman_query_interner_synthetic_misses_total` | Counter синтетических ответов SQLSTATE `26000` для anonymous prepared statements, состояние которых уже недоступно при последующем `Bind` или `Describe`. Перед увеличением `query_interner_anon_idle_ttl_seconds` проверьте вытеснения из клиентского Anonymous LRU, WARN-логи, `RESET INTERNER` и TTL-вытеснения. |
+| `pg_doorman_query_interner_gc_duration_seconds` | Гистограмма времени одного прохода GC interner (named и anonymous вместе), в секундах. Помогает увидеть, когда большой interner делает обход заметным. |
 
 ### Метрики серверного TLS
 

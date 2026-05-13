@@ -12,7 +12,7 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman
 psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 ```
 
-Команды администратора читаются через `SHOW <subcommand>` или выполняются голыми глаголами (`PAUSE`, `RESUME`, `RECONNECT`, `RELOAD`, `SHUTDOWN`, `SET <param> = <value>`).
+Команды администратора читаются через `SHOW <subcommand>` или выполняются голыми глаголами (`PAUSE`, `RESUME`, `RECONNECT`, `RELOAD`, `SHUTDOWN`, `RESET INTERNER`, `SET <param> = <value>`).
 
 ## Команды SHOW
 
@@ -27,6 +27,8 @@ psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 | `SHOW POOL_COORDINATOR` | Состояние координатора пулов на базу: текущие соединения, использование резерва, число вытеснений. См. [Координатор пулов](../concepts/pool-coordinator.md). |
 | `SHOW POOL_SCALING` | Метрики anticipation/burst: in-flight create-операции, ожидания на воротах, anticipation notifies/timeouts. |
 | `SHOW PREPARED_STATEMENTS` | Закэшированные prepared statements на пул: hash, имя, текст запроса, число попаданий. |
+| `SHOW INTERNER` | Сводка query interner: число записей и байты для named- и anonymous-половины. |
+| `SHOW INTERNER <N>` | N самых крупных интернированных текстов запросов: hash, kind, idle age и предпросмотр SQL. |
 | `SHOW CLIENTS` | Активные клиенты: ID, database, user, имя приложения, адрес, состояние TLS, счётчики transaction/query/error, возраст. |
 | `SHOW SERVERS` | Активные соединения с бэкендом: ID сервера, PID бэкенда, database, user, TLS, состояние, счётчики transaction/query, попадания/промахи кэша prepare, байты. |
 | `SHOW CONNECTIONS` | Число соединений по типу: total, errors, TLS, plain, cancel. |
@@ -50,8 +52,9 @@ psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 | `RESUME` / `RESUME <database>` | Возобновить после `PAUSE`. |
 | `RECONNECT` / `RECONNECT <database>` | Принудительно пересоздать соединения с PostgreSQL (закрыть простаивающие, дренировать активные). Новые соединения берутся из PostgreSQL. |
 | `RELOAD` | То же, что и `SIGHUP` — перезагрузить конфиг с диска. |
-| `SHUTDOWN` | То же, что и `SIGTERM` — плавное завершение работы. |
+| `SHUTDOWN` | Отправляет `SIGINT` текущему процессу. Перед использованием в daemon mode см. [Сигналы](../operations/signals.md). |
 | `KILL <database>` | Сбросить всех клиентов, подключённых к конкретному пулу. |
+| `RESET INTERNER` | Очистить named- и anonymous-записи query interner. Диагностическая команда; активные клиенты заново делают `Parse` при следующем использовании. |
 | `SET log_level = '<level>'` | Изменить уровень логирования в рантайме (`error`, `warn`, `info`, `debug`, `trace`). |
 
 `PAUSE`/`RESUME` полезны при failover или окнах обслуживания. `RECONNECT` после ротации учётных данных в `pg_authid` гарантирует, что бэкенды используют новый пароль.

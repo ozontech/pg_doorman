@@ -773,20 +773,28 @@ fields:
       config:
         en: "Enable caching of prepared statements."
         ru: "Включить кеширование подготовленных запросов."
-      doc: "Switcher to enable/disable caching of prepared statements."
+      doc: |
+        Enables prepared-statement remapping and caching. When disabled, pg_doorman forwards
+        `Parse` and `Bind` without rewriting them through the pool-level prepared-statement cache.
+
+        If this is `true`, `prepared_statements_cache_size` must be greater than `0`.
       default: "true"
 
     prepared_statements_cache_size:
       config:
-        en: "Cache size for prepared statements at the pool level (shared across clients)."
-        ru: "Размер кеша подготовленных запросов на уровне пула (общий для всех клиентов)."
+        en: "Pool-level prepared statement cache size (shared across clients). Must be >0 when prepared_statements is true."
+        ru: "Размер кеша prepared statements на уровне пула (общий для клиентов). Должен быть >0, если prepared_statements=true."
       doc: |
         Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
         This cache stores the mapping from query hash to rewritten prepared statement name.
 
+        This is not the disable switch. To disable prepared-statement remapping, set
+        `prepared_statements: false`; pg_doorman rejects a general `prepared_statements_cache_size`
+        of `0` while `prepared_statements` is enabled.
+
         For an end-to-end picture of how this knob interacts with `server_prepared_statements_cache_size`,
         `client_anonymous_prepared_cache_size`, and the query interner, see the
-        [Anonymous Prepared Statement Caching tutorial](../tutorials/prepared-statements.md).
+        [Anonymous Parse caching tutorial](../tutorials/prepared-statements.md).
       default: "8192"
 
     server_prepared_statements_cache_size:

@@ -49,9 +49,9 @@ A `Parse` message carries a statement name. An empty name means
 ```text
                           Lifetime in PG          Plan caching
   ─────────────────────   ─────────────────       ─────────────────────
-  Anonymous (name="")     Until next anonymous    No reusable named
-                          Parse or session end    statement; planning
-                                                   repeats on reuse
+  Anonymous (name="")     Until next anonymous    No named registry
+                          Parse or session end    entry; each new
+                                                   unnamed Parse plans
   Named (name="stmt_42")  Until Close /           Starts with custom
                           DEALLOCATE /            plans; may switch to
                           session end             a generic plan after
@@ -190,11 +190,11 @@ the same anonymous query share one allocation in memory.
   backend per query shape, and later calls go through `Bind` against
   already prepared backend state.
 - **Drivers that pin to anonymous prepared.** `lib/pq`, `libpq`
-  `PQexecParams`, JDBC's `serverPreparedStatementType=NONE`. Without
-  the remap they would re-plan on every call.
+  `PQexecParams`, pgjdbc before the `prepareThreshold` is reached.
+  Without the remap they would re-plan on every call.
 - **Mixed pools where named and anonymous coexist.** Anonymous
   statements get the same plan-cache benefit as named ones, without
-  growing the per-client client cache.
+  growing the per-client named cache.
 
 ## When the remap doesn't help
 
@@ -234,8 +234,7 @@ each `Bind` re-runs the planner. Odyssey's
 `pool_reserve_prepared_statement` requires named statements; it does
 nothing for anonymous traffic. PgCat behaves the same way.
 
-This makes anonymous-prepared caching a feature only PgDoorman
-provides.
+In this comparison, only PgDoorman caches anonymous `Parse`.
 
 ## Configuration
 
@@ -249,7 +248,7 @@ provides.
 The Named part of the per-client cache is always unlimited and is not
 affected by `client_anonymous_prepared_cache_size`.
 
-To disable anonymous remap entirely (rare, for OLAP-only deployments):
+To disable prepared-statement remapping entirely (rare, for OLAP-only deployments):
 
 ```yaml
 general:
@@ -366,10 +365,10 @@ Raise the cap when:
 - The application has a known wide working set per session and the
   eviction rate matches that pressure.
 
-Lower the cap or raise `max_memory_usage` for very large connection
-counts (50 000+ clients): at that scale `clients × cache_size × 80
-bytes` of pooler bookkeeping can cross 1 GB, and trimming the cap
-halves it.
+Lower the cap for very large connection counts (50 000+ clients): at
+that scale `clients × cache_size × 80 bytes` of pooler bookkeeping can
+cross 1 GB, and trimming the cap halves it. `max_memory_usage` does not
+cap prepared-statement bookkeeping; it protects in-flight query buffers.
 
 ### Named is unbounded by design
 
@@ -516,8 +515,8 @@ SELECT count(*) FROM pg_prepared_statements;
 ```
 
 Numbers near `server_prepared_statements_cache_size` per backend mean
-the server-level LRU is at its cap and rotation is the other way to
-release plan memory. If the server cache inherits
+the server-level LRU is at its cap. Backend rotation is the other
+mechanism that releases plan memory. If the server cache inherits
 `prepared_statements_cache_size`, use that value as the cap. Lowering
 the server cap or `server_lifetime` releases plan-memory pressure at
 the cost of more frequent re-Parses on the backend.
@@ -538,12 +537,14 @@ into two halves:
   pre-3.7 unbounded behaviour, kept as an escape hatch for legacy
   deployments.
 
-If both the interner and the pool/client caches drop the text for an
-anonymous prepared statement before the next `Bind`, pg_doorman
-returns `ERROR: unnamed prepared statement does not exist`
-(SQLSTATE `26000`). This is the same error native PostgreSQL raises
-for the same condition; standard drivers handle it transparently by
-re-issuing `Parse`.
+If an anonymous `Bind` or `Describe` arrives after pg_doorman has lost
+the matching anonymous prepared-statement state, pg_doorman returns
+`ERROR: unnamed prepared statement does not exist` (SQLSTATE `26000`).
+Common causes are client Anonymous LRU eviction, `RESET INTERNER`,
+interner TTL eviction, or a driver pattern that reuses unnamed prepared
+statements across batches. This is the same error native PostgreSQL
+raises for the same condition; standard drivers handle it transparently
+by re-issuing `Parse`.
 
 Binary upgrade (`SIGUSR2`) carries both NAMED and ANON entries to
 the new process. Anonymous entries land in the new ANON interner
@@ -570,10 +571,12 @@ preview of the SQL.
 next reuse — diagnostics-only.
 
 The Prometheus surface mirrors `SHOW INTERNER` plus a histogram for
-sweep duration and a counter for the synthetic `26000`s. Tune
-`query_interner_anon_idle_ttl_seconds` upward when
-`pg_doorman_query_interner_synthetic_misses_total` shows a sustained
-non-zero rate.
+sweep duration and a counter for the synthetic `26000`s. Raise
+`query_interner_anon_idle_ttl_seconds` only when synthetic misses
+correlate with anonymous TTL evictions or a known cross-batch unnamed
+statement pattern. If misses correlate with
+`pg_doorman_clients_prepared_anonymous_evictions_total`, increase
+`client_anonymous_prepared_cache_size` instead.
 
 ## Reference
 

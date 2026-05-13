@@ -49,14 +49,14 @@ PgDoorman rewrites the empty name to an internal `DOORMAN_<N>` on the backend an
 
 PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for **named** statements; an anonymous `Parse` is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.
 
-To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and `SHOW INTERNER` plus Prometheus metrics expose cache size, hits, misses, and evictions.
+To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, `SHOW INTERNER` exposes interner size, and Prometheus metrics expose hits, misses, and evictions.
 
 [Read more →](tutorials/prepared-statements.md)
 ```
 
 ## Why PgDoorman
 
-- **Caches `Parse` on hot query paths.** Prepared backend state is reused between clients sharing a pool, including the anonymous `Parse` most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; cache size, hits, misses, and evictions are visible through `SHOW INTERNER` and metrics.
+- **Caches `Parse` on hot query paths.** Prepared backend state is reused between clients sharing a pool, including the anonymous `Parse` most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; `SHOW INTERNER` shows query-text memory, while Prometheus metrics show cache hits, misses, and evictions.
 - **Multi-threaded, single shared pool.** All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind `so_reuseport` — gives each instance its own pool, and idle counts can drift between processes for the same database.
 - **Thundering herd suppression.** When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (`scaling_max_parallel_creates`) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.
 - **Bounded tail latency.** Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of `server_lifetime`, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.

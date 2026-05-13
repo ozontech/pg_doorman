@@ -439,7 +439,12 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 
 ### prepared_statements
 
-Переключатель для включения/отключения кеширования prepared statements.
+Включает подмену и кеширование prepared statements. Когда параметр
+выключен, pg_doorman передаёт `Parse` и `Bind` без переписывания через
+пуловый кеш prepared statements.
+
+Если значение `true`, `prepared_statements_cache_size` должен быть
+больше `0`.
 
 По умолчанию: `true`.
 
@@ -448,9 +453,14 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 Размер кеша prepared statements на уровне пула (общий для всех клиентов, подключающихся к одному пулу).
 Кеш хранит соответствие между хешем запроса и переписанным именем prepared statement.
 
+Это не выключатель. Чтобы отключить подмену prepared statements,
+задайте `prepared_statements: false`; pg_doorman отклоняет общее
+значение `prepared_statements_cache_size = 0`, пока `prepared_statements`
+включён.
+
 Полная картина того, как этот параметр взаимодействует с `server_prepared_statements_cache_size`,
 `client_anonymous_prepared_cache_size` и query interner — в туториале
-[Кеш Parse для анонимных prepared statements](../tutorials/prepared-statements.md).
+[Кеширование анонимных prepared statements](../tutorials/prepared-statements.md).
 
 По умолчанию: `8192`.
 
