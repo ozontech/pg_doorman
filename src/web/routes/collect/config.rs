@@ -31,11 +31,17 @@ fn is_startup_parameter_key(key: &str) -> bool {
     key.contains(".startup_parameters.") || key.starts_with("startup_parameters.")
 }
 
-/// Bind-address fields require a restart; everything else takes effect on
-/// the next backend or `RELOAD`. Listed precisely so the UI can render
-/// the right "restart_required" pill instead of marking everything
-/// reloadable.
-const IMMUTABLES: &[&str] = &["host", "port", "connect_timeout"];
+/// Bind-address fields require a restart; everything else takes effect
+/// on the next backend or `RELOAD`. Listed as full flattened keys so the
+/// UI renders the right "restart_required" pill — the previous bare
+/// `["host", "port", "connect_timeout"]` table never matched against
+/// flattened keys like `general.host` or `web.host`, so nothing was
+/// marked immutable (codex review MED #5).
+const IMMUTABLES: &[&str] = &["general.host", "general.port", "web.host", "web.port"];
+
+fn is_immutable_key(key: &str) -> bool {
+    IMMUTABLES.contains(&key)
+}
 
 /// Flatten a serde JSON value into dotted keys → string values. Operators
 /// have asked for a coverage-complete `/api/config` so they can verify
@@ -117,11 +123,7 @@ pub(crate) fn collect_config(reveal_startup_values: bool) -> ConfigDto {
                 .get(&key)
                 .map(|d| if mask { "***".to_string() } else { d.clone() })
                 .unwrap_or_else(|| "-".to_string());
-            let changeable = if IMMUTABLES.iter().any(|c| *c == key) {
-                "no"
-            } else {
-                "yes"
-            };
+            let changeable = if is_immutable_key(&key) { "no" } else { "yes" };
             let doc = lookup_doc(&key);
             ConfigEntry {
                 key,
@@ -230,6 +232,26 @@ mod tests {
         // Only exact equals or exact suffix counts.
         assert!(!super::is_secret_key("password_check_attempts"));
         assert!(!super::is_secret_key("not_a_secret_check"));
+    }
+
+    #[test]
+    fn is_immutable_key_matches_bind_addresses() {
+        assert!(super::is_immutable_key("general.host"));
+        assert!(super::is_immutable_key("general.port"));
+        assert!(super::is_immutable_key("web.host"));
+        assert!(super::is_immutable_key("web.port"));
+    }
+
+    #[test]
+    fn is_immutable_key_rejects_reloadable_fields() {
+        assert!(!super::is_immutable_key("general.idle_timeout"));
+        assert!(!super::is_immutable_key("general.shutdown_timeout"));
+        assert!(!super::is_immutable_key("general.connect_timeout"));
+        assert!(!super::is_immutable_key("pools.app_db.server_host"));
+        assert!(!super::is_immutable_key("pools.app_db.users.0.username"));
+        // Bare segment must not match a flattened key.
+        assert!(!super::is_immutable_key("host"));
+        assert!(!super::is_immutable_key("port"));
     }
 
     /// Coverage check: the previous implementation only exposed

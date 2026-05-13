@@ -5,11 +5,14 @@ use crate::web::routes::collect::collect_config;
 use crate::web::server::Response;
 
 pub(crate) fn handle_config(role: Role) -> Response {
-    // Mirror the /api/pools contract: operator-supplied
-    // startup_parameter values are masked for anonymous readers because
-    // they may carry tenant identifiers, audit routing tags, or
-    // accidental secrets. SSO and Admin keep the full view.
-    let reveal_startup_values = role >= Role::Sso;
+    // Operator-supplied startup_parameter values can carry tenant
+    // identifiers, audit routing tags, or accidental secrets. Only
+    // Admin sees the literal values; SSO readers get the same masked
+    // view as anonymous (key + source + state, value `***`).
+    // `sso_allowed_users = ["*"]` is the default, so widening visibility
+    // to the SSO role would expose those values to anyone the IdP
+    // authenticates (codex review MED #4).
+    let reveal_startup_values = role >= Role::Admin;
     Response::ok_json(&collect_config(reveal_startup_values))
 }
 
