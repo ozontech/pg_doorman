@@ -1,5 +1,44 @@
 # Changelog
 
+### 3.9.1
+
+Web admin console refresh.
+
+- Light theme by default. Three-position theme toggle (Light / System / Dark)
+  in the sidebar footer; choice persists in localStorage.
+- New `/servers` page reads SHOW SERVERS. Filters (database, user, state,
+  application_name) and pagination live in the URL.
+- New "Top SQLSTATE codes" card on Overview aggregating
+  `errors_by_sqlstate` across pools.
+- Patroni-assisted fallback banner on Overview when any pool reports
+  `fallback_active=true`.
+- Global RELOAD button on Config with typed confirmation.
+- Logs and Clients filters move to URL parameters; deep links are
+  shareable.
+- Cmd+K / Ctrl-K command palette for navigation and pool lookup.
+- `?` opens a keyboard-shortcut sheet. Esc dismisses popovers and
+  leaves the war room.
+- `/wall` requests a screen wake lock so a TV stays on past the OS
+  screensaver timeout.
+- Structured (i) popovers everywhere — definition, admin SHOW source,
+  formula, thresholds, related metrics, link to docs.
+- Sonner toast notifications for admin actions.
+- Persistent transport indicator (http/https) in the sidebar footer.
+- Counter-reset detection: a pg_doorman restart no longer renders as
+  silent "0 qps" in the sidebar.
+- Storage keys gained a host suffix, so two tabs against different
+  poolers keep separate rolling buffers.
+- Clients table memoises rows; poll cadence relaxed to 3 s. Resolves
+  a memory growth reported on long sessions.
+- Sidebar collapses below `md` (mobile navigation via Cmd+K and URL).
+- Trimmed embedded font bundle: 5 woff2 (~146 KB) down from 9.
+
+Backend: `web/access_log.rs` demotes authenticated 2xx reads to debug.
+`info` covers admin actions, personal-data paths, `/api/auth/`,
+`/api/sso/`, and any non-2xx.
+
+Docs: `guides/web-ui.md` rewritten for the new pages and shortcuts.
+
 ### 3.9.0
 
 Per-pool PostgreSQL startup parameters. pg_doorman can now add
