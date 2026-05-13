@@ -41,6 +41,28 @@ use crate::pool::{
 };
 use crate::server::ServerParameters;
 
+/// Canonicalised set of GUC names the operator put under
+/// `general.startup_parameters` / `pool.startup_parameters` /
+/// `auth_query` for the (db, user) pair that authenticated this
+/// connection. The same `Arc` lives on `ConnectionPool` so cloning
+/// stays zero-copy. Client startup uses this to drop `ParameterStatus`
+/// entries the client sent for keys the backend session already has
+/// pinned by `startup_parameters`.
+pub type OperatorManagedKeys = Arc<std::collections::HashSet<String>>;
+
+/// Outcome of [`authenticate`]: everything the client startup path needs
+/// to finish the StartupMessage exchange. `operator_managed_keys` is
+/// captured from the same `ConnectionPool` snapshot that produced
+/// `server_parameters`, so the client startup filter cannot drift
+/// against a concurrent RELOAD or auth_query overlay refetch the way a
+/// second global `POOLS` lookup would.
+pub struct AuthOutcome {
+    pub transaction_mode: bool,
+    pub server_parameters: ServerParameters,
+    pub prepared_statements_enabled: bool,
+    pub operator_managed_keys: Option<OperatorManagedKeys>,
+}
+
 /// Authenticate a user based on the provided parameters
 pub async fn authenticate<S, T>(
     read: &mut S,
@@ -49,7 +71,7 @@ pub async fn authenticate<S, T>(
     client_identifier: &mut ClientIdentifier,
     pool_name: &str,
     username_from_parameters: &str,
-) -> Result<(bool, ServerParameters, bool), Error>
+) -> Result<AuthOutcome, Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -57,7 +79,7 @@ where
     let mut prepared_statements_enabled = false;
 
     // Authenticate admin user.
-    let (transaction_mode, server_parameters) = if admin {
+    let (transaction_mode, server_parameters, operator_managed_keys) = if admin {
         if client_identifier.hba_md5 == CheckResult::Trust
             || client_identifier.hba_scram == CheckResult::Trust
         {
@@ -65,7 +87,12 @@ where
                 "HBA trust: admin user={username_from_parameters}, addr={}",
                 client_identifier.addr
             );
-            return Ok((false, ServerParameters::admin(), false));
+            return Ok(AuthOutcome {
+                transaction_mode: false,
+                server_parameters: ServerParameters::admin(),
+                prepared_statements_enabled: false,
+                operator_managed_keys: None,
+            });
         }
         if client_identifier.hba_md5 == CheckResult::Deny
             || client_identifier.hba_scram == CheckResult::Deny
@@ -77,7 +104,8 @@ where
             wrong_password(write, username_from_parameters).await?;
             return Err(error);
         }
-        authenticate_admin(read, write, username_from_parameters).await?
+        let (tx, sp) = authenticate_admin(read, write, username_from_parameters).await?;
+        (tx, sp, None)
     }
     // Authenticate normal user.
     else {
@@ -92,11 +120,12 @@ where
         .await?
     };
 
-    Ok((
+    Ok(AuthOutcome {
         transaction_mode,
         server_parameters,
         prepared_statements_enabled,
-    ))
+        operator_managed_keys,
+    })
 }
 
 /// Authenticate an admin user with MD5
@@ -191,7 +220,7 @@ async fn authenticate_normal_user<S, T>(
     pool_name: &str,
     username_from_parameters: &str,
     prepared_statements_enabled: &mut bool,
-) -> Result<(bool, ServerParameters), Error>
+) -> Result<(bool, ServerParameters, Option<OperatorManagedKeys>), Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -355,7 +384,17 @@ where
         }
     };
 
-    Ok((transaction_mode, server_parameters))
+    // Capture operator-managed startup-parameter keys from the same
+    // pool snapshot that produced `server_parameters`. The client
+    // startup path used to read this set with a second `POOLS` global
+    // lookup, which could observe a RELOAD between authentication and
+    // the lookup and send `ParameterStatus` values for keys the
+    // backend session already has set via operator-managed
+    // `startup_parameters`. Snapshotting on this side guarantees the
+    // two views stay in step.
+    let operator_managed_keys = Some(pool.database.server_pool().operator_managed_startup_keys());
+
+    Ok((transaction_mode, server_parameters, operator_managed_keys))
 }
 
 /// Authenticate a user with PAM
@@ -633,7 +672,7 @@ async fn try_auth_query<S, T>(
     pool_name: &str,
     username: &str,
     prepared_statements_enabled: &mut bool,
-) -> Result<(bool, ServerParameters), Error>
+) -> Result<(bool, ServerParameters, Option<OperatorManagedKeys>), Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -957,7 +996,9 @@ where
                 shared_pool_id
             );
 
-            Ok((transaction_mode, server_parameters))
+            let operator_managed_keys =
+                Some(pool.database.server_pool().operator_managed_startup_keys());
+            Ok((transaction_mode, server_parameters, operator_managed_keys))
         }
         None => {
             // === Passthrough mode: each dynamic user gets their own pool ===
@@ -1036,7 +1077,9 @@ where
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!("[{username}@{pool_name}] auth_query: authenticated (passthrough mode)");
 
-            Ok((transaction_mode, server_parameters))
+            let operator_managed_keys =
+                Some(pool.database.server_pool().operator_managed_startup_keys());
+            Ok((transaction_mode, server_parameters, operator_managed_keys))
         }
     }
 }

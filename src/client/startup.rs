@@ -367,7 +367,7 @@ where
         let secret_key: i32 = rand::random();
 
         // Authenticate user
-        let (transaction_mode, mut server_parameters, prepared_statements_enabled) = authenticate(
+        let auth_outcome = authenticate(
             &mut read,
             &mut write,
             admin,
@@ -376,19 +376,22 @@ where
             username_from_parameters,
         )
         .await?;
+        let transaction_mode = auth_outcome.transaction_mode;
+        let mut server_parameters = auth_outcome.server_parameters;
+        let prepared_statements_enabled = auth_outcome.prepared_statements_enabled;
 
         // Merge the startup parameters sent by the client with the
-        // server defaults.
-        // Operator-managed startup_parameters must win over the client
-        // packet, otherwise ParameterStatus reports the client value
-        // while the backend keeps the operator default — a protocol-
-        // visible mismatch. The backend's sync_parameters already
-        // applies the same filter on checkout, so this aligns the two
-        // client views. Iterate directly into `set_param` to avoid an
-        // intermediate `HashMap` allocation on every connection.
-        let operator_keys =
-            crate::pool::get_operator_managed_startup_keys(&pool_name, &client_identifier.username);
-        match operator_keys {
+        // server defaults. Operator-managed startup_parameters must
+        // win over the client packet; otherwise ParameterStatus
+        // reports the client value while the backend keeps the
+        // operator default, a protocol-visible mismatch. The
+        // backend's sync_parameters already applies the same filter
+        // on checkout, so this aligns the two client views. The key
+        // set comes from the same pool snapshot that produced
+        // `server_parameters`, so a concurrent RELOAD or auth_query
+        // overlay refetch between authentication and this filter
+        // cannot make the two views diverge.
+        match auth_outcome.operator_managed_keys {
             Some(keys) if !keys.is_empty() => {
                 for (key, value) in &parameters {
                     let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
