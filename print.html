@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.9.0</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.9.1</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-built-in-operator-dashboard" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-operator-dashboard-title">
 <div class="admonition-title">
@@ -5236,14 +5236,14 @@ this gate fired.</p>
 <tr><td><code>log_tap_max_entries</code></td><td>Ring-buffer size for the in-memory log tap behind <code>/api/logs</code>. <code>0</code> disables the endpoint.</td><td><code>8192</code></td></tr>
 </tbody></table>
 </div>
-<h2 id="url-surface"><a class="header" href="#url-surface">URL surface</a></h2>
+<h2 id="url-endpoints"><a class="header" href="#url-endpoints">URL endpoints</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>URL</th><th>Required role</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>/</code>, <code>/pools</code>, any non-API path</td><td>none</td><td>The SPA shell. Served anonymously even when <code>ui_anonymous = false</code>, so deep links do not trip a browser-native Basic-auth dialog before the React sign-in modal can render.</td></tr>
 <tr><td><code>/assets/*</code></td><td>none</td><td>Hashed JS, CSS, font, and SVG bundles. Served with <code>Cache-Control: public, max-age=31536000, immutable</code>.</td></tr>
 <tr><td><code>/metrics</code></td><td>none</td><td>Prometheus exposition format. Unaffected by <code>ui</code>.</td></tr>
 <tr><td><code>GET /api/auth/config</code></td><td>none</td><td>Tells the SPA whether SSO is wired and what role the current request holds.</td></tr>
 <tr><td><code>GET /api/version</code>, <code>/api/overview</code>, <code>/api/pools</code>, <code>/api/clients</code>, <code>/api/servers</code>, <code>/api/connections</code>, <code>/api/stats</code>, <code>/api/databases</code>, <code>/api/users</code>, <code>/api/auth_query</code>, <code>/api/config</code>, <code>/api/log_level</code>, <code>/api/pool_coordinator</code>, <code>/api/pool_scaling</code>, <code>/api/sockets</code>, <code>/api/prepared</code>, <code>/api/interner</code>, <code>/api/top/clients</code>, <code>/api/top/prepared</code>, <code>/api/apps</code>, <code>/api/events</code></td><td><code>Anonymous</code> when <code>ui_anonymous = true</code>, otherwise <code>Sso</code></td><td>Read-only JSON that mirrors the <code>SHOW &lt;admin-command&gt;</code> shape.</td></tr>
-<tr><td><code>GET /api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td><code>Sso</code></td><td>Read-only personal-data endpoints. <code>/api/logs</code> activates the in-memory tap on first request and self-disables after 2 minutes without traffic. <code>/api/top/queries</code> returns the first ~120 characters of cached SQL text — kept off the public surface because previews can carry literal values and tenant identifiers.</td></tr>
+<tr><td><code>GET /api/logs</code>, <code>/api/prepared/text/{hash}</code>, <code>/api/interner/top</code>, <code>/api/top/queries</code></td><td><code>Sso</code></td><td>Read-only personal-data endpoints. <code>/api/logs</code> activates the in-memory tap on first request and self-disables after 2 minutes without traffic. <code>/api/top/queries</code> returns the first ~120 characters of cached SQL text and is not available anonymously because previews can carry literal values and tenant identifiers.</td></tr>
 <tr><td><code>POST /api/admin/{reload,pause,resume,reconnect}</code></td><td><code>Admin</code></td><td>Mutating admin actions. Same semantics as the psql admin protocol.</td></tr>
 </tbody></table>
 </div>
@@ -5378,7 +5378,7 @@ issue <code>RELOAD</code>. pg_doorman picks the new key up without a restart.</p
 <code>sso_enabled = true</code> but the runtime cannot load (missing PEM file, empty
 audience, unparsable PEM), the listener logs the reason at <code>error</code> level,
 keeps SSO disabled for that run, and serves only Basic and Anonymous
-requests. The same reason surfaces in two places so an operator notices
+requests. The same reason is shown in two places so an operator notices
 the broken rollout instead of silently falling back:</p>
 <ul>
 <li><code>/api/auth/config.sso_config_error</code> carries a human-readable message.
@@ -5452,12 +5452,15 @@ proxy headers are ignored when the peer is not trusted.</li>
 <ul>
 <li><code>info</code> — every admin action (<code>POST /api/admin/*</code>), every
 personal-data read (<code>/api/logs</code>, <code>/api/prepared/text/*</code>,
-<code>/api/interner/top</code>, <code>/api/top/queries</code>), every non-2xx response,
-and every authenticated request (Sso or Admin role).</li>
-<li><code>debug</code> — anonymous successful reads of public APIs and <code>/metrics</code>
-scrapes. Prometheus scrapes every few seconds and the SPA polls
-the overview / pools endpoints, so keeping these off <code>info</code> lets
-<code>RUST_LOG=info</code> stay readable.</li>
+<code>/api/interner/top</code>, <code>/api/top/queries</code>), every auth/SSO endpoint
+(<code>/api/auth/*</code>, <code>/api/sso/*</code>), and every non-2xx response.</li>
+<li><code>debug</code> — every other successful 2xx read, anonymous or
+authenticated. The SPA polls <code>/api/overview</code>, <code>/api/pools</code>,
+<code>/api/clients</code>, <code>/api/process</code> every 1.5–3 s; with the previous
+rule that every authenticated 2xx was <code>info</code>, an operator sitting
+on the Logs page saw their own polls. Routine reads are logged at
+<code>debug</code>, so <code>RUST_LOG=info</code> is limited to admin actions, auth
+traffic, and failures.</li>
 </ul>
 <p>The dedicated <code>pg_doorman::web::access</code> target lets operators filter
 the access feed independently of the rest of the logger. The LogTap
@@ -5466,7 +5469,7 @@ target with one click.</p>
 <h3 id="real-client-ip-behind-a-reverse-proxy"><a class="header" href="#real-client-ip-behind-a-reverse-proxy">Real client IP behind a reverse proxy</a></h3>
 <p>By default <code>peer</code> records the TCP address that connected to the
 listener, which is the proxy when pg_doorman sits behind one. List
-the proxy's CIDR in <code>[web].trusted_proxies</code> to surface the real
+the proxy's CIDR in <code>[web].trusted_proxies</code> to record the real
 client IP:</p>
 <pre><code class="language-toml">[web]
 trusted_proxies = ["10.0.0.0/8", "192.168.0.0/16"]
@@ -5510,29 +5513,89 @@ the same domain, and <code>aud</code> must be in <code>sso_audience</code>. The 
 sends no cookies; cookie auth targets curl, sidecars, and oauth2-proxy
 variants that forward the token via cookie on the shared domain.</p>
 <h2 id="pages"><a class="header" href="#pages">Pages</a></h2>
-<p>The SPA exposes:</p>
-<ul>
-<li><strong>Overview</strong> — health pill, four golden-signal sparklines (latency
-p95, traffic, errors/s, saturation), connection breakdown stacked
-area, pool fill heatmap, dual-axis wait + oldest-active-age, top-5
-errors per pool, and a collapsed Resource detail panel.</li>
-<li><strong>Pools</strong> — sortable table with mini-sparklines per row.</li>
-<li><strong>Pool detail</strong> (<code>/pools/:poolId</code>) — full per-pool drill-down:
-SQLSTATE breakdown, oldest-active-age, pause/resume/reconnect
-controls.</li>
-<li><strong>Clients</strong> — paginated table backed by <code>/api/clients</code> with
-server-side filter and sort.</li>
-<li><strong>Apps</strong> — one row per <code>application_name</code> with err / 1k q ratio.</li>
-<li><strong>Caches</strong> — Prepared statement table with hit rate, plus a query
-interner card (named vs anonymous bytes).</li>
-<li><strong>Logs</strong> — live tail of the LogTap with level / target filter and
-pause / auto-scroll toggles.</li>
-<li><strong>Config &amp; state</strong> — collapsed panels covering <code>[general]</code> keys,
-the active log filter, <code>auth_query</code> cache, databases, users,
-sockets, pool scaling, pool coordinator.</li>
-<li><strong>War room</strong> (<code>/wall</code>) — six oversized tiles for an incident
-bridge or a wall display.</li>
-</ul>
+<p>The sidebar has eight routes. <strong>War room</strong> opens from <strong>Overview</strong>.
+Pages that expose SQL text or logs require the <code>Sso</code> or <code>Admin</code> role
+and are hidden from anonymous users.</p>
+<h3 id="overview-overview"><a class="header" href="#overview-overview">Overview (<code>/overview</code>)</a></h3>
+<p>Default page for pooler health: main metrics, queues, pool saturation,
+common SQLSTATE codes, and a collapsed resource block. If Patroni
+fallback is active, a banner lists the affected pools.</p>
+<h3 id="pools-pools"><a class="header" href="#pools-pools">Pools (<code>/pools</code>)</a></h3>
+<p>Table of all <code>user@database</code> pools: size, active connections, waiting
+clients, p95, errors, saturation, and fallback state. Selecting a row
+opens <strong>Pool detail</strong>.</p>
+<h3 id="pool-detail-poolspoolid"><a class="header" href="#pool-detail-poolspoolid">Pool detail (<code>/pools/:poolId</code>)</a></h3>
+<p>Single-pool view: mode, limits, current connections, TLS, fallback
+state, SQLSTATE counts, PostgreSQL startup parameters, and active
+threshold reasons. Pool actions <code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, and
+global <code>RELOAD</code> are available here.</p>
+<h3 id="clients-clients"><a class="header" href="#clients-clients">Clients (<code>/clients</code>)</a></h3>
+<p>Client table with URL filters:</p>
+<pre><code>/clients?pool=shop_checkout&amp;state=waiting&amp;user=app
+</code></pre>
+<p>Filters cover pool, database, user, state, <code>application_name</code>, and
+peer address. Sorting covers queries, errors, connection age, and
+current-query age. Use it with <strong>Servers</strong> to map a client to a
+PostgreSQL pid.</p>
+<h3 id="servers-servers"><a class="header" href="#servers-servers">Servers (<code>/servers</code>)</a></h3>
+<p>Backend connections from <code>SHOW SERVERS</code>: <code>server_id</code>, <code>process_id</code>,
+database, user, application, state, active-query age, counters, traffic,
+and TLS. Use a client's <code>server_id</code> here to find the pid in
+<code>pg_stat_activity</code>.</p>
+<h3 id="apps-apps"><a class="header" href="#apps-apps">Apps (<code>/apps</code>)</a></h3>
+<p>One row per <code>application_name</code>: active clients, qps, tps, totals, and
+<code>err / 1k q</code>.</p>
+<h3 id="caches-caches"><a class="header" href="#caches-caches">Caches (<code>/caches</code>)</a></h3>
+<p>Prepared-statement cache by pool and process-wide SQL-text cache. Both
+can show SQL text, so both require <code>Sso</code> or <code>Admin</code>.</p>
+<h3 id="logs-logs"><a class="header" href="#logs-logs">Logs (<code>/logs</code>)</a></h3>
+<p>LogTap stream with URL filters:</p>
+<pre><code>/logs?level=ERROR&amp;q=53300
+</code></pre>
+<p>Pause freezes the view only; the server buffer keeps filling. If
+<code>[web].log_tap_max_entries = 0</code>, the page reports that log streaming is
+disabled. Access requires <code>Sso</code> or <code>Admin</code>.</p>
+<h3 id="config--state-config"><a class="header" href="#config--state-config">Config &amp; state (<code>/config</code>)</a></h3>
+<p>Read-only mirror of <code>SHOW CONFIG</code>, <code>SHOW DATABASES</code>, <code>SHOW USERS</code>,
+<code>SHOW AUTH_QUERY</code>, <code>SHOW LOG_LEVEL</code>, <code>SHOW STARTUP_PARAMETERS</code>,
+<code>SHOW SOCKETS</code>, <code>SHOW POOL_SCALING</code>, and <code>SHOW POOL_COORDINATOR</code>.
+It shows which config keys apply on <code>RELOAD</code> and which require restart.
+<strong>Reload config</strong> is available only to <code>Admin</code>.</p>
+<h3 id="war-room-wall"><a class="header" href="#war-room-wall">War room (<code>/wall</code>)</a></h3>
+<p>Large-screen <strong>Overview</strong>: pool saturation, big metrics, and recent
+admin actions. <strong>Esc</strong> returns to <code>/overview</code>.</p>
+<h2 id="admin-actions"><a class="header" href="#admin-actions">Admin actions</a></h2>
+<p>The SPA exposes four mutating operations:</p>
+<div class="table-wrapper"><table><thead><tr><th>Action</th><th>Scope</th><th>Where</th><th>Confirmation</th></tr></thead><tbody>
+<tr><td><code>RELOAD</code></td><td>every pool</td><td>Config &amp; state · Pool detail</td><td><code>RELOAD</code></td></tr>
+<tr><td><code>PAUSE</code></td><td>one <code>user@database</code></td><td>Pool detail</td><td>database</td></tr>
+<tr><td><code>RESUME</code></td><td>one <code>user@database</code></td><td>Pool detail, when paused</td><td>database</td></tr>
+<tr><td><code>RECONNECT</code></td><td>one <code>user@database</code></td><td>Pool detail</td><td>database</td></tr>
+</tbody></table>
+</div>
+<p>Semantics match the psql admin protocol. <code>PAUSE</code> stops new backend
+checkouts for the pool; in-flight transactions continue. <code>RESUME</code>
+allows checkouts again. <code>RECONNECT</code> closes idle backends and rejects
+active ones when they return. <code>RELOAD</code> re-reads <code>pg_doorman.toml</code>;
+pool size shrinks as connections drain.</p>
+<p>Typed confirmation protects against accidental <code>RELOAD</code> or <code>PAUSE</code> on
+the wrong pool. Each action shows a result message, writes an <code>info</code>
+access-log line, and appears in the recent admin-event list.</p>
+<h2 id="keyboard-shortcuts"><a class="header" href="#keyboard-shortcuts">Keyboard shortcuts</a></h2>
+<p>Shortcuts work outside text fields.</p>
+<div class="table-wrapper"><table><thead><tr><th>Combo</th><th>Effect</th></tr></thead><tbody>
+<tr><td><kbd>⌘ K</kbd> / <kbd>Ctrl K</kbd></td><td>Search pages and pools.</td></tr>
+<tr><td><kbd>?</kbd></td><td>Show keyboard shortcuts.</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>Close help or modal. On <code>/wall</code>, go back.</td></tr>
+</tbody></table>
+</div>
+<h2 id="theme"><a class="header" href="#theme">Theme</a></h2>
+<p>The sidebar footer has <strong>Light</strong> / <strong>System</strong> / <strong>Dark</strong>. Default is
+<strong>Light</strong>. The choice is stored in <code>localStorage</code>.</p>
+<h2 id="in-app-help"><a class="header" href="#in-app-help">In-app help</a></h2>
+<p>Metric and section headers have an (i) icon. Help explains what the
+number means, where it comes from, how it is calculated, and which
+thresholds are normal.</p>
 <h2 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h2>
 <p>The frontend bundle is checked into git under <code>frontend/dist/</code> so RPM,
 DEB, and Docker pipelines do not need a node toolchain. Developers
@@ -5553,7 +5616,7 @@ touches <code>frontend/</code>.</p>
 <p><code>/metrics</code> is unauthenticated on the same listener that serves the UI.
 This mirrors the historical Prometheus exporter and keeps existing
 scrape configs working. Auth on <code>/api/*</code> does <strong>not</strong> propagate to
-<code>/metrics</code> — the metrics surface exposes pool names, users, databases,
+<code>/metrics</code> — the metrics endpoint exposes pool names, users, databases,
 connection pressure, auth-query state, and workload shape. Either bind
 <code>[web]</code> to a private host/port that only your scrape system reaches,
 or front the listener with a proxy that adds auth on <code>/metrics</code>
@@ -6802,6 +6865,42 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="391"><a class="header" href="#391">3.9.1</a></h3>
+<p>Web admin console refresh.</p>
+<ul>
+<li>Light theme by default. Three-position theme toggle (Light / System / Dark)
+in the sidebar footer; choice persists in localStorage.</li>
+<li>New <code>/servers</code> page reads SHOW SERVERS. Filters (database, user, state,
+application_name) and pagination live in the URL.</li>
+<li>New "Top SQLSTATE codes" card on Overview aggregating
+<code>errors_by_sqlstate</code> across pools.</li>
+<li>Patroni-assisted fallback banner on Overview when any pool reports
+<code>fallback_active=true</code>.</li>
+<li>Global RELOAD button on Config with typed confirmation.</li>
+<li>Logs and Clients filters move to URL parameters; deep links are
+shareable.</li>
+<li>Cmd+K / Ctrl-K command palette for navigation and pool lookup.</li>
+<li><code>?</code> opens a keyboard-shortcut sheet. Esc dismisses popovers and
+leaves the war room.</li>
+<li><code>/wall</code> requests a screen wake lock so a TV stays on past the OS
+screensaver timeout.</li>
+<li>Structured (i) popovers everywhere — definition, admin SHOW source,
+formula, thresholds, related metrics, link to docs.</li>
+<li>Sonner toast notifications for admin actions.</li>
+<li>Persistent transport indicator (http/https) in the sidebar footer.</li>
+<li>Counter-reset detection: a pg_doorman restart no longer renders as
+silent "0 qps" in the sidebar.</li>
+<li>Storage keys gained a host suffix, so two tabs against different
+poolers keep separate rolling buffers.</li>
+<li>Clients table memoises rows; poll cadence relaxed to 3 s. Resolves
+a memory growth reported on long sessions.</li>
+<li>Sidebar collapses below <code>md</code> (mobile navigation via Cmd+K and URL).</li>
+<li>Trimmed embedded font bundle: 5 woff2 (~146 KB) down from 9.</li>
+</ul>
+<p>Backend: <code>web/access_log.rs</code> demotes authenticated 2xx reads to debug.
+<code>info</code> covers admin actions, personal-data paths, <code>/api/auth/</code>,
+<code>/api/sso/</code>, and any non-2xx.</p>
+<p>Docs: <code>guides/web-ui.md</code> rewritten for the new pages and shortcuts.</p>
 <h3 id="390"><a class="header" href="#390">3.9.0</a></h3>
 <p>Per-pool PostgreSQL startup parameters. pg_doorman can now add
 configured GUCs to each backend <code>StartupMessage</code>. Values apply in

@@ -161,6 +161,42 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="391"><a class="header" href="#391">3.9.1</a></h3>
+<p>Web admin console refresh.</p>
+<ul>
+<li>Light theme by default. Three-position theme toggle (Light / System / Dark)
+in the sidebar footer; choice persists in localStorage.</li>
+<li>New <code>/servers</code> page reads SHOW SERVERS. Filters (database, user, state,
+application_name) and pagination live in the URL.</li>
+<li>New "Top SQLSTATE codes" card on Overview aggregating
+<code>errors_by_sqlstate</code> across pools.</li>
+<li>Patroni-assisted fallback banner on Overview when any pool reports
+<code>fallback_active=true</code>.</li>
+<li>Global RELOAD button on Config with typed confirmation.</li>
+<li>Logs and Clients filters move to URL parameters; deep links are
+shareable.</li>
+<li>Cmd+K / Ctrl-K command palette for navigation and pool lookup.</li>
+<li><code>?</code> opens a keyboard-shortcut sheet. Esc dismisses popovers and
+leaves the war room.</li>
+<li><code>/wall</code> requests a screen wake lock so a TV stays on past the OS
+screensaver timeout.</li>
+<li>Structured (i) popovers everywhere — definition, admin SHOW source,
+formula, thresholds, related metrics, link to docs.</li>
+<li>Sonner toast notifications for admin actions.</li>
+<li>Persistent transport indicator (http/https) in the sidebar footer.</li>
+<li>Counter-reset detection: a pg_doorman restart no longer renders as
+silent "0 qps" in the sidebar.</li>
+<li>Storage keys gained a host suffix, so two tabs against different
+poolers keep separate rolling buffers.</li>
+<li>Clients table memoises rows; poll cadence relaxed to 3 s. Resolves
+a memory growth reported on long sessions.</li>
+<li>Sidebar collapses below <code>md</code> (mobile navigation via Cmd+K and URL).</li>
+<li>Trimmed embedded font bundle: 5 woff2 (~146 KB) down from 9.</li>
+</ul>
+<p>Backend: <code>web/access_log.rs</code> demotes authenticated 2xx reads to debug.
+<code>info</code> covers admin actions, personal-data paths, <code>/api/auth/</code>,
+<code>/api/sso/</code>, and any non-2xx.</p>
+<p>Docs: <code>guides/web-ui.md</code> rewritten for the new pages and shortcuts.</p>
 <h3 id="390"><a class="header" href="#390">3.9.0</a></h3>
 <p>Per-pool PostgreSQL startup parameters. pg_doorman can now add
 configured GUCs to each backend <code>StartupMessage</code>. Values apply in
