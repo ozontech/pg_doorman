@@ -7,8 +7,8 @@ PgDoorman responds to four POSIX signals: `SIGHUP`, `SIGINT`, `SIGUSR2`, and `SI
 | Signal | Effect | Existing connections | When to use |
 | --- | --- | --- | --- |
 | `SIGHUP` | Reload config from disk. | Preserved. | Adjust pools, rotate server TLS certs, edit `pg_hba.conf`. |
-| `SIGTERM` | Graceful shutdown. | Drained until idle, then closed. | Stopping the service. |
-| `SIGUSR2` | Graceful binary upgrade. | Migrated to a new process. | Replacing the binary without downtime. |
+| `SIGTERM` | Immediate shutdown. | Closed. | Stopping the service when reconnects are acceptable. |
+| `SIGUSR2` | Binary upgrade and old-process drain. | Migrated to a new process where possible. | Replacing the binary without downtime. |
 | `SIGINT` | Depends on TTY (see below). | Varies. | Ctrl+C in development; deprecated in production. |
 
 ## Reload (`SIGHUP`)
@@ -29,33 +29,24 @@ Re-reads the config file and applies changes. What reloads:
 What does **not** reload:
 
 - `general.host`, `general.port` — listening socket is fixed at startup.
-- Client-side TLS certificates — process restart required, or use binary upgrade.
+- Client-facing TLS certificates — process restart required. Do not rotate
+  them during an upgrade where TLS session migration is required.
 - Worker thread count and Tokio runtime parameters.
 
 After reload, `SHOW CONFIG` reflects the new values. Existing client connections are not re-evaluated against the new `pg_hba.conf` — only new connections.
 
-## Graceful shutdown (`SIGTERM`)
+## Immediate shutdown (`SIGTERM`)
 
 ```bash
 kill -TERM $(pidof pg_doorman)
 ```
 
-PgDoorman:
+pg_doorman logs how many clients are still in transactions and exits.
+It does not wait for `shutdown_timeout` and it does not migrate active
+transactions. All client connections are closed by process exit.
 
-1. Stops accepting new connections.
-2. Closes idle backend connections.
-3. Logs how many clients are still in transactions.
-4. Waits up to `shutdown_timeout` (default 10s) for clients to finish.
-5. Exits.
-
-`shutdown_timeout` is a hard cap. Clients still in transactions when it fires receive a connection close.
-
-```yaml
-general:
-  shutdown_timeout: "30s"
-```
-
-For systemd, set `TimeoutStopSec` to a value larger than `shutdown_timeout` so systemd does not `SIGKILL` while PgDoorman is still draining.
+`shutdown_timeout` applies to `SIGUSR2` binary upgrade drain, not to
+plain `SIGTERM` shutdown.
 
 ## Binary upgrade (`SIGUSR2`)
 
@@ -65,13 +56,15 @@ kill -USR2 $(pidof pg_doorman)
 
 The recommended way to replace the binary without dropping clients:
 
-1. Replace the binary on disk with the new version.
+1. Replace the binary on disk with the new version using an atomic rename.
 2. Send `SIGUSR2` to the running process.
-3. The current process spawns a child running the new binary, hands over the listening socket, and continues serving existing clients until they finish.
-4. New clients connect to the child immediately.
-5. The old process exits when the last client transaction completes (or on `shutdown_timeout`).
+3. The current process validates the new binary with `-t`.
+4. The current process spawns a child running the new binary, hands over the listening socket, and continues serving existing clients until they finish.
+5. New clients connect to the child immediately.
+6. The old process exits when the last client transaction completes (or on `shutdown_timeout`).
 
-The child sends `sd_notify MAINPID=<new_pid>` so systemd `Type=notify` units update their main PID seamlessly.
+The child sends `sd_notify MAINPID=<new_pid>` so systemd `Type=notify`
+units track the new main PID correctly.
 
 For the full protocol, TLS migration, and rollback, see [Binary Upgrade](../tutorials/binary-upgrade.md).
 
@@ -79,8 +72,9 @@ For the full protocol, TLS migration, and rollback, see [Binary Upgrade](../tuto
 
 `SIGINT` is context-sensitive:
 
-- **Foreground with a TTY** (development, `cargo run`): graceful shutdown only.
-- **Daemon mode or no TTY** (legacy production): triggers a binary upgrade + graceful shutdown, like `SIGUSR2`.
+- **Foreground with a TTY** (development, `cargo run`): shutdown only.
+- **Daemon mode or no TTY** (legacy production): triggers binary upgrade
+  and old-process drain, like `SIGUSR2`.
 
 The legacy `SIGINT` upgrade path exists for backward compatibility with deployments that send `SIGINT` from init scripts. New deployments should use `SIGUSR2` for upgrade and `SIGTERM` for shutdown explicitly.
 
@@ -91,14 +85,25 @@ PgDoorman supports `Type=notify`. The shipped `pg_doorman.service` unit runs the
 ```ini
 [Service]
 Type=notify
-ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.yaml
-ExecReload=/bin/kill -HUP $MAINPID
-KillSignal=SIGTERM
+NotifyAccess=exec
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+ExecStop=/bin/kill -SIGTERM $MAINPID
+SyslogIdentifier=pg_doorman
+KillMode=mixed
 TimeoutStopSec=60
 Restart=on-failure
+Nice=-15
+User=postgres
+Group=postgres
+LimitNOFILE=65536
 ```
 
 `sd_notify READY=1` is sent after the listening socket is bound and pools are initialized. `sd_notify MAINPID=<child>` is sent during binary upgrade so systemd tracks the new process correctly.
+
+With this unit, `systemctl reload pg_doorman` means binary upgrade
+(`SIGUSR2`), not config reload (`SIGHUP`). Use `kill -HUP <pid>` when
+you only need to reload configuration.
 
 If you migrate from `Type=forking` + `--daemon`, drop `--daemon` and switch to `Type=notify` — fewer moving parts and proper readiness tracking. Older deployments using `--daemon` continue to work but do not benefit from `sd_notify`.
 
@@ -115,4 +120,4 @@ general:
 
 - [Binary Upgrade](../tutorials/binary-upgrade.md) — full upgrade protocol with TLS migration.
 - [Troubleshooting](../tutorials/troubleshooting.md) — what to check when reload does not pick up changes.
-- [TLS](../guides/tls.md#hot-reload) — `SIGHUP` reload semantics for server-side certificates.
+- [TLS](../guides/tls.md) — `SIGHUP` reload semantics for server-side certificates.

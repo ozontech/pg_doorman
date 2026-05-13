@@ -30,28 +30,35 @@ for direct-binary deployments where no package manager is in scope.
 ```
 
 ```bash
-# 1. Replace the binary atomically. `install` writes to a temporary
-#    file and renames it onto the target, so the inode the running
-#    process is mapped from is not overwritten in place. `cp` modifies
-#    the live inode and risks SIGBUS / SIGSEGV in the running pg_doorman.
-install -m 0755 pg_doorman_new /usr/bin/pg_doorman
+# 1. Stage the new binary in the same directory, then rename it over
+#    the target. The final `mv` is atomic on one filesystem, so the
+#    running process keeps its old inode. Do not `cp` over the target:
+#    that overwrites the live inode and can crash the old pg_doorman
+#    with SIGBUS / SIGSEGV.
+install -m 0755 pg_doorman_new /usr/bin/pg_doorman.next
+mv -f /usr/bin/pg_doorman.next /usr/bin/pg_doorman
 
 # 2. Validate the new binary against the live config before triggering
 #    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
 #    catching it here gives you a chance to fix the config without
 #    touching the running server.
-/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
+/usr/bin/pg_doorman -t /etc/pg_doorman/pg_doorman.toml
 
 # 3. Trigger the upgrade. With `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
-#    in the unit, `systemctl reload` runs the full binary upgrade
-#    (config validated by `pg_doorman -t` first, then state migrated,
-#    then old process drained). systemd delivers the signal to the
+#    in the unit, `systemctl reload` sends SIGUSR2 to start binary
+#    upgrade. pg_doorman then validates config, starts the child,
+#    migrates state where possible, and drains the old process.
+#    systemd delivers the signal to the
 #    tracked MainPID, so this targets the single correct process even
 #    when other pg_doorman instances are running on the host. Direct
 #    `kill -USR2 $(pgrep -f /usr/bin/pg_doorman)` works but matches by
 #    command line and can hit every instance, which is why packaged
 #    installs go through systemctl.
 sudo systemctl reload pg_doorman.service
+
+# A successful reload only means systemd delivered SIGUSR2. Validation,
+# child startup, MAINPID handoff, and client migration happen inside
+# pg_doorman. Verify them in the next step and in the logs.
 
 # 4. Verify: systemd tracks the new MainPID (Type=notify receives
 #    `MAINPID=<new_pid>` from the child during the handoff). Active
@@ -75,7 +82,8 @@ UPGRADE;
 ```
 
 `UPGRADE` sends `SIGUSR2` to the running process, which is the same code
-path as `kill -USR2`.
+path as `kill -USR2`. A successful command response means the signal was
+sent, not that validation and migration have finished.
 
 ## How the upgrade works
 
@@ -118,9 +126,12 @@ path as `kill -USR2`.
 
 ### Phase 1: Config validation
 
-The current binary re-executes itself with `-t` and the config file.
-If validation fails, the upgrade is aborted. The old process keeps
-serving traffic. An error banner appears in the logs:
+The running process executes the same binary path it was started with,
+using `-t` and the current config file. After the atomic replacement in
+the quick start, that path points to the new binary, so the check
+validates the binary that will take over. If validation fails, the
+upgrade is aborted and the old process keeps serving traffic. An error
+banner appears in the logs:
 
 ```
 !!!  BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED  !!!
@@ -143,9 +154,9 @@ serving traffic. An error banner appears in the logs:
 
 A new daemon process starts. The old daemon closes its listener.
 Client migration via socketpair is not used — existing clients
-drain in place. When `shutdown_timeout` expires, anyone still
-connected gets SQLSTATE `58006` (`pooler is shut down now`) and the
-old process exits.
+stay on the old process. When `shutdown_timeout` expires, the old
+process exits and any remaining client sockets close. Use foreground
+mode if clients must migrate to the new process.
 
 ### Phase 3: Idle client migration (foreground)
 
@@ -330,8 +341,8 @@ SHA-256 is verified automatically.
 
 | Signal | Behavior |
 |--------|----------|
-| `SIGUSR2` | Binary upgrade + graceful shutdown. **Recommended for all modes.** |
-| `SIGINT` | Foreground + TTY (Ctrl+C): graceful shutdown only, no upgrade. Daemon / non-TTY: binary upgrade (legacy compatibility). |
+| `SIGUSR2` | Binary upgrade + old-process drain. **Recommended for all modes.** |
+| `SIGINT` | Foreground + TTY (Ctrl+C): shutdown only, no upgrade. Daemon / non-TTY: binary upgrade (legacy compatibility). |
 | `SIGTERM` | Immediate exit. Active transactions are killed. All clients disconnected. |
 | `SIGHUP` | Reload configuration without restart. No downtime. |
 | `UPGRADE` (admin) | Sends SIGUSR2 to the current process internally. Same effect. |
@@ -345,8 +356,8 @@ SIGINT triggers binary upgrade in daemon mode or without a TTY (e.g. when spawne
 | | Foreground | Daemon |
 |---|---|---|
 | Client migration via fd passing | Yes (socketpair) | No |
-| Idle clients preserved | Yes | No (drain with 58006) |
-| In-tx clients | Finish tx, then migrate | Finish tx, then 58006 |
+| Idle clients preserved | Yes | No (closed when old process exits) |
+| In-tx clients | Finish tx, then migrate | Finish tx until timeout, then close |
 | New process startup | Inherits listener fd | Starts independently |
 | Recommended for | systemd, containers, k8s | Legacy deployments |
 
@@ -358,24 +369,26 @@ child process can update `MainPID` to itself during `SIGUSR2` upgrades:
 ```ini
 [Service]
 Type=notify
-# `exec` is enough: the child process that takes over on SIGUSR2 is
-# spawned through Command::spawn (fork + execve), which puts it in
-# scope for sd_notify. `all` works too, but exec narrows the notify
-# surface to what pg_doorman actually uses.
+# The child process that takes over on SIGUSR2 must be allowed to send
+# READY=1 and MAINPID=<new_pid> during handoff.
 NotifyAccess=exec
-ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
-# `systemctl reload` triggers a full binary upgrade (config validated,
-# state migrated, old process drained). pg_doorman's SIGUSR2 path runs
-# `pg_doorman -t` first and aborts the reload if the config is broken,
-# so this is safe to wire as the reload signal.
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
+# `systemctl reload` triggers binary upgrade: validate config, spawn
+# the new process, migrate clients where possible, then drain the old
+# process according to pg_doorman's shutdown_timeout.
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
-# `systemctl stop` sends SIGTERM to the main pid for a graceful drain.
+# `systemctl stop` is immediate shutdown. It is not a binary upgrade
+# path and it does not wait for active transactions to migrate.
 ExecStop=/bin/kill -SIGTERM $MAINPID
-# Always restart: bring the pooler back even after a manual stop.
-# Match the typical PostgreSQL-side HA expectation that the pool is
-# never down on the host.
-Restart=always
-RestartSec=5s
+# During binary upgrade the new child becomes MainPID via sd_notify.
+# With KillMode=mixed, systemd sends SIGTERM only to MainPID on stop
+# and SIGKILLs remaining cgroup processes only after TimeoutStopSec.
+KillMode=mixed
+TimeoutStopSec=60
+# Do not restart after a clean manual stop or after the old process exits
+# successfully during binary upgrade.
+Restart=on-failure
+Nice=-15
 # pg_doorman is connection-heavy: each client + each backend uses an
 # fd, plus internal pipes. 65536 covers most OLTP pools; size it from
 # `general.pool_size * num_pools` plus a few thousand for clients.
@@ -385,23 +398,21 @@ LimitNOFILE=65536
 # ownership consistent with PostgreSQL itself.
 User=postgres
 Group=postgres
-# Surface logs in journalctl under `pg-pooler` instead of the binary
-# name; convenient for `journalctl -u pg_doorman -t pg-pooler`.
-SyslogIdentifier=pg-pooler
-TimeoutStopSec=30s
+SyslogIdentifier=pg_doorman
 ```
 
-`systemctl reload pg_doorman` drives the binary upgrade: pg_doorman
-runs `-t` on the new binary, aborts the reload if the config is bad,
-otherwise spawns the new process and drains the old one. `UPGRADE;`
-from the admin console reaches the same code path. Tune
-`TimeoutStopSec` so it covers `shutdown_timeout` in
-`pg_doorman.yaml` plus a small margin; otherwise systemd SIGKILLs the
-old process before the drain finishes.
+`systemctl reload pg_doorman` sends `SIGUSR2`; a zero exit status only
+means the signal was delivered. pg_doorman then runs `-t` on the new
+binary, cancels the upgrade if the config is bad, otherwise spawns the
+new process and drains the old one. `UPGRADE;` from the admin console
+reaches the same code path. The drain window is controlled by
+`shutdown_timeout` in `pg_doorman.toml`; `TimeoutStopSec` controls normal
+`systemctl stop`, not how long `systemctl reload` waits for migrated
+sessions.
 
-Production deployments often layer resource controls on top of the
-above: `MemoryMax=`, `Nice=-15`, `CPUAffinity=2,3,4,5,6,7,8,9`. These
-are workload-specific and orthogonal to the upgrade contract.
+Production deployments often layer more resource controls on top of the
+above, such as `MemoryMax=` and `CPUAffinity=2,3,4,5,6,7,8,9`. These are
+workload-specific and orthogonal to the upgrade contract.
 
 ## Configuration
 
@@ -434,11 +445,12 @@ and import fails on mismatch — affected clients drop and reconnect.
 
 Client-facing TLS material is **not** reloaded on `SIGHUP` (only
 server-facing certificates are; see [Hot reload of server TLS](../guides/tls.md)).
-Rotating the client-facing cert therefore requires either a restart
-or a binary upgrade with the new files in place — and during that
-upgrade, TLS clients with the old cert will drop and reconnect even
-with `tls-migration` enabled. Plan the rotation around a window when
-you can tolerate the reconnects.
+Do not combine client-facing certificate rotation with an upgrade where
+you expect TLS sessions to migrate. If the files change between old and
+new process, TLS import fails and affected clients reconnect even with
+`tls-migration` enabled. Rotate the client-facing certificate in a
+maintenance window where reconnects are acceptable, or keep the same
+certificate files for the binary upgrade and rotate later with a restart.
 
 ### `prepared_statements_cache_size`
 
@@ -453,6 +465,17 @@ Per-client Anonymous prepared statement LRU. The client's full cache
 config has a smaller value, only Anonymous entries are subject to LRU
 eviction; Named entries are unbounded and migrate intact.
 
+## Rollback
+
+Binary upgrade has no separate undo path. Roll back by staging the
+previous binary at the same path and running another `SIGUSR2` upgrade.
+If validation fails, the current process keeps serving traffic. If the
+new process already took over, treat the rollback as a normal binary
+upgrade in the opposite direction.
+
+Avoid `systemctl restart` or `SIGTERM` for rollback unless reconnects
+are acceptable: both close client sessions instead of migrating them.
+
 ## Monitoring
 
 ### Logs
@@ -461,7 +484,7 @@ Key log lines during migration:
 
 ```
 INFO  Got SIGUSR2, starting binary upgrade and graceful shutdown
-INFO  Validating configuration with: /usr/bin/pg_doorman -t pg_doorman.yaml
+INFO  Validating configuration with: /usr/bin/pg_doorman -t pg_doorman.toml
 INFO  Configuration validation successful
 INFO  Starting new process with inherited listener fd=5
 INFO  New process signaled readiness
@@ -487,7 +510,7 @@ INFO  migration receiver: stopped
 |--------|--------------------------|
 | `pg_doorman_pools_clients{status="active"}` | Should drop to 0 on old process |
 | `pg_doorman_pools_clients{status="idle"}` | Drops as clients migrate |
-| `pg_doorman_connection_count{type="total"}` | Old: decreasing, new: increasing |
+| `pg_doorman_connections_total{type="total"}` | New process accepts fresh connections; use `rate()` / `increase()` |
 | `pg_doorman_clients_prepared_cache_entries` | Confirms cache transferred |
 
 ### Admin console
@@ -500,13 +523,14 @@ SHOW CLIENTS;
 
 ## Troubleshooting
 
-### Client receives "pooler is shut down now" (58006) instead of migrating
+### Client receives 58006 or disconnects instead of migrating
 
 **Ctrl+C in foreground mode.** SIGINT in TTY = shutdown without
 upgrade. Use `kill -USR2` or the `UPGRADE` admin command.
 
 **Daemon mode.** Daemon mode does not use fd-based migration.
-Clients drain normally. Switch to foreground mode for migration.
+Existing clients stay on the old process and are closed when it exits.
+Switch to foreground mode for migration.
 
 **`PG_DOORMAN_CI_SHUTDOWN_ONLY=1` is set.** This env var forces
 shutdown-only mode (used in CI tests). Unset it.
@@ -525,20 +549,21 @@ exit.
 ### TLS connection dropped after upgrade
 
 **Binary built without `--features tls-migration`.** TLS clients
-drain instead of migrating. Rebuild with the feature flag.
+drain instead of migrating. Rebuild with `--features tls-migration`.
 
 **Not running on Linux.** TLS migration is Linux-only.
 
 **Certificate or key changed.** The old process exported cipher state
-bound to the old certificate. Use the same files for both processes.
-Rotate certificates via SIGHUP before the binary upgrade.
+bound to the old certificate. Use the same files for both processes if
+you need TLS migration. Client-facing certificate rotation requires a
+restart or a planned reconnect window.
 
 ### "TLS migration not available" in logs
 
 The new process received a migration payload with TLS data but was
 built without `--features tls-migration` or is not running on Linux.
-The client is disconnected. Rebuild the new binary with the feature
-flag.
+The client is disconnected. Rebuild the new binary with
+`--features tls-migration`.
 
 ### "migration channel not ready" in logs
 
@@ -560,7 +585,10 @@ causes: fd exhaustion, or the client connected through a code
 path that does not store the raw fd. Check `ulimit -n`.
 
 ```admonish warning title="Client library compatibility"
-Libraries like `github.com/lib/pq` or Go's `database/sql` may need configuration to handle the reconnection path for clients that receive error 58006 (those in daemon mode or stuck past `shutdown_timeout`). See [this issue](https://github.com/lib/pq/issues/939).
+Libraries like `github.com/lib/pq` or Go's `database/sql` may need
+configuration to handle the reconnection path for clients that cannot
+migrate and receive 58006 or a connection close. See
+[this issue](https://github.com/lib/pq/issues/939).
 ```
 
 ## Operational checklist
@@ -576,9 +604,8 @@ Before rolling out binary upgrade to production:
       verify the session continues working
 - [ ] Verify the systemd unit is `Type=notify` with
       `NotifyAccess=exec`, `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
-      (so `systemctl reload` runs a full binary upgrade with config
-      validation), and a `TimeoutStopSec` that covers
-      `shutdown_timeout` plus margin
+      (so `systemctl reload` runs binary upgrade with config
+      validation), `KillMode=mixed`, and `Restart=on-failure`
 - [ ] Monitor logs for migration errors after the first production
       upgrade
 - [ ] Confirm old process exits (check PID file or `pgrep`)
