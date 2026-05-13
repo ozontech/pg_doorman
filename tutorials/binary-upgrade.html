@@ -186,8 +186,26 @@ cipher state with the <code>tls-migration</code> build (Linux, opt-in).</p>
 </div>
 </div>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
-<pre><code class="language-bash"># 1. Drop the new binary in place.
-cp pg_doorman_new /usr/bin/pg_doorman
+<div id="admonition-use-the-distro-package-whenever-you-can" class="admonition admonish-tip" role="note" aria-labelledby="admonition-use-the-distro-package-whenever-you-can-title">
+<div class="admonition-title">
+<div id="admonition-use-the-distro-package-whenever-you-can-title">
+<p>Use the distro package whenever you can</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-use-the-distro-package-whenever-you-can"></a>
+</div>
+<div>
+<p>On hosts where pg_doorman comes from <code>apt install pg-doorman</code> /
+<code>dnf install pg-doorman</code>, the package manager handles step 1 atomically
+(<code>dpkg</code> stages into a temp path and renames into place; <code>rpm</code> does the
+same). <code>apt-get install --only-upgrade pg-doorman</code> or <code>dnf upgrade pg-doorman</code> is the idiomatic devops path. The manual <code>install</code> below is
+for direct-binary deployments where no package manager is in scope.</p>
+</div>
+</div>
+<pre><code class="language-bash"># 1. Replace the binary atomically. `install` writes to a temporary
+#    file and renames it onto the target, so the inode the running
+#    process is mapped from is not overwritten in place. `cp` modifies
+#    the live inode and risks SIGBUS / SIGSEGV in the running pg_doorman.
+install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
 # 2. Validate the new binary against the live config before triggering
 #    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
@@ -195,13 +213,38 @@ cp pg_doorman_new /usr/bin/pg_doorman
 #    touching the running server.
 /usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Trigger the upgrade.
-kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+# 3. Trigger the upgrade. With `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
+#    in the unit, `systemctl reload` runs the full binary upgrade
+#    (config validated by `pg_doorman -t` first, then state migrated,
+#    then old process drained). systemd delivers the signal to the
+#    tracked MainPID, so this targets the single correct process even
+#    when other pg_doorman instances are running on the host. Direct
+#    `kill -USR2 $(pgrep -f /usr/bin/pg_doorman)` works but matches by
+#    command line and can hit every instance, which is why packaged
+#    installs go through systemctl.
+sudo systemctl reload pg_doorman.service
 
-# 4. Verify: a new PID is running and clients are still connected.
-pgrep -f /usr/bin/pg_doorman      # new PID
-psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # answers from new process
+# 4. Verify: systemd tracks the new MainPID (Type=notify receives
+#    `MAINPID=&lt;new_pid&gt;` from the child during the handoff). Active
+#    state and the admin console confirm clients are still attached.
+systemctl show -p MainPID --value pg_doorman.service
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'  # served by the new process
 </code></pre>
+<div id="admonition-standalone-no-systemd-deployments" class="admonition admonish-tip" role="note" aria-labelledby="admonition-standalone-no-systemd-deployments-title">
+<div class="admonition-title">
+<div id="admonition-standalone-no-systemd-deployments-title">
+<p>Standalone (no systemd) deployments</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-standalone-no-systemd-deployments"></a>
+</div>
+<div>
+<p>If the unit is not running under systemd, read the PID file the daemon
+writes (<code>daemon_pid_file</code>, default <code>/tmp/pg_doorman.pid</code>) instead of
+parsing <code>pgrep</code>: <code>kill -USR2 "$(cat /var/run/pg_doorman/pg_doorman.pid)"</code>.
+Foreground deployments not managed by systemd should keep the PID of
+the supervising process and signal that one directly.</p>
+</div>
+</div>
 <p>The same upgrade can be triggered from the admin console:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
@@ -453,12 +496,53 @@ against the new version.</p>
 </tbody></table>
 </div>
 <p>For zero-downtime upgrades with client migration, run in foreground
-mode. systemd manages the process lifecycle:</p>
+mode. systemd manages the process lifecycle. Use <code>Type=notify</code> so the
+unit reaches <code>active</code> only after pg_doorman signals readiness, and the
+child process can update <code>MainPID</code> to itself during <code>SIGUSR2</code> upgrades:</p>
 <pre><code class="language-ini">[Service]
-Type=simple
+Type=notify
+# `exec` is enough: the child process that takes over on SIGUSR2 is
+# spawned through Command::spawn (fork + execve), which puts it in
+# scope for sd_notify. `all` works too, but exec narrows the notify
+# surface to what pg_doorman actually uses.
+NotifyAccess=exec
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
+# `systemctl reload` triggers a full binary upgrade (config validated,
+# state migrated, old process drained). pg_doorman's SIGUSR2 path runs
+# `pg_doorman -t` first and aborts the reload if the config is broken,
+# so this is safe to wire as the reload signal.
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
+# `systemctl stop` sends SIGTERM to the main pid for a graceful drain.
+ExecStop=/bin/kill -SIGTERM $MAINPID
+# Always restart: bring the pooler back even after a manual stop.
+# Match the typical PostgreSQL-side HA expectation that the pool is
+# never down on the host.
+Restart=always
+RestartSec=5s
+# pg_doorman is connection-heavy: each client + each backend uses an
+# fd, plus internal pipes. 65536 covers most OLTP pools; size it from
+# `general.pool_size * num_pools` plus a few thousand for clients.
+LimitNOFILE=65536
+# Run as a non-privileged service account that owns the PID file. On
+# many deployments postgres already exists; reusing it keeps file
+# ownership consistent with PostgreSQL itself.
+User=postgres
+Group=postgres
+# Surface logs in journalctl under `pg-pooler` instead of the binary
+# name; convenient for `journalctl -u pg_doorman -t pg-pooler`.
+SyslogIdentifier=pg-pooler
+TimeoutStopSec=30s
 </code></pre>
+<p><code>systemctl reload pg_doorman</code> drives the binary upgrade: pg_doorman
+runs <code>-t</code> on the new binary, aborts the reload if the config is bad,
+otherwise spawns the new process and drains the old one. <code>UPGRADE;</code>
+from the admin console reaches the same code path. Tune
+<code>TimeoutStopSec</code> so it covers <code>shutdown_timeout</code> in
+<code>pg_doorman.yaml</code> plus a small margin; otherwise systemd SIGKILLs the
+old process before the drain finishes.</p>
+<p>Production deployments often layer resource controls on top of the
+above: <code>MemoryMax=</code>, <code>Nice=-15</code>, <code>CPUAffinity=2,3,4,5,6,7,8,9</code>. These
+are workload-specific and orthogonal to the upgrade contract.</p>
 <h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
 <h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
 <p>Maximum time to wait for in-transaction clients before force-closing
@@ -593,7 +677,11 @@ both processes use the same certificate and key files</li>
 Test the upgrade in staging: open a session, trigger SIGUSR2,
 verify the session continues working</li>
 <li><input disabled="" type="checkbox"/>
-Verify systemd unit has <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code></li>
+Verify the systemd unit is <code>Type=notify</code> with
+<code>NotifyAccess=exec</code>, <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>
+(so <code>systemctl reload</code> runs a full binary upgrade with config
+validation), and a <code>TimeoutStopSec</code> that covers
+<code>shutdown_timeout</code> plus margin</li>
 <li><input disabled="" type="checkbox"/>
 Monitor logs for migration errors after the first production
 upgrade</li>

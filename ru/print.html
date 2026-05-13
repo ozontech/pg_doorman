@@ -641,7 +641,7 @@ Arguments:
 Options:
   -l, --log-level &lt;LOG_LEVEL&gt;    [env: LOG_LEVEL=] [default: INFO]
   -F, --log-format &lt;LOG_FORMAT&gt;  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
-  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
+  -n, --no-color                 force colors off in the log output
   -d, --daemon                   run as daemon [env: DAEMON=]
   -h, --help                     Print help
   -V, --version                  Print version
@@ -651,7 +651,7 @@ Options:
 <tr><td><code>-d</code>, <code>--daemon</code></td><td>Запуск в фоне. Без этого параметра процесс работает на переднем плане.<br><br>В daemon-режиме обязательны <code>daemon_pid_file</code> и <code>syslog_prog_name</code>. После ухода в фон сообщения в stderr больше не пишутся.</td></tr>
 <tr><td><code>-l</code>, <code>--log-level</code></td><td>Уровень логирования: <code>INFO</code>, <code>DEBUG</code> или <code>WARN</code>.</td></tr>
 <tr><td><code>-F</code>, <code>--log-format</code></td><td>Формат логов. Возможные значения: <code>text</code>, <code>structured</code>, <code>debug</code>.</td></tr>
-<tr><td><code>-n</code>, <code>--no-color</code></td><td>Отключить цвета в выводе логов.</td></tr>
+<tr><td><code>-n</code>, <code>--no-color</code></td><td>Принудительно отключить цвета в логах. Цвета также автоматически выключаются, если stderr не терминал (под systemd — это pipe в journald) и если переменная окружения <code>NO_COLOR</code> установлена в любое непустое значение.</td></tr>
 <tr><td><code>-V</code>, <code>--version</code></td><td>Показать информацию о версии.</td></tr>
 <tr><td><code>-h</code>, <code>--help</code></td><td>Показать справку.</td></tr>
 </tbody></table>
@@ -4520,8 +4520,28 @@ OpenSSL.</p>
 </div>
 </div>
 <h2 id="Быстрый-старт-2"><a class="header" href="#Быстрый-старт-2">Быстрый старт</a></h2>
-<pre><code class="language-bash"># 1. Положите новый бинарник на место.
-cp pg_doorman_new /usr/bin/pg_doorman
+<div id="admonition-Используйте-дистрибутивный-пакет-если-он-есть" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Используйте-дистрибутивный-пакет-если-он-есть-title">
+<div class="admonition-title">
+<div id="admonition-Используйте-дистрибутивный-пакет-если-он-есть-title">
+<p>Используйте дистрибутивный пакет, если он есть</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/binary-upgrade.html#admonition-Используйте-дистрибутивный-пакет-если-он-есть"></a>
+</div>
+<div>
+<p>Если pg_doorman поставлен через <code>apt install pg-doorman</code> или
+<code>dnf install pg-doorman</code>, пакетный менеджер выполняет шаг 1 атомарно
+(<code>dpkg</code> пишет во временный путь и переименовывает, <code>rpm</code> делает то
+же). Идиоматичный путь — <code>apt-get install --only-upgrade pg-doorman</code>
+или <code>dnf upgrade pg-doorman</code>. Ручной <code>install</code> ниже — для разворотов
+прямо бинарём, без пакетного менеджера.</p>
+</div>
+</div>
+<pre><code class="language-bash"># 1. Атомарно замените бинарник. `install` пишет во временный файл и
+#    переименовывает его на целевой путь, поэтому inode, из которого
+#    отображены сегменты работающего процесса, не перезаписывается.
+#    `cp` правит живой inode и может уронить старый pg_doorman через
+#    SIGBUS / SIGSEGV.
+install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
 # 2. Проверьте, что новый бинарник принимает текущий конфиг, до того
 #    как запускать обновление. SIGUSR2 тоже прогоняет `-t` и отменяет
@@ -4529,13 +4549,37 @@ cp pg_doorman_new /usr/bin/pg_doorman
 #    не трогая работающий сервер.
 /usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Запустите обновление.
-kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+# 3. Запустите обновление. С `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
+#    в юните `systemctl reload` запускает полный binary upgrade
+#    (сначала валидация `pg_doorman -t`, потом миграция состояния,
+#    потом drain старого процесса). systemd шлёт сигнал в MainPID,
+#    поэтому выбирается ровно один процесс, даже если на хосте есть
+#    другие инстансы pg_doorman. Прямой `kill -USR2 $(pgrep -f
+#    /usr/bin/pg_doorman)` работает, но pgrep матчит по командной
+#    строке и может попасть во все инстансы сразу — пакетные
+#    установки используют systemctl.
+sudo systemctl reload pg_doorman.service
 
-# 4. Убедитесь: запущен новый PID, клиенты на месте.
-pgrep -f /usr/bin/pg_doorman      # новый PID
-psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # отвечает уже новый процесс
+# 4. Проверьте: systemd подхватил новый MainPID (Type=notify получает
+#    `MAINPID=&lt;new_pid&gt;` от чайлда при handoff). Состояние active и
+#    админ-консоль подтверждают, что клиенты на месте.
+systemctl show -p MainPID --value pg_doorman.service
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'  # отвечает новый процесс
 </code></pre>
+<div id="admonition-stand-alone-установки-без-systemd" class="admonition admonish-tip" role="note" aria-labelledby="admonition-stand-alone-установки-без-systemd-title">
+<div class="admonition-title">
+<div id="admonition-stand-alone-установки-без-systemd-title">
+<p>Stand-alone установки без systemd</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/binary-upgrade.html#admonition-stand-alone-установки-без-systemd"></a>
+</div>
+<div>
+<p>Если процесс не управляется systemd, читайте PID-файл, который пишет
+daemon (<code>daemon_pid_file</code>, по умолчанию <code>/tmp/pg_doorman.pid</code>), вместо
+парсинга <code>pgrep</code>: <code>kill -USR2 "$(cat /var/run/pg_doorman/pg_doorman.pid)"</code>.
+Foreground без systemd — шлите сигнал в PID супервизора процесса.</p>
+</div>
+</div>
 <p>То же обновление можно запустить из консоли администратора:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
@@ -4784,12 +4828,57 @@ Java-клиентом и pg_doorman.</p>
 </tbody></table>
 </div>
 <p>Для обновления без простоя и с миграцией клиентов запускайте PgDoorman
-в foreground-режиме. systemd управляет жизненным циклом процесса:</p>
+в foreground-режиме. systemd управляет жизненным циклом процесса.
+Используйте <code>Type=notify</code>, тогда unit становится <code>active</code> только после
+сигнала готовности от pg_doorman, а новый процесс при <code>SIGUSR2</code>
+обновляет <code>MainPID</code> на себя:</p>
 <pre><code class="language-ini">[Service]
-Type=simple
+Type=notify
+# `exec` достаточно: новый процесс при SIGUSR2 порождается через
+# Command::spawn (fork + execve), он попадает в exec-scope notify.
+# `all` тоже работает, но `exec` сужает поверхность только до того,
+# что действительно делает pg_doorman.
+NotifyAccess=exec
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
+# `systemctl reload` запускает полный binary upgrade (валидация
+# конфига, миграция состояния, drain старого процесса). SIGUSR2 в
+# pg_doorman сначала прогоняет `-t` и отменяет reload при битом
+# конфиге, поэтому такой сигнал безопасно вешать на reload.
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
+# `systemctl stop` шлёт SIGTERM в main pid для graceful drain.
+ExecStop=/bin/kill -SIGTERM $MAINPID
+# Перезапуск всегда: возвращаем пул на ноге даже после ручной
+# остановки. Соответствует ожиданию HA на стороне PostgreSQL, что пул
+# никогда не лежит на хосте.
+Restart=always
+RestartSec=5s
+# pg_doorman тяжёл по дескрипторам: каждый клиент и каждый backend —
+# отдельный fd, плюс служебные pipe. 65536 покрывает большинство
+# OLTP-пулов; считается как `general.pool_size * num_pools` плюс
+# несколько тысяч на клиентов.
+LimitNOFILE=65536
+# Сервисная учётка, которой принадлежит PID-файл. На многих установках
+# postgres уже существует — переиспользование оставляет владение
+# файлов согласованным с самим PostgreSQL.
+User=postgres
+Group=postgres
+# Имя в journalctl: `pg-pooler` вместо имени бинаря; удобно для
+# `journalctl -u pg_doorman -t pg-pooler`.
+SyslogIdentifier=pg-pooler
+TimeoutStopSec=30s
 </code></pre>
+<p><code>systemctl reload pg_doorman</code> запускает binary upgrade: pg_doorman
+прогоняет <code>-t</code> на новом бинаре, отменяет reload при битом конфиге,
+иначе порождает новый процесс и дренирует старый. <code>UPGRADE;</code> из
+админ-консоли идёт по тому же code path. Подбирайте <code>TimeoutStopSec</code>
+с запасом над <code>shutdown_timeout</code> из <code>pg_doorman.yaml</code>, иначе systemd
+прибьёт старый процесс SIGKILL-ом до завершения дренажа.</p>
+<p>Прод-установки часто добавляют сверху ограничения ресурсов:
+<code>MemoryMax=</code>, <code>Nice=-15</code>, <code>CPUAffinity=2,3,4,5,6,7,8,9</code>. Это
+workload-специфика и она ортогональна контракту upgrade.</p>
+<p>или <code>UPGRADE;</code> из админ-консоли. <code>TimeoutStopSec</code> подбирайте под
+значение <code>shutdown_timeout</code> в <code>pg_doorman.yaml</code> плюс небольшой запас,
+иначе systemd прибьёт процесс SIGKILL до окончания дренажа.</p>
 <h2 id="Конфигурация-12"><a class="header" href="#Конфигурация-12">Конфигурация</a></h2>
 <h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
 <p>Максимальное время ожидания завершения транзакций перед принудительным
@@ -4922,7 +5011,9 @@ idle-итерации.</p>
 Протестировать обновление на staging: открыть сессию, отправить
 SIGUSR2, убедиться что сессия продолжает работать</li>
 <li><input disabled="" type="checkbox"/>
-В systemd unit есть <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code></li>
+В systemd unit указано <code>Type=notify</code> с <code>NotifyAccess=exec</code>,
+<code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code> (тогда <code>systemctl     reload</code> запускает полный binary upgrade с валидацией конфига)
+и <code>TimeoutStopSec</code>, покрывающий <code>shutdown_timeout</code> с запасом</li>
 <li><input disabled="" type="checkbox"/>
 Мониторинг логов на ошибки миграции после первого промышленного
 обновления</li>
