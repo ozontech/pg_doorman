@@ -1,10 +1,9 @@
-# Anonymous Parse Caching
+# Anonymous Parse caching
 
-PgDoorman caches anonymous `Parse` as a performance optimization for
-transaction pooling. Many drivers send short parameterised queries as
-`Parse` with an empty statement name; without a remap, PostgreSQL
-does planner work again on every `Bind`, and the hot OLTP path pays
-that cost on every call.
+PgDoorman caches anonymous `Parse` messages for transaction pooling.
+Many drivers send short parameterised queries as `Parse` with an empty
+statement name. Without a remap, PostgreSQL plans the query again on
+every `Bind`, so hot OLTP paths pay planner CPU on every call.
 
 PgDoorman transparently remaps every anonymous `Parse` to an internal
 `DOORMAN_<N>` name on the backend. The plan lands in the backend's
@@ -17,12 +16,11 @@ The remap is transparent to the driver: clients send and receive
 empty statement names just as they would against a vanilla
 PostgreSQL.
 
-This is a feature unique to PgDoorman. PgBouncer (1.21+) and Odyssey
-support prepared statements in transaction mode, but only for
-**named** statements; anonymous `Parse` is forwarded unchanged and
-re-planned on every call. Cache bounds, LRU, TTL, and observability
-exist to keep the performance optimization controlled under dynamic
-SQL, not to replace the performance goal.
+PgBouncer (1.21+) and Odyssey support prepared statements in
+transaction mode, but only for **named** statements. They forward
+anonymous `Parse` unchanged. PgDoorman's extra behaviour is the
+anonymous remap. Cache bounds, LRU, TTL, and observability keep that
+remap controlled under dynamic SQL.
 
 ## What gets faster
 
@@ -50,12 +48,14 @@ A `Parse` message carries a statement name. An empty name means
 
 ```text
                           Lifetime in PG          Plan caching
-  ─────────────────────   ─────────────────       ─────────────────
-  Anonymous (name="")     Until next anonymous    None: planner runs
-                          Parse or session end    on every Bind
-  Named (name="stmt_42")  Until Close /           Generic at first,
-                          DEALLOCATE /            switches to custom
-                          session end             after 5 observations
+  ─────────────────────   ─────────────────       ─────────────────────
+  Anonymous (name="")     Until next anonymous    No reusable named
+                          Parse or session end    statement; planning
+                                                   repeats on reuse
+  Named (name="stmt_42")  Until Close /           Starts with custom
+                          DEALLOCATE /            plans; may switch to
+                          session end             a generic plan after
+                                                   5 custom executions
 ```
 
 Most modern drivers default to **anonymous** for one-shot
@@ -198,9 +198,10 @@ the same anonymous query share one allocation in memory.
 
 ## When the remap doesn't help
 
-- **Ad-hoc / OLAP traffic.** Each query is unique, so every insert
-  triggers an eviction with an O(N) scan. Disable with
-  `prepared_statements_cache_size = 0`.
+- **Ad-hoc / OLAP traffic.** Each query is unique. When the pool cache
+  is full, each new query shape must find an old entry to evict with an
+  O(N) scan. Disable prepared-statement remapping with
+  `prepared_statements: false` if the instance only serves this traffic.
 - **Single-statement scripts.** A connect → `Parse` → 1 `Bind` →
   disconnect pattern doesn't accumulate enough hits to repay the
   bookkeeping. The overhead per `Parse` is small (~700 ns) but
@@ -211,11 +212,11 @@ the same anonymous query share one allocation in memory.
   across sessions. The pool-level cache still shares the query text
   across sessions; the backend planner still runs once per session.
 
-Track effectiveness as a performance feature with the Prometheus counters
-`pg_doorman_servers_prepared_hits` and
-`pg_doorman_servers_prepared_misses`. A sustained miss rate above
-30 % means the remap is spending CPU and memory without delivering
-plan-cache reuse. Either disable it or raise
+Track effectiveness with
+`rate(pg_doorman_servers_prepared_hits_total[5m])` and
+`rate(pg_doorman_servers_prepared_misses_total[5m])`. A sustained miss
+share above 30 % means the remap is spending CPU and memory without
+enough backend plan reuse. Either disable it or raise
 `prepared_statements_cache_size`.
 
 ## How other poolers handle this
@@ -240,8 +241,10 @@ provides.
 
 | Setting                                  | Default | Effect                                                                                                        |
 | ---------------------------------------- | :-----: | ------------------------------------------------------------------------------------------------------------- |
-| `prepared_statements_cache_size`         | 8192    | Pool-level cache size in entries. 0 disables remap.                                                           |
-| `client_anonymous_prepared_cache_size`   | inherits `prepared_statements_cache_size` | Per-client Anonymous LRU size. 0 = unlimited. Named is unbounded. |
+| `prepared_statements`                    | `true`  | Enables prepared-statement remapping and caching. Set `false` to disable the feature.                         |
+| `prepared_statements_cache_size`         | 8192    | Pool-level cache size in entries. Must be greater than 0 while `prepared_statements` is `true`.                |
+| `server_prepared_statements_cache_size`  | inherits `prepared_statements_cache_size` | Per-backend LRU size for `DOORMAN_<N>` names. `0` disables backend retention but not the pool-level remap. |
+| `client_anonymous_prepared_cache_size`   | inherits `prepared_statements_cache_size` | Per-client Anonymous LRU size. `0` means unlimited. Named is unbounded. |
 
 The Named part of the per-client cache is always unlimited and is not
 affected by `client_anonymous_prepared_cache_size`.
@@ -250,8 +253,12 @@ To disable anonymous remap entirely (rare, for OLAP-only deployments):
 
 ```yaml
 general:
-  prepared_statements_cache_size: 0
+  prepared_statements: false
 ```
+
+There is no separate anonymous-only switch. Do not use
+`prepared_statements_cache_size: 0` as the disable switch: pg_doorman
+rejects that general config while `prepared_statements` is enabled.
 
 ## Differences from PostgreSQL semantics
 
@@ -264,12 +271,12 @@ applications may rely on:
 - `Close` with an empty name is a no-op for PgDoorman's caches. The
   underlying `DOORMAN_<N>` lives until pool-level LRU evicts it or
   the pool shuts down.
-- The plan stays generic longer. PostgreSQL switches a named
-  statement from generic to custom plans after five observations; if
-  different clients share the same `DOORMAN_<N>` and each contributes
-  one or two `Bind`s, the threshold is reached faster — but the
-  resulting shared plan may be a poor fit for a client with skewed
-  data.
+- PostgreSQL's custom/generic plan decision is shared by all clients
+  using the same `DOORMAN_<N>`. A named statement starts with custom
+  plans; after five custom executions PostgreSQL may switch to a
+  generic plan if its estimated cost is close enough. With PgDoorman,
+  those executions can come from different clients, so a generic-plan
+  decision can reflect mixed parameter distributions.
 
 Applications that depend on PostgreSQL's "anonymous Parse discards
 the previous one" semantics should switch to named statements with
@@ -280,7 +287,7 @@ explicit `Close`.
 ### Sizing the cache
 
 PgDoorman's prepared-statement cache has three layers, governed by
-two related config knobs:
+three related config knobs:
 
 - `prepared_statements_cache_size` (default `8192`) sizes the
   pool-level shared cache — one map per pool, keyed by query hash.
@@ -302,7 +309,7 @@ two related config knobs:
   to a number to bound the per-client cache independently of the
   pool size.
 
-Both knobs accept a per-pool override:
+The pool-level and server-level knobs accept per-pool overrides:
 
 ```yaml
 general:
@@ -319,8 +326,8 @@ pools:
     pool_mode: "transaction"
 ```
 
-Setting `prepared_statements_cache_size: 0` disables the entire
-remap and forces server-level LRU to 0 too. Setting
+Setting `prepared_statements: false` disables the entire remap and
+forces the pool-level and server-level caches to 0. Setting
 `server_prepared_statements_cache_size: 0` while leaving the pool
 size positive is allowed but rarely useful — the per-backend cache
 becomes a pass-through that re-Parses on every cross-backend hit.
@@ -395,18 +402,20 @@ served it. Two mechanisms eventually clean it up:
 
 - **Server-level LRU.** Each backend tracks its own
   `LruCache<String, ()>` of `DOORMAN_<N>` names, capped at
-  `prepared_statements_cache_size` (default 8192). When the cap is
-  reached, the backend issues `Close` on the least recently used
-  name, releasing the plan.
+  `server_prepared_statements_cache_size` (or
+  `prepared_statements_cache_size` when unset). When the cap is reached,
+  the backend issues `Close` on the least recently used name, releasing
+  the plan.
 - **Backend rotation.** A backend reaches `server_lifetime`
   (default 20 min) and pg_doorman closes it; the new backend starts
   with an empty plan cache.
 
 The worst-case memory footprint per backend is therefore
-`prepared_statements_cache_size × ~100 KB` of plan memory ≈ 800 MB
-on the PostgreSQL side. To shrink the window:
+`server_prepared_statements_cache_size × average plan memory`
+(`8192 × ~100 KB` is about 800 MB) on the PostgreSQL side. To shrink
+the window:
 
-- Lower `prepared_statements_cache_size` so the server-level LRU
+- Lower `server_prepared_statements_cache_size` so the server-level LRU
   recycles plans sooner.
 - Lower `server_lifetime` so backends rotate faster.
 
@@ -456,7 +465,13 @@ Prometheus metrics (full list in [Prometheus](../reference/prometheus.md)):
 - `pg_doorman_clients_prepared_anonymous_evictions_total{user, database}`
 - `pg_doorman_servers_prepared_hits{user, database}`
 - `pg_doorman_servers_prepared_misses{user, database}`
+- `pg_doorman_servers_prepared_hits_total{user, database}`
+- `pg_doorman_servers_prepared_misses_total{user, database}`
 - `pg_doorman_async_clients_count`
+
+Use the `_total` metrics for `rate()` and alerting. The non-`_total`
+server metrics are live backend aggregates and can drop when backends
+rotate.
 
 ## Alerting
 
@@ -500,12 +515,12 @@ per backend:
 SELECT count(*) FROM pg_prepared_statements;
 ```
 
-Numbers near `prepared_statements_cache_size` (default 8192) per
-backend mean the server-level LRU is at its cap and rotation is the
-only way to release plan memory. If `server_lifetime` is long, plans
-accumulate for a long time. Lowering either knob releases the
-plan-memory pressure, at the cost of more frequent re-parses on the
-backend.
+Numbers near `server_prepared_statements_cache_size` per backend mean
+the server-level LRU is at its cap and rotation is the other way to
+release plan memory. If the server cache inherits
+`prepared_statements_cache_size`, use that value as the cap. Lowering
+the server cap or `server_lifetime` releases plan-memory pressure at
+the cost of more frequent re-Parses on the backend.
 
 ## Bounded query interner
 
@@ -565,6 +580,7 @@ non-zero rate.
 - [Pool Modes](../concepts/pool-modes.md) — transaction mode, where
   prepared-statement remapping is enabled.
 - [General Settings](../reference/general.md) — `prepared_statements_cache_size`,
+  `server_prepared_statements_cache_size`,
   `client_anonymous_prepared_cache_size`,
   `query_interner_gc_interval_seconds`,
   `query_interner_anon_idle_ttl_seconds`.
