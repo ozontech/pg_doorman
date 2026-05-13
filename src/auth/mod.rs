@@ -681,8 +681,11 @@ where
         }
     };
 
-    // 3. Fetch password hash from cache or PG
-    let cache_entry = match cache.get_or_fetch(username).await {
+    // 3. Fetch password hash from cache or PG. `mut` because a
+    //    successful MD5 refetch below swaps in the fresh entry so the
+    //    backend pool gets the rotated password hash and the rotated
+    //    per-user startup_parameters, not the stale snapshot.
+    let mut cache_entry = match cache.get_or_fetch(username).await {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             // User not found
@@ -705,10 +708,8 @@ where
         }
     };
 
-    let pool_password = &cache_entry.password_hash;
-
     // 4. HBA check
-    let hba_decision = eval_hba_for_pool_password(pool_password, client_identifier);
+    let hba_decision = eval_hba_for_pool_password(&cache_entry.password_hash, client_identifier);
     if hba_decision == CheckResult::Deny {
         error_response_terminal(
             write,
@@ -730,26 +731,48 @@ where
 
     if hba_decision == CheckResult::Trust {
         // HBA trust — skip password check
-    } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+    } else if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
         // MD5 challenge-response
         let salt = md5_challenge(write).await?;
         let password_response = read_password(read).await?;
-        let expected = md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
+        let expected = md5_hash_second_pass(
+            cache_entry.password_hash.strip_prefix("md5").unwrap(),
+            &salt,
+        );
 
         if expected != password_response {
             // Password mismatch — try re-fetch (password may have changed in PG)
             let mut auth_ok = false;
+            let mut refreshed: Option<crate::auth::auth_query::CacheEntry> = None;
             if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await {
-                if new_entry.password_hash != *pool_password
-                    && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
-                {
-                    let new_expected = md5_hash_second_pass(
-                        new_entry.password_hash.strip_prefix("md5").unwrap(),
-                        &salt,
-                    );
-                    if new_expected == password_response {
-                        auth_ok = true;
-                        info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
+                if new_entry.password_hash != cache_entry.password_hash {
+                    if new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
+                        let new_expected = md5_hash_second_pass(
+                            new_entry.password_hash.strip_prefix("md5").unwrap(),
+                            &salt,
+                        );
+                        if new_expected == password_response {
+                            auth_ok = true;
+                            info!(
+                                "[{username}@{pool_name}] auth_query: re-fetched password matched"
+                            );
+                            refreshed = Some(new_entry);
+                        }
+                    } else {
+                        // The refetched verifier is no longer MD5 — the
+                        // operator switched `password_encryption` mid-flight
+                        // (typically MD5 → SCRAM). The current MD5 proof
+                        // cannot validate against a SCRAM verifier; reject
+                        // this attempt and invalidate the cache so the next
+                        // reconnect hits `cache.get_or_fetch` and takes the
+                        // SCRAM branch immediately rather than waiting for
+                        // `cache_ttl`.
+                        warn!(
+                            "[{username}@{pool_name}] auth_query: refetched verifier changed type ({stored} → {fresh}); cache invalidated, client must reconnect with the new mechanism",
+                            stored = if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) { "md5" } else { "scram" },
+                            fresh = if new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) { "md5" } else { "scram" }
+                        );
+                        cache.invalidate(username);
                     }
                 }
             }
@@ -763,10 +786,17 @@ where
                     "MD5 authentication failed for auth_query user: {username}"
                 )));
             }
+            // Swap in the refetched snapshot so backend_auth and the
+            // dynamic-pool overlay below are built from the rotated
+            // credentials, not the stale ones that just failed the
+            // first challenge.
+            if let Some(new_entry) = refreshed {
+                cache_entry = new_entry;
+            }
         }
-    } else if pool_password.starts_with(SCRAM_SHA_256) {
+    } else if cache_entry.password_hash.starts_with(SCRAM_SHA_256) {
         // SCRAM-SHA-256 challenge-response
-        let server_secret = match parse_server_secret(pool_password) {
+        let server_secret = match parse_server_secret(&cache_entry.password_hash) {
             Ok(s) => s,
             Err(err) => {
                 error!(
@@ -931,8 +961,14 @@ where
         }
         None => {
             // === Passthrough mode: each dynamic user gets their own pool ===
-            let backend_auth = if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
-                Some(BackendAuthMethod::Md5PassTheHash(pool_password.clone()))
+            // After an MD5 refetch matched the rotated password,
+            // `cache_entry` already points at the new snapshot, so
+            // `password_hash` and `startup_parameters` below reflect the
+            // credentials PG will accept on the backend side.
+            let backend_auth = if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
+                Some(BackendAuthMethod::Md5PassTheHash(
+                    cache_entry.password_hash.clone(),
+                ))
             } else {
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
@@ -941,14 +977,19 @@ where
             // authenticated this user. That keeps dynamic-pool creation
             // tied to this login instead of reading the global cache
             // again while TTL expiry or a concurrent refetch is changing it.
-            let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
-            let mut pool = create_dynamic_pool(pool_name, username, backend_auth, fetched_overlay)
-                .map_err(|err| {
-                    error!(
-                        "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
-                    );
-                    err
-                })?;
+            let fetched_overlay = Arc::clone(cache_entry.startup_overlay.map());
+            let fetched_overlay_hash = cache_entry.startup_overlay.hash();
+            let mut pool = create_dynamic_pool(
+                pool_name,
+                username,
+                backend_auth,
+                fetched_overlay,
+                fetched_overlay_hash,
+            )
+            .map_err(|err| {
+                error!("[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}");
+                err
+            })?;
 
             // Do NOT change client_identifier.username — stay as the dynamic user
             // so that Client.username matches the pool's user for get_pool() lookups.
@@ -967,6 +1008,17 @@ where
                     } = &err
                     {
                         error!("[{username}@{pool_name}] auth_query passthrough: PG rejected operator-supplied startup parameter: {pg_message}");
+                        // Invalidate before dropping the pool. A
+                        // concurrent reconnect that races us between
+                        // these two calls would otherwise read the
+                        // still-cached bad overlay, rebuild the same
+                        // dynamic pool against it, and trigger the
+                        // same rejection. Invalidating first guarantees
+                        // any racing get_or_fetch refetches before
+                        // reconstructing the pool.
+                        cache.invalidate(username);
+                        let identifier = crate::pool::PoolIdentifier::new(pool_name, username);
+                        crate::pool::drop_dynamic_pool(&identifier);
                         error_response(write, pg_message, sqlstate).await?;
                         return Err(err);
                     }

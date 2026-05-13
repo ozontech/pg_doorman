@@ -535,14 +535,12 @@ impl ConnectionPool {
                 // second reload between this iteration and constructor
                 // execution would write a different baseline to the pool
                 // than the one the reuse hash captured.
-                let base_startup_parameters = {
-                    let mut merged: std::collections::BTreeMap<String, String> =
-                        config.general.startup_parameters.clone();
-                    for (k, v) in &pool_config.startup_parameters {
-                        merged.insert(k.clone(), v.clone());
-                    }
-                    Arc::new(merged)
-                };
+                let base_startup_parameters = Arc::new(
+                    crate::config::startup_parameters::cascade_canonical_keys(&[
+                        &config.general.startup_parameters,
+                        &pool_config.startup_parameters,
+                    ]),
+                );
 
                 let manager = ServerPool::new(
                     address.clone(),
@@ -753,14 +751,12 @@ impl ConnectionPool {
                         let fallback_state =
                             build_fallback_state(pool_name, pool_config, &config.general);
 
-                        let base_startup_parameters = {
-                            let mut merged: std::collections::BTreeMap<String, String> =
-                                config.general.startup_parameters.clone();
-                            for (k, v) in &pool_config.startup_parameters {
-                                merged.insert(k.clone(), v.clone());
-                            }
-                            Arc::new(merged)
-                        };
+                        let base_startup_parameters = Arc::new(
+                            crate::config::startup_parameters::cascade_canonical_keys(&[
+                                &config.general.startup_parameters,
+                                &pool_config.startup_parameters,
+                            ]),
+                        );
 
                         let manager = ServerPool::new(
                             address.clone(),
@@ -1203,6 +1199,23 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
     (*(*POOLS.load()))
         .get(&PoolIdentifier::new(db, user))
         .cloned()
+}
+
+/// Cheap focused lookup of the canonicalised operator-managed key set
+/// for a `(db, user)` pool. Used by the client startup path to filter
+/// `StartupMessage` parameters without cloning the whole
+/// `ConnectionPool` — the previous `get_pool().cloned()` path cloned
+/// `Address`, `PoolSettings`, `User` (every string field), `Arc`s and
+/// counters per authenticated connect, even when the operator set no
+/// startup_parameters. The returned `Arc` is the same one the spawn
+/// path consumes, so reads stay zero-copy.
+pub fn get_operator_managed_startup_keys(
+    db: &str,
+    user: &str,
+) -> Option<Arc<std::collections::HashSet<String>>> {
+    (*(*POOLS.load()))
+        .get(&PoolIdentifier::new(db, user))
+        .map(|p| p.database.server_pool().operator_managed_startup_keys())
 }
 
 /// Get pool-level configuration by database name.

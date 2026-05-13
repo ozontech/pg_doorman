@@ -479,7 +479,7 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 /// back to scanning the M-field for any sent key wrapped in double
 /// quotes (PG keeps the quote markers across all `lc_messages` locales).
 /// If both heuristics fail — typically because the PG error is unrelated
-/// to the sent map at all — the counter does NOT increment. Operator
+/// to the sent map at all — the counter does NOT increment. An operator
 /// reading a non-zero rate can be confident the issue is on a key they
 /// configured; the per-line warn log carries the parameter name and
 /// username for triage.
@@ -513,16 +513,14 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///     `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes). Same drop-all
 ///     behaviour.
 ///   * `auth_query_oversize` — the auth_query `startup_parameters`
-///     text column for some username exceeded the operator budget at
-///     parse time, so the per-user overlay is ignored.
+///     value for some username exceeded the operator budget at parse
+///     time, so the per-user overlay is ignored.
 ///   * `auth_query_overlay_oversize` — the merged baseline+overlay was
-///     over budget, but the baseline alone fits. Keeps general/pool
-///     defaults (statement_timeout, lock_timeout, ...) for that user
-///     instead of stripping the whole configured parameter set.
+///     over budget, but the baseline alone fits. Backend startup is
+///     rejected with `SQLSTATE 53400` rather than sending a partial map.
 ///   * `auth_query_bad_type` — the auth_query `startup_parameters`
-///     column has a non-text type (likely `json`/`jsonb`); pg_doorman
-///     reads it as text, so the row's overlay is dropped. Cast to
-///     `::text` in the auth_query SELECT to fix.
+///     column has an unsupported PostgreSQL type. Native `text`, `json`,
+///     and `jsonb` are accepted.
 ///   * `auth_query_invalid_json` — the column value is not valid JSON.
 ///   * `auth_query_invalid_shape` — the column parses but the
 ///     top-level value is not a JSON object.
@@ -536,8 +534,8 @@ pub(crate) static LISTENER_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
 ///     was dropped. Incremented once per such row.
 ///
 /// All cases also emit a `warn!` log line for human triage; the
-/// counter exists so dashboards and alerts can spot the silent drop
-/// without log scraping.
+/// counter lets dashboards and alerts catch these drops without log
+/// scraping.
 pub(crate) static STARTUP_PARAMETERS_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(

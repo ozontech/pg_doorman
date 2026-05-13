@@ -1,5 +1,39 @@
 # Changelog
 
+### 3.9.1
+
+Follow-up fixes for `startup_parameters` after the 3.9.0 release.
+
+Upgrade notes for operators monitoring 3.9.0:
+
+- The pg_doorman-side budget rejection now returns `SQLSTATE 53400`
+  (`configuration_limit_exceeded`) instead of `54000`. Alert rules
+  and log filters keyed on `54000` need to switch.
+- `PgDoormanStartupParameterPgRejection` is now `severity: warning`
+  (was `critical` in 3.9.0). Cascade-overflow stays `critical`. Review
+  the Alertmanager / on-call routing if you key on severity to page.
+
+- If the resolved `startup_parameters` set exceeds the startup packet
+  budget, backend startup now fails with `SQLSTATE 53400`. A
+  deterministic `general + pool` overflow is rejected at config load.
+- The final `ParameterStatus` messages sent to the client no longer
+  overwrite operator-managed GUC names, so the client-visible values
+  match the backend checkout state.
+- `auth_query` now rebuilds a dynamic pool after a successful MD5
+  refetch, rejects the stale-overlay race in `create_dynamic_pool`, and
+  accepts native `json`/`jsonb` startup_parameter columns without a
+  `::text` cast.
+- `/api/config` and `/api/pools` show literal startup_parameter values
+  only to `Admin`; SSO readers get the masked view. `/api/config` also
+  marks `general.host`, `general.port`, `web.host`, and `web.port` as
+  restart-required.
+- Prometheus rules now cover PostgreSQL-side rejection, budget overflow,
+  malformed auth_query columns, dedicated-mode drops, and rejected SSO
+  credentials sent over insecure transport.
+- Each pool now precomputes the merged startup map, budget decision, and
+  canonical operator-key set. Backend checkout reuses those cached
+  values instead of cloning and recalculating the map each time.
+
 ### 3.9.0
 
 Per-pool PostgreSQL startup parameters. pg_doorman can now add

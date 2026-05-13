@@ -377,8 +377,30 @@ where
         )
         .await?;
 
-        // Update the parameters to merge what the application sent and what's originally on the server
-        server_parameters.set_from_hashmap(&parameters, false);
+        // Merge the startup parameters sent by the client with the
+        // server defaults.
+        // Operator-managed startup_parameters must win over the client
+        // packet, otherwise ParameterStatus reports the client value
+        // while the backend keeps the operator default — a protocol-
+        // visible mismatch. The backend's sync_parameters already
+        // applies the same filter on checkout, so this aligns the two
+        // client views. Iterate directly into `set_param` to avoid an
+        // intermediate `HashMap` allocation on every connection.
+        let operator_keys =
+            crate::pool::get_operator_managed_startup_keys(&pool_name, &client_identifier.username);
+        match operator_keys {
+            Some(keys) if !keys.is_empty() => {
+                for (key, value) in &parameters {
+                    let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
+                    if !keys.contains(&canonical) {
+                        server_parameters.set_param(key.clone(), value.clone(), false);
+                    }
+                }
+            }
+            _ => {
+                server_parameters.set_from_hashmap(&parameters, false);
+            }
+        }
         let mut buf = BytesMut::new();
         {
             let mut auth_ok = BytesMut::with_capacity(9);

@@ -1,0 +1,126 @@
+groups:
+  - name: startup_parameters_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanStartupParameterPgRejection
+        expr: |
+          sum by (job, instance, pool, sqlstate) (
+            increase(pg_doorman_backend_startup_parameter_errors_total[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: PG rejected configured startup_parameter for pool {{ $labels.pool }} (SQLSTATE {{ $labels.sqlstate }})"
+          runbook: |
+            PostgreSQL rejected at least one backend startup for this
+            pool because of a startup_parameter sent in StartupMessage.
+            The metric is labelled only by pool and SQLSTATE, so the
+            source may be one auth_query row or the pool-wide baseline.
+            Use the warning log line to find the failing key and
+            username, then fix the value in general/pool config or in
+            the auth_query row. SQLSTATE usually identifies the cause:
+            22023 invalid_value, 42704 undefined_object, 42501
+            insufficient_privilege, or 55P02 cannot_alter_runtime_param.
+
+      - alert: PgDoormanStartupParameterCascadeOverflow
+        expr: |
+          sum by (job, instance, pool, reason) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason=~"cascade_budget_exceeded|packet_cap_exceeded"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: startup_parameters cascade does not fit StartupMessage budget for pool {{ $labels.pool }}"
+          runbook: |
+            The merged general/pool/auth_query map does not fit the
+            PostgreSQL StartupMessage budget. pg_doorman rejects backend
+            startup for this pool until the configured map is smaller.
+            Trim general.startup_parameters,
+            pools.<name>.startup_parameters, or the per-user auth_query
+            row. The reason label shows which gate fired:
+            cascade_budget_exceeded or packet_cap_exceeded.
+
+      - alert: PgDoormanStartupParameterOverlayOversize
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason="auth_query_overlay_oversize"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query startup_parameters exceed budget for pool {{ $labels.pool }}"
+          runbook: |
+            A per-user auth_query row makes the resolved startup map
+            exceed the StartupMessage budget. pg_doorman returns
+            SQLSTATE 53400 and rejects backend startup for the affected
+            dynamic pool. Shrink the per-user startup_parameters row,
+            the pool baseline, or the general baseline.
+
+      - alert: PgDoormanStartupParameterOverlayRaw
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason="auth_query_oversize"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query startup_parameters row exceeds parse-time budget for pool {{ $labels.pool }}"
+          runbook: |
+            The auth_query row for a user returned a
+            startup_parameters payload too large to be a valid
+            StartupMessage overlay. pg_doorman ignores the per-user
+            values for that row, so the affected user authenticates
+            without those GUCs. Inspect the auth_query view for the
+            affected user and shrink the row.
+
+      - alert: PgDoormanStartupParameterAuthQueryInvalid
+        expr: |
+          sum by (job, instance, pool, reason) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason=~"auth_query_bad_type|auth_query_invalid_json|auth_query_invalid_shape|auth_query_invalid_entry"}[5m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query startup_parameters column malformed for pool {{ $labels.pool }} (reason {{ $labels.reason }})"
+          runbook: |
+            auth_query returned a startup_parameters value pg_doorman
+            could not use: unsupported PG type, malformed JSON,
+            non-object top level, or invalid key/value entry. Affected
+            users authenticate, but backend startup proceeds without
+            their per-user GUCs. Fix the auth_query SELECT or the
+            underlying row. The warning log line has the exact failure.
+
+      - alert: PgDoormanStartupParameterDedicatedDrops
+        # `dedicated_mode` ticks only when auth_query actually fetches
+        # a row, not on cache hits. With the default `cache_ttl = 1h`
+        # the counter fires once per user per hour at most, so the
+        # window has to span at least one full TTL or the alert will
+        # silently miss a steady misconfiguration. `for: 5m` keeps the
+        # signal from flapping on a single noisy refetch.
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason="dedicated_mode"}[1h])
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query dedicated mode ignored per-user startup_parameters for pool {{ $labels.pool }}"
+          runbook: |
+            Dedicated auth_query mode uses a shared server_user pool
+            and cannot apply per-user startup_parameters. If the
+            operator filled that column, either switch the pool to
+            passthrough mode or remove the per-user values. A sustained
+            non-zero rate means the auth_query SELECT keeps returning
+            values that this pool mode cannot use.
