@@ -40,11 +40,34 @@ fn init(args: &Args, syslog_name: Option<String>) {
     } else {
         let inner: Box<dyn Log> = match args.log_format {
             LogFormat::Structured => Box::new(JsonLogger::new()),
-            _ => Box::new(TextLogger::new(!args.no_color)),
+            _ => Box::new(TextLogger::new(should_use_color(args.no_color))),
         };
 
         LogLevelController::new(inner, startup_level).register();
     }
+}
+
+/// Decide whether the text logger should emit ANSI colour escapes.
+///
+/// The runtime answer threads three inputs through [`resolve_color`]:
+/// the explicit `--no-color` flag, the standard `NO_COLOR` env var
+/// (<https://no-color.org/>: any non-empty value disables colour), and
+/// whether stderr is a TTY. Under systemd the unit's stderr is a pipe
+/// to journald, not a terminal, so colour escapes used to land in the
+/// journal as `[NNN blob data]` placeholders; auto-disabling for a
+/// non-TTY stderr fixes that without requiring every operator to pass
+/// `--no-color`.
+fn should_use_color(no_color_flag: bool) -> bool {
+    use std::io::IsTerminal;
+    let env_no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    resolve_color(no_color_flag, env_no_color, std::io::stderr().is_terminal())
+}
+
+/// Pure decision used by [`should_use_color`]: colour is on only when
+/// every gate is open. Split out so the matrix of inputs can be unit
+/// tested without touching real env vars or a real terminal handle.
+fn resolve_color(no_color_flag: bool, env_no_color: bool, stderr_is_tty: bool) -> bool {
+    !no_color_flag && !env_no_color && stderr_is_tty
 }
 
 /// Direct text logger — no tracing bridge.
@@ -167,5 +190,39 @@ impl Log for JsonLogger {
 
     fn flush(&self) {
         let _ = std::io::stderr().flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_color;
+
+    #[test]
+    fn color_on_only_when_every_gate_is_open() {
+        assert!(resolve_color(
+            /*no_color_flag=*/ false, /*env_no_color=*/ false,
+            /*stderr_is_tty=*/ true,
+        ));
+    }
+
+    #[test]
+    fn color_off_when_no_color_flag_set() {
+        assert!(!resolve_color(true, false, true));
+    }
+
+    #[test]
+    fn color_off_when_no_color_env_set() {
+        // `NO_COLOR` is the open standard from https://no-color.org/:
+        // any non-empty value disables colour. The pure decision sees
+        // the boolean after the env lookup.
+        assert!(!resolve_color(false, true, true));
+    }
+
+    #[test]
+    fn color_off_when_stderr_is_not_a_tty() {
+        // The fix this guard exists for: under systemd the journal
+        // pipe is not a terminal, so default colour-on used to leak
+        // ANSI escapes into journalctl as `[NNN blob data]`.
+        assert!(!resolve_color(false, false, false));
     }
 }

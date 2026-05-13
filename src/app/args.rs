@@ -18,12 +18,16 @@ pub struct Args {
     #[clap(short='F', long, value_enum, default_value_t=LogFormat::Text, env)]
     pub log_format: LogFormat,
 
+    /// `env` is intentionally omitted: clap parses bool env vars as
+    /// `"true"`/`"false"` and would reject `NO_COLOR=1` at startup.
+    /// The logger respects the `NO_COLOR` env var per
+    /// <https://no-color.org/> independently of this flag and also
+    /// auto-disables colors when stderr is not a TTY.
     #[arg(
         short,
         long,
         default_value_t = false,
-        env,
-        help = "disable colors in the log output"
+        help = "force colors off in the log output"
     )]
     pub no_color: bool,
 
