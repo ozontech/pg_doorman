@@ -312,6 +312,17 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --features tls-migration --test bdd --no-run
 
+      - name: Chown cargo cache so actions/cache can read it
+        # The docker steps above ran as root, so `.cargo/` and `target/`
+        # are root-owned on the host. actions/cache@v4 saves files as
+        # the runner user (uid 1001); without this chown its post-step
+        # tar gets permission-denied on every file and silently writes
+        # an empty cache (~13s save, ~0s restore on the next run).
+        # `sudo` is available on GitHub-hosted ubuntu-latest by default.
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" .cargo target
+          du -sh .cargo target
+
   # Single matrixed job replaces the 21 nearly-identical per-language /
   # per-suite jobs that used to live here. Each suite differs only in
   # the cargo command it runs; share everything else. See the cargo
