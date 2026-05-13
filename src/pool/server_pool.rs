@@ -59,6 +59,108 @@ impl BudgetReason {
     }
 }
 
+/// Precompute the wire-ready `startup_parameters` map for a pool plus
+/// the budget classification the runtime will report on every backend
+/// spawn. Called once from `ServerPool::new`; saves the spawn path from
+/// cloning the BTreeMap, re-running `packet_and_body_bytes`, and
+/// re-evaluating the overlay-drop branch on every checkout.
+///
+/// Cases follow `classify_startup_parameters`:
+/// 1. Empty overlay + budget OK → reuse the base `Arc`.
+/// 2. Non-empty overlay + budget OK → allocate the merged map once.
+/// 3. Merged over budget but baseline fits → reuse the base `Arc` and
+///    log the drop. The spawn path will still error (H3) using the
+///    decision below; the warn happens once here instead of per spawn.
+/// 4. Nothing fits → empty map, log the drop.
+fn build_resolved_startup(
+    base: &Arc<BTreeMap<String, String>>,
+    overlay: &Arc<BTreeMap<String, String>>,
+    server_username: &str,
+    database: &str,
+    application_name: &str,
+    pool_name: &str,
+    client_username: &str,
+) -> (Arc<BTreeMap<String, String>>, BudgetDecision) {
+    if overlay.is_empty() {
+        let (packet_bytes, body_bytes) =
+            sp::packet_and_body_bytes(server_username, database, application_name, base);
+        let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
+        let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
+        if !over_budget && !over_packet {
+            return (Arc::clone(base), BudgetDecision::FullCascade);
+        }
+        let reason = if over_packet {
+            BudgetReason::PacketCapExceeded
+        } else {
+            BudgetReason::CascadeBudgetExceeded
+        };
+        warn!(
+            "[{client_username}@{pool_name}] effective startup_parameters serialize to {body_bytes} bytes \
+             (packet {packet_bytes} bytes), exceeding operator budget {} / PG cap {}; \
+             backend spawns will be rejected until general/pool startup_parameters shrink",
+            sp::MAX_OPERATOR_BUDGET, sp::MAX_STARTUP_PACKET_SIZE,
+        );
+        return (
+            Arc::new(BTreeMap::new()),
+            BudgetDecision::EmptyDueToBudget {
+                reason,
+                body_bytes,
+                packet_bytes,
+            },
+        );
+    }
+
+    let mut merged = (**base).clone();
+    for (k, v) in overlay.iter() {
+        merged.insert(k.clone(), v.clone());
+    }
+    let (packet_bytes, body_bytes) =
+        sp::packet_and_body_bytes(server_username, database, application_name, &merged);
+    let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
+    let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
+    if !over_budget && !over_packet {
+        return (Arc::new(merged), BudgetDecision::FullCascade);
+    }
+
+    // Merged cascade is over a limit. Try baseline-only.
+    let (baseline_packet, baseline_body) =
+        sp::packet_and_body_bytes(server_username, database, application_name, base);
+    if baseline_body <= sp::MAX_OPERATOR_BUDGET && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE {
+        warn!(
+            "[{client_username}@{pool_name}] auth_query per-user startup_parameters pushes the cascade \
+             over the operator budget (merged {body_bytes} bytes, packet {packet_bytes} bytes); \
+             backend spawns will be rejected until the overlay or baseline shrinks"
+        );
+        return (
+            Arc::clone(base),
+            BudgetDecision::OverlayDroppedBaselineKept {
+                body_bytes,
+                packet_bytes,
+            },
+        );
+    }
+
+    let reason = if over_packet {
+        BudgetReason::PacketCapExceeded
+    } else {
+        BudgetReason::CascadeBudgetExceeded
+    };
+    warn!(
+        "[{client_username}@{pool_name}] effective startup_parameters serialize to {body_bytes} bytes \
+         (packet {packet_bytes} bytes), exceeding operator budget {} / PG cap {}; \
+         backend spawns will be rejected until general/pool startup_parameters shrink",
+        sp::MAX_OPERATOR_BUDGET, sp::MAX_STARTUP_PACKET_SIZE,
+    );
+    (
+        Arc::new(BTreeMap::new()),
+        BudgetDecision::EmptyDueToBudget {
+            reason,
+            body_bytes,
+            packet_bytes,
+        },
+    )
+}
+
 /// Wrapper for the connection pool.
 pub struct ServerPool {
     /// Server address.
@@ -121,16 +223,6 @@ pub struct ServerPool {
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
 
-    /// `general.startup_parameters` merged with this pool's
-    /// `pool.startup_parameters` — the baseline that every backend spawn
-    /// from this pool ships in `StartupMessage`, before the optional
-    /// per-user auth_query overlay is applied. Cached once at pool
-    /// construction: the reload path rebuilds the pool whenever either
-    /// layer's hash changes (see `ConnectionPool::from_config`), so this
-    /// view is immutable for the lifetime of the pool object. Shared as
-    /// `Arc` so backend spawns can borrow it without per-call cloning.
-    base_startup_parameters: Arc<std::collections::BTreeMap<String, String>>,
-
     /// Per-user auth_query overlay captured at pool construction. Dynamic
     /// passthrough pools populate this from a fresh `cache.get_or_fetch`
     /// snapshot taken right after auth, so every backend spawn from this
@@ -151,6 +243,20 @@ pub struct ServerPool {
     /// `ParameterStatus`, so a driver sees the same value PG will use for
     /// the session. Built once per pool and shared as `Arc`.
     operator_managed_startup_keys: Arc<HashSet<String>>,
+
+    /// Wire-ready merged startup map, precomputed at pool creation. The
+    /// spawn path used to recompute this on every backend create — clone
+    /// the baseline, merge the auth_query overlay, recheck the budget.
+    /// `base_startup_parameters` and `per_user_startup_overlay` are
+    /// immutable for the pool's lifetime, so the merge is too: every call
+    /// can hand out an `Arc` to the same map instead of cloning a
+    /// 50-entry BTreeMap and re-running `packet_and_body_bytes`.
+    resolved_startup_map: Arc<BTreeMap<String, String>>,
+
+    /// Budget classification for `resolved_startup_map`. Precomputed
+    /// together with the map so the spawn path skips the re-validation
+    /// walk on every backend create.
+    resolved_startup_decision: BudgetDecision,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -206,6 +312,19 @@ impl ServerPool {
                 .map(|k| crate::server::parameters::canonicalize_param_name(k.clone()))
                 .collect::<HashSet<String>>(),
         );
+        let server_username = user
+            .server_username
+            .as_deref()
+            .unwrap_or(user.username.as_str());
+        let (resolved_startup_map, resolved_startup_decision) = build_resolved_startup(
+            &base_startup_parameters,
+            &per_user_startup_overlay,
+            server_username,
+            database,
+            &application_name,
+            address.pool_name.as_str(),
+            user.username.as_str(),
+        );
         ServerPool {
             address,
             user: user.clone(),
@@ -226,9 +345,10 @@ impl ServerPool {
             resume_notify: Notify::new(),
             session_mode,
             fallback_state,
-            base_startup_parameters,
             per_user_startup_overlay,
             operator_managed_startup_keys,
+            resolved_startup_map,
+            resolved_startup_decision,
         }
     }
 
@@ -327,6 +447,7 @@ impl ServerPool {
                 self.application_name.clone(),
                 self.session_mode,
                 &startup_parameters,
+                self.operator_managed_startup_keys.clone(),
             ),
         )
         .await;
@@ -384,6 +505,7 @@ impl ServerPool {
                     self.application_name.clone(),
                     self.session_mode,
                     &startup_parameters,
+                    self.operator_managed_startup_keys.clone(),
                 ),
             )
             .await;
@@ -548,87 +670,22 @@ impl ServerPool {
         out
     }
 
-    /// Resolve the operator-supplied startup_parameters map that this pool
     /// Pure classifier shared between the spawn path and the read-only
     /// admin/API views. Returns the wire-ready map and the budget
     /// decision the runtime would make for this spawn, **without**
-    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL` or emitting warn
-    /// logs. The spawn-side `resolved_startup_parameters` wraps this
-    /// with the counter + log; admin/API callers call this directly so
-    /// `SHOW STARTUP_PARAMETERS` polling cannot inflate the drop counter
-    /// or spam the warn log.
+    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL`. Both fields are
+    /// precomputed at pool construction (`build_resolved_startup`), so
+    /// every call hands back a borrow of the cached `Arc` instead of
+    /// cloning and re-validating the merge.
     fn classify_startup_parameters(
         &self,
     ) -> (
         std::borrow::Cow<'_, BTreeMap<String, String>>,
         BudgetDecision,
     ) {
-        let merged: std::borrow::Cow<'_, BTreeMap<String, String>> =
-            if self.per_user_startup_overlay.is_empty() {
-                std::borrow::Cow::Borrowed(&*self.base_startup_parameters)
-            } else {
-                let mut owned = (*self.base_startup_parameters).clone();
-                for (k, v) in self.per_user_startup_overlay.iter() {
-                    owned.insert(k.clone(), v.clone());
-                }
-                std::borrow::Cow::Owned(owned)
-            };
-
-        let username_for_wire = self
-            .user
-            .server_username
-            .as_deref()
-            .unwrap_or(self.user.username.as_str());
-
-        let (packet_bytes, body_bytes) = sp::packet_and_body_bytes(
-            username_for_wire,
-            &self.database,
-            &self.application_name,
-            &merged,
-        );
-
-        let over_budget = body_bytes > sp::MAX_OPERATOR_BUDGET;
-        let over_packet = packet_bytes > sp::MAX_STARTUP_PACKET_SIZE;
-        if !over_budget && !over_packet {
-            return (merged, BudgetDecision::FullCascade);
-        }
-
-        // The merged cascade is over a limit. If we have an overlay, try
-        // dropping just the overlay and keep the baseline.
-        let has_overlay = !self.per_user_startup_overlay.is_empty();
-        if has_overlay {
-            let baseline = &*self.base_startup_parameters;
-            let (baseline_packet, baseline_body) = sp::packet_and_body_bytes(
-                username_for_wire,
-                &self.database,
-                &self.application_name,
-                baseline,
-            );
-            if baseline_body <= sp::MAX_OPERATOR_BUDGET
-                && baseline_packet <= sp::MAX_STARTUP_PACKET_SIZE
-            {
-                return (
-                    std::borrow::Cow::Borrowed(baseline),
-                    BudgetDecision::OverlayDroppedBaselineKept {
-                        body_bytes,
-                        packet_bytes,
-                    },
-                );
-            }
-        }
-
-        let reason = if over_packet {
-            BudgetReason::PacketCapExceeded
-        } else {
-            BudgetReason::CascadeBudgetExceeded
-        };
         (
-            std::borrow::Cow::Owned(BTreeMap::new()),
-            BudgetDecision::EmptyDueToBudget {
-                reason,
-                body_bytes,
-                packet_bytes,
-            },
+            std::borrow::Cow::Borrowed(&*self.resolved_startup_map),
+            self.resolved_startup_decision,
         )
     }
 
@@ -657,13 +714,6 @@ impl ServerPool {
                 body_bytes,
                 packet_bytes,
             } => {
-                warn!(
-                    "[{}@{}] auth_query per-user startup_parameters pushes the cascade \
-                     over the operator budget (merged {} bytes, packet {} bytes); \
-                     rejecting this backend spawn so the client sees the budget miss \
-                     instead of silently losing the overlay",
-                    self.user.username, self.address.pool_name, body_bytes, packet_bytes,
-                );
                 crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
                     .with_label_values(&[
                         self.address.pool_name.as_str(),
@@ -696,25 +746,9 @@ impl ServerPool {
                 body_bytes,
                 packet_bytes,
             } => {
-                warn!(
-                    "[{}@{}] effective startup_parameters serialize to {} bytes \
-                     (packet {} bytes), exceeding operator budget {} / PG cap {}; \
-                     rejecting backend spawn",
-                    self.user.username,
-                    self.address.pool_name,
-                    body_bytes,
-                    packet_bytes,
-                    sp::MAX_OPERATOR_BUDGET,
-                    sp::MAX_STARTUP_PACKET_SIZE,
-                );
                 crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
                     .with_label_values(&[self.address.pool_name.as_str(), reason.as_str()])
                     .inc();
-                // `map` is intentionally discarded — the prior fail-open
-                // behaviour shipped an empty StartupMessage and let the
-                // session run without the operator's defaults. That is
-                // exactly the silent degradation H3 wants gone.
-                let _ = map;
                 Err(Error::ServerStartupParameterRejection {
                     sqlstate: "54000".to_string(),
                     message: format!(
@@ -1123,6 +1157,7 @@ impl ServerPool {
                 self.application_name.clone(),
                 self.session_mode,
                 startup_parameters,
+                self.operator_managed_startup_keys.clone(),
             ),
         )
         .await;
@@ -1174,6 +1209,7 @@ impl ServerPool {
                     self.application_name.clone(),
                     self.session_mode,
                     startup_parameters,
+                    self.operator_managed_startup_keys.clone(),
                 ),
             )
             .await;
