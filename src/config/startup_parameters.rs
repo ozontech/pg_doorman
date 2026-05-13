@@ -129,6 +129,25 @@ pub fn serialized_bytes(map: &BTreeMap<String, String>) -> usize {
     map.iter().map(|(k, v)| k.len() + 1 + v.len() + 1).sum()
 }
 
+/// Merge `general`/`pool`/`auth_query` startup_parameter layers with
+/// PostgreSQL case-insensitive GUC semantics. Each layer's keys are
+/// canonicalised before insertion, so a pool `TimeZone` correctly wins
+/// over a general `timezone` regardless of the raw casing the operator
+/// wrote. Layers later in the slice override earlier ones, mirroring
+/// the cascade order documented in the tutorial.
+pub fn cascade_canonical_keys(layers: &[&BTreeMap<String, String>]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for layer in layers {
+        for (k, v) in layer.iter() {
+            out.insert(
+                crate::server::parameters::canonicalize_param_name(k.clone()),
+                v.clone(),
+            );
+        }
+    }
+    out
+}
+
 /// Exact byte length of the full StartupMessage pg_doorman will put on the
 /// wire for one backend spawn, *including* the 4-byte length prefix. The
 /// layout mirrors `crate::messages::protocol::startup`:

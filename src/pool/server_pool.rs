@@ -59,9 +59,9 @@ impl BudgetReason {
     }
 }
 
-/// Precompute the wire-ready `startup_parameters` map for a pool plus
-/// the budget classification the runtime will report on every backend
-/// spawn. Called once from `ServerPool::new`; saves the spawn path from
+/// Precompute the wire-ready `startup_parameters` map for a pool and
+/// the budget classification reported on each backend start. Called
+/// once from `ServerPool::new`; saves the startup path from
 /// cloning the BTreeMap, re-running `packet_and_body_bytes`, and
 /// re-evaluating the overlay-drop branch on every checkout.
 ///
@@ -69,8 +69,7 @@ impl BudgetReason {
 /// 1. Empty overlay + budget OK → reuse the base `Arc`.
 /// 2. Non-empty overlay + budget OK → allocate the merged map once.
 /// 3. Merged over budget but baseline fits → reuse the base `Arc` and
-///    log the drop. The spawn path will still error (H3) using the
-///    decision below; the warn happens once here instead of per spawn.
+///    log the drop once. The backend start path rejects this decision.
 /// 4. Nothing fits → empty map, log the drop.
 fn build_resolved_startup(
     base: &Arc<BTreeMap<String, String>>,
@@ -610,20 +609,13 @@ impl ServerPool {
         // page refreshes are safe to call repeatedly.
         let (wire_cow, decision) = self.classify_startup_parameters();
         let wire = wire_cow.as_ref();
-        // When the auth_query overlay was dropped because it would
-        // push the cascade over budget, every key from the overlay is
-        // "dropped due to budget" even if the baseline happens to
-        // carry the same key with a different value. Without this the
-        // admin view classified those keys as `Stale`, sending
-        // operators to chase a RELOAD/refetch race that is not the
-        // cause (codex review MED #6).
-        // `OverlayDroppedBaselineKept` and `EmptyDueToBudget` both
-        // produce `ServerStartupParameterRejection` on every backend
-        // spawn now (codex H3). The admin/API view must report that
-        // intent: no configured key reaches PG, no matter whether the
-        // baseline alone would have fit. Marking baseline keys
-        // `Applied` because they happen to match the wire map sends
-        // operators to chase a RELOAD that cannot help.
+        // If an auth_query overlay would push the cascade over budget,
+        // every overlay key is dropped due to budget, even when the
+        // baseline carries the same key with another value. Both
+        // over-budget decisions reject backend startup, so the admin/API
+        // view must show that no configured key reaches PostgreSQL.
+        // Reporting those keys as `Applied` or `Stale` would point the
+        // operator at RELOAD/refetch, which cannot fix a budget failure.
         let cascade_rejected = matches!(
             decision,
             BudgetDecision::OverlayDroppedBaselineKept { .. }
@@ -702,14 +694,11 @@ impl ServerPool {
     /// values.
     ///
     /// The merged map is checked against the operator budget and the full
-    /// PostgreSQL startup-packet limit. Any overflow — either the
-    /// auth_query overlay alone, the general/pool baseline, or the full
-    /// StartupMessage — is surfaced as a PG-style
-    /// `ServerStartupParameterRejection` so the client sees a real error
-    /// and the operator notices the budget miss. Silent degradation
-    /// (drop overlay, drop everything) used to hide misconfigured
-    /// auth_query rows and over-large general/pool maps; codex review
-    /// HIGH #3 flagged that as a protocol-visible bug.
+    /// PostgreSQL startup-packet limit. Any overflow, whether caused by
+    /// the auth_query overlay, the general/pool baseline, or the full
+    /// StartupMessage, becomes a PG-style
+    /// `ServerStartupParameterRejection`. That gives the client a clear
+    /// error instead of silently dropping configured startup parameters.
     fn resolved_startup_parameters(
         &self,
     ) -> Result<std::borrow::Cow<'_, BTreeMap<String, String>>, Error> {
@@ -826,25 +815,34 @@ impl ServerPool {
         };
 
         let (result, source) = self.run_fallback_round(fallback).await;
-        match (result, source) {
-            (Ok(conn), _) => Ok(conn),
-            (Err(err), super::fallback::TargetSource::WhitelistCache) => {
-                // Cached host was stale; wipe it and try with full discovery
-                // exactly once more. If discovery fails too, return that
-                // failure without a third attempt.
-                info!(
-                    "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
-                    self.address.username, self.address.pool_name,
-                );
-                fallback.clear_whitelist();
-                let (retry_result, _) = self.run_fallback_round(fallback).await;
-                retry_result.map_err(|e2| {
-                    Error::ConnectError(format!(
-                        "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
-                    ))
-                })
-            }
-            (Err(err), super::fallback::TargetSource::Discovery) => Err(err),
+        match result {
+            Ok(conn) => Ok(conn),
+            // The startup_parameters preflight is host-independent. If it
+            // rejected the cascade, every candidate would fail with the
+            // same SQLSTATE until the operator fixes the config. Return
+            // the rejection unchanged so the client sees the PG-style
+            // error, and skip the whitelist clear so a healthy whitelist
+            // is not wiped because of a configuration bug.
+            Err(err @ Error::ServerStartupParameterRejection { .. }) => Err(err),
+            Err(err) => match source {
+                super::fallback::TargetSource::WhitelistCache => {
+                    // Cached host was stale; wipe it and try with full
+                    // discovery exactly once more. If discovery fails
+                    // too, return that failure without a third attempt.
+                    info!(
+                        "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
+                        self.address.username, self.address.pool_name,
+                    );
+                    fallback.clear_whitelist();
+                    let (retry_result, _) = self.run_fallback_round(fallback).await;
+                    retry_result.map_err(|e2| {
+                        Error::ConnectError(format!(
+                            "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
+                        ))
+                    })
+                }
+                super::fallback::TargetSource::Discovery => Err(err),
+            },
         }
     }
 

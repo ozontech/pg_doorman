@@ -521,7 +521,13 @@ impl AuthQueryExecutor {
                         had_invalid_entry = true;
                         continue;
                     }
-                    out.insert(k, s);
+                    // Canonicalise tracked GUC names so the per-user
+                    // overlay merges with the general/pool cascade by
+                    // canonical key. Without this, an auth_query row
+                    // returning `timezone` would not override a pool
+                    // `TimeZone` baseline and both would survive.
+                    let canonical = crate::server::parameters::canonicalize_param_name(k);
+                    out.insert(canonical, s);
                 }
                 other => {
                     let kind = match other {
@@ -548,6 +554,28 @@ impl AuthQueryExecutor {
             crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
                 .with_label_values(&[pool_name, "auth_query_invalid_entry"])
                 .inc();
+        }
+        // The text decoder enforces `MAX_OPERATOR_BUDGET` on the raw
+        // column before parsing. The json/jsonb decoder has no raw
+        // bytes to size, so apply the same gate to the wire-shape of
+        // the resulting map. Without this a large `jsonb` row would be
+        // cached and then rejected at backend startup with a less
+        // helpful 53400; here we drop it as `auth_query_oversize` like
+        // the text path.
+        let max_bytes = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
+        let serialized = out
+            .iter()
+            .map(|(k, v)| k.len() + 1 + v.len() + 1)
+            .sum::<usize>();
+        if serialized > max_bytes {
+            warn!(
+                "[{username}@{pool_name}] auth_query startup_parameters: decoded map is \
+                 {serialized} bytes, exceeding operator budget {max_bytes}; parameters ignored"
+            );
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[pool_name, "auth_query_oversize"])
+                .inc();
+            return std::collections::HashMap::new();
         }
         out
     }
@@ -1428,11 +1456,11 @@ mod tests {
 
     #[test]
     fn parse_startup_parameters_oversize_text_returns_empty() {
-        // HIGH #9 regression guard: pathological auth_query row should not
-        // make serde_json walk megabytes of JSON. The raw text cap matches
-        // `MAX_OPERATOR_BUDGET`, so anything past that returns empty before
-        // we even start parsing. Drop the same value into a giant string
-        // so the byte length crosses the cap independently of JSON shape.
+        // A pathological auth_query row should not make serde_json walk
+        // megabytes of JSON. The raw text cap matches `MAX_OPERATOR_BUDGET`,
+        // so anything past that returns empty before parsing starts. Use a
+        // giant string so the byte length crosses the cap independently of
+        // JSON shape.
         let cap = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
         let bytes = "a".repeat(cap + 1);
         let r = AuthQueryExecutor::parse_startup_parameters_text(Some(&bytes), "u", "p");
@@ -1553,11 +1581,10 @@ mod tests {
 
     #[tokio::test]
     async fn peek_startup_parameters_returns_none_for_expired_entry() {
-        // HIGH #7 regression guard: a positive cache entry that has lived
-        // past `cache_ttl` must not pin a stale per-user startup parameter
-        // onto a backend the replenishment loop spawns later. Mirrors
-        // `test_cache_ttl_expiration` but exercises the peek path the
-        // backend-spawn hot path uses.
+        // A positive cache entry that has lived past `cache_ttl` must not
+        // pin a stale per-user startup parameter onto a backend spawned by
+        // the replenishment loop. Mirrors `test_cache_ttl_expiration` but
+        // exercises the peek path used by backend startup.
         let fetcher = Arc::new(MockFetcher::new());
         fetcher.add_user_with_params("alice", "md5abc123", &[("work_mem", "64MB")]);
         let mut config = test_config();

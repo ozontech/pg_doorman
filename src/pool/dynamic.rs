@@ -149,14 +149,12 @@ pub fn create_dynamic_pool(
     // snapshot. Dynamic auth_query pools follow the same lifecycle as
     // static pools: rebuilt on RELOAD when the underlying base changes
     // (see `general_startup_parameters_changed` in pool/mod.rs).
-    let base_startup_parameters = {
-        let mut merged: std::collections::BTreeMap<String, String> =
-            config.general.startup_parameters.clone();
-        for (k, v) in &pool_config.startup_parameters {
-            merged.insert(k.clone(), v.clone());
-        }
-        std::sync::Arc::new(merged)
-    };
+    let base_startup_parameters = std::sync::Arc::new(
+        crate::config::startup_parameters::cascade_canonical_keys(&[
+            &config.general.startup_parameters,
+            &pool_config.startup_parameters,
+        ]),
+    );
 
     // Convert the caller's HashMap snapshot into the BTreeMap shape
     // ServerPool stores. The snapshot comes from the auth_query row used

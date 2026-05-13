@@ -428,21 +428,24 @@ impl Config {
             &self.general.startup_parameters,
             "general.startup_parameters",
         )?;
-        // H3: catch the deterministic `general + pool` overflow at config
-        // load time so the runtime never sees a misconfigured pool. Per
-        // user, mirror the full-packet check the runtime runs in
-        // `build_resolved_startup` so a config whose body fits but whose
-        // `user`/`database`/`application_name` push the StartupMessage
-        // over `MAX_STARTUP_PACKET_LENGTH` fails `pg_doorman -t`. Only
-        // the size gate runs here — per-level reserved-key and shape
-        // checks already fired during general/pool validation. The
-        // optional auth_query overlay is still checked at backend spawn
-        // because it comes from PG, not the config file.
+        // Reject deterministic `general + pool` overflows at config load.
+        // For each configured user, mirror the runtime full-packet size
+        // check so `pg_doorman -t` fails even when the parameter body fits
+        // but `user`/`database`/`application_name` would push the full
+        // StartupMessage over `MAX_STARTUP_PACKET_LENGTH`. The checks
+        // here only cover size: reserved-key and shape validation has
+        // already run per level, and auth_query overlays are still
+        // checked at backend startup because they come from PostgreSQL.
         for (pool_name, pool_config) in &self.pools {
-            let mut merged = self.general.startup_parameters.clone();
-            for (k, v) in &pool_config.startup_parameters {
-                merged.insert(k.clone(), v.clone());
-            }
+            // Same canonical cascade build the runtime does in
+            // `ServerPool::new`. Without the canonicalisation here, a
+            // pool that overrides `timezone` with `TimeZone` would
+            // serialise two rows during validation and disagree with
+            // the runtime byte count.
+            let merged = startup_parameters::cascade_canonical_keys(&[
+                &self.general.startup_parameters,
+                &pool_config.startup_parameters,
+            ]);
             let merged_size = startup_parameters::serialized_bytes(&merged);
             if merged_size > startup_parameters::MAX_OPERATOR_BUDGET {
                 return Err(Error::BadConfig(format!(
@@ -457,12 +460,17 @@ impl Config {
                 .server_database
                 .as_deref()
                 .unwrap_or(pool_name.as_str());
-            let application_name = pool_config.application_name.as_deref().unwrap_or("");
-            for user in &pool_config.users {
-                let server_username = user
-                    .server_username
-                    .as_deref()
-                    .unwrap_or(user.username.as_str());
+            // Runtime resolves the StartupMessage application_name as
+            // pool override → `"pg_doorman"`. Mirror that default so
+            // `pg_doorman -t` doesn't accept a config whose only safe
+            // case is the empty-string assumption.
+            let application_name = pool_config
+                .application_name
+                .as_deref()
+                .unwrap_or("pg_doorman");
+            let validate_user_identity = |display_user: &str,
+                                          server_username: &str|
+             -> Result<(), Error> {
                 let (packet_bytes, _body_bytes) = startup_parameters::packet_and_body_bytes(
                     server_username,
                     server_database,
@@ -472,12 +480,27 @@ impl Config {
                 if packet_bytes > startup_parameters::MAX_STARTUP_PACKET_SIZE {
                     return Err(Error::BadConfig(format!(
                         "merged general + pools.{pool_name}.startup_parameters: full StartupMessage \
-                         for user '{}' is {packet_bytes} bytes, exceeding the PG cap of {} bytes \
-                         (user/database/application_name overhead included); reduce general or \
-                         pool startup_parameters",
-                        user.username,
+                         for user '{display_user}' is {packet_bytes} bytes, exceeding the PG cap of \
+                         {} bytes (user/database/application_name overhead included); reduce \
+                         general or pool startup_parameters",
                         startup_parameters::MAX_STARTUP_PACKET_SIZE,
                     )));
+                }
+                Ok(())
+            };
+            for user in &pool_config.users {
+                let server_username = user
+                    .server_username
+                    .as_deref()
+                    .unwrap_or(user.username.as_str());
+                validate_user_identity(&user.username, server_username)?;
+            }
+            // Dedicated auth_query mode opens one shared backend
+            // connection identified by `auth_query.server_user`; that
+            // identity must fit the packet just like a static user.
+            if let Some(aq) = pool_config.auth_query.as_ref() {
+                if let Some(shared_user) = aq.server_user.as_deref() {
+                    validate_user_identity(shared_user, shared_user)?;
                 }
             }
         }
