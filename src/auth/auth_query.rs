@@ -386,16 +386,20 @@ impl AuthQueryExecutor {
         }
     }
 
-    /// Read the optional `startup_parameters` text column from the auth_query
-    /// row and parse it as a JSON object. A missing column yields an empty
-    /// map; a present column whose type does not coerce to `Option<String>`
-    /// logs a warning and yields an empty map. Actual JSON parsing and
-    /// per-entry validation happen in `parse_startup_parameters_text`.
+    /// Read the optional `startup_parameters` column from the auth_query
+    /// row. A missing column yields an empty map. Column type drives the
+    /// decoder so a `jsonb` row goes straight through `serde_json::Value`
+    /// without a `text`-decode failure or a serialize/re-parse
+    /// round-trip; an unsupported column type logs a warning, ticks the
+    /// drop counter, and yields an empty map. Actual JSON shape /
+    /// per-entry validation is shared via
+    /// `parse_startup_parameters_value`.
     fn extract_startup_parameters(
         row: &tokio_postgres::Row,
         username: &str,
         pool_name: &str,
     ) -> std::collections::HashMap<String, String> {
+        use tokio_postgres::types::Type;
         let column = row
             .columns()
             .iter()
@@ -403,40 +407,46 @@ impl AuthQueryExecutor {
         let Some(column) = column else {
             return std::collections::HashMap::new();
         };
-        // Decode order: text first (the documented contract), then
-        // `json`/`jsonb` via `serde_json::Value`. A natural auth_query
-        // schema often stores per-user GUCs as `jsonb`, and requiring
-        // a `::text` cast for that case bites operators who modelled
-        // the column naturally.
-        let raw: Option<String> = match row.try_get::<_, Option<String>>("startup_parameters") {
-            Ok(v) => v,
-            Err(text_err) => {
-                match row.try_get::<_, Option<serde_json::Value>>("startup_parameters") {
-                    Ok(Some(value)) => Some(value.to_string()),
-                    Ok(None) => None,
-                    Err(json_err) => {
-                        warn!(
-                            "[{username}@{pool_name}] auth_query startup_parameters column has type \
-                             `{ty}` but pg_doorman reads it as `text` or `json`/`jsonb`: \
-                             text decode error: {text_err}; json decode error: {json_err}. \
-                             Per-user parameters are ignored for this row.",
-                            ty = column.type_().name()
-                        );
-                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                            .with_label_values(&[pool_name, "auth_query_bad_type"])
-                            .inc();
-                        return std::collections::HashMap::new();
-                    }
+        let col_type = column.type_();
+        if matches!(*col_type, Type::JSON | Type::JSONB) {
+            match row.try_get::<_, Option<serde_json::Value>>("startup_parameters") {
+                Ok(Some(value)) => Self::parse_startup_parameters_value(value, username, pool_name),
+                Ok(None) => std::collections::HashMap::new(),
+                Err(json_err) => {
+                    warn!(
+                        "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                         `{ty}` but pg_doorman could not decode it as json: {json_err}. \
+                         Per-user parameters are ignored for this row.",
+                        ty = col_type.name()
+                    );
+                    crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                        .with_label_values(&[pool_name, "auth_query_bad_type"])
+                        .inc();
+                    std::collections::HashMap::new()
                 }
             }
-        };
-        Self::parse_startup_parameters_text(raw.as_deref(), username, pool_name)
+        } else {
+            match row.try_get::<_, Option<String>>("startup_parameters") {
+                Ok(raw) => Self::parse_startup_parameters_text(raw.as_deref(), username, pool_name),
+                Err(text_err) => {
+                    warn!(
+                        "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                         `{ty}` but pg_doorman reads it as `text`, `json`, or `jsonb`: {text_err}. \
+                         Per-user parameters are ignored for this row.",
+                        ty = col_type.name()
+                    );
+                    crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                        .with_label_values(&[pool_name, "auth_query_bad_type"])
+                        .inc();
+                    std::collections::HashMap::new()
+                }
+            }
+        }
     }
 
-    /// Parse the optional `startup_parameters` JSON object returned by
-    /// auth_query. Valid string entries become per-user GUCs. Invalid keys,
-    /// non-string values, malformed JSON, and non-object JSON are logged and
-    /// ignored; authentication still continues.
+    /// Parse the optional `startup_parameters` JSON object received as
+    /// `text` from auth_query. Wraps `parse_startup_parameters_value`
+    /// after the size gate and `serde_json::from_str`.
     fn parse_startup_parameters_text(
         text: Option<&str>,
         username: &str,
@@ -476,7 +486,19 @@ impl AuthQueryExecutor {
                 return std::collections::HashMap::new();
             }
         };
-        let serde_json::Value::Object(obj) = parsed else {
+        Self::parse_startup_parameters_value(parsed, username, pool_name)
+    }
+
+    /// Per-entry validation shared between the `text` and `json`/`jsonb`
+    /// auth_query decoders. The json/jsonb path used to serialise the
+    /// `serde_json::Value` back into a string and re-parse it here; this
+    /// helper avoids the round-trip.
+    fn parse_startup_parameters_value(
+        value: serde_json::Value,
+        username: &str,
+        pool_name: &str,
+    ) -> std::collections::HashMap<String, String> {
+        let serde_json::Value::Object(obj) = value else {
             warn!(
                 "[{username}@{pool_name}] auth_query startup_parameters: top-level value is not a \
                  JSON object; ignored"

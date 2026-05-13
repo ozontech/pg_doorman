@@ -745,17 +745,34 @@ where
             let mut auth_ok = false;
             let mut refreshed: Option<crate::auth::auth_query::CacheEntry> = None;
             if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await {
-                if new_entry.password_hash != cache_entry.password_hash
-                    && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
-                {
-                    let new_expected = md5_hash_second_pass(
-                        new_entry.password_hash.strip_prefix("md5").unwrap(),
-                        &salt,
-                    );
-                    if new_expected == password_response {
-                        auth_ok = true;
-                        info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
-                        refreshed = Some(new_entry);
+                if new_entry.password_hash != cache_entry.password_hash {
+                    if new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
+                        let new_expected = md5_hash_second_pass(
+                            new_entry.password_hash.strip_prefix("md5").unwrap(),
+                            &salt,
+                        );
+                        if new_expected == password_response {
+                            auth_ok = true;
+                            info!(
+                                "[{username}@{pool_name}] auth_query: re-fetched password matched"
+                            );
+                            refreshed = Some(new_entry);
+                        }
+                    } else {
+                        // The refetched verifier is no longer MD5 — the
+                        // operator switched `password_encryption` mid-flight
+                        // (typically MD5 → SCRAM). The current MD5 proof
+                        // cannot validate against a SCRAM verifier; reject
+                        // this attempt and invalidate the cache so the next
+                        // reconnect hits `cache.get_or_fetch` and takes the
+                        // SCRAM branch immediately rather than waiting for
+                        // `cache_ttl`.
+                        warn!(
+                            "[{username}@{pool_name}] auth_query: refetched verifier changed type ({stored} → {fresh}); cache invalidated, client must reconnect with the new mechanism",
+                            stored = if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) { "md5" } else { "scram" },
+                            fresh = if new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) { "md5" } else { "scram" }
+                        );
+                        cache.invalidate(username);
                     }
                 }
             }
@@ -986,6 +1003,15 @@ where
                     } = &err
                     {
                         error!("[{username}@{pool_name}] auth_query passthrough: PG rejected operator-supplied startup parameter: {pg_message}");
+                        // Drop the dynamic pool and invalidate the cache
+                        // entry so the operator's fix to the auth_query
+                        // row reaches the next reconnect immediately.
+                        // Without this the bad overlay sticks until
+                        // `cache_ttl` expires, and every reconnect from
+                        // this user repeats the same rejection.
+                        let identifier = crate::pool::PoolIdentifier::new(pool_name, username);
+                        crate::pool::drop_dynamic_pool(&identifier);
+                        cache.invalidate(username);
                         error_response(write, pg_message, sqlstate).await?;
                         return Err(err);
                     }
