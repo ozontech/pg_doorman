@@ -430,8 +430,8 @@ function BasicBlock({
         >
           That user/password was rejected. Recheck{" "}
           <span className="font-mono">[general].admin_username</span> and{" "}
-          <span className="font-mono">[general].admin_password</span> in{" "}
-          <span className="font-mono">pg_doorman.toml</span>.
+          <span className="font-mono">[general].admin_password</span> in the
+          active config file.
         </p>
       )}
       <form onSubmit={onSubmit} className="space-y-3">

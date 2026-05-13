@@ -89,16 +89,25 @@ pub fn resolve_with_sources(
     pool: &BTreeMap<String, String>,
     auth_query_params: Option<&HashMap<String, String>>,
 ) -> BTreeMap<String, (String, ParameterSource)> {
+    // Canonicalise keys at insert so the read model matches the
+    // wire-ready map produced by `cascade_canonical_keys` in the
+    // runtime. Without this, a `timezone` baseline and a `TimeZone`
+    // override surface as two entries in `SHOW STARTUP_PARAMETERS` /
+    // `/api/pools`, and the wire compare in
+    // `effective_startup_parameters_with_sources` flags one variant as
+    // `dropped_due_to_budget`/`stale`. Later layers win because their
+    // canonical key replaces earlier inserts at the same key.
+    let canon = crate::server::parameters::canonicalize_param_name;
     let mut out: BTreeMap<String, (String, ParameterSource)> = BTreeMap::new();
     for (k, v) in general {
-        out.insert(k.clone(), (v.clone(), ParameterSource::General));
+        out.insert(canon(k.clone()), (v.clone(), ParameterSource::General));
     }
     for (k, v) in pool {
-        out.insert(k.clone(), (v.clone(), ParameterSource::Pool));
+        out.insert(canon(k.clone()), (v.clone(), ParameterSource::Pool));
     }
     if let Some(extra) = auth_query_params {
         for (k, v) in extra {
-            out.insert(k.clone(), (v.clone(), ParameterSource::AuthQuery));
+            out.insert(canon(k.clone()), (v.clone(), ParameterSource::AuthQuery));
         }
     }
     out
@@ -185,6 +194,59 @@ mod tests {
             r.get("lock_timeout"),
             Some(&("5s".to_string(), ParameterSource::AuthQuery))
         );
+    }
+
+    #[test]
+    fn resolve_with_sources_canonicalises_tracked_keys() {
+        // PG GUC lookup is case-insensitive; the runtime cascade
+        // canonicalises names before they reach the wire (e.g. pool
+        // `TimeZone` collapses with general `timezone`). The read model
+        // backing `SHOW STARTUP_PARAMETERS` and `/api/pools` must do the
+        // same — otherwise the same logical GUC appears twice in the
+        // SHOW output and the wire-map compare flags one variant as
+        // `dropped_due_to_budget`/`stale`.
+        let g = b(&[("timezone", "UTC")]);
+        let p = b(&[("TimeZone", "Europe/Moscow")]);
+        let r = resolve_with_sources(&g, &p, None);
+        assert!(
+            !r.contains_key("timezone"),
+            "raw lowercase key must not survive canonicalisation"
+        );
+        assert_eq!(
+            r.get("TimeZone"),
+            Some(&("Europe/Moscow".to_string(), ParameterSource::Pool))
+        );
+    }
+
+    #[test]
+    fn resolve_with_sources_canonicalises_non_tracked_keys() {
+        // For non-tracked GUCs canonicalisation is `to_ascii_lowercase`,
+        // mirroring `canonicalize_param_name`. Without it `Work_Mem`
+        // (pool) and `work_mem` (general) would both appear in the SHOW
+        // output and only one would be present on the wire.
+        let g = b(&[("work_mem", "64MB")]);
+        let p = b(&[("Work_Mem", "256MB")]);
+        let r = resolve_with_sources(&g, &p, None);
+        assert!(!r.contains_key("Work_Mem"));
+        assert_eq!(
+            r.get("work_mem"),
+            Some(&("256MB".to_string(), ParameterSource::Pool))
+        );
+    }
+
+    #[test]
+    fn resolve_with_sources_canonicalises_auth_query_keys() {
+        // auth_query JSON rows can return any casing for tracked GUCs.
+        // The read model must canonicalise them too so the auth_query
+        // overlay overrides the same canonical key the runtime ships.
+        let p = b(&[("TimeZone", "UTC")]);
+        let a = h(&[("timezone", "Europe/Moscow")]);
+        let r = resolve_with_sources(&BTreeMap::new(), &p, Some(&a));
+        assert_eq!(
+            r.get("TimeZone"),
+            Some(&("Europe/Moscow".to_string(), ParameterSource::AuthQuery))
+        );
+        assert!(!r.contains_key("timezone"));
     }
 
     #[test]

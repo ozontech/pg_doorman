@@ -1687,9 +1687,9 @@ fn check_hba_legacy_empty_allows_unix() {
 
 #[test]
 fn check_hba_legacy_list_bypassed_for_unix() {
-    // Reproduces the "silent privilege expansion" case from review: the
-    // operator restricts TCP access with a CIDR whitelist, but Unix clients
-    // must still be allowed because the legacy list has no transport concept.
+    // The legacy CIDR allowlist applies only to TCP clients. Unix socket
+    // clients must still be allowed because the legacy list has no
+    // transport concept.
     let mut general = General::default();
     general.hba = vec!["10.0.0.0/8".parse().unwrap()];
 
@@ -2069,6 +2069,38 @@ async fn reject_reserved_in_pool_startup_parameters() {
     match err {
         Error::BadConfig(msg) => assert!(
             msg.contains("pool.startup_parameters") && msg.contains("reserved"),
+            "unexpected message: {msg}"
+        ),
+        other => panic!("expected BadConfig, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn reject_merged_general_pool_startup_parameters_overflow() {
+    // Two layers can fit on their own and still overflow once merged.
+    // Config validation should catch that at `pg_doorman -t`, before the
+    // first client tries to connect.
+    let mut cfg = Config::default();
+    cfg.general.tls_rate_limit_per_second = 0;
+    let filler = "x".repeat(4800);
+    cfg.general
+        .startup_parameters
+        .insert("aaa_big".to_string(), filler.clone());
+    let mut pool = Pool::default();
+    pool.startup_parameters
+        .insert("bbb_big".to_string(), filler);
+    pool.users.push(User {
+        username: "u".to_string(),
+        password: "p".to_string(),
+        pool_size: 1,
+        ..User::default()
+    });
+    cfg.pools.insert("p".to_string(), pool);
+    let err = cfg.validate().await.unwrap_err();
+    match err {
+        Error::BadConfig(msg) => assert!(
+            msg.contains("merged general + pools.p.startup_parameters")
+                && msg.contains("exceeds operator budget"),
             "unexpected message: {msg}"
         ),
         other => panic!("expected BadConfig, got {other:?}"),

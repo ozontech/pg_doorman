@@ -65,6 +65,19 @@ pub fn validate(map: &BTreeMap<String, String>, scope: &str) -> Result<(), Error
         validate_key(k, scope)?;
         validate_value(k, v, scope)?;
     }
+    // PG GUC names are case-insensitive. Two keys that collapse to the
+    // same canonical form would silently lose one entry to BTreeMap
+    // iteration order in the cascade merge — reject the configuration
+    // instead and tell the operator which two keys clash.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for k in map.keys() {
+        let canonical = crate::server::parameters::canonicalize_param_name(k.clone());
+        if let Some(existing) = seen.insert(canonical.clone(), k.clone()) {
+            return Err(Error::BadConfig(format!(
+                "{scope}: '{existing}' and '{k}' both refer to PG GUC '{canonical}'; keep one"
+            )));
+        }
+    }
     validate_total_size(map, scope)
 }
 
@@ -88,7 +101,13 @@ fn validate_key(key: &str, scope: &str) -> Result<(), Error> {
             "{scope}: '{key}' is reserved and managed by pg_doorman"
         )));
     }
-    if key.starts_with(RESERVED_PREFIX) {
+    // Case-insensitive prefix check: PG GUC lookup is case-insensitive
+    // and `canonicalize_param_name` lowercases non-tracked keys before
+    // they reach the wire, so `_PQ_.foo` would otherwise pass validation
+    // here and emerge on the wire as `_pq_.foo`.
+    if key.len() >= RESERVED_PREFIX.len()
+        && key.as_bytes()[..RESERVED_PREFIX.len()].eq_ignore_ascii_case(RESERVED_PREFIX.as_bytes())
+    {
         return Err(Error::BadConfig(format!(
             "{scope}: '{key}' uses the reserved '_pq_.' prefix"
         )));
@@ -127,6 +146,25 @@ fn validate_total_size(map: &BTreeMap<String, String>, scope: &str) -> Result<()
 /// per the PG layout where each pair contributes `key\0value\0`.
 pub fn serialized_bytes(map: &BTreeMap<String, String>) -> usize {
     map.iter().map(|(k, v)| k.len() + 1 + v.len() + 1).sum()
+}
+
+/// Merge `general`/`pool`/`auth_query` startup_parameter layers with
+/// PostgreSQL case-insensitive GUC semantics. Each layer's keys are
+/// canonicalised before insertion, so a pool `TimeZone` correctly wins
+/// over a general `timezone` regardless of the raw casing the operator
+/// wrote. Layers later in the slice override earlier ones, mirroring
+/// the cascade order documented in the tutorial.
+pub fn cascade_canonical_keys(layers: &[&BTreeMap<String, String>]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for layer in layers {
+        for (k, v) in layer.iter() {
+            out.insert(
+                crate::server::parameters::canonicalize_param_name(k.clone()),
+                v.clone(),
+            );
+        }
+    }
+    out
 }
 
 /// Exact byte length of the full StartupMessage pg_doorman will put on the
@@ -273,6 +311,30 @@ mod tests {
     fn pq_prefix_rejected() {
         let err = validate(&m(&[("_pq_.fancy_ext", "x")]), "scope").unwrap_err();
         assert!(matches!(err, Error::BadConfig(_)));
+    }
+
+    #[test]
+    fn pq_prefix_rejected_case_insensitive() {
+        // PG GUC lookup is case-insensitive, and `canonicalize_param_name`
+        // lowercases non-tracked keys before they reach the wire. Without
+        // a case-insensitive check the reserved protocol-extension
+        // namespace can be smuggled in as `_PQ_.foo` or `_Pq_.foo` and
+        // emerges on the wire as `_pq_.foo`.
+        for key in ["_PQ_.fancy_ext", "_Pq_.fancy_ext", "_pQ_.FANCY"] {
+            let err = validate(&m(&[(key, "x")]), "scope").unwrap_err();
+            assert!(
+                matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")),
+                "key {key} must be rejected as reserved"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_entry_rejects_pq_prefix_case_insensitive() {
+        // auth_query JSON values flow through `validate_entry`, so the
+        // reserved-prefix guard must cover that path identically.
+        let err = validate_entry("_PQ_.fancy_ext", "x", "scope").unwrap_err();
+        assert!(matches!(err, Error::BadConfig(ref msg) if msg.contains("reserved")));
     }
 
     #[test]

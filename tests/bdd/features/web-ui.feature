@@ -49,8 +49,8 @@ Feature: Web UI listener
       curl -s -o /dev/null -w "%{http_code} %{content_type}\n" http://127.0.0.1:9127/
       """
     Then the command should succeed
-    And output contains "200"
-    And output contains "text/html"
+    And the command output should contain "200"
+    And the command output should contain "text/html"
 
   Scenario: Deep link falls back to the SPA shell
     When I run shell command:
@@ -58,8 +58,8 @@ Feature: Web UI listener
       curl -s -o /dev/null -w "%{http_code} %{content_type}\n" http://127.0.0.1:9127/pools
       """
     Then the command should succeed
-    And output contains "200"
-    And output contains "text/html"
+    And the command output should contain "200"
+    And the command output should contain "text/html"
 
   Scenario: /api/version is anonymous when ui_anonymous is true
     When I run shell command:
@@ -67,7 +67,7 @@ Feature: Web UI listener
       curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/version
       """
     Then the command should succeed
-    And output contains "200"
+    And the command output should contain "200"
 
   Scenario: /api/logs is admin-only without credentials
     When I run shell command:
@@ -75,7 +75,7 @@ Feature: Web UI listener
       curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/logs
       """
     Then the command should succeed
-    And output contains "401"
+    And the command output should contain "401"
 
   Scenario: JSON callers receive 401 without WWW-Authenticate
     When I run shell command:
@@ -83,7 +83,7 @@ Feature: Web UI listener
       curl -s -i -H "Accept: application/json" http://127.0.0.1:9127/api/logs | grep -ci 'WWW-Authenticate' || echo 0
       """
     Then the command should succeed
-    And output contains "0"
+    And the command output should contain "0"
 
   Scenario: Curl-style callers do receive WWW-Authenticate on 401
     When I run shell command:
@@ -91,7 +91,7 @@ Feature: Web UI listener
       curl -s -i http://127.0.0.1:9127/api/logs | grep -ci 'WWW-Authenticate'
       """
     Then the command should succeed
-    And output contains "1"
+    And the command output should contain "1"
 
   Scenario: /api/logs accepts admin basic auth
     When I run shell command:
@@ -99,7 +99,7 @@ Feature: Web UI listener
       curl -s --user 'admin:webui_bdd' -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/logs
       """
     Then the command should succeed
-    And output contains "200"
+    And the command output should contain "200"
 
   Scenario: /metrics still serves Prometheus when the UI is on
     When I run shell command:
@@ -107,7 +107,7 @@ Feature: Web UI listener
       curl -s http://127.0.0.1:9127/metrics | head -1
       """
     Then the command should succeed
-    And output contains "# HELP"
+    And the command output should contain "# HELP"
 
   Scenario: /api/auth/config is anonymous and reports SSO disabled
     When I run shell command:
@@ -115,8 +115,8 @@ Feature: Web UI listener
       curl -s http://127.0.0.1:9127/api/auth/config
       """
     Then the command should succeed
-    And output contains "\"sso_enabled\":false"
-    And output contains "\"current_user\":null"
+    And the command output should contain "\"sso_enabled\":false"
+    And the command output should contain "\"current_user\":null"
 
   Scenario: /api/auth/config carries admin identity for Basic auth
     When I run shell command:
@@ -124,8 +124,8 @@ Feature: Web UI listener
       curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/auth/config
       """
     Then the command should succeed
-    And output contains "\"role\":\"admin\""
-    And output contains "\"source\":\"basic\""
+    And the command output should contain "\"role\":\"admin\""
+    And the command output should contain "\"source\":\"basic\""
 
   Scenario: /api/admin/reload requires Admin and rejects anonymous with 401
     When I run shell command:
@@ -133,7 +133,7 @@ Feature: Web UI listener
       curl -s -X POST -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/admin/reload
       """
     Then the command should succeed
-    And output contains "401"
+    And the command output should contain "401"
 
   Scenario: Bearer with malformed token is Rejected (401) when SSO is off
     When I run shell command:
@@ -141,7 +141,7 @@ Feature: Web UI listener
       curl -s -H "Authorization: Bearer not.a.real.jwt" -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9127/api/logs
       """
     Then the command should succeed
-    And output contains "401"
+    And the command output should contain "401"
 
   Scenario: Access log line surfaces in /api/logs after a probe
     When I run shell command:
@@ -151,3 +151,21 @@ Feature: Web UI listener
       curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/logs | grep -c 'pg_doorman::web::access' || echo 0
       """
     Then the command should succeed
+
+  # Bind-address fields require a restart; most other fields take effect
+  # on RELOAD or on the next backend. /api/config must mark the flattened
+  # bind-address keys as immutable so the SPA shows restart_required for
+  # the right rows.
+  Scenario: /api/config marks bind-address fields as restart-required
+    When I run shell command:
+      """
+      curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/config | \
+        grep -oE '"key":"(general|web)\.(host|port)"[^}]*"changeable":"[^"]*"' | sort -u
+      """
+    Then the command should succeed
+    # Each bind-address key must appear with changeable=no.
+    And the command output should contain "\"key\":\"general.host\""
+    And the command output should contain "\"key\":\"general.port\""
+    And the command output should contain "\"key\":\"web.host\""
+    And the command output should contain "\"key\":\"web.port\""
+    And the command output should contain "\"changeable\":\"no\""

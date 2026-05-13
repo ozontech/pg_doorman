@@ -1158,8 +1158,9 @@ fields:
           validates reserved keys, GUC names, null bytes, and this level's
           size. Before backend startup, pg_doorman checks the resolved
           parameter set again; if it does not fit PG's
-          MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
-          configured GUCs for that startup and logs a warning.
+          MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman rejects
+          backend startup with SQLSTATE 53400 (configuration_limit_exceeded)
+          and writes the event to the warning log.
           Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
         ru: |
           Базовые GUC PostgreSQL, которые pg_doorman добавляет в
@@ -1170,15 +1171,16 @@ fields:
           зарезервированные ключи, имена GUC, нулевые байты и размер
           этого уровня. Объединённый набор параметров снова проверяется
           при запуске бэкенда; если он не помещается в лимит PG
-          MAX_STARTUP_PACKET_LENGTH (10000 байт), pg_doorman пропускает
-          операторские GUC для этого запуска и пишет предупреждение.
+          MAX_STARTUP_PACKET_LENGTH (10000 байт), pg_doorman отклоняет
+          запуск бэкенда с SQLSTATE 53400 (configuration_limit_exceeded)
+          и пишет предупреждение в лог.
           Пример: startup_parameters = { plan_cache_mode = "force_custom_plan" }
       doc: |
         Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend `StartupMessage`; PostgreSQL stores them as the session reset defaults, so client `RESET ALL` / `DISCARD ALL` returns to these values.
 
         Cascade order: `general.startup_parameters`, then `pools.<name>.startup_parameters`, then the optional `startup_parameters` JSON column returned by passthrough `auth_query`. Later layers win per key. Dedicated-mode `auth_query` pools ignore the per-user column because one shared backend serves multiple roles.
 
-        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes); if it does not fit, pg_doorman drops the auth_query overlay when the baseline still fits, otherwise it drops all configured keys for that startup and logs the event.
+        Validation at config load rejects reserved protocol keys (`user`, `database`, `replication`, `options`, anything starting with `_pq_.`), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes). The cascade and packet-cap gates reject backend startup with SQLSTATE 53400 (`configuration_limit_exceeded`); when only the auth_query overlay tips the cascade over budget, pg_doorman drops that overlay and continues with the baseline.
 
         If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's `ErrorResponse` to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as `pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}`; the parameter name and username are written to the corresponding warning log line.
 
@@ -1641,7 +1643,7 @@ fields:
       doc: |
         SQL query to fetch credentials. It must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name.
 
-        Extra columns are ignored except for the optional `startup_parameters` text column. In passthrough mode, pg_doorman reads that column as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores it and logs a warning. Use `$1` as the placeholder for the username parameter.
+        Extra columns are ignored except for the optional `startup_parameters` column. The column may be `text`, `json`, or `jsonb`; pg_doorman dispatches by the column type and the content must be a JSON object whose values are strings. Custom domains over `jsonb` are not accepted without an explicit cast. In passthrough mode, the map applies as per-user startup parameters. Dedicated mode ignores it and logs a warning. Use `$1` as the placeholder for the username parameter.
 
         Example: `"SELECT passwd FROM pg_shadow WHERE usename = $1"`
 

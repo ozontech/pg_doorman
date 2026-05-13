@@ -552,3 +552,44 @@ Feature: Per-pool startup_parameters
     # cascade fits the operator budget for this fixture.
     And the command output should contain "statement_timeout|10s|general|applied"
     And the command output should contain "plan_cache_mode|force_custom_plan|pool|applied"
+
+  # A common auth_query schema stores startup_parameters as jsonb.
+  # pg_doorman must decode that column directly, without forcing the
+  # operator to add a ::text cast to the SELECT.
+  Scenario: auth_query startup_parameters from a jsonb column applies without ::text cast
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all             all                                     trust
+      host    all             postgres        127.0.0.1/32            trust
+      host    all             all             127.0.0.1/32            md5
+      host    all             all             ::1/128                 trust
+      """
+    And fixtures from "tests/auth_query_jsonb_fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 md5"
+
+      [pools.postgres]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [pools.postgres.startup_parameters]
+      plan_cache_mode = "auto"
+
+      [pools.postgres.auth_query]
+      query = "SELECT username, password, startup_parameters FROM auth_users_jsonb WHERE username = $1"
+      user = "postgres"
+      password = ""
+      workers = 1
+      pool_size = 5
+      cache_ttl = "1h"
+      cache_failure_ttl = "30s"
+      min_interval = "0s"
+      """
+    Then psql query "SHOW plan_cache_mode" via pg_doorman as user "sp_jsonb_user" to database "postgres" with password "jsonb_pass" returns "force_custom_plan"

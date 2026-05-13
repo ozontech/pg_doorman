@@ -416,8 +416,9 @@ hba = []
 # validates reserved keys, GUC names, null bytes, and this level's
 # size. Before backend startup, pg_doorman checks the resolved
 # parameter set again; if it does not fit PG's
-# MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman skips
-# configured GUCs for that startup and logs a warning.
+# MAX_STARTUP_PACKET_LENGTH (10000 bytes), pg_doorman rejects
+# backend startup with SQLSTATE 53400 (configuration_limit_exceeded)
+# and writes the event to the warning log.
 # Example: startup_parameters = { plan_cache_mode = "force_custom_plan" }
 # Default: {} (empty)
 # startup_parameters = { plan_cache_mode = "force_custom_plan", work_mem = "64MB" }

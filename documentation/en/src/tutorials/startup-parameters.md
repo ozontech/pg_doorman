@@ -52,14 +52,26 @@ FROM pg_authid
 WHERE rolname = $1;
 ```
 
-The column must serialize as `text`. If the SQL returns `json` or
-`jsonb`, add an explicit `::text` cast. pg_doorman reads the column
-as `text` and logs a warning for that fetched row when the type does
-not match.
+The column may be `text`, `json`, or `jsonb`; pg_doorman dispatches by
+the column type without requiring a cast. The content must be a JSON
+object whose values are strings. Other PostgreSQL types (or a custom
+domain on top of `jsonb`) log a warning and the per-user overlay is
+ignored.
 
 Dedicated `auth_query` mode (`server_user` set) ignores the per-user
 column and logs once per (pool, username): one shared backend serves
 many users, so a per-user override cannot apply.
+
+Changes to a per-user `startup_parameters` row apply to **new** backend
+connections, but only after pg_doorman re-reads the row. The
+`auth_query` cache holds positive entries for `auth_query.cache_ttl`
+(default one hour) and on a refresh detects the overlay change and
+drops the dynamic pool so the next login rebuilds it against the new
+values. Until the cache entry expires, reconnecting clients still see
+the old overlay. To force an immediate rollout: lower `cache_ttl` and
+reload the config, restart pg_doorman, or wait for the TTL to elapse.
+Backends that are already checked out keep the values captured when
+their pool was created.
 
 ## What pg_doorman does with the values
 
@@ -92,21 +104,24 @@ At config load:
 - Keys must match PG GUC naming `^[A-Za-z_][A-Za-z0-9_.]*$`. Namespaced
   names like `auto_explain.log_min_duration` are accepted; arbitrary
   punctuation is not.
-- Reserved keys (`user`, `database`, `replication`, `options`, and
-  anything starting with `_pq_.`) are refused. pg_doorman manages
-  them itself or PG treats them specially in the StartupMessage.
+- Reserved keys (`user`, `database`, `replication`, `options`, `role`,
+  `session_authorization`, and anything starting with `_pq_.`) are
+  refused. pg_doorman manages them itself or PG treats them specially in
+  the StartupMessage.
 - Values must not contain null bytes.
 - Each level (general or per-pool) must fit within the startup-parameter
   budget: `MAX_STARTUP_PACKET_LENGTH` (10 000 bytes) minus 512 bytes
   reserved for pg_doorman-managed keys.
 
-Before each backend spawn pg_doorman checks the resolved parameter set
-against the same cap. Two layers that fit on their own can overflow once
-`auth_query` adds a third layer. If only the `auth_query` layer pushes
-the set over the cap, pg_doorman drops that layer and keeps the
-general/pool baseline. If the baseline itself or the full startup packet
-does not fit, pg_doorman skips all configured parameters for that
-spawn and logs the byte counts.
+Before each backend start, pg_doorman checks the resolved parameter set
+against the same cap. Layers that fit individually can exceed the limit
+after merging: `general + pool` can already be too large, and an
+`auth_query` row can push a valid baseline over the limit. Any overflow
+now returns a PostgreSQL-style error (`SQLSTATE 53400`) to the client
+instead of sending a partial or empty `StartupMessage`. The warning log
+records the byte counts, and
+`pg_doorman_startup_parameters_dropped_total` increments for each
+rejected backend start.
 
 ## What happens when PG rejects a parameter
 

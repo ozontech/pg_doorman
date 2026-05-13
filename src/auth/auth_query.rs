@@ -17,6 +17,7 @@ use log::{debug, error, info, warn};
 use crate::utils::format_elapsed;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
+use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{Client, NoTls};
 
 use crate::config::{AuthQueryConfig, Duration};
@@ -28,6 +29,46 @@ use crate::stats::auth_query::AuthQueryStats;
 /// Usernames exceeding this are rejected without caching to prevent
 /// memory exhaustion from very long usernames.
 const MAX_USERNAME_LEN: usize = 63;
+
+/// Marker string the custom `LimitedJson` decoder embeds in its error
+/// message when a `json`/`jsonb` row exceeds `MAX_OPERATOR_BUDGET`. The
+/// outer `try_get` error has to stay generic (`Box<dyn Error>`), so the
+/// auth_query reader matches on this substring to decide between
+/// `auth_query_oversize` (operator footgun) and `auth_query_bad_type`
+/// (decoder failure on unexpected wire bytes).
+const LIMITED_JSON_OVERSIZE_TAG: &str = "auth_query startup_parameters oversize";
+
+/// Custom `FromSql` wrapper for `json`/`jsonb` columns that enforces
+/// `MAX_OPERATOR_BUDGET` on the raw wire bytes BEFORE `serde_json` walks
+/// the value tree. Without this, a malicious or accidentally large
+/// `jsonb` row on the auth_query path would force pg_doorman to
+/// allocate and parse the full tree on every cache miss, even though
+/// the result is later rejected by the size gate inside
+/// `parse_startup_parameters_value`. The text decoder already has this
+/// pre-parse gate; this wrapper closes the asymmetry for jsonb.
+struct LimitedJson(serde_json::Value);
+
+impl<'a> FromSql<'a> for LimitedJson {
+    fn from_sql(
+        ty: &Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        let budget = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
+        if raw.len() > budget {
+            return Err(format!(
+                "{LIMITED_JSON_OVERSIZE_TAG}: raw column is {} bytes, exceeding operator budget {budget}",
+                raw.len()
+            )
+            .into());
+        }
+        let value = <serde_json::Value as FromSql>::from_sql(ty, raw)?;
+        Ok(LimitedJson(value))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::JSON | Type::JSONB)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // PasswordFetcher trait (allows mocking AuthQueryExecutor in unit tests)
@@ -386,11 +427,14 @@ impl AuthQueryExecutor {
         }
     }
 
-    /// Read the optional `startup_parameters` text column from the auth_query
-    /// row and parse it as a JSON object. A missing column yields an empty
-    /// map; a present column whose type does not coerce to `Option<String>`
-    /// logs a warning and yields an empty map. Actual JSON parsing and
-    /// per-entry validation happen in `parse_startup_parameters_text`.
+    /// Read the optional `startup_parameters` column from the auth_query
+    /// row. A missing column yields an empty map. Column type drives the
+    /// decoder so a `jsonb` row goes straight through `serde_json::Value`
+    /// without a `text`-decode failure or a serialize/re-parse
+    /// round-trip; an unsupported column type logs a warning, ticks the
+    /// drop counter, and yields an empty map. Actual JSON shape /
+    /// per-entry validation is shared via
+    /// `parse_startup_parameters_value`.
     fn extract_startup_parameters(
         row: &tokio_postgres::Row,
         username: &str,
@@ -403,30 +447,66 @@ impl AuthQueryExecutor {
         let Some(column) = column else {
             return std::collections::HashMap::new();
         };
-        let raw: Option<String> = match row.try_get::<_, Option<String>>("startup_parameters") {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(
-                    "[{username}@{pool_name}] auth_query startup_parameters column has type \
-                     `{ty}` but pg_doorman reads it as `text`: {e}. If the SELECT returns \
-                     json or jsonb, add `::text` (for example: \
-                     `jsonb_build_object(...)::text AS startup_parameters`); per-user \
-                     parameters are ignored for this row.",
-                    ty = column.type_().name()
-                );
-                crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
-                    .with_label_values(&[pool_name, "auth_query_bad_type"])
-                    .inc();
-                return std::collections::HashMap::new();
+        let col_type = column.type_();
+        if matches!(*col_type, Type::JSON | Type::JSONB) {
+            // The custom `LimitedJson` wrapper enforces the
+            // `MAX_OPERATOR_BUDGET` cap on the raw wire bytes from PG
+            // before `serde_json` walks the tree. Without this gate the
+            // text path (which checks `text.len()` before
+            // `from_str`) and the json/jsonb path diverge: a malicious
+            // or accidentally oversize `jsonb` row would still force
+            // pg_doorman to materialise the full `Value` tree before
+            // discarding it.
+            match row.try_get::<_, Option<LimitedJson>>("startup_parameters") {
+                Ok(Some(LimitedJson(value))) => {
+                    Self::parse_startup_parameters_value(value, username, pool_name)
+                }
+                Ok(None) => std::collections::HashMap::new(),
+                Err(json_err) => {
+                    if json_err.to_string().contains(LIMITED_JSON_OVERSIZE_TAG) {
+                        warn!(
+                            "[{username}@{pool_name}] auth_query startup_parameters: {json_err}; \
+                             parameters ignored"
+                        );
+                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                            .with_label_values(&[pool_name, "auth_query_oversize"])
+                            .inc();
+                    } else {
+                        warn!(
+                            "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                             `{ty}` but pg_doorman could not decode it as json: {json_err}. \
+                             Per-user parameters are ignored for this row.",
+                            ty = col_type.name()
+                        );
+                        crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                            .with_label_values(&[pool_name, "auth_query_bad_type"])
+                            .inc();
+                    }
+                    std::collections::HashMap::new()
+                }
             }
-        };
-        Self::parse_startup_parameters_text(raw.as_deref(), username, pool_name)
+        } else {
+            match row.try_get::<_, Option<String>>("startup_parameters") {
+                Ok(raw) => Self::parse_startup_parameters_text(raw.as_deref(), username, pool_name),
+                Err(text_err) => {
+                    warn!(
+                        "[{username}@{pool_name}] auth_query startup_parameters column has type \
+                         `{ty}` but pg_doorman reads it as `text`, `json`, or `jsonb`: {text_err}. \
+                         Per-user parameters are ignored for this row.",
+                        ty = col_type.name()
+                    );
+                    crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                        .with_label_values(&[pool_name, "auth_query_bad_type"])
+                        .inc();
+                    std::collections::HashMap::new()
+                }
+            }
+        }
     }
 
-    /// Parse the optional `startup_parameters` JSON object returned by
-    /// auth_query. Valid string entries become per-user GUCs. Invalid keys,
-    /// non-string values, malformed JSON, and non-object JSON are logged and
-    /// ignored; authentication still continues.
+    /// Parse the optional `startup_parameters` JSON object received as
+    /// `text` from auth_query. Wraps `parse_startup_parameters_value`
+    /// after the size gate and `serde_json::from_str`.
     fn parse_startup_parameters_text(
         text: Option<&str>,
         username: &str,
@@ -466,7 +546,19 @@ impl AuthQueryExecutor {
                 return std::collections::HashMap::new();
             }
         };
-        let serde_json::Value::Object(obj) = parsed else {
+        Self::parse_startup_parameters_value(parsed, username, pool_name)
+    }
+
+    /// Per-entry validation shared between the `text` and `json`/`jsonb`
+    /// auth_query decoders. The json/jsonb path used to serialise the
+    /// `serde_json::Value` back into a string and re-parse it here; this
+    /// helper avoids the round-trip.
+    fn parse_startup_parameters_value(
+        value: serde_json::Value,
+        username: &str,
+        pool_name: &str,
+    ) -> std::collections::HashMap<String, String> {
+        let serde_json::Value::Object(obj) = value else {
             warn!(
                 "[{username}@{pool_name}] auth_query startup_parameters: top-level value is not a \
                  JSON object; ignored"
@@ -489,7 +581,13 @@ impl AuthQueryExecutor {
                         had_invalid_entry = true;
                         continue;
                     }
-                    out.insert(k, s);
+                    // Canonicalise tracked GUC names so the per-user
+                    // overlay merges with the general/pool cascade by
+                    // canonical key. Without this, an auth_query row
+                    // returning `timezone` would not override a pool
+                    // `TimeZone` baseline and both would survive.
+                    let canonical = crate::server::parameters::canonicalize_param_name(k);
+                    out.insert(canonical, s);
                 }
                 other => {
                     let kind = match other {
@@ -517,6 +615,28 @@ impl AuthQueryExecutor {
                 .with_label_values(&[pool_name, "auth_query_invalid_entry"])
                 .inc();
         }
+        // The text decoder enforces `MAX_OPERATOR_BUDGET` on the raw
+        // column before parsing. The json/jsonb decoder has no raw
+        // bytes to size, so apply the same gate to the wire-shape of
+        // the resulting map. Without this a large `jsonb` row would be
+        // cached and then rejected at backend startup with a less
+        // helpful 53400; here we drop it as `auth_query_oversize` like
+        // the text path.
+        let max_bytes = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
+        let serialized = out
+            .iter()
+            .map(|(k, v)| k.len() + 1 + v.len() + 1)
+            .sum::<usize>();
+        if serialized > max_bytes {
+            warn!(
+                "[{username}@{pool_name}] auth_query startup_parameters: decoded map is \
+                 {serialized} bytes, exceeding operator budget {max_bytes}; parameters ignored"
+            );
+            crate::web::metrics::STARTUP_PARAMETERS_DROPPED_TOTAL
+                .with_label_values(&[pool_name, "auth_query_oversize"])
+                .inc();
+            return std::collections::HashMap::new();
+        }
         out
     }
 }
@@ -524,6 +644,47 @@ impl AuthQueryExecutor {
 // ---------------------------------------------------------------------------
 // CacheEntry
 // ---------------------------------------------------------------------------
+
+/// Immutable snapshot of a user's auth_query overlay: the wire map plus
+/// the precomputed hash the dynamic-pool fast path consumes. The two
+/// values move together by contract — direct field writes risk drift
+/// (e.g. swapping the map without touching the hash), so the struct
+/// only exposes accessors and constructors. Cheap to clone because the
+/// inner `Arc<HashMap>` is shared.
+#[derive(Clone, Debug)]
+pub struct StartupOverlay {
+    map: Arc<std::collections::HashMap<String, String>>,
+    hash: u64,
+}
+
+impl StartupOverlay {
+    pub fn empty() -> Self {
+        Self {
+            map: Arc::new(std::collections::HashMap::new()),
+            hash: crate::pool::empty_overlay_hash(),
+        }
+    }
+
+    pub fn from_map(map: std::collections::HashMap<String, String>) -> Self {
+        let hash = crate::pool::per_user_overlay_hash(map.iter());
+        Self {
+            map: Arc::new(map),
+            hash,
+        }
+    }
+
+    pub fn map(&self) -> &Arc<std::collections::HashMap<String, String>> {
+        &self.map
+    }
+
+    pub fn hash(&self) -> u64 {
+        self.hash
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
 
 /// Single cache entry for a username's credentials.
 #[derive(Clone, Debug)]
@@ -542,14 +703,12 @@ pub struct CacheEntry {
     /// None for MD5 users or before first SCRAM auth.
     pub client_key: Option<Vec<u8>>,
     /// Per-user startup parameters returned by the optional auth_query
-    /// `startup_parameters` JSON column. Empty when the column is absent,
-    /// empty/NULL, or filtered out in dedicated auth_query mode.
-    ///
-    /// Wrapped in `Arc` so cache hits do not clone the underlying map.
-    /// For a user with a wide row (a dozen extension GUCs) every
-    /// `cache.get_or_fetch` previously paid an `O(map)` clone; the
-    /// `Arc::clone` here is two atomic increments instead.
-    pub startup_parameters: Arc<std::collections::HashMap<String, String>>,
+    /// `startup_parameters` JSON column, paired with their overlay hash.
+    /// The map is empty (and hash is `empty_overlay_hash()`) when the
+    /// column is absent, empty/NULL, or filtered out in dedicated
+    /// auth_query mode. `StartupOverlay` keeps map and hash from
+    /// drifting — mutate via [`Self::set_startup_overlay`].
+    pub startup_overlay: StartupOverlay,
 }
 
 impl CacheEntry {
@@ -560,7 +719,7 @@ impl CacheEntry {
             is_negative: false,
             last_refetch_at: None,
             client_key: None,
-            startup_parameters: Arc::new(std::collections::HashMap::new()),
+            startup_overlay: StartupOverlay::empty(),
         }
     }
 
@@ -571,8 +730,17 @@ impl CacheEntry {
             is_negative: true,
             last_refetch_at: None,
             client_key: None,
-            startup_parameters: Arc::new(std::collections::HashMap::new()),
+            startup_overlay: StartupOverlay::empty(),
         }
+    }
+
+    /// Replace the overlay with one built from the given map; the new
+    /// hash is computed inside the constructor.
+    pub fn set_startup_overlay(
+        &mut self,
+        startup_parameters: std::collections::HashMap<String, String>,
+    ) {
+        self.startup_overlay = StartupOverlay::from_map(startup_parameters);
     }
 
     fn is_expired(&self, cache_ttl: &Duration, cache_failure_ttl: &Duration) -> bool {
@@ -655,7 +823,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     /// apply them. Drop the parsed map before it reaches downstream code
     /// and warn once per (pool, username) so the operator notices.
     fn dedicated_mode_filter(&self, entry: &mut CacheEntry, username: &str) {
-        if !self.is_dedicated || entry.startup_parameters.is_empty() {
+        if !self.is_dedicated || entry.startup_overlay.is_empty() {
             return;
         }
         // One increment per drop event (a single fetched row whose
@@ -677,7 +845,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 pool = self.pool_name
             );
         }
-        entry.startup_parameters = Arc::new(std::collections::HashMap::new());
+        entry.set_startup_overlay(std::collections::HashMap::new());
     }
 
     /// When a fresh auth_query fetch produces a per-user
@@ -779,7 +947,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             Ok(Some((password_hash, startup_params))) => {
                 self.inc(|s| &s.cache_misses);
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.startup_parameters = Arc::new(startup_params);
+                entry.set_startup_overlay(startup_params);
                 self.dedicated_mode_filter(&mut entry, username);
                 // Publish the fresh entry first so any concurrent
                 // create_dynamic_pool peeks the new overlay, then drop the
@@ -789,7 +957,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 // create_dynamic_pool would rebuild against that stale
                 // map and immediately drift again.
                 self.entries.insert(username.to_string(), entry.clone());
-                self.drop_dynamic_pool_if_overlay_drifted(username, &entry.startup_parameters);
+                self.drop_dynamic_pool_if_overlay_drifted(username, entry.startup_overlay.map());
                 Ok(Some(entry))
             }
             Ok(None) => {
@@ -854,12 +1022,12 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         match self.executor.fetch_credentials(username).await {
             Ok(Some((password_hash, startup_params))) => {
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.startup_parameters = Arc::new(startup_params);
+                entry.set_startup_overlay(startup_params);
                 entry.last_refetch_at = Some(Instant::now());
                 self.dedicated_mode_filter(&mut entry, username);
                 // Insert before drop — see comment in get_or_fetch.
                 self.entries.insert(username.to_string(), entry.clone());
-                self.drop_dynamic_pool_if_overlay_drifted(username, &entry.startup_parameters);
+                self.drop_dynamic_pool_if_overlay_drifted(username, entry.startup_overlay.map());
                 Ok(Some(entry))
             }
             Ok(None) => {
@@ -919,7 +1087,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         if entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
             return None;
         }
-        Some(f(&entry.startup_parameters))
+        Some(f(entry.startup_overlay.map()))
     }
 
     /// Number of cached entries (for metrics/admin).
@@ -1376,11 +1544,11 @@ mod tests {
 
     #[test]
     fn parse_startup_parameters_oversize_text_returns_empty() {
-        // HIGH #9 regression guard: pathological auth_query row should not
-        // make serde_json walk megabytes of JSON. The raw text cap matches
-        // `MAX_OPERATOR_BUDGET`, so anything past that returns empty before
-        // we even start parsing. Drop the same value into a giant string
-        // so the byte length crosses the cap independently of JSON shape.
+        // A pathological auth_query row should not make serde_json walk
+        // megabytes of JSON. The raw text cap matches `MAX_OPERATOR_BUDGET`,
+        // so anything past that returns empty before parsing starts. Use a
+        // giant string so the byte length crosses the cap independently of
+        // JSON shape.
         let cap = crate::config::startup_parameters::MAX_OPERATOR_BUDGET;
         let bytes = "a".repeat(cap + 1);
         let r = AuthQueryExecutor::parse_startup_parameters_text(Some(&bytes), "u", "p");
@@ -1432,7 +1600,7 @@ mod tests {
         // because the backend identity is shared in dedicated mode.
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
         assert!(
-            entry.startup_parameters.is_empty(),
+            entry.startup_overlay.is_empty(),
             "params must be cleared in dedicated mode"
         );
 
@@ -1441,7 +1609,7 @@ mod tests {
         // tracker still holds exactly one entry after a second miss-and-fill.
         cache.invalidate("alice");
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
-        assert!(entry.startup_parameters.is_empty());
+        assert!(entry.startup_overlay.is_empty());
         assert_eq!(cache.dedicated_warnings.len(), 1);
 
         // clear() resets the warning tracker so a config reload re-arms it.
@@ -1458,7 +1626,11 @@ mod tests {
         let cache = make_cache(fetcher.clone(), &config);
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
         assert_eq!(
-            entry.startup_parameters.get("work_mem").map(String::as_str),
+            entry
+                .startup_overlay
+                .map()
+                .get("work_mem")
+                .map(String::as_str),
             Some("64MB")
         );
     }
@@ -1501,11 +1673,10 @@ mod tests {
 
     #[tokio::test]
     async fn peek_startup_parameters_returns_none_for_expired_entry() {
-        // HIGH #7 regression guard: a positive cache entry that has lived
-        // past `cache_ttl` must not pin a stale per-user startup parameter
-        // onto a backend the replenishment loop spawns later. Mirrors
-        // `test_cache_ttl_expiration` but exercises the peek path the
-        // backend-spawn hot path uses.
+        // A positive cache entry that has lived past `cache_ttl` must not
+        // pin a stale per-user startup parameter onto a backend spawned by
+        // the replenishment loop. Mirrors `test_cache_ttl_expiration` but
+        // exercises the peek path used by backend startup.
         let fetcher = Arc::new(MockFetcher::new());
         fetcher.add_user_with_params("alice", "md5abc123", &[("work_mem", "64MB")]);
         let mut config = test_config();

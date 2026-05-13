@@ -3086,7 +3086,7 @@
         }
       ],
       "title": "PG-Side Rejections by SQLSTATE",
-      "description": "Per-pool rate of backend startups PG rejected because of an operator-supplied parameter. Split by SQLSTATE: 22023 invalid_value, 42704 undefined_object, 42501 insufficient_privilege, 55P02 cant_change_runtime_param. Non-zero for the same pool over a few minutes means every connect through that pool fails on the same operator GUC \u2014 fix general/pool/auth_query. Filters on $user/$database do not apply \u2014 the counter has only the `pool` label.",
+      "description": "Rate of backend startups PostgreSQL rejected because of a configured startup parameter. Split by SQLSTATE: 22023 invalid_value, 42704 undefined_object, 42501 insufficient_privilege, 55P02 cant_change_runtime_param. Growth for the same pool over several minutes means new connects through that pool fail on the same GUC; fix general/pool/auth_query. Filters on $user/$database do not apply: the counter has only the `pool` label.",
       "datasource": {
         "uid": "prometheus"
       },
@@ -3178,7 +3178,7 @@
         }
       ],
       "title": "Pre-Wire Drops by Reason",
-      "description": "Operator-supplied entries pg_doorman dropped BEFORE the StartupMessage went on the wire \u2014 the failure mode the PG-side counter above cannot see. Reasons: cascade_budget_exceeded (merged map past 9 488 bytes), packet_cap_exceeded (full packet past PG MAX_STARTUP_PACKET_LENGTH 10 000 bytes), auth_query_oversize (per-user JSON column past operator budget), auth_query_overlay_oversize (overlay pushes cascade over budget but baseline alone fits \u2014 pg_doorman ships the baseline), auth_query_bad_type / auth_query_invalid_json / auth_query_invalid_shape (column type, JSON parse, or non-object payload), auth_query_invalid_entry (one or more JSON entries failed validation), dedicated_mode (per-user GUC ignored because the pool shares one backend across users). Non-zero on any reason needs operator attention. Filters on $user/$database do not apply \u2014 the counter has only `pool` and `reason` labels.",
+      "description": "Startup parameter drop events before pg_doorman sends StartupMessage. Reasons: cascade_budget_exceeded (resolved set above 9 488 bytes), packet_cap_exceeded (full packet above PG MAX_STARTUP_PACKET_LENGTH 10 000 bytes), auth_query_oversize (per-user JSON column above the startup-parameter budget), auth_query_overlay_oversize (auth_query overlay overflows but the general/pool baseline still fits), auth_query_bad_type / auth_query_invalid_json / auth_query_invalid_shape (column type, JSON parse, or non-object payload), auth_query_invalid_entry (one or more JSON entries failed validation), dedicated_mode (per-user GUC ignored because the pool shares one backend across users). Any increase should be investigated. Filters on $user/$database do not apply: the counter has only `pool` and `reason` labels.",
       "datasource": {
         "uid": "prometheus"
       },

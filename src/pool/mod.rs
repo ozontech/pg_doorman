@@ -535,14 +535,12 @@ impl ConnectionPool {
                 // second reload between this iteration and constructor
                 // execution would write a different baseline to the pool
                 // than the one the reuse hash captured.
-                let base_startup_parameters = {
-                    let mut merged: std::collections::BTreeMap<String, String> =
-                        config.general.startup_parameters.clone();
-                    for (k, v) in &pool_config.startup_parameters {
-                        merged.insert(k.clone(), v.clone());
-                    }
-                    Arc::new(merged)
-                };
+                let base_startup_parameters = Arc::new(
+                    crate::config::startup_parameters::cascade_canonical_keys(&[
+                        &config.general.startup_parameters,
+                        &pool_config.startup_parameters,
+                    ]),
+                );
 
                 let manager = ServerPool::new(
                     address.clone(),
@@ -753,14 +751,12 @@ impl ConnectionPool {
                         let fallback_state =
                             build_fallback_state(pool_name, pool_config, &config.general);
 
-                        let base_startup_parameters = {
-                            let mut merged: std::collections::BTreeMap<String, String> =
-                                config.general.startup_parameters.clone();
-                            for (k, v) in &pool_config.startup_parameters {
-                                merged.insert(k.clone(), v.clone());
-                            }
-                            Arc::new(merged)
-                        };
+                        let base_startup_parameters = Arc::new(
+                            crate::config::startup_parameters::cascade_canonical_keys(&[
+                                &config.general.startup_parameters,
+                                &pool_config.startup_parameters,
+                            ]),
+                        );
 
                         let manager = ServerPool::new(
                             address.clone(),

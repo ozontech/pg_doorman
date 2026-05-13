@@ -432,8 +432,12 @@ where
 {
     let config = &get_config();
     let config: HashMap<String, String> = config.into();
-    // Configs that cannot be changed without restarting.
-    let immutables = ["host", "port", "connect_timeout"];
+    // Configs that cannot be changed without restarting. The keys here
+    // are the bare names that `From<&Config> for HashMap` emits — the
+    // Web `/api/config` view uses flattened paths (`general.host`,
+    // `web.host`, …) and its own matcher in `web::routes::collect::config`.
+    // `connect_timeout` is reloadable on SIGHUP; do not list it.
+    let immutables = ["host", "port"];
     // Columns
     let columns = vec![
         ("key", DataType::Text),

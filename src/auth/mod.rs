@@ -41,6 +41,28 @@ use crate::pool::{
 };
 use crate::server::ServerParameters;
 
+/// Canonicalised set of GUC names the operator put under
+/// `general.startup_parameters` / `pool.startup_parameters` /
+/// `auth_query` for the (db, user) pair that authenticated this
+/// connection. The same `Arc` lives on `ConnectionPool` so cloning
+/// stays zero-copy. Client startup uses this to drop `ParameterStatus`
+/// entries the client sent for keys the backend session already has
+/// pinned by `startup_parameters`.
+pub type OperatorManagedKeys = Arc<std::collections::HashSet<String>>;
+
+/// Outcome of [`authenticate`]: everything the client startup path needs
+/// to finish the StartupMessage exchange. `operator_managed_keys` is
+/// captured from the same `ConnectionPool` snapshot that produced
+/// `server_parameters`, so the client startup filter cannot drift
+/// against a concurrent RELOAD or auth_query overlay refetch the way a
+/// second global `POOLS` lookup would.
+pub struct AuthOutcome {
+    pub transaction_mode: bool,
+    pub server_parameters: ServerParameters,
+    pub prepared_statements_enabled: bool,
+    pub operator_managed_keys: Option<OperatorManagedKeys>,
+}
+
 /// Authenticate a user based on the provided parameters
 pub async fn authenticate<S, T>(
     read: &mut S,
@@ -49,7 +71,7 @@ pub async fn authenticate<S, T>(
     client_identifier: &mut ClientIdentifier,
     pool_name: &str,
     username_from_parameters: &str,
-) -> Result<(bool, ServerParameters, bool), Error>
+) -> Result<AuthOutcome, Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -57,7 +79,7 @@ where
     let mut prepared_statements_enabled = false;
 
     // Authenticate admin user.
-    let (transaction_mode, server_parameters) = if admin {
+    let (transaction_mode, server_parameters, operator_managed_keys) = if admin {
         if client_identifier.hba_md5 == CheckResult::Trust
             || client_identifier.hba_scram == CheckResult::Trust
         {
@@ -65,7 +87,12 @@ where
                 "HBA trust: admin user={username_from_parameters}, addr={}",
                 client_identifier.addr
             );
-            return Ok((false, ServerParameters::admin(), false));
+            return Ok(AuthOutcome {
+                transaction_mode: false,
+                server_parameters: ServerParameters::admin(),
+                prepared_statements_enabled: false,
+                operator_managed_keys: None,
+            });
         }
         if client_identifier.hba_md5 == CheckResult::Deny
             || client_identifier.hba_scram == CheckResult::Deny
@@ -77,7 +104,8 @@ where
             wrong_password(write, username_from_parameters).await?;
             return Err(error);
         }
-        authenticate_admin(read, write, username_from_parameters).await?
+        let (tx, sp) = authenticate_admin(read, write, username_from_parameters).await?;
+        (tx, sp, None)
     }
     // Authenticate normal user.
     else {
@@ -92,11 +120,12 @@ where
         .await?
     };
 
-    Ok((
+    Ok(AuthOutcome {
         transaction_mode,
         server_parameters,
         prepared_statements_enabled,
-    ))
+        operator_managed_keys,
+    })
 }
 
 /// Authenticate an admin user with MD5
@@ -191,7 +220,7 @@ async fn authenticate_normal_user<S, T>(
     pool_name: &str,
     username_from_parameters: &str,
     prepared_statements_enabled: &mut bool,
-) -> Result<(bool, ServerParameters), Error>
+) -> Result<(bool, ServerParameters, Option<OperatorManagedKeys>), Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -355,7 +384,17 @@ where
         }
     };
 
-    Ok((transaction_mode, server_parameters))
+    // Capture operator-managed startup-parameter keys from the same
+    // pool snapshot that produced `server_parameters`. The client
+    // startup path used to read this set with a second `POOLS` global
+    // lookup, which could observe a RELOAD between authentication and
+    // the lookup and send `ParameterStatus` values for keys the
+    // backend session already has set via operator-managed
+    // `startup_parameters`. Snapshotting on this side guarantees the
+    // two views stay in step.
+    let operator_managed_keys = Some(pool.database.server_pool().operator_managed_startup_keys());
+
+    Ok((transaction_mode, server_parameters, operator_managed_keys))
 }
 
 /// Authenticate a user with PAM
@@ -633,7 +672,7 @@ async fn try_auth_query<S, T>(
     pool_name: &str,
     username: &str,
     prepared_statements_enabled: &mut bool,
-) -> Result<(bool, ServerParameters), Error>
+) -> Result<(bool, ServerParameters, Option<OperatorManagedKeys>), Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -681,8 +720,11 @@ where
         }
     };
 
-    // 3. Fetch password hash from cache or PG
-    let cache_entry = match cache.get_or_fetch(username).await {
+    // 3. Fetch password hash from cache or PG. `mut` because a
+    //    successful MD5 refetch below swaps in the fresh entry so the
+    //    backend pool gets the rotated password hash and the rotated
+    //    per-user startup_parameters, not the stale snapshot.
+    let mut cache_entry = match cache.get_or_fetch(username).await {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             // User not found
@@ -705,10 +747,8 @@ where
         }
     };
 
-    let pool_password = &cache_entry.password_hash;
-
     // 4. HBA check
-    let hba_decision = eval_hba_for_pool_password(pool_password, client_identifier);
+    let hba_decision = eval_hba_for_pool_password(&cache_entry.password_hash, client_identifier);
     if hba_decision == CheckResult::Deny {
         error_response_terminal(
             write,
@@ -730,26 +770,48 @@ where
 
     if hba_decision == CheckResult::Trust {
         // HBA trust — skip password check
-    } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+    } else if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
         // MD5 challenge-response
         let salt = md5_challenge(write).await?;
         let password_response = read_password(read).await?;
-        let expected = md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
+        let expected = md5_hash_second_pass(
+            cache_entry.password_hash.strip_prefix("md5").unwrap(),
+            &salt,
+        );
 
         if expected != password_response {
             // Password mismatch — try re-fetch (password may have changed in PG)
             let mut auth_ok = false;
+            let mut refreshed: Option<crate::auth::auth_query::CacheEntry> = None;
             if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await {
-                if new_entry.password_hash != *pool_password
-                    && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
-                {
-                    let new_expected = md5_hash_second_pass(
-                        new_entry.password_hash.strip_prefix("md5").unwrap(),
-                        &salt,
-                    );
-                    if new_expected == password_response {
-                        auth_ok = true;
-                        info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
+                if new_entry.password_hash != cache_entry.password_hash {
+                    if new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
+                        let new_expected = md5_hash_second_pass(
+                            new_entry.password_hash.strip_prefix("md5").unwrap(),
+                            &salt,
+                        );
+                        if new_expected == password_response {
+                            auth_ok = true;
+                            info!(
+                                "[{username}@{pool_name}] auth_query: re-fetched password matched"
+                            );
+                            refreshed = Some(new_entry);
+                        }
+                    } else {
+                        // The refetched verifier is no longer MD5 — the
+                        // operator switched `password_encryption` mid-flight
+                        // (typically MD5 → SCRAM). The current MD5 proof
+                        // cannot validate against a SCRAM verifier; reject
+                        // this attempt and invalidate the cache so the next
+                        // reconnect hits `cache.get_or_fetch` and takes the
+                        // SCRAM branch immediately rather than waiting for
+                        // `cache_ttl`.
+                        warn!(
+                            "[{username}@{pool_name}] auth_query: refetched verifier changed type ({stored} → {fresh}); cache invalidated, client must reconnect with the new mechanism",
+                            stored = if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) { "md5" } else { "scram" },
+                            fresh = if new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) { "md5" } else { "scram" }
+                        );
+                        cache.invalidate(username);
                     }
                 }
             }
@@ -763,10 +825,17 @@ where
                     "MD5 authentication failed for auth_query user: {username}"
                 )));
             }
+            // Swap in the refetched snapshot so backend_auth and the
+            // dynamic-pool overlay below are built from the rotated
+            // credentials, not the stale ones that just failed the
+            // first challenge.
+            if let Some(new_entry) = refreshed {
+                cache_entry = new_entry;
+            }
         }
-    } else if pool_password.starts_with(SCRAM_SHA_256) {
+    } else if cache_entry.password_hash.starts_with(SCRAM_SHA_256) {
         // SCRAM-SHA-256 challenge-response
-        let server_secret = match parse_server_secret(pool_password) {
+        let server_secret = match parse_server_secret(&cache_entry.password_hash) {
             Ok(s) => s,
             Err(err) => {
                 error!(
@@ -927,12 +996,20 @@ where
                 shared_pool_id
             );
 
-            Ok((transaction_mode, server_parameters))
+            let operator_managed_keys =
+                Some(pool.database.server_pool().operator_managed_startup_keys());
+            Ok((transaction_mode, server_parameters, operator_managed_keys))
         }
         None => {
             // === Passthrough mode: each dynamic user gets their own pool ===
-            let backend_auth = if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
-                Some(BackendAuthMethod::Md5PassTheHash(pool_password.clone()))
+            // After an MD5 refetch matched the rotated password,
+            // `cache_entry` already points at the new snapshot, so
+            // `password_hash` and `startup_parameters` below reflect the
+            // credentials PG will accept on the backend side.
+            let backend_auth = if cache_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX) {
+                Some(BackendAuthMethod::Md5PassTheHash(
+                    cache_entry.password_hash.clone(),
+                ))
             } else {
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
@@ -941,14 +1018,19 @@ where
             // authenticated this user. That keeps dynamic-pool creation
             // tied to this login instead of reading the global cache
             // again while TTL expiry or a concurrent refetch is changing it.
-            let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
-            let mut pool = create_dynamic_pool(pool_name, username, backend_auth, fetched_overlay)
-                .map_err(|err| {
-                    error!(
-                        "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
-                    );
-                    err
-                })?;
+            let fetched_overlay = Arc::clone(cache_entry.startup_overlay.map());
+            let fetched_overlay_hash = cache_entry.startup_overlay.hash();
+            let mut pool = create_dynamic_pool(
+                pool_name,
+                username,
+                backend_auth,
+                fetched_overlay,
+                fetched_overlay_hash,
+            )
+            .map_err(|err| {
+                error!("[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}");
+                err
+            })?;
 
             // Do NOT change client_identifier.username — stay as the dynamic user
             // so that Client.username matches the pool's user for get_pool() lookups.
@@ -967,6 +1049,17 @@ where
                     } = &err
                     {
                         error!("[{username}@{pool_name}] auth_query passthrough: PG rejected operator-supplied startup parameter: {pg_message}");
+                        // Invalidate before dropping the pool. A
+                        // concurrent reconnect that races us between
+                        // these two calls would otherwise read the
+                        // still-cached bad overlay, rebuild the same
+                        // dynamic pool against it, and trigger the
+                        // same rejection. Invalidating first guarantees
+                        // any racing get_or_fetch refetches before
+                        // reconstructing the pool.
+                        cache.invalidate(username);
+                        let identifier = crate::pool::PoolIdentifier::new(pool_name, username);
+                        crate::pool::drop_dynamic_pool(&identifier);
                         error_response(write, pg_message, sqlstate).await?;
                         return Err(err);
                     }
@@ -984,7 +1077,9 @@ where
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!("[{username}@{pool_name}] auth_query: authenticated (passthrough mode)");
 
-            Ok((transaction_mode, server_parameters))
+            let operator_managed_keys =
+                Some(pool.database.server_pool().operator_managed_startup_keys());
+            Ok((transaction_mode, server_parameters, operator_managed_keys))
         }
     }
 }

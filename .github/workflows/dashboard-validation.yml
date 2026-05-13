@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - "grafana/**"
+      - "monitoring/prometheus-rules/**"
       - "scripts/dashboard-*"
       - "scripts/docker-smoke.sh"
       - "src/web/metrics/**"
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - "grafana/**"
+      - "monitoring/prometheus-rules/**"
       - "scripts/dashboard-*"
       - "scripts/docker-smoke.sh"
       - "src/web/metrics/**"
