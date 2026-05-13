@@ -340,13 +340,13 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
-      # Six concurrent suites is the cap this matrix was tuned for.
-      # GitHub-hosted runners share CPU under heavy fan-out; with 20+
-      # BDD jobs in parallel, the sleep-based lifecycle tests and the
-      # SCRAM passthrough reconnect tests lost timing margin. This cap
-      # keeps those suites stable while reducing total wall time versus
-      # the previous limit of four.
-      max-parallel: 6
+      # Twelve concurrent suites: the prebuild-bdd cache trims each
+      # suite to a link + scenario run, so the CPU pressure that drove
+      # the previous cap of 6 (sleep-based lifecycle tests and SCRAM
+      # passthrough reconnect losing timing margin) is gone. Doubling
+      # the fan-out halves the BDD wall clock on a green PR; the
+      # sleep-heavy suites still have their own retry policy.
+      max-parallel: 12
       matrix:
         suite:
           - { name: "Go",                                cargo: "test --test bdd -- --tags @go" }
