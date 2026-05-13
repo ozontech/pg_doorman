@@ -1,0 +1,101 @@
+groups:
+  - name: startup_parameters_alerts
+    interval: 30s
+    rules:
+      - alert: PgDoormanStartupParameterPgRejection
+        expr: |
+          sum by (job, instance, pool, sqlstate) (
+            increase(pg_doorman_backend_startup_parameter_errors_total[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: PG rejected configured startup_parameter for pool {{ $labels.pool }} (SQLSTATE {{ $labels.sqlstate }})"
+          runbook: |
+            Every new backend for this pool failed: PostgreSQL refused a
+            startup_parameter pg_doorman sent in StartupMessage. The
+            failing key and value are in the warn log line above this
+            alert; SQLSTATE points at the cause (22023 invalid_value,
+            42704 undefined_object, 42501 insufficient_privilege,
+            55P02 cannot_alter_runtime_param). Fix the offending
+            startup_parameter in general/pool config or in the
+            auth_query row.
+
+      - alert: PgDoormanStartupParameterCascadeOverflow
+        expr: |
+          sum by (job, instance, pool, reason) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason=~"cascade_budget_exceeded|packet_cap_exceeded"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: startup_parameters cascade does not fit StartupMessage budget for pool {{ $labels.pool }}"
+          runbook: |
+            The merged general/pool/auth_query map cannot fit the
+            PostgreSQL StartupMessage budget, so pg_doorman refuses
+            every backend spawn for this pool. Trim
+            general.startup_parameters, pools.<name>.startup_parameters,
+            or shrink the per-user auth_query row. Reason label points
+            at the gate that fired (cascade_budget_exceeded vs the
+            full packet cap).
+
+      - alert: PgDoormanStartupParameterOverlayOversize
+        expr: |
+          sum by (job, instance, pool, reason) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason=~"auth_query_overlay_oversize|auth_query_oversize"}[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query startup_parameters row exceeds budget for pool {{ $labels.pool }}"
+          runbook: |
+            A specific auth_query row holds a startup_parameters
+            payload too large to merge into the cascade. The dynamic
+            pool for that user cannot spawn backends. Inspect the
+            auth_query view for that user and shrink the per-user
+            map, or raise the operator budget if every row is
+            legitimately large.
+
+      - alert: PgDoormanStartupParameterAuthQueryInvalid
+        expr: |
+          sum by (job, instance, pool, reason) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason=~"auth_query_bad_type|auth_query_invalid_json|auth_query_invalid_shape|auth_query_invalid_entry"}[5m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query startup_parameters column malformed for pool {{ $labels.pool }} (reason {{ $labels.reason }})"
+          runbook: |
+            auth_query returned a startup_parameters value pg_doorman
+            could not parse: wrong PG type, malformed JSON, non-object
+            top level, or invalid key/value entry. Affected users
+            authenticate but spawn backends without per-user GUCs.
+            Fix the auth_query SELECT or the underlying row; the
+            specific failure is in the warn log line.
+
+      - alert: PgDoormanStartupParameterDedicatedDrops
+        expr: |
+          sum by (job, instance, pool) (
+            increase(pg_doorman_startup_parameters_dropped_total{reason="dedicated_mode"}[15m])
+          ) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: pg_doorman
+        annotations:
+          summary: "pg_doorman: auth_query in dedicated mode silently drops per-user startup_parameters for pool {{ $labels.pool }}"
+          runbook: |
+            Dedicated auth_query mode uses a shared server_user pool
+            and cannot honour per-user startup_parameters. If the
+            operator filled that column, either switch the pool to
+            passthrough mode or remove the per-user values. Sustained
+            non-zero rate means the auth_query SELECT keeps producing
+            per-user maps pg_doorman is forced to discard.
