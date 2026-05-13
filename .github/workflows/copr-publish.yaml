@@ -98,6 +98,36 @@ jobs:
           echo "Downloaded Rust tarball:"
           ls -la rust-*.tar.gz
 
+      - name: Bundle Perl modules for offline build
+        run: |
+          # RHEL/CentOS Stream 7 and 8 ship FindBin and IPC::Cmd only
+          # inside modular Perl streams that COPR mock filters out
+          # by default (`package perl-FindBin-... is filtered out by
+          # modular filtering`). COPR builders also have no network
+          # access, so we cannot `dnf module enable perl` inside the
+          # chroot. Same pattern as the Rust tarball: ship the pure-Perl
+          # modules we need as a Source so the spec extracts them and
+          # the build sees them via PERL5LIB, regardless of distro.
+          dnf install -y perl perl-FindBin perl-IPC-Cmd
+          mkdir -p perl_modules
+          # Resolve actual on-disk path of each .pm via Perl itself so
+          # the tarball follows whichever vendor_perl / site_perl layout
+          # the prepare distro uses.
+          for module in FindBin IPC::Cmd IPC::Open3 Module::Load::Conditional Module::Load Module::Metadata Params::Check Locale::Maketext::Simple ExtUtils::MakeMaker version; do
+            path=$(perl -M"$module" -e "print \$INC{'${module//::/\/}.pm'}" 2>/dev/null || true)
+            if [ -n "$path" ] && [ -r "$path" ]; then
+              relative="${module//::/\/}.pm"
+              dest="perl_modules/$relative"
+              mkdir -p "$(dirname "$dest")"
+              cp -L "$path" "$dest"
+              echo "bundled: $relative <- $path"
+            else
+              echo "skipped: $module (not found)"
+            fi
+          done
+          tar czf perl_modules.tar.gz perl_modules/
+          ls -la perl_modules.tar.gz
+
       - name: Setup RPM build environment
         run: |
           rpmdev-setuptree
@@ -154,9 +184,13 @@ jobs:
           
           # Copy vendor tarball
           cp "$SOURCE_DIR/vendor.tar.gz" ~/rpmbuild/SOURCES/
-          
+
           # Copy Rust tarball for offline COPR build
           cp "$SOURCE_DIR/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz" ~/rpmbuild/SOURCES/
+
+          # Copy bundled Perl modules for offline COPR build on EL7/EL8
+          # (their modular filtering hides perl-FindBin / perl-IPC-Cmd).
+          cp "$SOURCE_DIR/perl_modules.tar.gz" ~/rpmbuild/SOURCES/
           
           # Update spec file with correct version
           cd "$SOURCE_DIR"

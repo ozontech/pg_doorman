@@ -21,7 +21,7 @@ Arguments:
 Options:
   -l, --log-level <LOG_LEVEL>    [env: LOG_LEVEL=] [default: INFO]
   -F, --log-format <LOG_FORMAT>  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
-  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
+  -n, --no-color                 force colors off in the log output
   -d, --daemon                   run as daemon [env: DAEMON=]
   -h, --help                     Print help
   -V, --version                  Print version
@@ -34,7 +34,7 @@ Options:
 | `-d`, `--daemon` | Запуск в фоне. Без этого параметра процесс работает на переднем плане.<br><br>В daemon-режиме обязательны `daemon_pid_file` и `syslog_prog_name`. После ухода в фон сообщения в stderr больше не пишутся. |
 | `-l`, `--log-level` | Уровень логирования: `INFO`, `DEBUG` или `WARN`. |
 | `-F`, `--log-format` | Формат логов. Возможные значения: `text`, `structured`, `debug`. |
-| `-n`, `--no-color` | Отключить цвета в выводе логов. |
+| `-n`, `--no-color` | Принудительно отключить цвета в логах. Цвета также автоматически выключаются, если stderr не терминал (под systemd — это pipe в journald) и если переменная окружения `NO_COLOR` установлена в любое непустое значение. |
 | `-V`, `--version` | Показать информацию о версии. |
 | `-h`, `--help` | Показать справку. |
 

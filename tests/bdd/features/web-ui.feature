@@ -115,8 +115,8 @@ Feature: Web UI listener
       curl -s http://127.0.0.1:9127/api/auth/config
       """
     Then the command should succeed
-    And the command output should contain "\"sso_enabled\":false"
-    And the command output should contain "\"current_user\":null"
+    And the command output should contain '"sso_enabled":false'
+    And the command output should contain '"current_user":null'
 
   Scenario: /api/auth/config carries admin identity for Basic auth
     When I run shell command:
@@ -124,8 +124,8 @@ Feature: Web UI listener
       curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/auth/config
       """
     Then the command should succeed
-    And the command output should contain "\"role\":\"admin\""
-    And the command output should contain "\"source\":\"basic\""
+    And the command output should contain '"role":"admin"'
+    And the command output should contain '"source":"basic"'
 
   Scenario: /api/admin/reload requires Admin and rejects anonymous with 401
     When I run shell command:
@@ -164,8 +164,8 @@ Feature: Web UI listener
       """
     Then the command should succeed
     # Each bind-address key must appear with changeable=no.
-    And the command output should contain "\"key\":\"general.host\""
-    And the command output should contain "\"key\":\"general.port\""
-    And the command output should contain "\"key\":\"web.host\""
-    And the command output should contain "\"key\":\"web.port\""
-    And the command output should contain "\"changeable\":\"no\""
+    And the command output should contain '"key":"general.host"'
+    And the command output should contain '"key":"general.port"'
+    And the command output should contain '"key":"web.host"'
+    And the command output should contain '"key":"web.port"'
+    And the command output should contain '"changeable":"no"'
