@@ -248,7 +248,7 @@ pooler_check_query = ";"
 # Default: true
 prepared_statements = true
 
-# Cache size for prepared statements at the pool level (shared across clients).
+# Pool-level prepared statement cache size (shared across clients). Must be >0 when prepared_statements is true.
 # Default: 8192
 prepared_statements_cache_size = 8192
 
