@@ -603,10 +603,6 @@ opt-in. The choice persists in `localStorage`. **System** tracks the
 OS / browser preference and switches automatically when the OS
 flips between light and dark mode.
 
-The palette uses Geist Sans for interface text and JetBrains Mono for
-numeric and identifier columns; accent is `#2563eb` on light,
-`#60a5fa` on dark.
-
 ## In-app help
 
 Every metric tile and section header carries a small (i) icon next
