@@ -170,7 +170,7 @@
 </code></pre>
 <p>Для SCRAM оба процесса должны видеть <strong>одни и те же</strong> salt и iteration count — даже один отличающийся символ в сохранённом verifier ломает passthrough.</p>
 <h3 id="Когда-username-пула-отличается-от-роли-на-backend"><a class="header" href="#Когда-username-пула-отличается-от-роли-на-backend">Когда username пула отличается от роли на backend</a></h3>
-<p>Когда обращённый к клиенту <code>username</code> в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может: у pg_doorman нет пароля для backend-роли. Дайте явные credentials:</p>
+<p>Когда <code>username</code>, под которым клиент подключается к pg_doorman, не совпадает с реальной ролью PostgreSQL, passthrough работать не может: у pg_doorman нет пароля для backend-роли. Укажите явные credentials:</p>
 <pre><code class="language-yaml">users:
   - username: "app_user"              # имя для клиента
     password: "md5..."                # хеш для аутентификации client → pg_doorman

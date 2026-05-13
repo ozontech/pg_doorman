@@ -293,7 +293,7 @@ GRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;
 </div>
 <h3 id="query"><a class="header" href="#query">query</a></h3>
 <p>SQL query to fetch credentials. It must return a column named <code>passwd</code> or <code>password</code> containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name.</p>
-<p>Extra columns are ignored except for the optional <code>startup_parameters</code> text column. In passthrough mode, pg_doorman reads that column as a JSON object with per-user PostgreSQL startup parameters. Dedicated mode ignores it and logs a warning. Use <code>$1</code> as the placeholder for the username parameter.</p>
+<p>Extra columns are ignored except for the optional <code>startup_parameters</code> column. The column may be <code>text</code>, <code>json</code>, or <code>jsonb</code>; pg_doorman dispatches by the column type and the content must be a JSON object whose values are strings. Custom domains over <code>jsonb</code> are not accepted without an explicit cast. In passthrough mode, the map applies as per-user startup parameters. Dedicated mode ignores it and logs a warning. Use <code>$1</code> as the placeholder for the username parameter.</p>
 <p>Example: <code>"SELECT passwd FROM pg_shadow WHERE usename = $1"</code></p>
 <h3 id="user"><a class="header" href="#user">user</a></h3>
 <p>PostgreSQL username for the executor connection that runs auth queries.</p>

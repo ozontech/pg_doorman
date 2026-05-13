@@ -162,7 +162,17 @@
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="391"><a class="header" href="#391">3.9.1</a></h3>
-<p>Web admin console refresh.</p>
+<p>Web admin console refresh and a follow-up pass on <code>startup_parameters</code>.</p>
+<p>Upgrade notes for operators monitoring 3.9.0:</p>
+<ul>
+<li>The pg_doorman-side budget rejection now returns <code>SQLSTATE 53400</code>
+(<code>configuration_limit_exceeded</code>) instead of <code>54000</code>. Alert rules
+and log filters keyed on <code>54000</code> need to switch.</li>
+<li><code>PgDoormanStartupParameterPgRejection</code> is now <code>severity: warning</code>
+(was <code>critical</code> in 3.9.0). Cascade-overflow stays <code>critical</code>. Review
+the Alertmanager / on-call routing if you key on severity to page.</li>
+</ul>
+<h4 id="web-admin-console"><a class="header" href="#web-admin-console">Web admin console</a></h4>
 <ul>
 <li>Light theme by default. Three-position theme toggle (Light / System / Dark)
 in the sidebar footer; choice persists in localStorage.</li>
@@ -197,6 +207,29 @@ a memory growth reported on long sessions.</li>
 <code>info</code> covers admin actions, personal-data paths, <code>/api/auth/</code>,
 <code>/api/sso/</code>, and any non-2xx.</p>
 <p>Docs: <code>guides/web-ui.md</code> rewritten for the new pages and shortcuts.</p>
+<h4 id="startup_parameters-follow-up"><a class="header" href="#startup_parameters-follow-up">startup_parameters follow-up</a></h4>
+<ul>
+<li>If the resolved <code>startup_parameters</code> set exceeds the startup packet
+budget, backend startup now fails with <code>SQLSTATE 53400</code>. A
+deterministic <code>general + pool</code> overflow is rejected at config load.</li>
+<li>The final <code>ParameterStatus</code> messages sent to the client no longer
+overwrite operator-managed GUC names, so the client-visible values
+match the backend checkout state.</li>
+<li><code>auth_query</code> now rebuilds a dynamic pool after a successful MD5
+refetch, rejects the stale-overlay race in <code>create_dynamic_pool</code>, and
+accepts native <code>json</code>/<code>jsonb</code> startup_parameter columns without a
+<code>::text</code> cast.</li>
+<li><code>/api/config</code> and <code>/api/pools</code> show literal startup_parameter values
+only to <code>Admin</code>; SSO readers get the masked view. <code>/api/config</code> also
+marks <code>general.host</code>, <code>general.port</code>, <code>web.host</code>, and <code>web.port</code> as
+restart-required.</li>
+<li>Prometheus rules now cover PostgreSQL-side rejection, budget overflow,
+malformed auth_query columns, dedicated-mode drops, and rejected SSO
+credentials sent over insecure transport.</li>
+<li>Each pool now precomputes the merged startup map, budget decision, and
+canonical operator-key set. Backend checkout reuses those cached
+values instead of cloning and recalculating the map each time.</li>
+</ul>
 <h3 id="390"><a class="header" href="#390">3.9.0</a></h3>
 <p>Per-pool PostgreSQL startup parameters. pg_doorman can now add
 configured GUCs to each backend <code>StartupMessage</code>. Values apply in

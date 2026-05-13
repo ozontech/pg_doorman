@@ -197,10 +197,11 @@ work_mem        = "64MB"
 <code>statement_timeout = 5s</code> из <code>general</code>; остальные значения берутся из
 настроек PostgreSQL по умолчанию. Уже открытые бэкенды не меняются:
 новые значения вступают в силу по мере ротации соединений.</p>
-<p>В passthrough-режиме <code>auth_query</code>, когда <code>server_user</code> не задан, запрос
+<p>В сквозном режиме <code>auth_query</code>, когда <code>server_user</code> не задан, запрос
 аутентификации может вернуть необязательную колонку <code>startup_parameters</code>
-типа <code>text</code> с JSON-объектом. Значения из этой колонки переопределяют
-<code>general</code> и настройки пула только для конкретного пользователя.</p>
+типа <code>text</code>, <code>json</code> или <code>jsonb</code> с JSON-объектом. Значения из этой
+колонки переопределяют <code>general</code> и настройки пула только для
+конкретного пользователя.</p>
 <pre><code class="language-sql">SELECT
   rolpassword AS passwd,
   CASE rolname
@@ -210,14 +211,26 @@ work_mem        = "64MB"
 FROM pg_authid
 WHERE rolname = $1;
 </code></pre>
-<p>Колонка должна возвращаться как <code>text</code>. Если SQL отдаёт <code>json</code> или
-<code>jsonb</code>, добавьте явное приведение типа <code>::text</code>. pg_doorman читает её
-именно как <code>text</code> и пишет предупреждение для полученной строки, если
-тип не совпал.</p>
-<p>Dedicated-режим <code>auth_query</code>, когда <code>server_user</code> задан, игнорирует эту
+<p>pg_doorman выбирает декодер по типу колонки, поэтому приведение <code>::text</code>
+не требуется. Содержимое должно быть JSON-объектом, а значения —
+строками. Для других типов PostgreSQL, в том числе доменов поверх
+<code>jsonb</code>, pg_doorman пишет предупреждение и игнорирует пользовательские
+параметры из этой строки.</p>
+<p>Выделенный режим <code>auth_query</code>, когда <code>server_user</code> задан, игнорирует эту
 колонку и один раз пишет предупреждение на пару <code>(пул, пользователь)</code>.
 В этом режиме один серверный пул обслуживает разных пользователей,
-поэтому per-user значения применить нельзя.</p>
+поэтому пользовательские значения применить нельзя.</p>
+<p>Изменения в пользовательской строке <code>startup_parameters</code> применяются
+только к <strong>новым</strong> серверным подключениям и только после того, как
+pg_doorman перечитает строку. Кеш <code>auth_query</code> хранит положительные
+записи в течение <code>auth_query.cache_ttl</code> (по умолчанию час); при
+обновлении кеша pg_doorman замечает изменение overlay и сбрасывает
+динамический пул, чтобы следующий логин пересоздал его с новыми
+значениями. Пока запись кеша не истекла, новые подключения клиентов
+получают прежний overlay. Чтобы выкатить изменения немедленно: уменьшить
+<code>cache_ttl</code> и сделать reload конфигурации, перезапустить pg_doorman или
+дождаться истечения TTL. Бэкенды, которые уже выданы клиентам,
+продолжают работать со значениями, сохранёнными при создании пула.</p>
 <h2 id="Что-pg_doorman-делает-со-значениями"><a class="header" href="#Что-pg_doorman-делает-со-значениями">Что pg_doorman делает со значениями</a></h2>
 <p>pg_doorman добавляет итоговый набор параметров в <code>StartupMessage</code>
 каждого нового бэкенда. PostgreSQL сохраняет эти значения как
@@ -243,29 +256,32 @@ checkout=&gt; SET plan_cache_mode = 'auto'; RESET ALL; SHOW plan_cache_mode;
 <code>^[A-Za-z_][A-Za-z0-9_.]*$</code>. Составные имена вроде
 <code>auto_explain.log_min_duration</code> допустимы; произвольная пунктуация
 нет.</li>
-<li>Зарезервированные ключи (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>
-и всё, что начинается с <code>_pq_.</code>) отклоняются. pg_doorman управляет
-ими сам, либо PostgreSQL обрабатывает их в <code>StartupMessage</code> особым
-образом.</li>
+<li>Зарезервированные ключи (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>,
+<code>role</code>, <code>session_authorization</code> и всё, что начинается с <code>_pq_.</code>)
+отклоняются. pg_doorman управляет ими сам, либо PostgreSQL
+обрабатывает их в <code>StartupMessage</code> особым образом.</li>
 <li>Значения не должны содержать нулевой байт.</li>
 <li>Каждый уровень (<code>general</code> или <code>pool</code>) должен помещаться в лимит для
 операторских параметров: <code>MAX_STARTUP_PACKET_LENGTH</code> (10000 байт)
 минус 512 байт, зарезервированных под служебные ключи pg_doorman.</li>
 </ul>
-<p>Перед запуском каждого бэкенда pg_doorman заново проверяет объединённый
-набор параметров по тому же лимиту. Два уровня, которые помещались по
-отдельности, могут вместе выйти за лимит, особенно когда <code>auth_query</code>
-добавляет третий слой. Если лимит превышает только слой <code>auth_query</code>,
-pg_doorman отбрасывает этот слой и сохраняет baseline из <code>general</code> и
-пула. Если не помещается сам baseline или полный startup-пакет,
-pg_doorman пропускает все операторские параметры для этого
-запуска и пишет размеры в лог.</p>
+<p>Перед запуском каждого бэкенда pg_doorman снова проверяет объединённый
+набор параметров по тому же лимиту. Слои, которые помещаются по
+отдельности, могут превысить лимит после объединения: <code>general + pool</code>
+может быть слишком большим сам по себе, а строка <code>auth_query</code> может
+переполнить уже допустимый базовый набор. Любое превышение теперь
+возвращается клиенту как PostgreSQL-ошибка с <code>SQLSTATE 53400</code>; пустой
+или урезанный <code>StartupMessage</code> не отправляется. В предупреждении
+записываются размеры в байтах, а
+<code>pg_doorman_startup_parameters_dropped_total</code> увеличивается на каждой
+отклонённой попытке запуска бэкенда.</p>
 <h2 id="Что-происходит-если-pg-отвергает-параметр"><a class="header" href="#Что-происходит-если-pg-отвергает-параметр">Что происходит, если PG отвергает параметр</a></h2>
 <p>Если PostgreSQL отвергает заданный оператором параметр при запуске
 бэкенда, pg_doorman возвращает клиенту <code>ErrorResponse</code> PostgreSQL без
-изменений. Клиент видит тот же sqlstate (<code>22023</code>, <code>42704</code>, <code>42501</code>,
-<code>55P02</code> или любой другой код из стартового семейства) и то же сообщение,
-что увидел бы при прямом подключении к PostgreSQL.</p>
+изменений. Клиент видит тот же <code>SQLSTATE</code> (<code>22023</code>, <code>42704</code>, <code>42501</code>,
+<code>55P02</code> или любой другой код, который PostgreSQL вернул при отклонении
+<code>StartupMessage</code>) и то же сообщение, что увидел бы при прямом
+подключении к PostgreSQL.</p>
 <p>pg_doorman не пробует повторить подключение без отклонённого параметра
 и не отключает этот ключ автоматически для пула. Следующее подключение
 клиента отправит тот же <code>StartupMessage</code> и получит ту же ошибку, пока
@@ -288,8 +304,14 @@ SQL-консоль:</p>
 параметра, заданного оператором. Имя параметра и пользователя
 пишутся в строку лога уровня <code>warn</code>; в лейблы они не включены, чтобы
 динамические <code>auth_query</code>-пулы не раздували количество серий.</li>
+<li><code>pg_doorman_startup_parameters_dropped_total{pool, reason}</code> считает
+случаи, когда pg_doorman отклонил <code>startup_parameters</code> до отправки
+<code>StartupMessage</code>: превышение лимита, неподдерживаемый тип или
+неверный JSON из <code>auth_query</code>, недопустимые ключи или значения, а
+также пользовательские значения, проигнорированные в выделенном
+режиме.</li>
 </ul>
-<p>Разумная отправная точка для алерта: если
+<p>Практичное условие для алерта: если
 <code>pg_doorman_backend_startup_parameter_errors_total</code> растёт по одному и
 тому же пулу несколько минут подряд, новые подключения к этому пулу
 падают на одном и том же GUC. Конфигурацию нужно исправить до возврата
@@ -311,8 +333,8 @@ SQL-консоль:</p>
 <li><a href="../reference/general.html">Общие настройки</a>: <code>startup_parameters</code>.</li>
 <li><a href="../reference/pool.html">Настройки пула</a>:
 <code>pools.&lt;name&gt;.startup_parameters</code>.</li>
-<li><a href="../authentication/auth-query.html">auth_query</a>: passthrough- и
-dedicated-режимы, чтение колонки <code>startup_parameters</code>.</li>
+<li><a href="../authentication/auth-query.html">auth_query</a>: сквозной и выделенный
+режимы, чтение колонки <code>startup_parameters</code>.</li>
 <li><a href="../observability/admin-commands.html">Команды администратора</a>:
 <code>SHOW STARTUP_PARAMETERS</code>.</li>
 <li><a href="../reference/prometheus.html">Метрики Prometheus</a>: полный список.</li>
