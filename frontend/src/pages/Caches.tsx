@@ -258,9 +258,20 @@ function PreparedTab() {
     <>
       <SectionHeader
         title="Prepared statements"
-        what="One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip. Click a row to fetch the SQL body."
-        how="Click a row to expand the SQL body — admin credentials required, fetched once per row and kept until you collapse it. Updates every 3 s."
-        normal="Hit rate ≥ 95 % once the pool is warm. If a pool sits below 95 % for several minutes, raise prepared_statements_cache_size. Below 80 % means most queries pay for a Parse — that is a hot-path regression."
+        help={{
+          definition:
+            "One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip. Click a row to fetch the SQL body (admin-only, cached until collapse).",
+          source: "SHOW PREPARED_STATEMENTS",
+          formula: "hit rate = hits / (hits + misses)",
+          thresholds: {
+            healthy: "hit rate ≥ 95 % once pool is warm",
+            warn: "< 95 % sustained — raise prepared_statements_cache_size",
+            crit: "< 80 % — hot-path Parse on every call",
+          },
+          related: ["SHOW POOLS_MEMORY", "client_anonymous_prepared_cache_size"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/tutorials/prepared-statements.html",
+        }}
       />
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
         <input
@@ -478,9 +489,19 @@ function InternerTab() {
     <>
       <SectionHeader
         title="Query interner"
-        what="Global byte-deduplicated SQL text cache. Named = explicitly prepared statements; anonymous = ad-hoc queries."
-        how="Refreshes every 3 s."
-        normal="Named bytes flat, anonymous bytes climbing without bound = an app is sending one-off SQL on every call. Either fix the app to use prepared statements, or lower client_anonymous_prepared_cache_size to bound the memory."
+        help={{
+          definition:
+            "Process-wide byte-deduplicated SQL text cache. Named = explicitly prepared statements; anonymous = ad-hoc queries with no name (Parse with empty name).",
+          source: "SHOW INTERNER",
+          related: ["SHOW INTERNER <N>", "client_anonymous_prepared_cache_size"],
+          thresholds: {
+            healthy: "named bytes flat",
+            warn: "anonymous bytes climbing without bound",
+            crit: "anonymous bytes near memory cap — app sending unique SQL each call",
+          },
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/operations/monitoring-interner.html",
+        }}
       />
       <div className="grid grid-cols-2 gap-6 p-6">
         <Card title="Named" entries={poll.data.named.entries} bytes={poll.data.named.bytes} fmtBytes={fmtBytes} />
@@ -488,8 +509,14 @@ function InternerTab() {
       </div>
       <SectionHeader
         title="Top entries by bytes"
-        what="Largest interned SQL texts across both kinds. Useful for spotting outlier statements that bloat the cache."
-        how="Top 20 largest interned statements, admin only. Preview is the first ~120 characters, trimmed at a UTF-8 boundary so the SQL stays readable."
+        help={{
+          definition:
+            "Twenty largest interned SQL texts across both kinds. Outliers here are usually one-off statements that should be parametrised.",
+          source: "SHOW INTERNER 20",
+          related: ["SHOW INTERNER"],
+          docsHref:
+            "https://ozontech.github.io/pg_doorman/operations/monitoring-interner.html",
+        }}
       />
       {topPoll.error && (
         <p className="px-6 pb-4 text-sm text-danger">{topPoll.error.message}</p>
