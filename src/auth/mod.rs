@@ -978,13 +978,18 @@ where
             // tied to this login instead of reading the global cache
             // again while TTL expiry or a concurrent refetch is changing it.
             let fetched_overlay = Arc::clone(&cache_entry.startup_parameters);
-            let mut pool = create_dynamic_pool(pool_name, username, backend_auth, fetched_overlay)
-                .map_err(|err| {
-                    error!(
-                        "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
-                    );
-                    err
-                })?;
+            let fetched_overlay_hash = cache_entry.startup_parameters_hash;
+            let mut pool = create_dynamic_pool(
+                pool_name,
+                username,
+                backend_auth,
+                fetched_overlay,
+                fetched_overlay_hash,
+            )
+            .map_err(|err| {
+                error!("[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}");
+                err
+            })?;
 
             // Do NOT change client_identifier.username — stay as the dynamic user
             // so that Client.username matches the pool's user for get_pool() lookups.
@@ -1003,15 +1008,17 @@ where
                     } = &err
                     {
                         error!("[{username}@{pool_name}] auth_query passthrough: PG rejected operator-supplied startup parameter: {pg_message}");
-                        // Drop the dynamic pool and invalidate the cache
-                        // entry so the operator's fix to the auth_query
-                        // row reaches the next reconnect immediately.
-                        // Without this the bad overlay sticks until
-                        // `cache_ttl` expires, and every reconnect from
-                        // this user repeats the same rejection.
+                        // Invalidate before dropping the pool. A
+                        // concurrent reconnect that races us between
+                        // these two calls would otherwise read the
+                        // still-cached bad overlay, rebuild the same
+                        // dynamic pool against it, and trigger the
+                        // same rejection. Invalidating first guarantees
+                        // any racing get_or_fetch refetches before
+                        // reconstructing the pool.
+                        cache.invalidate(username);
                         let identifier = crate::pool::PoolIdentifier::new(pool_name, username);
                         crate::pool::drop_dynamic_pool(&identifier);
-                        cache.invalidate(username);
                         error_response(write, pg_message, sqlstate).await?;
                         return Err(err);
                     }

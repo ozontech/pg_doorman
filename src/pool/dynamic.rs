@@ -36,6 +36,7 @@ pub fn create_dynamic_pool(
     username: &str,
     backend_auth: Option<BackendAuthMethod>,
     fetched_overlay: Arc<std::collections::HashMap<String, String>>,
+    fetched_overlay_hash: u64,
 ) -> Result<ConnectionPool, Error> {
     // Fast path: pool already exists. The cache-side refetch path
     // already drops the live pool when an auth_query refetch changes
@@ -44,10 +45,11 @@ pub fn create_dynamic_pool(
     // fresh entry yet before the drop fires, or with a fetched_overlay
     // newer than what the live pool was frozen with. Check the overlay
     // hash here too so that login rebuilds the pool against the
-    // current snapshot instead of inheriting a stale one.
+    // current snapshot instead of inheriting a stale one. The hash is
+    // precomputed on `CacheEntry`, so the fast path skips the sort +
+    // SipHash on every login.
     if let Some(existing) = get_pool(pool_name, username) {
-        let new_overlay_hash = super::per_user_overlay_hash(fetched_overlay.iter());
-        if existing.per_user_startup_overlay_hash == new_overlay_hash {
+        if existing.per_user_startup_overlay_hash == fetched_overlay_hash {
             if let (Some(ref ba_lock), Some(new_ba)) =
                 (&existing.address.backend_auth, &backend_auth)
             {
@@ -202,11 +204,12 @@ pub fn create_dynamic_pool(
         per_user_startup_overlay.clone(),
     );
 
-    // Snapshot the overlay hash before the Arc moves into ServerPool.
     // The auth_query cache compares the new fetched per-user map against
     // this value after every refetch; a mismatch drops the dynamic pool
-    // so the next connect rebuilds with the new reset_val.
-    let overlay_hash = super::per_user_overlay_hash(per_user_startup_overlay.iter());
+    // so the next connect rebuilds with the new reset_val. The caller
+    // already has the hash precomputed on the `CacheEntry`, so we reuse
+    // it instead of re-running per_user_overlay_hash on the same map.
+    let overlay_hash = fetched_overlay_hash;
 
     let queue_strategy = match config.general.server_round_robin {
         true => QueueMode::Fifo,

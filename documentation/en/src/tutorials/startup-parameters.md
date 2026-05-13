@@ -62,6 +62,13 @@ Dedicated `auth_query` mode (`server_user` set) ignores the per-user
 column and logs once per (pool, username): one shared backend serves
 many users, so a per-user override cannot apply.
 
+Operator-side changes to the per-user `startup_parameters` row apply
+to **new** backend connections only. Already-checked-out backends keep
+the snapshot pg_doorman froze when their pool was created — the next
+client reconnect (which goes through `auth_query` again) picks up the
+fresh row and rebuilds the dynamic pool, after which new spawns ship
+the updated values.
+
 ## What pg_doorman does with the values
 
 pg_doorman adds the resolved parameter set to the PostgreSQL

@@ -383,21 +383,19 @@ where
         // while the backend keeps the operator default — a protocol-
         // visible mismatch. The backend's sync_parameters already
         // applies the same filter on checkout, so this aligns the two
-        // sides on the client view.
+        // sides on the client view. Iterate directly into
+        // `set_param` to skip the intermediate `HashMap` allocation a
+        // connect storm would otherwise pay per client.
         let operator_keys = crate::pool::get_pool(&pool_name, &client_identifier.username)
             .map(|p| p.database.server_pool().operator_managed_startup_keys());
         match operator_keys {
             Some(keys) if !keys.is_empty() => {
-                let filtered: std::collections::HashMap<String, String> = parameters
-                    .iter()
-                    .filter(|(k, _)| {
-                        !keys.contains(&crate::server::parameters::canonicalize_param_name(
-                            (*k).clone(),
-                        ))
-                    })
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-                server_parameters.set_from_hashmap(&filtered, false);
+                for (key, value) in &parameters {
+                    let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
+                    if !keys.contains(&canonical) {
+                        server_parameters.set_param(key.clone(), value.clone(), false);
+                    }
+                }
             }
             _ => {
                 server_parameters.set_from_hashmap(&parameters, false);

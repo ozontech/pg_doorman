@@ -219,11 +219,13 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
-      # GitHub-hosted runners share CPU under heavy matrix fan-out, and
-      # the timing-sensitive scenarios (sleep-based retain/lifetime
-      # waits, SCRAM passthrough reconnect) lose their margin when 20+
-      # BDD jobs run in parallel. Cap concurrency so each suite gets a
-      # less contested runner.
+      # 6 is the steady-state cap for this matrix. GitHub-hosted runners
+      # share CPU under heavy fan-out, so the timing-sensitive scenarios
+      # (sleep-based retain/lifetime waits, SCRAM passthrough reconnect)
+      # used to lose their margin when 20+ BDD jobs ran in parallel and
+      # the cap was 4. Raising to 6 cut wall time on the 22-suite
+      # rollout without measurable flake increase on the sleep-heavy
+      # @rust-4 lifecycle and SCRAM-reconnect suites.
       max-parallel: 6
       matrix:
         suite:

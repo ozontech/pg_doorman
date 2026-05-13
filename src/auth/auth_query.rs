@@ -582,6 +582,12 @@ pub struct CacheEntry {
     /// `cache.get_or_fetch` previously paid an `O(map)` clone; the
     /// `Arc::clone` here is two atomic increments instead.
     pub startup_parameters: Arc<std::collections::HashMap<String, String>>,
+    /// Precomputed `per_user_overlay_hash(startup_parameters)` so the
+    /// dynamic-pool fast path can compare against the live pool's
+    /// `per_user_startup_overlay_hash` without re-running the sort +
+    /// SipHash on every login. Recomputed only when
+    /// `set_startup_parameters` runs (cache miss / refetch).
+    pub startup_parameters_hash: u64,
 }
 
 impl CacheEntry {
@@ -593,6 +599,7 @@ impl CacheEntry {
             last_refetch_at: None,
             client_key: None,
             startup_parameters: Arc::new(std::collections::HashMap::new()),
+            startup_parameters_hash: crate::pool::empty_overlay_hash(),
         }
     }
 
@@ -604,7 +611,20 @@ impl CacheEntry {
             last_refetch_at: None,
             client_key: None,
             startup_parameters: Arc::new(std::collections::HashMap::new()),
+            startup_parameters_hash: crate::pool::empty_overlay_hash(),
         }
+    }
+
+    /// Update both the map and its hash in one shot. Direct field
+    /// writes risk drifting the hash out of sync with the map; route
+    /// every refetch / mutation through this setter instead.
+    pub fn set_startup_parameters(
+        &mut self,
+        startup_parameters: std::collections::HashMap<String, String>,
+    ) {
+        self.startup_parameters_hash =
+            crate::pool::per_user_overlay_hash(startup_parameters.iter());
+        self.startup_parameters = Arc::new(startup_parameters);
     }
 
     fn is_expired(&self, cache_ttl: &Duration, cache_failure_ttl: &Duration) -> bool {
@@ -709,7 +729,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 pool = self.pool_name
             );
         }
-        entry.startup_parameters = Arc::new(std::collections::HashMap::new());
+        entry.set_startup_parameters(std::collections::HashMap::new());
     }
 
     /// When a fresh auth_query fetch produces a per-user
@@ -811,7 +831,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             Ok(Some((password_hash, startup_params))) => {
                 self.inc(|s| &s.cache_misses);
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.startup_parameters = Arc::new(startup_params);
+                entry.set_startup_parameters(startup_params);
                 self.dedicated_mode_filter(&mut entry, username);
                 // Publish the fresh entry first so any concurrent
                 // create_dynamic_pool peeks the new overlay, then drop the
@@ -886,7 +906,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         match self.executor.fetch_credentials(username).await {
             Ok(Some((password_hash, startup_params))) => {
                 let mut entry = CacheEntry::positive(password_hash);
-                entry.startup_parameters = Arc::new(startup_params);
+                entry.set_startup_parameters(startup_params);
                 entry.last_refetch_at = Some(Instant::now());
                 self.dedicated_mode_filter(&mut entry, username);
                 // Insert before drop — see comment in get_or_fetch.
