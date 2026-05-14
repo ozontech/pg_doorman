@@ -16,7 +16,7 @@ general:
   host: "0.0.0.0"
   port: 6432
   admin_username: "admin"
-  admin_password: "admin"
+  admin_password: "change_me_to_a_long_random_secret"
 
 pools:
   mydb:
@@ -25,7 +25,7 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "myuser"
-        password: "mypassword"
+        password: "md5..."  # хеш из pg_shadow / pg_authid
         pool_size: 40
 ```
 
@@ -36,7 +36,7 @@ pools:
 host = "0.0.0.0"
 port = 6432
 admin_username = "admin"
-admin_password = "admin"
+admin_password = "change_me_to_a_long_random_secret"
 
 [pools.mydb]
 server_host = "localhost"
@@ -45,7 +45,7 @@ pool_mode = "transaction"
 
 [[pools.mydb.users]]
 username = "myuser"
-password = "mypassword"
+password = "md5..."  # хеш из pg_shadow / pg_authid
 pool_size = 40
 ```
 
@@ -439,7 +439,12 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 
 ### prepared_statements
 
-Переключатель для включения/отключения кеширования prepared statements.
+Включает подмену и кеширование prepared statements. Когда параметр
+выключен, pg_doorman передаёт `Parse` и `Bind` без переписывания через
+пуловый кеш prepared statements.
+
+Если значение `true`, `prepared_statements_cache_size` должен быть
+больше `0`.
 
 По умолчанию: `true`.
 
@@ -448,9 +453,14 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 Размер кеша prepared statements на уровне пула (общий для всех клиентов, подключающихся к одному пулу).
 Кеш хранит соответствие между хешем запроса и переписанным именем prepared statement.
 
+Это не выключатель. Чтобы отключить подмену prepared statements,
+задайте `prepared_statements: false`; pg_doorman отклоняет общее
+значение `prepared_statements_cache_size = 0`, пока `prepared_statements`
+включён.
+
 Полная картина того, как этот параметр взаимодействует с `server_prepared_statements_cache_size`,
 `client_anonymous_prepared_cache_size` и query interner — в туториале
-[Кеш Parse для анонимных prepared statements](../tutorials/prepared-statements.md).
+[Кеширование анонимных prepared statements](../tutorials/prepared-statements.md).
 
 По умолчанию: `8192`.
 
@@ -684,11 +694,10 @@ hostnossl all      all    192.168.1.0/24  trust
 протокольные ключи (`user`, `database`, `replication`, `options`,
 `_pq_.*`), имена GUC, нулевые байты и размер этого уровня. Перед каждым
 запуском бэкенда объединённый набор параметров снова проверяется по
-лимиту `MAX_STARTUP_PACKET_LENGTH` PostgreSQL (10 000 байт). Каскад и
-проверка пакета отклоняют запуск бэкенда с SQLSTATE 53400
-(`configuration_limit_exceeded`); если каскад выходит за бюджет только
-из-за overlay из `auth_query`, pg_doorman сбрасывает этот overlay и
-продолжает с baseline.
+лимиту `MAX_STARTUP_PACKET_LENGTH` PostgreSQL (10 000 байт). Любое
+переполнение отклоняет запуск бэкенда с SQLSTATE 53400
+(`configuration_limit_exceeded`), вместо отправки частичного или пустого
+`StartupMessage`.
 
 Если PostgreSQL отвергает параметр при запуске бэкенда, pg_doorman
 возвращает клиенту `ErrorResponse` PostgreSQL без изменений: повторной

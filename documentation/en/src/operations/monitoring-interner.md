@@ -66,7 +66,9 @@ alerts:
 - **`PgDoormanAnonInternerMemoryHigh`** (critical) — ANON bytes
   > 1.5 GiB. Tighten TTL or check for ORM dynamic SQL.
 - **`PgDoormanAnonTTLTooShort`** (critical) — synthetic 26000 rate
-  > 1/s for 10 min. Raise TTL or fix the offending driver.
+  > 1/s for 10 min. Find whether the misses come from client LRU
+  churn, `RESET INTERNER`, anonymous TTL eviction, or the offending
+  driver before changing TTL.
 - **`PgDoormanAnonInternerNotShrinking`** (warning) — ANON keeps
   growing while TTL evictions are flat. Either TTL is set too long
   or the workload is pushing unique queries faster than they expire.
@@ -121,22 +123,26 @@ Action: drop `query_interner_anon_idle_ttl_seconds` in `general`
 config (e.g. 60 → 30). Reload pg_doorman. Watch the eviction rate
 catch up to the new threshold.
 
-### Raise TTL when synthetic 26000 fires
+### Investigate synthetic 26000 before raising TTL
 
 Trigger: `PgDoormanAnonTTLTooShort` fires.
 
 Action: identify which client and what query — the synthetic-miss
 counter has no labels, so use the WARN log line emitted with each
-miss for client / pool / connection_id context. If the offender is
-a driver that legitimately reuses unnamed Bind across batches,
-raise TTL to cover the gap (e.g. 60 → 300). If it is not, switch
-that client to named prepared.
+miss for client / pool / connection_id context. Check
+`pg_doorman_clients_prepared_anonymous_evictions_total` and
+`pg_doorman_query_interner_evictions_total{kind="anonymous"}` before
+changing config. If misses come from the client Anonymous LRU, increase
+`client_anonymous_prepared_cache_size`. If they come from anonymous TTL
+or from a driver that legitimately reuses unnamed Bind across batches,
+raise TTL to cover the gap (e.g. 60 → 300). If it is not, switch that
+client to named prepared.
 
 ### Run RESET INTERNER
 
 Trigger: ad-hoc diagnostics or memory containment incident.
 
-Action: `psql admin@:6432 -c "RESET INTERNER"`. Returns
+Action: `psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman" -c "RESET INTERNER"`. Returns
 `CommandComplete RESET`. In-flight clients re-Parse on next reuse;
 short-lived ones see no effect because their `last_anonymous_hash`
 remembers the hash they registered before the reset, and the next

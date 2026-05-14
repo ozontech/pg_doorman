@@ -44,7 +44,7 @@ pub fn generate_prometheus_doc() -> String {
     let mut out = String::with_capacity(8 * 1024);
 
     let _ = writeln!(out, "# Prometheus Settings\n");
-    let _ = writeln!(out, "pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.\n");
+    let _ = writeln!(out, "pg_doorman exposes Prometheus metrics on the `[web]` listener. Enable `/metrics` through `[web]`; the tables below map metric names to the pooler state they report.\n");
     write_prometheus_fields(&mut out, f);
     write_prometheus_metrics_section(&mut out);
 
@@ -99,13 +99,13 @@ fn write_config_examples(out: &mut String) {
     let _ = writeln!(out, "### Example YAML Configuration (Recommended)\n");
     let _ = writeln!(
         out,
-        "```yaml\ngeneral:\n  host: \"0.0.0.0\"\n  port: 6432\n  admin_username: \"admin\"\n  admin_password: \"admin\"\n\npools:\n  mydb:\n    server_host: \"localhost\"\n    server_port: 5432\n    pool_mode: \"transaction\"\n    users:\n      - username: \"myuser\"\n        password: \"mypassword\"\n        pool_size: 40\n```\n"
+        "```yaml\ngeneral:\n  host: \"0.0.0.0\"\n  port: 6432\n  admin_username: \"admin\"\n  admin_password: \"change_me_to_a_long_random_secret\"\n\npools:\n  mydb:\n    server_host: \"localhost\"\n    server_port: 5432\n    pool_mode: \"transaction\"\n    users:\n      - username: \"myuser\"\n        password: \"md5...\"  # hash from pg_shadow / pg_authid\n        pool_size: 40\n```\n"
     );
 
     let _ = writeln!(out, "### Example TOML Configuration (Legacy)\n");
     let _ = writeln!(
         out,
-        "```toml\n[general]\nhost = \"0.0.0.0\"\nport = 6432\nadmin_username = \"admin\"\nadmin_password = \"admin\"\n\n[pools.mydb]\nserver_host = \"localhost\"\nserver_port = 5432\npool_mode = \"transaction\"\n\n[[pools.mydb.users]]\nusername = \"myuser\"\npassword = \"mypassword\"\npool_size = 40\n```\n"
+        "```toml\n[general]\nhost = \"0.0.0.0\"\nport = 6432\nadmin_username = \"admin\"\nadmin_password = \"change_me_to_a_long_random_secret\"\n\n[pools.mydb]\nserver_host = \"localhost\"\nserver_port = 5432\npool_mode = \"transaction\"\n\n[[pools.mydb.users]]\nusername = \"myuser\"\npassword = \"md5...\"  # hash from pg_shadow / pg_authid\npool_size = 40\n```\n"
     );
 }
 
@@ -374,10 +374,10 @@ fn write_user_fields(out: &mut String, f: &FieldsData) {
 fn write_prometheus_fields(out: &mut String, f: &FieldsData) {
     let _ = writeln!(out, "## Enabling the Web Listener\n");
     let _ = writeln!(out, "Both the Prometheus metrics endpoint (`/metrics`) and the optional operator console (the SPA on `/`, `/api/*`) are served by the same `[web]` listener. The legacy `prometheus.*` config keys are accepted as aliases for `web.*`.\n");
-    let _ = writeln!(out, "```yaml\nweb:\n  enabled: true     # Bind the listener (Prometheus only)\n  host: \"0.0.0.0\"\n  port: 9127\n  # Operator console (off by default; see the Web UI guide)\n  ui: false\n  ui_anonymous: false\n```\n");
+    let _ = writeln!(out, "```yaml\nweb:\n  enabled: true     # Bind the HTTP listener for /metrics\n  host: \"0.0.0.0\"\n  port: 9127\n  # Operator console is off by default; see the Web UI guide\n  ui: false\n  ui_anonymous: false\n```\n");
 
     let _ = writeln!(out, "### Configuration Options\n");
-    let _ = writeln!(out, "Full list — including UI-related fields — lives in [Web Settings](web.md). The minimum to expose `/metrics` is:\n");
+    let _ = writeln!(out, "For UI settings, see [Web UI](../guides/web-ui.md). The minimum to expose `/metrics` is:\n");
 
     let _ = writeln!(out, "| Option | Description | Default |");
     let _ = writeln!(out, "|--------|-------------|---------|");
@@ -485,8 +485,10 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "### Server Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with `pg_doorman_servers_prepared_misses` to derive hit ratio. |");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statement_cache_size`. |\n");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Live aggregate of prepared-statement cache hits across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use `pg_doorman_servers_prepared_hits_total` for rates. |");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Live aggregate of prepared-statement cache misses across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use `pg_doorman_servers_prepared_misses_total` for rates. |");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits_total` | Counter form of prepared-statement cache hits across all backends of each pool, by user and database. Use `rate()` over this metric for hit throughput. |");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses_total` | Counter form of prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statements_cache_size`. |\n");
 
     // Per-Client Prepared Statement Cache Metrics
     let _ = writeln!(out, "### Per-Client Prepared Statement Cache Metrics\n");
@@ -496,6 +498,17 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_named_entries` | Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends `DEALLOCATE`. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer. |");
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_anonymous_entries` | Gauge by user and database. Sum of Anonymous entries across every connected client's cache. Each client's Anonymous part is capped at `client_anonymous_prepared_cache_size`, so this gauge approaches at most `connected_clients * cache_size`. |");
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_anonymous_evictions_total` | Counter by user and database. Cumulative count of Anonymous LRU evictions across all clients of the pool. A sustained non-zero rate signals that `client_anonymous_prepared_cache_size` is too small for the workload and the LRU is recycling entries faster than the application reuses them. The counter is monotonic per pool; an upgrade restarts it from zero. |\n");
+
+    // Query Interner Metrics
+    let _ = writeln!(out, "### Query Interner Metrics\n");
+    let _ = writeln!(out, "The query interner is process-global. These metrics have no pool, user, or database labels; use the prepared-statement metrics above to locate the affected pool.\n");
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_query_interner_entries` | Gauge by `kind` (`named` or `anonymous`). Number of interned query texts. Refreshed once per GC sweep. |");
+    let _ = writeln!(out, "| `pg_doorman_query_interner_bytes` | Gauge by `kind` (`named` or `anonymous`). Total bytes of interned query text. Refreshed once per GC sweep. |");
+    let _ = writeln!(out, "| `pg_doorman_query_interner_evictions_total` | Counter by `kind` and `reason` (`gc_passive` or `ttl_expired`). Named entries are removed when no cache outside the interner still holds them; anonymous entries are removed after the idle TTL. |");
+    let _ = writeln!(out, "| `pg_doorman_query_interner_synthetic_misses_total` | Counter of synthetic SQLSTATE `26000` responses for anonymous prepared statements whose state was no longer available when a later `Bind` or `Describe` referenced it. Check client Anonymous LRU evictions, WARN logs, `RESET INTERNER`, and TTL evictions before increasing `query_interner_anon_idle_ttl_seconds`. |");
+    let _ = writeln!(out, "| `pg_doorman_query_interner_gc_duration_seconds` | Histogram of one interner GC sweep (named and anonymous combined), in seconds. Use this to detect large interners that make sweep time visible. |\n");
 
     // Grafana Dashboard
     let _ = writeln!(out, "## Grafana Dashboard\n");

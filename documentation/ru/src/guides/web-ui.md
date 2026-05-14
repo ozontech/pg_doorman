@@ -125,11 +125,11 @@ SSO опциональный. По умолчанию (`[web].sso_enabled = fals
 | `sso_enabled` | Включает SSO-ветку. Без неё JWT не валидируются. | `false` |
 | `sso_proxy_url` | URL, на который SPA уводит браузер по кнопке «Sign in via SSO». Бэкенд этот URL сам не вызывает. | `null` |
 | `sso_public_key_file` | Путь к PEM-файлу с публичным RSA-ключом. Читается на старте и при `RELOAD`. | `null` |
-| `sso_audience` | Допустимые значения claim `aud`. Токен принимается, если совпадает хотя бы одно. Обязательное поле при `sso_enabled = true`. | `[]` |
-| `sso_allowed_users` | Allowlist по claim `preferred_username` (или `sub`). `["*"]` принимает любого. Иначе пропускаются только перечисленные имена. | `["*"]` |
-| `sso_groups_claim` | Имя JWT-claim, в котором лежат группы пользователя. Читается вместе с `sso_admin_groups`. | `"groups"` |
+| `sso_audience` | Допустимые значения JWT claim `aud`. Токен принимается, если совпадает хотя бы одно. Обязательное поле при `sso_enabled = true`. | `[]` |
+| `sso_allowed_users` | Список разрешённых значений JWT claims `preferred_username` или `sub`. `["*"]` принимает любой валидный токен; явный список пропускает только перечисленные имена. | `["*"]` |
+| `sso_groups_claim` | Имя JWT claim, в котором лежат группы пользователя. Читается вместе с `sso_admin_groups`. | `"groups"` |
 | `sso_admin_groups` | Группы, которые поднимают SSO-пользователя до `Admin`. Пустой список оставляет каждый SSO-логин на роли `Sso` только для чтения. | `[]` |
-| `sso_require_https` | Отклонять Bearer/cookie/query SSO-credentials, пришедшие по plain HTTP. Запрос считается защищённым только если TCP-peer входит в `trusted_proxies` и прокси прислал `X-Forwarded-Proto: https`. По умолчанию выключено, чтобы SSO продолжал работать в схеме «TLS терминирует прокси → pg_doorman слушает HTTP во внутренней сети». | `false` |
+| `sso_require_https` | Отклонять Bearer/cookie/query SSO-учётные данные, пришедшие по обычному HTTP. Запрос считается защищённым только если TCP-пир входит в `trusted_proxies` и прокси прислал `X-Forwarded-Proto: https`. По умолчанию выключено, чтобы SSO продолжал работать в схеме «TLS терминирует прокси → pg_doorman слушает HTTP во внутренней сети». | `false` |
 | `trusted_proxies` | CIDR доверенных обратных прокси для `X-Forwarded-For`, `Forwarded` и `X-Forwarded-Proto`. При пустом списке pg_doorman игнорирует эти заголовки и берёт адрес прямого TCP-пира. Если `sso_require_https = true` работает за прокси, который завершает TLS, добавьте CIDR этого прокси, чтобы доверять `X-Forwarded-Proto: https`. См. [Журнал доступа](#журнал-доступа). | `[]` |
 
 ### Поднятие SSO-пользователя до Admin через claim с группами

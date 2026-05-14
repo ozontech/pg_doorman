@@ -288,7 +288,7 @@ general:
   # Default: true
   prepared_statements: true
 
-  # Cache size for prepared statements at the pool level (shared across clients).
+  # Pool-level prepared statement cache size (shared across clients). Must be >0 when prepared_statements is true.
   # Default: 8192
   prepared_statements_cache_size: 8192
 
@@ -469,15 +469,15 @@ general:
 # WEB UI / METRICS
 # ############################################################################
 web:
-  # Enable Prometheus metrics exporter.
+  # Enable the HTTP listener for /metrics and the optional web UI.
   # Default: false
   enabled: false
 
-  # Host for the metrics HTTP endpoint.
+  # Bind address for the [web] HTTP listener.
   # Default: "0.0.0.0"
   host: "0.0.0.0"
 
-  # Port for the metrics HTTP endpoint.
+  # Port for the [web] HTTP listener.
   # Default: 9127
   port: 9127
 
