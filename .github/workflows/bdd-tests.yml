@@ -281,9 +281,16 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Pull test image from GHCR
+        # The test-runner image is a nix-based ~1.5+ GB blob. On a
+        # GHA runner with a slow ghcr.io route, three 5-minute pulls
+        # in a row can each time out before the final layer lands,
+        # killing the job before any test runs (observed on the
+        # SIGUSR2 readiness fix PR). 10 minutes per attempt gives
+        # the slowest paths room to finish; the retry policy keeps
+        # the fast-path bound at the same overall wall time.
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 10
           command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
@@ -410,9 +417,16 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ${{ env.REGISTRY }} -u "$GHCR_ACTOR" --password-stdin
 
       - name: Pull test image from GHCR
+        # The test-runner image is a nix-based ~1.5+ GB blob. On a
+        # GHA runner with a slow ghcr.io route, three 5-minute pulls
+        # in a row can each time out before the final layer lands,
+        # killing the job before any test runs (observed on the
+        # SIGUSR2 readiness fix PR). 10 minutes per attempt gives
+        # the slowest paths room to finish; the retry policy keeps
+        # the fast-path bound at the same overall wall time.
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 5
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 10
           command: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
