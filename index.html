@@ -164,16 +164,16 @@
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
 <p><a href="tutorials/installation.html">Get PgDoorman 3.9.1</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
-<div id="admonition-built-in-operator-dashboard" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-operator-dashboard-title">
+<div id="admonition-built-in-diagnostic-console" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-diagnostic-console-title">
 <div class="admonition-title">
-<div id="admonition-built-in-operator-dashboard-title">
-<p>Built-in operator dashboard</p>
+<div id="admonition-built-in-diagnostic-console-title">
+<p>Built-in diagnostic console</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-built-in-operator-dashboard"></a>
+<a class="admonition-anchor-link" href="#admonition-built-in-diagnostic-console"></a>
 </div>
 <div>
-<p>A diagnostic console embedded in the pg_doorman binary, served on the same port as <code>/metrics</code>. What it shows: pool saturation tiles, per-pool latency p95/p99 sparklines, errors split by SQLSTATE per pool, top-N stuck queries, jemalloc memory broken into live allocations / fragmentation / internal caches / code-and-libs / stacks / swap, <code>/proc/self/status</code> fields with one-line explanations next to the numbers, per-thread tokio-worker CPU, prepared cache attribution, query interner contents, live log tail. Sortable, filterable tables on Pools / Clients / Apps / Caches; live qps and tx-per-second per app and per client.</p>
-<p>PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy expose <code>/metrics</code> and a psql admin console. The dashboard you would build on top of them — Prometheus + Grafana + a memory exporter + a custom panel set — is already in pg_doorman.</p>
+<p>A diagnostic console embedded in the pg_doorman binary, served on the same port as <code>/metrics</code>. It gives operators the incident view that <code>/metrics</code> and the psql admin console expose only in pieces: pool saturation, latency percentiles, SQLSTATE breakdowns, long-running queries, prepared-cache and query-interner state, process memory, cgroup limits, per-worker CPU, and a live log tail.</p>
+<p>The console is for live diagnosis, not a replacement for long-term Prometheus/Grafana monitoring.</p>
 <p>Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when <code>[web].ui = true</code> and <code>general.admin_password</code> is non-default; a fresh install with the placeholder password keeps the listener at <code>/metrics</code> only and logs a <code>WARN</code>.</p>
 <p><a href="guides/web-ui.html">Read more →</a></p>
 </div>
@@ -212,7 +212,7 @@
 <a class="admonition-anchor-link" href="#admonition-graceful-binary-upgrade"></a>
 </div>
 <div>
-<p>Update PgDoorman during business hours without a maintenance window. Apps don't see reconnect errors, PostgreSQL isn't hit by a wave of <code>auth</code>/SCRAM handshakes from simultaneous reconnects, in-flight transactions don't fail.</p>
+<p>Update PgDoorman without stopping the listener. Idle client sessions can move to the new process, which avoids a reconnect wave and reduces repeated <code>auth</code>/SCRAM handshakes against PostgreSQL. Clients inside a transaction stay on the old process until they go idle.</p>
 <p>On <code>SIGUSR2</code> the old process hands each idle client's TCP socket to the new one through <code>SCM_RIGHTS</code> — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the <code>tls-migration</code> build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.</p>
 <p>PgBouncer's online restart (<code>-R</code>, deprecated since 1.20; or <code>so_reuseport</code> rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.</p>
 <p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
@@ -229,13 +229,13 @@
 <p>In extended protocol, many drivers send short parameterised queries as <code>Parse</code> with an empty statement name. Without a remap, that hot path keeps paying PostgreSQL planner CPU and repeated backend <code>Parse</code> work on every reuse.</p>
 <p>PgDoorman rewrites the empty name to an internal <code>DOORMAN_&lt;N&gt;</code> on the backend and keeps the mapping in the pool. PostgreSQL sees a named prepared statement, so later <code>Bind</code>s for the same query shape can reuse prepared backend state across one client and across clients sharing the pool. The primary value is performance: less planner work and fewer backend Parses on repeated OLTP queries.</p>
 <p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.</p>
-<p>To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and <code>SHOW INTERNER</code> plus Prometheus metrics expose cache size, hits, misses, and evictions.</p>
+<p>To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, <code>SHOW INTERNER</code> exposes interner size, and Prometheus metrics expose hits, misses, and evictions.</p>
 <p><a href="tutorials/prepared-statements.html">Read more →</a></p>
 </div>
 </div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
 <ul>
-<li><strong>Caches <code>Parse</code> on hot query paths.</strong> Prepared backend state is reused between clients sharing a pool, including the anonymous <code>Parse</code> most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; cache size, hits, misses, and evictions are visible through <code>SHOW INTERNER</code> and metrics.</li>
+<li><strong>Caches <code>Parse</code> on hot query paths.</strong> Prepared backend state is reused between clients sharing a pool, including the anonymous <code>Parse</code> most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; <code>SHOW INTERNER</code> shows query-text memory, while Prometheus metrics show cache hits, misses, and evictions.</li>
 <li><strong>Multi-threaded, single shared pool.</strong> All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind <code>so_reuseport</code> — gives each instance its own pool, and idle counts can drift between processes for the same database.</li>
 <li><strong>Thundering herd suppression.</strong> When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (<code>scaling_max_parallel_creates</code>) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.</li>
 <li><strong>Bounded tail latency.</strong> Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of <code>server_lifetime</code>, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.</li>

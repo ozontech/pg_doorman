@@ -173,7 +173,7 @@
   host: "0.0.0.0"
   port: 6432
   admin_username: "admin"
-  admin_password: "admin"
+  admin_password: "change_me_to_a_long_random_secret"
 
 pools:
   mydb:
@@ -182,7 +182,7 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "myuser"
-        password: "mypassword"
+        password: "md5..."  # hash from pg_shadow / pg_authid
         pool_size: 40
 </code></pre>
 <h3 id="example-toml-configuration-legacy"><a class="header" href="#example-toml-configuration-legacy">Example TOML Configuration (Legacy)</a></h3>
@@ -190,7 +190,7 @@ pools:
 host = "0.0.0.0"
 port = 6432
 admin_username = "admin"
-admin_password = "admin"
+admin_password = "change_me_to_a_long_random_secret"
 
 [pools.mydb]
 server_host = "localhost"
@@ -199,7 +199,7 @@ pool_mode = "transaction"
 
 [[pools.mydb.users]]
 username = "myuser"
-password = "mypassword"
+password = "md5..."  # hash from pg_shadow / pg_authid
 pool_size = 40
 </code></pre>
 <h3 id="generate-command"><a class="header" href="#generate-command">Generate Command</a></h3>
@@ -468,14 +468,19 @@ keepalive cannot help (e.g., during active data transmission).</p>
 It should be replaced with your secret.</p>
 <p>Default: <code>"admin"</code>.</p>
 <h3 id="prepared_statements"><a class="header" href="#prepared_statements">prepared_statements</a></h3>
-<p>Switcher to enable/disable caching of prepared statements.</p>
+<p>Enables prepared-statement remapping and caching. When disabled, pg_doorman forwards
+<code>Parse</code> and <code>Bind</code> without rewriting them through the pool-level prepared-statement cache.</p>
+<p>If this is <code>true</code>, <code>prepared_statements_cache_size</code> must be greater than <code>0</code>.</p>
 <p>Default: <code>true</code>.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size">prepared_statements_cache_size</a></h3>
 <p>Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
 This cache stores the mapping from query hash to rewritten prepared statement name.</p>
+<p>This is not the disable switch. To disable prepared-statement remapping, set
+<code>prepared_statements: false</code>; pg_doorman rejects a general <code>prepared_statements_cache_size</code>
+of <code>0</code> while <code>prepared_statements</code> is enabled.</p>
 <p>For an end-to-end picture of how this knob interacts with <code>server_prepared_statements_cache_size</code>,
 <code>client_anonymous_prepared_cache_size</code>, and the query interner, see the
-<a href="../tutorials/prepared-statements.html">Anonymous Prepared Statement Caching tutorial</a>.</p>
+<a href="../tutorials/prepared-statements.html">Anonymous Parse caching tutorial</a>.</p>
 <p>Default: <code>8192</code>.</p>
 <h3 id="server_prepared_statements_cache_size"><a class="header" href="#server_prepared_statements_cache_size">server_prepared_statements_cache_size</a></h3>
 <p>Sizes the per-backend <code>LruCache&lt;String, ()&gt;</code> of <code>DOORMAN_&lt;N&gt;</code> names independently of the pool-level cache.
@@ -649,7 +654,7 @@ or application-level keepalive probes. The default <code>;</code> (empty stateme
 <h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
 <p>Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend <code>StartupMessage</code>; PostgreSQL stores them as the session reset defaults, so client <code>RESET ALL</code> / <code>DISCARD ALL</code> returns to these values.</p>
 <p>Cascade order: <code>general.startup_parameters</code>, then <code>pools.&lt;name&gt;.startup_parameters</code>, then the optional <code>startup_parameters</code> JSON column returned by passthrough <code>auth_query</code>. Later layers win per key. Dedicated-mode <code>auth_query</code> pools ignore the per-user column because one shared backend serves multiple roles.</p>
-<p>Validation at config load rejects reserved protocol keys (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>, anything starting with <code>_pq_.</code>), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000 bytes). The cascade and packet-cap gates reject backend startup with SQLSTATE 53400 (<code>configuration_limit_exceeded</code>); when only the auth_query overlay tips the cascade over budget, pg_doorman drops that overlay and continues with the baseline.</p>
+<p>Validation at config load rejects reserved protocol keys (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>, anything starting with <code>_pq_.</code>), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000 bytes). Any overflow rejects backend startup with SQLSTATE 53400 (<code>configuration_limit_exceeded</code>) instead of sending a partial or empty <code>StartupMessage</code>.</p>
 <p>If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's <code>ErrorResponse</code> to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as <code>pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}</code>; the parameter name and username are written to the corresponding warning log line.</p>
 <p>Inspect the resolved per-pool values with <code>SHOW STARTUP_PARAMETERS</code> or the <code>/api/pools</code> REST endpoint.</p>
 <p>Default: <code>{} (empty)</code>.</p>

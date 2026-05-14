@@ -162,16 +162,16 @@
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
 <p><a href="tutorials/installation.html">Get PgDoorman 3.9.1</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
-<div id="admonition-built-in-operator-dashboard" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-operator-dashboard-title">
+<div id="admonition-built-in-diagnostic-console" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-diagnostic-console-title">
 <div class="admonition-title">
-<div id="admonition-built-in-operator-dashboard-title">
-<p>Built-in operator dashboard</p>
+<div id="admonition-built-in-diagnostic-console-title">
+<p>Built-in diagnostic console</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-built-in-operator-dashboard"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-built-in-diagnostic-console"></a>
 </div>
 <div>
-<p>A diagnostic console embedded in the pg_doorman binary, served on the same port as <code>/metrics</code>. What it shows: pool saturation tiles, per-pool latency p95/p99 sparklines, errors split by SQLSTATE per pool, top-N stuck queries, jemalloc memory broken into live allocations / fragmentation / internal caches / code-and-libs / stacks / swap, <code>/proc/self/status</code> fields with one-line explanations next to the numbers, per-thread tokio-worker CPU, prepared cache attribution, query interner contents, live log tail. Sortable, filterable tables on Pools / Clients / Apps / Caches; live qps and tx-per-second per app and per client.</p>
-<p>PgBouncer, PgCat, Odyssey, PgPool-II, RDS Proxy and Cloud SQL Auth Proxy expose <code>/metrics</code> and a psql admin console. The dashboard you would build on top of them — Prometheus + Grafana + a memory exporter + a custom panel set — is already in pg_doorman.</p>
+<p>A diagnostic console embedded in the pg_doorman binary, served on the same port as <code>/metrics</code>. It gives operators the incident view that <code>/metrics</code> and the psql admin console expose only in pieces: pool saturation, latency percentiles, SQLSTATE breakdowns, long-running queries, prepared-cache and query-interner state, process memory, cgroup limits, per-worker CPU, and a live log tail.</p>
+<p>The console is for live diagnosis, not a replacement for long-term Prometheus/Grafana monitoring.</p>
 <p>Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when <code>[web].ui = true</code> and <code>general.admin_password</code> is non-default; a fresh install with the placeholder password keeps the listener at <code>/metrics</code> only and logs a <code>WARN</code>.</p>
 <p><a href="guides/web-ui.html">Read more →</a></p>
 </div>
@@ -210,7 +210,7 @@
 <a class="admonition-anchor-link" href="index.html#admonition-graceful-binary-upgrade"></a>
 </div>
 <div>
-<p>Update PgDoorman during business hours without a maintenance window. Apps don't see reconnect errors, PostgreSQL isn't hit by a wave of <code>auth</code>/SCRAM handshakes from simultaneous reconnects, in-flight transactions don't fail.</p>
+<p>Update PgDoorman without stopping the listener. Idle client sessions can move to the new process, which avoids a reconnect wave and reduces repeated <code>auth</code>/SCRAM handshakes against PostgreSQL. Clients inside a transaction stay on the old process until they go idle.</p>
 <p>On <code>SIGUSR2</code> the old process hands each idle client's TCP socket to the new one through <code>SCM_RIGHTS</code> — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the <code>tls-migration</code> build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.</p>
 <p>PgBouncer's online restart (<code>-R</code>, deprecated since 1.20; or <code>so_reuseport</code> rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.</p>
 <p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
@@ -227,13 +227,13 @@
 <p>In extended protocol, many drivers send short parameterised queries as <code>Parse</code> with an empty statement name. Without a remap, that hot path keeps paying PostgreSQL planner CPU and repeated backend <code>Parse</code> work on every reuse.</p>
 <p>PgDoorman rewrites the empty name to an internal <code>DOORMAN_&lt;N&gt;</code> on the backend and keeps the mapping in the pool. PostgreSQL sees a named prepared statement, so later <code>Bind</code>s for the same query shape can reuse prepared backend state across one client and across clients sharing the pool. The primary value is performance: less planner work and fewer backend Parses on repeated OLTP queries.</p>
 <p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.</p>
-<p>To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and <code>SHOW INTERNER</code> plus Prometheus metrics expose cache size, hits, misses, and evictions.</p>
+<p>To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, <code>SHOW INTERNER</code> exposes interner size, and Prometheus metrics expose hits, misses, and evictions.</p>
 <p><a href="tutorials/prepared-statements.html">Read more →</a></p>
 </div>
 </div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
 <ul>
-<li><strong>Caches <code>Parse</code> on hot query paths.</strong> Prepared backend state is reused between clients sharing a pool, including the anonymous <code>Parse</code> most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; cache size, hits, misses, and evictions are visible through <code>SHOW INTERNER</code> and metrics.</li>
+<li><strong>Caches <code>Parse</code> on hot query paths.</strong> Prepared backend state is reused between clients sharing a pool, including the anonymous <code>Parse</code> most drivers send for short parameterised queries. That cuts PostgreSQL planner CPU on repeated OLTP queries; <code>SHOW INTERNER</code> shows query-text memory, while Prometheus metrics show cache hits, misses, and evictions.</li>
 <li><strong>Multi-threaded, single shared pool.</strong> All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind <code>so_reuseport</code> — gives each instance its own pool, and idle counts can drift between processes for the same database.</li>
 <li><strong>Thundering herd suppression.</strong> When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (<code>scaling_max_parallel_creates</code>) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.</li>
 <li><strong>Bounded tail latency.</strong> Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of <code>server_lifetime</code>, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.</li>
@@ -417,7 +417,7 @@ pools:
 <tr><td><code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td><code>SHOW INTERNER</code> (per-kind entries / bytes / preview)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Bounded prepared-statement cache (TTL on anonymous, per-client LRU split)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (named only, unbounded <code>max_prepared_statements</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Bounded prepared-statement cache (TTL on anonymous, per-client LRU split)</td><td style="text-align: center">Yes</td><td style="text-align: center">Named only, bounded by <code>max_prepared_statements</code>; no anonymous cache</td><td style="text-align: center">No</td></tr>
 <tr><td><code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>SHOW RULES</code> (dump effective routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 <tr><td>Server-side TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
@@ -1959,12 +1959,11 @@ shared_db   | 80          | 78      | 16           | 2            | 142       | 
 <li>Reading admin output: <a href="concepts/../observability/admin-commands.html">Admin Commands → SHOW POOL_COORDINATOR</a>.</li>
 <li>Pool modes (transaction vs session): <a href="concepts/pool-modes.html">Pool Modes</a>.</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="anonymous-parse-caching"><a class="header" href="#anonymous-parse-caching">Anonymous Parse Caching</a></h1>
-<p>PgDoorman caches anonymous <code>Parse</code> as a performance optimization for
-transaction pooling. Many drivers send short parameterised queries as
-<code>Parse</code> with an empty statement name; without a remap, PostgreSQL
-does planner work again on every <code>Bind</code>, and the hot OLTP path pays
-that cost on every call.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="anonymous-parse-caching"><a class="header" href="#anonymous-parse-caching">Anonymous Parse caching</a></h1>
+<p>PgDoorman caches anonymous <code>Parse</code> messages for transaction pooling.
+Many drivers send short parameterised queries as <code>Parse</code> with an empty
+statement name. Without a remap, PostgreSQL plans the query again on
+every <code>Bind</code>, so hot OLTP paths pay planner CPU on every call.</p>
 <p>PgDoorman transparently remaps every anonymous <code>Parse</code> to an internal
 <code>DOORMAN_&lt;N&gt;</code> name on the backend. The plan lands in the backend's
 named prepared statement registry and gets reused across <code>Bind</code>s of
@@ -1974,12 +1973,11 @@ query shape.</p>
 <p>The remap is transparent to the driver: clients send and receive
 empty statement names just as they would against a vanilla
 PostgreSQL.</p>
-<p>This is a feature unique to PgDoorman. PgBouncer (1.21+) and Odyssey
-support prepared statements in transaction mode, but only for
-<strong>named</strong> statements; anonymous <code>Parse</code> is forwarded unchanged and
-re-planned on every call. Cache bounds, LRU, TTL, and observability
-exist to keep the performance optimization controlled under dynamic
-SQL, not to replace the performance goal.</p>
+<p>PgBouncer (1.21+) and Odyssey support prepared statements in
+transaction mode, but only for <strong>named</strong> statements. They forward
+anonymous <code>Parse</code> unchanged. PgDoorman's extra behaviour is the
+anonymous remap. Cache bounds, LRU, TTL, and observability keep that
+remap controlled under dynamic SQL.</p>
 <h2 id="what-gets-faster"><a class="header" href="#what-gets-faster">What gets faster</a></h2>
 <p>Anonymous <code>Parse</code> caching removes repeated work from hot
 parameterised query paths:</p>
@@ -2001,12 +1999,14 @@ PostgreSQL backends.</p>
 <p>A <code>Parse</code> message carries a statement name. An empty name means
 <strong>anonymous</strong>, anything else means <strong>named</strong>:</p>
 <pre><code class="language-text">                          Lifetime in PG          Plan caching
-  ─────────────────────   ─────────────────       ─────────────────
-  Anonymous (name="")     Until next anonymous    None: planner runs
-                          Parse or session end    on every Bind
-  Named (name="stmt_42")  Until Close /           Generic at first,
-                          DEALLOCATE /            switches to custom
-                          session end             after 5 observations
+  ─────────────────────   ─────────────────       ─────────────────────
+  Anonymous (name="")     Until next anonymous    No named registry
+                          Parse or session end    entry; each new
+                                                   unnamed Parse plans
+  Named (name="stmt_42")  Until Close /           Starts with custom
+                          DEALLOCATE /            plans; may switch to
+                          session end             a generic plan after
+                                                   5 custom executions
 </code></pre>
 <p>Most modern drivers default to <strong>anonymous</strong> for one-shot
 parameterised queries: <code>lib/pq</code> (Go), <code>libpq</code> <code>PQexecParams</code> (C),
@@ -2118,17 +2118,18 @@ clients. Pool-cache hit rate near 100 %, planner runs once per
 backend per query shape, and later calls go through <code>Bind</code> against
 already prepared backend state.</li>
 <li><strong>Drivers that pin to anonymous prepared.</strong> <code>lib/pq</code>, <code>libpq</code>
-<code>PQexecParams</code>, JDBC's <code>serverPreparedStatementType=NONE</code>. Without
-the remap they would re-plan on every call.</li>
+<code>PQexecParams</code>, pgjdbc before the <code>prepareThreshold</code> is reached.
+Without the remap they would re-plan on every call.</li>
 <li><strong>Mixed pools where named and anonymous coexist.</strong> Anonymous
 statements get the same plan-cache benefit as named ones, without
-growing the per-client client cache.</li>
+growing the per-client named cache.</li>
 </ul>
 <h2 id="when-the-remap-doesnt-help"><a class="header" href="#when-the-remap-doesnt-help">When the remap doesn't help</a></h2>
 <ul>
-<li><strong>Ad-hoc / OLAP traffic.</strong> Each query is unique, so every insert
-triggers an eviction with an O(N) scan. Disable with
-<code>prepared_statements_cache_size = 0</code>.</li>
+<li><strong>Ad-hoc / OLAP traffic.</strong> Each query is unique. When the pool cache
+is full, each new query shape must find an old entry to evict with an
+O(N) scan. Disable prepared-statement remapping with
+<code>prepared_statements: false</code> if the instance only serves this traffic.</li>
 <li><strong>Single-statement scripts.</strong> A connect → <code>Parse</code> → 1 <code>Bind</code> →
 disconnect pattern doesn't accumulate enough hits to repay the
 bookkeeping. The overhead per <code>Parse</code> is small (~700 ns) but
@@ -2139,11 +2140,11 @@ in-flight operations, so the server cache can't reuse entries
 across sessions. The pool-level cache still shares the query text
 across sessions; the backend planner still runs once per session.</li>
 </ul>
-<p>Track effectiveness as a performance feature with the Prometheus counters
-<code>pg_doorman_servers_prepared_hits</code> and
-<code>pg_doorman_servers_prepared_misses</code>. A sustained miss rate above
-30 % means the remap is spending CPU and memory without delivering
-plan-cache reuse. Either disable it or raise
+<p>Track effectiveness with
+<code>rate(pg_doorman_servers_prepared_hits_total[5m])</code> and
+<code>rate(pg_doorman_servers_prepared_misses_total[5m])</code>. A sustained miss
+share above 30 % means the remap is spending CPU and memory without
+enough backend plan reuse. Either disable it or raise
 <code>prepared_statements_cache_size</code>.</p>
 <h2 id="how-other-poolers-handle-this"><a class="header" href="#how-other-poolers-handle-this">How other poolers handle this</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Pooler</th><th style="text-align: left">Parse/plan cache for anonymous prepared statements</th></tr></thead><tbody>
@@ -2158,20 +2159,24 @@ to <strong>named</strong> statements: an anonymous <code>Parse</code> is forward
 each <code>Bind</code> re-runs the planner. Odyssey's
 <code>pool_reserve_prepared_statement</code> requires named statements; it does
 nothing for anonymous traffic. PgCat behaves the same way.</p>
-<p>This makes anonymous-prepared caching a feature only PgDoorman
-provides.</p>
+<p>In this comparison, only PgDoorman caches anonymous <code>Parse</code>.</p>
 <h2 id="configuration-8"><a class="header" href="#configuration-8">Configuration</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Setting</th><th style="text-align: center">Default</th><th>Effect</th></tr></thead><tbody>
-<tr><td><code>prepared_statements_cache_size</code></td><td style="text-align: center">8192</td><td>Pool-level cache size in entries. 0 disables remap.</td></tr>
-<tr><td><code>client_anonymous_prepared_cache_size</code></td><td style="text-align: center">inherits <code>prepared_statements_cache_size</code></td><td>Per-client Anonymous LRU size. 0 = unlimited. Named is unbounded.</td></tr>
+<tr><td><code>prepared_statements</code></td><td style="text-align: center"><code>true</code></td><td>Enables prepared-statement remapping and caching. Set <code>false</code> to disable the feature.</td></tr>
+<tr><td><code>prepared_statements_cache_size</code></td><td style="text-align: center">8192</td><td>Pool-level cache size in entries. Must be greater than 0 while <code>prepared_statements</code> is <code>true</code>.</td></tr>
+<tr><td><code>server_prepared_statements_cache_size</code></td><td style="text-align: center">inherits <code>prepared_statements_cache_size</code></td><td>Per-backend LRU size for <code>DOORMAN_&lt;N&gt;</code> names. <code>0</code> disables backend retention but not the pool-level remap.</td></tr>
+<tr><td><code>client_anonymous_prepared_cache_size</code></td><td style="text-align: center">inherits <code>prepared_statements_cache_size</code></td><td>Per-client Anonymous LRU size. <code>0</code> means unlimited. Named is unbounded.</td></tr>
 </tbody></table>
 </div>
 <p>The Named part of the per-client cache is always unlimited and is not
 affected by <code>client_anonymous_prepared_cache_size</code>.</p>
-<p>To disable anonymous remap entirely (rare, for OLAP-only deployments):</p>
+<p>To disable prepared-statement remapping entirely (rare, for OLAP-only deployments):</p>
 <pre><code class="language-yaml">general:
-  prepared_statements_cache_size: 0
+  prepared_statements: false
 </code></pre>
+<p>There is no separate anonymous-only switch. Do not use
+<code>prepared_statements_cache_size: 0</code> as the disable switch: pg_doorman
+rejects that general config while <code>prepared_statements</code> is enabled.</p>
 <h2 id="differences-from-postgresql-semantics"><a class="header" href="#differences-from-postgresql-semantics">Differences from PostgreSQL semantics</a></h2>
 <p>The remap changes a few protocol-level behaviours that strict
 applications may rely on:</p>
@@ -2182,12 +2187,12 @@ the pool cache under a separate <code>DOORMAN_&lt;N&gt;</code>.</li>
 <li><code>Close</code> with an empty name is a no-op for PgDoorman's caches. The
 underlying <code>DOORMAN_&lt;N&gt;</code> lives until pool-level LRU evicts it or
 the pool shuts down.</li>
-<li>The plan stays generic longer. PostgreSQL switches a named
-statement from generic to custom plans after five observations; if
-different clients share the same <code>DOORMAN_&lt;N&gt;</code> and each contributes
-one or two <code>Bind</code>s, the threshold is reached faster — but the
-resulting shared plan may be a poor fit for a client with skewed
-data.</li>
+<li>PostgreSQL's custom/generic plan decision is shared by all clients
+using the same <code>DOORMAN_&lt;N&gt;</code>. A named statement starts with custom
+plans; after five custom executions PostgreSQL may switch to a
+generic plan if its estimated cost is close enough. With PgDoorman,
+those executions can come from different clients, so a generic-plan
+decision can reflect mixed parameter distributions.</li>
 </ul>
 <p>Applications that depend on PostgreSQL's "anonymous Parse discards
 the previous one" semantics should switch to named statements with
@@ -2195,7 +2200,7 @@ explicit <code>Close</code>.</p>
 <h2 id="tuning"><a class="header" href="#tuning">Tuning</a></h2>
 <h3 id="sizing-the-cache"><a class="header" href="#sizing-the-cache">Sizing the cache</a></h3>
 <p>PgDoorman's prepared-statement cache has three layers, governed by
-two related config knobs:</p>
+three related config knobs:</p>
 <ul>
 <li><code>prepared_statements_cache_size</code> (default <code>8192</code>) sizes the
 pool-level shared cache — one map per pool, keyed by query hash.
@@ -2217,7 +2222,7 @@ LRU. Set to <code>0</code> to disable the LRU and use an unlimited map; set
 to a number to bound the per-client cache independently of the
 pool size.</li>
 </ul>
-<p>Both knobs accept a per-pool override:</p>
+<p>The pool-level and server-level knobs accept per-pool overrides:</p>
 <pre><code class="language-yaml">general:
   prepared_statements_cache_size: 8192
   server_prepared_statements_cache_size: 1024  # tighter per-backend
@@ -2231,8 +2236,8 @@ pools:
     server_prepared_statements_cache_size: 4096
     pool_mode: "transaction"
 </code></pre>
-<p>Setting <code>prepared_statements_cache_size: 0</code> disables the entire
-remap and forces server-level LRU to 0 too. Setting
+<p>Setting <code>prepared_statements: false</code> disables the entire remap and
+forces the pool-level and server-level caches to 0. Setting
 <code>server_prepared_statements_cache_size: 0</code> while leaving the pool
 size positive is allowed but rarely useful — the per-backend cache
 becomes a pass-through that re-Parses on every cross-backend hit.</p>
@@ -2267,9 +2272,10 @@ non-zero rate on <code>pg_doorman_clients_prepared_anonymous_evictions_total</co
 <li>The application has a known wide working set per session and the
 eviction rate matches that pressure.</li>
 </ul>
-<p>Lower the cap or raise <code>max_memory_usage</code> for very large connection
-counts (50 000+ clients): at that scale <code>clients × cache_size × 80 bytes</code> of pooler bookkeeping can cross 1 GB, and trimming the cap
-halves it.</p>
+<p>Lower the cap for very large connection counts (50 000+ clients): at
+that scale <code>clients × cache_size × 80 bytes</code> of pooler bookkeeping can
+cross 1 GB, and trimming the cap halves it. <code>max_memory_usage</code> does not
+cap prepared-statement bookkeeping; it protects in-flight query buffers.</p>
 <h3 id="named-is-unbounded-by-design"><a class="header" href="#named-is-unbounded-by-design">Named is unbounded by design</a></h3>
 <p>The Named part of the per-client cache has no upper bound. PgDoorman
 holds the <code>Arc&lt;Parse&gt;</code> for every named statement the client created
@@ -2296,18 +2302,20 @@ served it. Two mechanisms eventually clean it up:</p>
 <ul>
 <li><strong>Server-level LRU.</strong> Each backend tracks its own
 <code>LruCache&lt;String, ()&gt;</code> of <code>DOORMAN_&lt;N&gt;</code> names, capped at
-<code>prepared_statements_cache_size</code> (default 8192). When the cap is
-reached, the backend issues <code>Close</code> on the least recently used
-name, releasing the plan.</li>
+<code>server_prepared_statements_cache_size</code> (or
+<code>prepared_statements_cache_size</code> when unset). When the cap is reached,
+the backend issues <code>Close</code> on the least recently used name, releasing
+the plan.</li>
 <li><strong>Backend rotation.</strong> A backend reaches <code>server_lifetime</code>
 (default 20 min) and pg_doorman closes it; the new backend starts
 with an empty plan cache.</li>
 </ul>
 <p>The worst-case memory footprint per backend is therefore
-<code>prepared_statements_cache_size × ~100 KB</code> of plan memory ≈ 800 MB
-on the PostgreSQL side. To shrink the window:</p>
+<code>server_prepared_statements_cache_size × average plan memory</code>
+(<code>8192 × ~100 KB</code> is about 800 MB) on the PostgreSQL side. To shrink
+the window:</p>
 <ul>
-<li>Lower <code>prepared_statements_cache_size</code> so the server-level LRU
+<li>Lower <code>server_prepared_statements_cache_size</code> so the server-level LRU
 recycles plans sooner.</li>
 <li>Lower <code>server_lifetime</code> so backends rotate faster.</li>
 </ul>
@@ -2355,8 +2363,13 @@ Prometheus surface instead.</p>
 <li><code>pg_doorman_clients_prepared_anonymous_evictions_total{user, database}</code></li>
 <li><code>pg_doorman_servers_prepared_hits{user, database}</code></li>
 <li><code>pg_doorman_servers_prepared_misses{user, database}</code></li>
+<li><code>pg_doorman_servers_prepared_hits_total{user, database}</code></li>
+<li><code>pg_doorman_servers_prepared_misses_total{user, database}</code></li>
 <li><code>pg_doorman_async_clients_count</code></li>
 </ul>
+<p>Use the <code>_total</code> metrics for <code>rate()</code> and alerting. The non-<code>_total</code>
+server metrics are live backend aggregates and can drop when backends
+rotate.</p>
 <h2 id="alerting"><a class="header" href="#alerting">Alerting</a></h2>
 <h3 id="anonymous-lru-eviction-rate"><a class="header" href="#anonymous-lru-eviction-rate">Anonymous LRU eviction rate</a></h3>
 <p>A sustained non-zero rate on the Anonymous eviction counter means the
@@ -2387,12 +2400,12 @@ memory is fine but PostgreSQL backend RSS keeps growing, count rows
 per backend:</p>
 <pre><code class="language-sql">SELECT count(*) FROM pg_prepared_statements;
 </code></pre>
-<p>Numbers near <code>prepared_statements_cache_size</code> (default 8192) per
-backend mean the server-level LRU is at its cap and rotation is the
-only way to release plan memory. If <code>server_lifetime</code> is long, plans
-accumulate for a long time. Lowering either knob releases the
-plan-memory pressure, at the cost of more frequent re-parses on the
-backend.</p>
+<p>Numbers near <code>server_prepared_statements_cache_size</code> per backend mean
+the server-level LRU is at its cap. Backend rotation is the other
+mechanism that releases plan memory. If the server cache inherits
+<code>prepared_statements_cache_size</code>, use that value as the cap. Lowering
+the server cap or <code>server_lifetime</code> releases plan-memory pressure at
+the cost of more frequent re-Parses on the backend.</p>
 <h2 id="bounded-query-interner"><a class="header" href="#bounded-query-interner">Bounded query interner</a></h2>
 <p>The pool-level interner that deduplicates Parse query texts is split
 into two halves:</p>
@@ -2408,12 +2421,14 @@ after <code>query_interner_anon_idle_ttl_seconds</code> of idle time (default
 pre-3.7 unbounded behaviour, kept as an escape hatch for legacy
 deployments.</li>
 </ul>
-<p>If both the interner and the pool/client caches drop the text for an
-anonymous prepared statement before the next <code>Bind</code>, pg_doorman
-returns <code>ERROR: unnamed prepared statement does not exist</code>
-(SQLSTATE <code>26000</code>). This is the same error native PostgreSQL raises
-for the same condition; standard drivers handle it transparently by
-re-issuing <code>Parse</code>.</p>
+<p>If an anonymous <code>Bind</code> or <code>Describe</code> arrives after pg_doorman has lost
+the matching anonymous prepared-statement state, pg_doorman returns
+<code>ERROR: unnamed prepared statement does not exist</code> (SQLSTATE <code>26000</code>).
+Common causes are client Anonymous LRU eviction, <code>RESET INTERNER</code>,
+interner TTL eviction, or a driver pattern that reuses unnamed prepared
+statements across batches. This is the same error native PostgreSQL
+raises for the same condition; standard drivers handle it transparently
+by re-issuing <code>Parse</code>.</p>
 <p>Binary upgrade (<code>SIGUSR2</code>) carries both NAMED and ANON entries to
 the new process. Anonymous entries land in the new ANON interner
 with a fresh <code>last_used</code> timestamp, so the TTL clock starts over at
@@ -2432,15 +2447,18 @@ preview of the SQL.</p>
 <p><code>RESET INTERNER</code> clears both halves. In-flight clients re-Parse on
 next reuse — diagnostics-only.</p>
 <p>The Prometheus surface mirrors <code>SHOW INTERNER</code> plus a histogram for
-sweep duration and a counter for the synthetic <code>26000</code>s. Tune
-<code>query_interner_anon_idle_ttl_seconds</code> upward when
-<code>pg_doorman_query_interner_synthetic_misses_total</code> shows a sustained
-non-zero rate.</p>
+sweep duration and a counter for the synthetic <code>26000</code>s. Raise
+<code>query_interner_anon_idle_ttl_seconds</code> only when synthetic misses
+correlate with anonymous TTL evictions or a known cross-batch unnamed
+statement pattern. If misses correlate with
+<code>pg_doorman_clients_prepared_anonymous_evictions_total</code>, increase
+<code>client_anonymous_prepared_cache_size</code> instead.</p>
 <h2 id="reference-1"><a class="header" href="#reference-1">Reference</a></h2>
 <ul>
 <li><a href="tutorials/../concepts/pool-modes.html">Pool Modes</a> — transaction mode, where
 prepared-statement remapping is enabled.</li>
 <li><a href="tutorials/../reference/general.html">General Settings</a> — <code>prepared_statements_cache_size</code>,
+<code>server_prepared_statements_cache_size</code>,
 <code>client_anonymous_prepared_cache_size</code>,
 <code>query_interner_gc_interval_seconds</code>,
 <code>query_interner_anon_idle_ttl_seconds</code>.</li>
@@ -4395,34 +4413,37 @@ cipher state with the <code>tls-migration</code> build (Linux, opt-in).</p>
 </div>
 <div>
 <p>On hosts where pg_doorman comes from <code>apt install pg-doorman</code> /
-<code>dnf install pg-doorman</code>, the package manager handles step 1 atomically
-(<code>dpkg</code> stages into a temp path and renames into place; <code>rpm</code> does the
-same). <code>apt-get install --only-upgrade pg-doorman</code> or <code>dnf upgrade pg-doorman</code> is the idiomatic devops path. The manual <code>install</code> below is
-for direct-binary deployments where no package manager is in scope.</p>
+<code>dnf install pg-doorman</code>, use the package manager for the binary
+replacement. <code>apt-get install --only-upgrade pg-doorman</code> or
+<code>dnf upgrade pg-doorman</code> is the idiomatic devops path. The manual
+<code>install</code> below is for direct-binary deployments where no package
+manager is in scope.</p>
 </div>
 </div>
-<pre><code class="language-bash"># 1. Replace the binary atomically. `install` writes to a temporary
-#    file and renames it onto the target, so the inode the running
-#    process is mapped from is not overwritten in place. `cp` modifies
-#    the live inode and risks SIGBUS / SIGSEGV in the running pg_doorman.
+<pre><code class="language-bash"># 1. Install the new binary at the path used by the running service.
 install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
 # 2. Validate the new binary against the live config before triggering
 #    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
 #    catching it here gives you a chance to fix the config without
 #    touching the running server.
-/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
+/usr/bin/pg_doorman -t /etc/pg_doorman/pg_doorman.toml
 
 # 3. Trigger the upgrade. With `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
-#    in the unit, `systemctl reload` runs the full binary upgrade
-#    (config validated by `pg_doorman -t` first, then state migrated,
-#    then old process drained). systemd delivers the signal to the
+#    in the unit, `systemctl reload` sends SIGUSR2 to start binary
+#    upgrade. pg_doorman then validates config, starts the child,
+#    migrates state where possible, and drains the old process.
+#    systemd delivers the signal to the
 #    tracked MainPID, so this targets the single correct process even
 #    when other pg_doorman instances are running on the host. Direct
 #    `kill -USR2 $(pgrep -f /usr/bin/pg_doorman)` works but matches by
 #    command line and can hit every instance, which is why packaged
 #    installs go through systemctl.
 sudo systemctl reload pg_doorman.service
+
+# A successful reload only means systemd delivered SIGUSR2. Validation,
+# child startup, MAINPID handoff, and client migration happen inside
+# pg_doorman. Verify them in the next step and in the logs.
 
 # 4. Verify: systemd tracks the new MainPID (Type=notify receives
 #    `MAINPID=&lt;new_pid&gt;` from the child during the handoff). Active
@@ -4449,7 +4470,8 @@ the supervising process and signal that one directly.</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
 <p><code>UPGRADE</code> sends <code>SIGUSR2</code> to the running process, which is the same code
-path as <code>kill -USR2</code>.</p>
+path as <code>kill -USR2</code>. A successful command response means the signal was
+sent, not that validation and migration have finished.</p>
 <h2 id="how-the-upgrade-works"><a class="header" href="#how-the-upgrade-works">How the upgrade works</a></h2>
 <pre><code>                        SIGUSR2
                            |
@@ -4487,9 +4509,12 @@ path as <code>kill -USR2</code>.</p>
   +---------------------+
 </code></pre>
 <h3 id="phase-1-config-validation"><a class="header" href="#phase-1-config-validation">Phase 1: Config validation</a></h3>
-<p>The current binary re-executes itself with <code>-t</code> and the config file.
-If validation fails, the upgrade is aborted. The old process keeps
-serving traffic. An error banner appears in the logs:</p>
+<p>The running process executes the same binary path it was started with,
+using <code>-t</code> and the current config file. After the install in the quick
+start, that path points to the new binary, so the check validates the
+binary that will take over. If validation fails, the upgrade is aborted
+and the old process keeps serving traffic. An error banner appears in
+the logs:</p>
 <pre><code>!!!  BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED  !!!
 !!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!
 !!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY  !!!
@@ -4507,9 +4532,9 @@ writes to the pipe.</li>
 <p><strong>Daemon mode:</strong></p>
 <p>A new daemon process starts. The old daemon closes its listener.
 Client migration via socketpair is not used — existing clients
-drain in place. When <code>shutdown_timeout</code> expires, anyone still
-connected gets SQLSTATE <code>58006</code> (<code>pooler is shut down now</code>) and the
-old process exits.</p>
+stay on the old process. When <code>shutdown_timeout</code> expires, the old
+process exits and any remaining client sockets close. Use foreground
+mode if clients must migrate to the new process.</p>
 <h3 id="phase-3-idle-client-migration-foreground"><a class="header" href="#phase-3-idle-client-migration-foreground">Phase 3: Idle client migration (foreground)</a></h3>
 <p>When <code>MIGRATION_IN_PROGRESS</code> is set, each idle client (not in a
 transaction, no pending deferred <code>BEGIN</code>, no buffered reads)
@@ -4669,8 +4694,8 @@ against the new version.</p>
 </ul>
 <h2 id="signal-reference"><a class="header" href="#signal-reference">Signal reference</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Behavior</th></tr></thead><tbody>
-<tr><td><code>SIGUSR2</code></td><td>Binary upgrade + graceful shutdown. <strong>Recommended for all modes.</strong></td></tr>
-<tr><td><code>SIGINT</code></td><td>Foreground + TTY (Ctrl+C): graceful shutdown only, no upgrade. Daemon / non-TTY: binary upgrade (legacy compatibility).</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Binary upgrade + old-process drain. <strong>Recommended for all modes.</strong></td></tr>
+<tr><td><code>SIGINT</code></td><td>Foreground + TTY (Ctrl+C): shutdown only, no upgrade. Daemon / non-TTY: binary upgrade (legacy compatibility).</td></tr>
 <tr><td><code>SIGTERM</code></td><td>Immediate exit. Active transactions are killed. All clients disconnected.</td></tr>
 <tr><td><code>SIGHUP</code></td><td>Reload configuration without restart. No downtime.</td></tr>
 <tr><td><code>UPGRADE</code> (admin)</td><td>Sends SIGUSR2 to the current process internally. Same effect.</td></tr>
@@ -4689,8 +4714,8 @@ against the new version.</p>
 <h2 id="daemon-vs-foreground"><a class="header" href="#daemon-vs-foreground">Daemon vs foreground</a></h2>
 <div class="table-wrapper"><table><thead><tr><th></th><th>Foreground</th><th>Daemon</th></tr></thead><tbody>
 <tr><td>Client migration via fd passing</td><td>Yes (socketpair)</td><td>No</td></tr>
-<tr><td>Idle clients preserved</td><td>Yes</td><td>No (drain with 58006)</td></tr>
-<tr><td>In-tx clients</td><td>Finish tx, then migrate</td><td>Finish tx, then 58006</td></tr>
+<tr><td>Idle clients preserved</td><td>Yes</td><td>No (closed when old process exits)</td></tr>
+<tr><td>In-tx clients</td><td>Finish tx, then migrate</td><td>Finish tx until timeout, then close</td></tr>
 <tr><td>New process startup</td><td>Inherits listener fd</td><td>Starts independently</td></tr>
 <tr><td>Recommended for</td><td>systemd, containers, k8s</td><td>Legacy deployments</td></tr>
 </tbody></table>
@@ -4701,24 +4726,26 @@ unit reaches <code>active</code> only after pg_doorman signals readiness, and th
 child process can update <code>MainPID</code> to itself during <code>SIGUSR2</code> upgrades:</p>
 <pre><code class="language-ini">[Service]
 Type=notify
-# `exec` is enough: the child process that takes over on SIGUSR2 is
-# spawned through Command::spawn (fork + execve), which puts it in
-# scope for sd_notify. `all` works too, but exec narrows the notify
-# surface to what pg_doorman actually uses.
+# The child process that takes over on SIGUSR2 must be allowed to send
+# READY=1 and MAINPID=&lt;new_pid&gt; during handoff.
 NotifyAccess=exec
-ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
-# `systemctl reload` triggers a full binary upgrade (config validated,
-# state migrated, old process drained). pg_doorman's SIGUSR2 path runs
-# `pg_doorman -t` first and aborts the reload if the config is broken,
-# so this is safe to wire as the reload signal.
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
+# `systemctl reload` triggers binary upgrade: validate config, spawn
+# the new process, migrate clients where possible, then drain the old
+# process according to pg_doorman's shutdown_timeout.
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
-# `systemctl stop` sends SIGTERM to the main pid for a graceful drain.
+# `systemctl stop` is immediate shutdown. It is not a binary upgrade
+# path and it does not wait for active transactions to migrate.
 ExecStop=/bin/kill -SIGTERM $MAINPID
-# Always restart: bring the pooler back even after a manual stop.
-# Match the typical PostgreSQL-side HA expectation that the pool is
-# never down on the host.
-Restart=always
-RestartSec=5s
+# During binary upgrade the new child becomes MainPID via sd_notify.
+# With KillMode=mixed, systemd sends SIGTERM only to MainPID on stop
+# and SIGKILLs remaining cgroup processes only after TimeoutStopSec.
+KillMode=mixed
+TimeoutStopSec=60
+# Do not restart after a clean manual stop or after the old process exits
+# successfully during binary upgrade.
+Restart=on-failure
+Nice=-15
 # pg_doorman is connection-heavy: each client + each backend uses an
 # fd, plus internal pipes. 65536 covers most OLTP pools; size it from
 # `general.pool_size * num_pools` plus a few thousand for clients.
@@ -4728,21 +4755,19 @@ LimitNOFILE=65536
 # ownership consistent with PostgreSQL itself.
 User=postgres
 Group=postgres
-# Surface logs in journalctl under `pg-pooler` instead of the binary
-# name; convenient for `journalctl -u pg_doorman -t pg-pooler`.
-SyslogIdentifier=pg-pooler
-TimeoutStopSec=30s
+SyslogIdentifier=pg_doorman
 </code></pre>
-<p><code>systemctl reload pg_doorman</code> drives the binary upgrade: pg_doorman
-runs <code>-t</code> on the new binary, aborts the reload if the config is bad,
-otherwise spawns the new process and drains the old one. <code>UPGRADE;</code>
-from the admin console reaches the same code path. Tune
-<code>TimeoutStopSec</code> so it covers <code>shutdown_timeout</code> in
-<code>pg_doorman.yaml</code> plus a small margin; otherwise systemd SIGKILLs the
-old process before the drain finishes.</p>
-<p>Production deployments often layer resource controls on top of the
-above: <code>MemoryMax=</code>, <code>Nice=-15</code>, <code>CPUAffinity=2,3,4,5,6,7,8,9</code>. These
-are workload-specific and orthogonal to the upgrade contract.</p>
+<p><code>systemctl reload pg_doorman</code> sends <code>SIGUSR2</code>; a zero exit status only
+means the signal was delivered. pg_doorman then runs <code>-t</code> on the new
+binary, cancels the upgrade if the config is bad, otherwise spawns the
+new process and drains the old one. <code>UPGRADE;</code> from the admin console
+reaches the same code path. The drain window is controlled by
+<code>shutdown_timeout</code> in <code>pg_doorman.toml</code>; <code>TimeoutStopSec</code> controls normal
+<code>systemctl stop</code>, not how long <code>systemctl reload</code> waits for migrated
+sessions.</p>
+<p>Production deployments often layer more resource controls on top of the
+above, such as <code>MemoryMax=</code> and <code>CPUAffinity=2,3,4,5,6,7,8,9</code>. These are
+workload-specific and orthogonal to the upgrade contract.</p>
 <h2 id="configuration-12"><a class="header" href="#configuration-12">Configuration</a></h2>
 <h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
 <p>Maximum time to wait for in-transaction clients before force-closing
@@ -4764,11 +4789,12 @@ The cipher state is bound to the <code>SSL_CTX</code> created from those files,
 and import fails on mismatch — affected clients drop and reconnect.</p>
 <p>Client-facing TLS material is <strong>not</strong> reloaded on <code>SIGHUP</code> (only
 server-facing certificates are; see <a href="tutorials/../guides/tls.html">Hot reload of server TLS</a>).
-Rotating the client-facing cert therefore requires either a restart
-or a binary upgrade with the new files in place — and during that
-upgrade, TLS clients with the old cert will drop and reconnect even
-with <code>tls-migration</code> enabled. Plan the rotation around a window when
-you can tolerate the reconnects.</p>
+Do not combine client-facing certificate rotation with an upgrade where
+you expect TLS sessions to migrate. If the files change between old and
+new process, TLS import fails and affected clients reconnect even with
+<code>tls-migration</code> enabled. Rotate the client-facing certificate in a
+maintenance window where reconnects are acceptable, or keep the same
+certificate files for the binary upgrade and rotate later with a restart.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
 <p>Pool-level prepared statement cache. Does not directly affect
 migration, but the pool cache in the new process must be large
@@ -4778,11 +4804,19 @@ enough to hold entries registered by migrated clients.</p>
 (both Named and Anonymous) is serialized during migration. If the new
 config has a smaller value, only Anonymous entries are subject to LRU
 eviction; Named entries are unbounded and migrate intact.</p>
+<h2 id="rollback"><a class="header" href="#rollback">Rollback</a></h2>
+<p>Binary upgrade has no separate undo path. Roll back by staging the
+previous binary at the same path and running another <code>SIGUSR2</code> upgrade.
+If validation fails, the current process keeps serving traffic. If the
+new process already took over, treat the rollback as a normal binary
+upgrade in the opposite direction.</p>
+<p>Avoid <code>systemctl restart</code> or <code>SIGTERM</code> for rollback unless reconnects
+are acceptable: both close client sessions instead of migrating them.</p>
 <h2 id="monitoring"><a class="header" href="#monitoring">Monitoring</a></h2>
 <h3 id="logs"><a class="header" href="#logs">Logs</a></h3>
 <p>Key log lines during migration:</p>
 <pre><code>INFO  Got SIGUSR2, starting binary upgrade and graceful shutdown
-INFO  Validating configuration with: /usr/bin/pg_doorman -t pg_doorman.yaml
+INFO  Validating configuration with: /usr/bin/pg_doorman -t pg_doorman.toml
 INFO  Configuration validation successful
 INFO  Starting new process with inherited listener fd=5
 INFO  New process signaled readiness
@@ -4802,7 +4836,7 @@ INFO  migration receiver: stopped
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Relevance during upgrade</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_pools_clients{status="active"}</code></td><td>Should drop to 0 on old process</td></tr>
 <tr><td><code>pg_doorman_pools_clients{status="idle"}</code></td><td>Drops as clients migrate</td></tr>
-<tr><td><code>pg_doorman_connection_count{type="total"}</code></td><td>Old: decreasing, new: increasing</td></tr>
+<tr><td><code>pg_doorman_connections_total{type="total"}</code></td><td>New process accepts fresh connections; use <code>rate()</code> / <code>increase()</code></td></tr>
 <tr><td><code>pg_doorman_clients_prepared_cache_entries</code></td><td>Confirms cache transferred</td></tr>
 </tbody></table>
 </div>
@@ -4812,11 +4846,12 @@ SHOW POOLS;
 SHOW CLIENTS;
 </code></pre>
 <h2 id="troubleshooting-2"><a class="header" href="#troubleshooting-2">Troubleshooting</a></h2>
-<h3 id="client-receives-pooler-is-shut-down-now-58006-instead-of-migrating"><a class="header" href="#client-receives-pooler-is-shut-down-now-58006-instead-of-migrating">Client receives "pooler is shut down now" (58006) instead of migrating</a></h3>
+<h3 id="client-receives-58006-or-disconnects-instead-of-migrating"><a class="header" href="#client-receives-58006-or-disconnects-instead-of-migrating">Client receives 58006 or disconnects instead of migrating</a></h3>
 <p><strong>Ctrl+C in foreground mode.</strong> SIGINT in TTY = shutdown without
 upgrade. Use <code>kill -USR2</code> or the <code>UPGRADE</code> admin command.</p>
 <p><strong>Daemon mode.</strong> Daemon mode does not use fd-based migration.
-Clients drain normally. Switch to foreground mode for migration.</p>
+Existing clients stay on the old process and are closed when it exits.
+Switch to foreground mode for migration.</p>
 <p><strong><code>PG_DOORMAN_CI_SHUTDOWN_ONLY=1</code> is set.</strong> This env var forces
 shutdown-only mode (used in CI tests). Unset it.</p>
 <h3 id="old-process-does-not-exit"><a class="header" href="#old-process-does-not-exit">Old process does not exit</a></h3>
@@ -4828,16 +4863,17 @@ admin session on the old process.</p>
 exit.</p>
 <h3 id="tls-connection-dropped-after-upgrade"><a class="header" href="#tls-connection-dropped-after-upgrade">TLS connection dropped after upgrade</a></h3>
 <p><strong>Binary built without <code>--features tls-migration</code>.</strong> TLS clients
-drain instead of migrating. Rebuild with the feature flag.</p>
+drain instead of migrating. Rebuild with <code>--features tls-migration</code>.</p>
 <p><strong>Not running on Linux.</strong> TLS migration is Linux-only.</p>
 <p><strong>Certificate or key changed.</strong> The old process exported cipher state
-bound to the old certificate. Use the same files for both processes.
-Rotate certificates via SIGHUP before the binary upgrade.</p>
+bound to the old certificate. Use the same files for both processes if
+you need TLS migration. Client-facing certificate rotation requires a
+restart or a planned reconnect window.</p>
 <h3 id="tls-migration-not-available-in-logs"><a class="header" href="#tls-migration-not-available-in-logs">"TLS migration not available" in logs</a></h3>
 <p>The new process received a migration payload with TLS data but was
 built without <code>--features tls-migration</code> or is not running on Linux.
-The client is disconnected. Rebuild the new binary with the feature
-flag.</p>
+The client is disconnected. Rebuild the new binary with
+<code>--features tls-migration</code>.</p>
 <h3 id="migration-channel-not-ready-in-logs"><a class="header" href="#migration-channel-not-ready-in-logs">"migration channel not ready" in logs</a></h3>
 <p>The <code>MIGRATION_TX</code> channel has not been initialized yet. This can
 happen if the new process has not finished starting when a client
@@ -4859,7 +4895,10 @@ path that does not store the raw fd. Check <code>ulimit -n</code>.</p>
 <a class="admonition-anchor-link" href="tutorials/binary-upgrade.html#admonition-client-library-compatibility"></a>
 </div>
 <div>
-<p>Libraries like <code>github.com/lib/pq</code> or Go's <code>database/sql</code> may need configuration to handle the reconnection path for clients that receive error 58006 (those in daemon mode or stuck past <code>shutdown_timeout</code>). See <a href="https://github.com/lib/pq/issues/939">this issue</a>.</p>
+<p>Libraries like <code>github.com/lib/pq</code> or Go's <code>database/sql</code> may need
+configuration to handle the reconnection path for clients that cannot
+migrate and receive 58006 or a connection close. See
+<a href="https://github.com/lib/pq/issues/939">this issue</a>.</p>
 </div>
 </div>
 <h2 id="operational-checklist"><a class="header" href="#operational-checklist">Operational checklist</a></h2>
@@ -4879,9 +4918,8 @@ verify the session continues working</li>
 <li><input disabled="" type="checkbox"/>
 Verify the systemd unit is <code>Type=notify</code> with
 <code>NotifyAccess=exec</code>, <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>
-(so <code>systemctl reload</code> runs a full binary upgrade with config
-validation), and a <code>TimeoutStopSec</code> that covers
-<code>shutdown_timeout</code> plus margin</li>
+(so <code>systemctl reload</code> runs binary upgrade with config
+validation), <code>KillMode=mixed</code>, and <code>Restart=on-failure</code></li>
 <li><input disabled="" type="checkbox"/>
 Monitor logs for migration errors after the first production
 upgrade</li>
@@ -4906,8 +4944,8 @@ Verify Prometheus metrics show clients on the new process</li>
 <h2 id="quick-reference"><a class="header" href="#quick-reference">Quick reference</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Effect</th><th>Existing connections</th><th>When to use</th></tr></thead><tbody>
 <tr><td><code>SIGHUP</code></td><td>Reload config from disk.</td><td>Preserved.</td><td>Adjust pools, rotate server TLS certs, edit <code>pg_hba.conf</code>.</td></tr>
-<tr><td><code>SIGTERM</code></td><td>Graceful shutdown.</td><td>Drained until idle, then closed.</td><td>Stopping the service.</td></tr>
-<tr><td><code>SIGUSR2</code></td><td>Graceful binary upgrade.</td><td>Migrated to a new process.</td><td>Replacing the binary without downtime.</td></tr>
+<tr><td><code>SIGTERM</code></td><td>Immediate shutdown.</td><td>Closed.</td><td>Stopping the service when reconnects are acceptable.</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Binary upgrade and old-process drain.</td><td>Migrated to a new process where possible.</td><td>Replacing the binary without downtime.</td></tr>
 <tr><td><code>SIGINT</code></td><td>Depends on TTY (see below).</td><td>Varies.</td><td>Ctrl+C in development; deprecated in production.</td></tr>
 </tbody></table>
 </div>
@@ -4926,57 +4964,63 @@ Verify Prometheus metrics show clients on the new process</li>
 <p>What does <strong>not</strong> reload:</p>
 <ul>
 <li><code>general.host</code>, <code>general.port</code> — listening socket is fixed at startup.</li>
-<li>Client-side TLS certificates — process restart required, or use binary upgrade.</li>
+<li>Client-facing TLS certificates — process restart required. Do not rotate
+them during an upgrade where TLS session migration is required.</li>
 <li>Worker thread count and Tokio runtime parameters.</li>
 </ul>
 <p>After reload, <code>SHOW CONFIG</code> reflects the new values. Existing client connections are not re-evaluated against the new <code>pg_hba.conf</code> — only new connections.</p>
-<h2 id="graceful-shutdown-sigterm"><a class="header" href="#graceful-shutdown-sigterm">Graceful shutdown (<code>SIGTERM</code>)</a></h2>
+<h2 id="immediate-shutdown-sigterm"><a class="header" href="#immediate-shutdown-sigterm">Immediate shutdown (<code>SIGTERM</code>)</a></h2>
 <pre><code class="language-bash">kill -TERM $(pidof pg_doorman)
 </code></pre>
-<p>PgDoorman:</p>
-<ol>
-<li>Stops accepting new connections.</li>
-<li>Closes idle backend connections.</li>
-<li>Logs how many clients are still in transactions.</li>
-<li>Waits up to <code>shutdown_timeout</code> (default 10s) for clients to finish.</li>
-<li>Exits.</li>
-</ol>
-<p><code>shutdown_timeout</code> is a hard cap. Clients still in transactions when it fires receive a connection close.</p>
-<pre><code class="language-yaml">general:
-  shutdown_timeout: "30s"
-</code></pre>
-<p>For systemd, set <code>TimeoutStopSec</code> to a value larger than <code>shutdown_timeout</code> so systemd does not <code>SIGKILL</code> while PgDoorman is still draining.</p>
+<p>pg_doorman logs how many clients are still in transactions and exits.
+It does not wait for <code>shutdown_timeout</code> and it does not migrate active
+transactions. All client connections are closed by process exit.</p>
+<p><code>shutdown_timeout</code> applies to <code>SIGUSR2</code> binary upgrade drain, not to
+plain <code>SIGTERM</code> shutdown.</p>
 <h2 id="binary-upgrade-sigusr2"><a class="header" href="#binary-upgrade-sigusr2">Binary upgrade (<code>SIGUSR2</code>)</a></h2>
 <pre><code class="language-bash">kill -USR2 $(pidof pg_doorman)
 </code></pre>
 <p>The recommended way to replace the binary without dropping clients:</p>
 <ol>
-<li>Replace the binary on disk with the new version.</li>
+<li>Replace the binary on disk with the new version using an atomic rename.</li>
 <li>Send <code>SIGUSR2</code> to the running process.</li>
+<li>The current process validates the new binary with <code>-t</code>.</li>
 <li>The current process spawns a child running the new binary, hands over the listening socket, and continues serving existing clients until they finish.</li>
 <li>New clients connect to the child immediately.</li>
 <li>The old process exits when the last client transaction completes (or on <code>shutdown_timeout</code>).</li>
 </ol>
-<p>The child sends <code>sd_notify MAINPID=&lt;new_pid&gt;</code> so systemd <code>Type=notify</code> units update their main PID seamlessly.</p>
+<p>The child sends <code>sd_notify MAINPID=&lt;new_pid&gt;</code> so systemd <code>Type=notify</code>
+units track the new main PID correctly.</p>
 <p>For the full protocol, TLS migration, and rollback, see <a href="operations/../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
 <h2 id="sigint-ctrlc"><a class="header" href="#sigint-ctrlc"><code>SIGINT</code> (Ctrl+C)</a></h2>
 <p><code>SIGINT</code> is context-sensitive:</p>
 <ul>
-<li><strong>Foreground with a TTY</strong> (development, <code>cargo run</code>): graceful shutdown only.</li>
-<li><strong>Daemon mode or no TTY</strong> (legacy production): triggers a binary upgrade + graceful shutdown, like <code>SIGUSR2</code>.</li>
+<li><strong>Foreground with a TTY</strong> (development, <code>cargo run</code>): shutdown only.</li>
+<li><strong>Daemon mode or no TTY</strong> (legacy production): triggers binary upgrade
+and old-process drain, like <code>SIGUSR2</code>.</li>
 </ul>
 <p>The legacy <code>SIGINT</code> upgrade path exists for backward compatibility with deployments that send <code>SIGINT</code> from init scripts. New deployments should use <code>SIGUSR2</code> for upgrade and <code>SIGTERM</code> for shutdown explicitly.</p>
 <h2 id="systemd-integration"><a class="header" href="#systemd-integration">systemd integration</a></h2>
 <p>PgDoorman supports <code>Type=notify</code>. The shipped <code>pg_doorman.service</code> unit runs the binary in the foreground and notifies systemd via <code>sd_notify</code>:</p>
 <pre><code class="language-ini">[Service]
 Type=notify
-ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.yaml
-ExecReload=/bin/kill -HUP $MAINPID
-KillSignal=SIGTERM
+NotifyAccess=exec
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+ExecStop=/bin/kill -SIGTERM $MAINPID
+SyslogIdentifier=pg_doorman
+KillMode=mixed
 TimeoutStopSec=60
 Restart=on-failure
+Nice=-15
+User=postgres
+Group=postgres
+LimitNOFILE=65536
 </code></pre>
 <p><code>sd_notify READY=1</code> is sent after the listening socket is bound and pools are initialized. <code>sd_notify MAINPID=&lt;child&gt;</code> is sent during binary upgrade so systemd tracks the new process correctly.</p>
+<p>With this unit, <code>systemctl reload pg_doorman</code> means binary upgrade
+(<code>SIGUSR2</code>), not config reload (<code>SIGHUP</code>). Use <code>kill -HUP &lt;pid&gt;</code> when
+you only need to reload configuration.</p>
 <p>If you migrate from <code>Type=forking</code> + <code>--daemon</code>, drop <code>--daemon</code> and switch to <code>Type=notify</code> — fewer moving parts and proper readiness tracking. Older deployments using <code>--daemon</code> continue to work but do not benefit from <code>sd_notify</code>.</p>
 <h2 id="daemon-mode"><a class="header" href="#daemon-mode">Daemon mode</a></h2>
 <p><code>pg_doorman --daemon</code> forks into the background and writes its PID to <code>daemon_pid_file</code> (default <code>/tmp/pg_doorman.pid</code>). For systemd users, prefer <code>Type=notify</code> over <code>--daemon</code>.</p>
@@ -4987,7 +5031,7 @@ Restart=on-failure
 <ul>
 <li><a href="operations/../tutorials/binary-upgrade.html">Binary Upgrade</a> — full upgrade protocol with TLS migration.</li>
 <li><a href="operations/../tutorials/troubleshooting.html">Troubleshooting</a> — what to check when reload does not pick up changes.</li>
-<li><a href="operations/../guides/tls.html#hot-reload">TLS</a> — <code>SIGHUP</code> reload semantics for server-side certificates.</li>
+<li><a href="operations/../guides/tls.html">TLS</a> — <code>SIGHUP</code> reload semantics for server-side certificates.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="monitoring-the-query-interner"><a class="header" href="#monitoring-the-query-interner">Monitoring the Query Interner</a></h1>
 <p>The query interner deduplicates Parse texts in pg_doorman's process
@@ -5058,7 +5102,9 @@ alerts:</p>
 </li>
 <li><strong><code>PgDoormanAnonTTLTooShort</code></strong> (critical) — synthetic 26000 rate
 <blockquote>
-<p>1/s for 10 min. Raise TTL or fix the offending driver.</p>
+<p>1/s for 10 min. Find whether the misses come from client LRU
+churn, <code>RESET INTERNER</code>, anonymous TTL eviction, or the offending
+driver before changing TTL.</p>
 </blockquote>
 </li>
 <li><strong><code>PgDoormanAnonInternerNotShrinking</code></strong> (warning) — ANON keeps
@@ -5105,17 +5151,21 @@ approaches the budget for the host.</p>
 <p>Action: drop <code>query_interner_anon_idle_ttl_seconds</code> in <code>general</code>
 config (e.g. 60 → 30). Reload pg_doorman. Watch the eviction rate
 catch up to the new threshold.</p>
-<h3 id="raise-ttl-when-synthetic-26000-fires"><a class="header" href="#raise-ttl-when-synthetic-26000-fires">Raise TTL when synthetic 26000 fires</a></h3>
+<h3 id="investigate-synthetic-26000-before-raising-ttl"><a class="header" href="#investigate-synthetic-26000-before-raising-ttl">Investigate synthetic 26000 before raising TTL</a></h3>
 <p>Trigger: <code>PgDoormanAnonTTLTooShort</code> fires.</p>
 <p>Action: identify which client and what query — the synthetic-miss
 counter has no labels, so use the WARN log line emitted with each
-miss for client / pool / connection_id context. If the offender is
-a driver that legitimately reuses unnamed Bind across batches,
-raise TTL to cover the gap (e.g. 60 → 300). If it is not, switch
-that client to named prepared.</p>
+miss for client / pool / connection_id context. Check
+<code>pg_doorman_clients_prepared_anonymous_evictions_total</code> and
+<code>pg_doorman_query_interner_evictions_total{kind="anonymous"}</code> before
+changing config. If misses come from the client Anonymous LRU, increase
+<code>client_anonymous_prepared_cache_size</code>. If they come from anonymous TTL
+or from a driver that legitimately reuses unnamed Bind across batches,
+raise TTL to cover the gap (e.g. 60 → 300). If it is not, switch that
+client to named prepared.</p>
 <h3 id="run-reset-interner"><a class="header" href="#run-reset-interner">Run RESET INTERNER</a></h3>
 <p>Trigger: ad-hoc diagnostics or memory containment incident.</p>
-<p>Action: <code>psql admin@:6432 -c "RESET INTERNER"</code>. Returns
+<p>Action: <code>psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman" -c "RESET INTERNER"</code>. Returns
 <code>CommandComplete RESET</code>. In-flight clients re-Parse on next reuse;
 short-lived ones see no effect because their <code>last_anonymous_hash</code>
 remembers the hash they registered before the reset, and the next
@@ -5210,7 +5260,7 @@ sv_active    — backends currently checked out
 <p>Or via <code>psql</code> connection string:</p>
 <pre><code class="language-bash">psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 </code></pre>
-<p>Admin commands are read with <code>SHOW &lt;subcommand&gt;</code> or executed with bare verbs (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
+<p>Admin commands are read with <code>SHOW &lt;subcommand&gt;</code> or executed with bare verbs (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>RESET INTERNER</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
 <h2 id="show-commands-1"><a class="header" href="#show-commands-1">SHOW commands</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>SHOW HELP</code></td><td>List available commands.</td></tr>
@@ -5222,6 +5272,8 @@ sv_active    — backends currently checked out
 <tr><td><code>SHOW POOL_COORDINATOR</code></td><td>Pool Coordinator state per database: current connections, reserve usage, eviction count. See <a href="observability/../concepts/pool-coordinator.html">Pool Coordinator</a>.</td></tr>
 <tr><td><code>SHOW POOL_SCALING</code></td><td>Anticipation/burst metrics: in-flight creates, gate waits, anticipation notifies/timeouts.</td></tr>
 <tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td>Cached prepared statements per pool: hash, name, query text, hit count.</td></tr>
+<tr><td><code>SHOW INTERNER</code></td><td>Query interner summary: entry count and bytes for named and anonymous halves.</td></tr>
+<tr><td><code>SHOW INTERNER &lt;N&gt;</code></td><td>Top N interned query texts by byte size, with hash, kind, idle age, and SQL preview.</td></tr>
 <tr><td><code>SHOW CLIENTS</code></td><td>Active clients: ID, database, user, app name, address, TLS state, transaction/query/error counts, age.</td></tr>
 <tr><td><code>SHOW SERVERS</code></td><td>Active backend connections: server ID, backend PID, database, user, TLS, state, transaction/query counts, prepare cache hits/misses, bytes.</td></tr>
 <tr><td><code>SHOW CONNECTIONS</code></td><td>Connection counts by type: total, errors, TLS, plain, cancel.</td></tr>
@@ -5243,8 +5295,9 @@ sv_active    — backends currently checked out
 <tr><td><code>RESUME</code> / <code>RESUME &lt;database&gt;</code></td><td>Resume after <code>PAUSE</code>.</td></tr>
 <tr><td><code>RECONNECT</code> / <code>RECONNECT &lt;database&gt;</code></td><td>Force-recycle backend connections (close idle, drain active). New connections come from PostgreSQL.</td></tr>
 <tr><td><code>RELOAD</code></td><td>Same as <code>SIGHUP</code> — reload config from disk.</td></tr>
-<tr><td><code>SHUTDOWN</code></td><td>Same as <code>SIGTERM</code> — graceful shutdown.</td></tr>
+<tr><td><code>SHUTDOWN</code></td><td>Sends <code>SIGINT</code> to the current process. See <a href="observability/../operations/signals.html">Signals</a> before using it in daemon mode.</td></tr>
 <tr><td><code>KILL &lt;database&gt;</code></td><td>Drop all clients connected to a specific pool.</td></tr>
+<tr><td><code>RESET INTERNER</code></td><td>Clear named and anonymous query interner entries. Diagnostic command; active clients re-Parse on next reuse.</td></tr>
 <tr><td><code>SET log_level = '&lt;level&gt;'</code></td><td>Change runtime log level (<code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>).</td></tr>
 </tbody></table>
 </div>
@@ -5907,7 +5960,7 @@ user "report_job": queries p99=4500 xacts p99=8000
   host: "0.0.0.0"
   port: 6432
   admin_username: "admin"
-  admin_password: "admin"
+  admin_password: "change_me_to_a_long_random_secret"
 
 pools:
   mydb:
@@ -5916,7 +5969,7 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "myuser"
-        password: "mypassword"
+        password: "md5..."  # hash from pg_shadow / pg_authid
         pool_size: 40
 </code></pre>
 <h3 id="example-toml-configuration-legacy"><a class="header" href="#example-toml-configuration-legacy">Example TOML Configuration (Legacy)</a></h3>
@@ -5924,7 +5977,7 @@ pools:
 host = "0.0.0.0"
 port = 6432
 admin_username = "admin"
-admin_password = "admin"
+admin_password = "change_me_to_a_long_random_secret"
 
 [pools.mydb]
 server_host = "localhost"
@@ -5933,7 +5986,7 @@ pool_mode = "transaction"
 
 [[pools.mydb.users]]
 username = "myuser"
-password = "mypassword"
+password = "md5..."  # hash from pg_shadow / pg_authid
 pool_size = 40
 </code></pre>
 <h3 id="generate-command"><a class="header" href="#generate-command">Generate Command</a></h3>
@@ -6202,14 +6255,19 @@ keepalive cannot help (e.g., during active data transmission).</p>
 It should be replaced with your secret.</p>
 <p>Default: <code>"admin"</code>.</p>
 <h3 id="prepared_statements"><a class="header" href="#prepared_statements">prepared_statements</a></h3>
-<p>Switcher to enable/disable caching of prepared statements.</p>
+<p>Enables prepared-statement remapping and caching. When disabled, pg_doorman forwards
+<code>Parse</code> and <code>Bind</code> without rewriting them through the pool-level prepared-statement cache.</p>
+<p>If this is <code>true</code>, <code>prepared_statements_cache_size</code> must be greater than <code>0</code>.</p>
 <p>Default: <code>true</code>.</p>
 <h3 id="prepared_statements_cache_size-1"><a class="header" href="#prepared_statements_cache_size-1">prepared_statements_cache_size</a></h3>
 <p>Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
 This cache stores the mapping from query hash to rewritten prepared statement name.</p>
+<p>This is not the disable switch. To disable prepared-statement remapping, set
+<code>prepared_statements: false</code>; pg_doorman rejects a general <code>prepared_statements_cache_size</code>
+of <code>0</code> while <code>prepared_statements</code> is enabled.</p>
 <p>For an end-to-end picture of how this knob interacts with <code>server_prepared_statements_cache_size</code>,
 <code>client_anonymous_prepared_cache_size</code>, and the query interner, see the
-<a href="reference/../tutorials/prepared-statements.html">Anonymous Prepared Statement Caching tutorial</a>.</p>
+<a href="reference/../tutorials/prepared-statements.html">Anonymous Parse caching tutorial</a>.</p>
 <p>Default: <code>8192</code>.</p>
 <h3 id="server_prepared_statements_cache_size"><a class="header" href="#server_prepared_statements_cache_size">server_prepared_statements_cache_size</a></h3>
 <p>Sizes the per-backend <code>LruCache&lt;String, ()&gt;</code> of <code>DOORMAN_&lt;N&gt;</code> names independently of the pool-level cache.
@@ -6383,7 +6441,7 @@ or application-level keepalive probes. The default <code>;</code> (empty stateme
 <h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
 <p>Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend <code>StartupMessage</code>; PostgreSQL stores them as the session reset defaults, so client <code>RESET ALL</code> / <code>DISCARD ALL</code> returns to these values.</p>
 <p>Cascade order: <code>general.startup_parameters</code>, then <code>pools.&lt;name&gt;.startup_parameters</code>, then the optional <code>startup_parameters</code> JSON column returned by passthrough <code>auth_query</code>. Later layers win per key. Dedicated-mode <code>auth_query</code> pools ignore the per-user column because one shared backend serves multiple roles.</p>
-<p>Validation at config load rejects reserved protocol keys (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>, anything starting with <code>_pq_.</code>), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000 bytes). The cascade and packet-cap gates reject backend startup with SQLSTATE 53400 (<code>configuration_limit_exceeded</code>); when only the auth_query overlay tips the cascade over budget, pg_doorman drops that overlay and continues with the baseline.</p>
+<p>Validation at config load rejects reserved protocol keys (<code>user</code>, <code>database</code>, <code>replication</code>, <code>options</code>, anything starting with <code>_pq_.</code>), invalid GUC names, null bytes, and per-level maps that exceed the startup-parameter budget. Before each backend startup, pg_doorman checks the resolved parameter set against PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000 bytes). Any overflow rejects backend startup with SQLSTATE 53400 (<code>configuration_limit_exceeded</code>) instead of sending a partial or empty <code>StartupMessage</code>.</p>
 <p>If PostgreSQL rejects a parameter at backend startup, pg_doorman returns PostgreSQL's <code>ErrorResponse</code> to the client unchanged. There is no retry with the key removed, and pg_doorman does not automatically disable that key for the pool. The cumulative count is exported as <code>pg_doorman_backend_startup_parameter_errors_total{pool, sqlstate}</code>; the parameter name and username are written to the corresponding warning log line.</p>
 <p>Inspect the resolved per-pool values with <code>SHOW STARTUP_PARAMETERS</code> or the <code>/api/pools</code> REST endpoint.</p>
 <p>Default: <code>{} (empty)</code>.</p>
@@ -6468,8 +6526,8 @@ only affects eviction decisions (never creates connections).</p>
 Set to <code>0</code> (or omit) for no eviction protection. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
 <p>Default: <code>0 (no protection)</code>.</p>
 <h3 id="startup_parameters-1"><a class="header" href="#startup_parameters-1">startup_parameters</a></h3>
-<p>Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for <a href="reference/pool.html#startup-parameters"><code>general.startup_parameters</code></a>: reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000-byte) <code>StartupMessage</code> cap.</p>
-<p>In the cascade <code>general</code> → <code>pool</code> → <code>auth_query</code>, this layer overrides <code>general</code> per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode <code>auth_query</code> pools ignore the per-user column because one shared backend serves multiple users. See <a href="reference/pool.html#startup-parameters"><code>general.startup_parameters</code></a> for validation rules, failure behavior, and observability.</p>
+<p>Per-pool map of PostgreSQL configuration parameters. Validation rules match those documented for <a href="reference/general.html#startup_parameters"><code>general.startup_parameters</code></a>: reserved keys, GUC naming, null bytes, and the startup-parameter budget within PG's <code>MAX_STARTUP_PACKET_LENGTH</code> (10 000-byte) <code>StartupMessage</code> cap.</p>
+<p>In the cascade <code>general</code> → <code>pool</code> → <code>auth_query</code>, this layer overrides <code>general</code> per key, and a passthrough auth_query entry overrides this layer. Dedicated-mode <code>auth_query</code> pools ignore the per-user column because one shared backend serves multiple users. See <a href="reference/general.html#startup_parameters"><code>general.startup_parameters</code></a> for validation rules, failure behavior, and observability.</p>
 <p>Default: <code>{} (empty)</code>.</p>
 <h2 id="auth-query-settings"><a class="header" href="#auth-query-settings">Auth Query Settings</a></h2>
 <p>The <code>auth_query</code> section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.</p>
@@ -6620,23 +6678,23 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 </div>
 </div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="prometheus-settings"><a class="header" href="#prometheus-settings">Prometheus Settings</a></h1>
-<p>pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.</p>
+<p>pg_doorman exposes Prometheus metrics on the <code>[web]</code> listener. Enable <code>/metrics</code> through <code>[web]</code>; the tables below map metric names to the pooler state they report.</p>
 <h2 id="enabling-the-web-listener"><a class="header" href="#enabling-the-web-listener">Enabling the Web Listener</a></h2>
 <p>Both the Prometheus metrics endpoint (<code>/metrics</code>) and the optional operator console (the SPA on <code>/</code>, <code>/api/*</code>) are served by the same <code>[web]</code> listener. The legacy <code>prometheus.*</code> config keys are accepted as aliases for <code>web.*</code>.</p>
 <pre><code class="language-yaml">web:
-  enabled: true     # Bind the listener (Prometheus only)
+  enabled: true     # Bind the HTTP listener for /metrics
   host: "0.0.0.0"
   port: 9127
-  # Operator console (off by default; see the Web UI guide)
+  # Operator console is off by default; see the Web UI guide
   ui: false
   ui_anonymous: false
 </code></pre>
 <h3 id="configuration-options-1"><a class="header" href="#configuration-options-1">Configuration Options</a></h3>
-<p>Full list — including UI-related fields — lives in <a href="reference/web.html">Web Settings</a>. The minimum to expose <code>/metrics</code> is:</p>
+<p>For UI settings, see <a href="reference/../guides/web-ui.html">Web UI</a>. The minimum to expose <code>/metrics</code> is:</p>
 <div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
-<tr><td><code>enabled</code></td><td>Enable or disable the Prometheus metrics exporter.</td><td><code>false</code></td></tr>
-<tr><td><code>host</code></td><td>The host on which the Prometheus metrics exporter will listen.</td><td><code>"0.0.0.0"</code></td></tr>
-<tr><td><code>port</code></td><td>The port on which the Prometheus metrics exporter will listen.</td><td><code>9127</code></td></tr>
+<tr><td><code>enabled</code></td><td>Enable the <code>[web]</code> HTTP listener. <code>/metrics</code> is available when this is true; the operator console also requires <code>ui = true</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>host</code></td><td>Bind address for the <code>[web]</code> HTTP listener.</td><td><code>"0.0.0.0"</code></td></tr>
+<tr><td><code>port</code></td><td>Port for the <code>[web]</code> HTTP listener.</td><td><code>9127</code></td></tr>
 </tbody></table>
 </div>
 <h2 id="configuring-prometheus"><a class="header" href="#configuring-prometheus">Configuring Prometheus</a></h2>
@@ -6712,8 +6770,10 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 </div>
 <h3 id="server-metrics"><a class="header" href="#server-metrics">Server Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with <code>pg_doorman_servers_prepared_misses</code> to derive hit ratio.</td></tr>
-<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger <code>server_prepared_statement_cache_size</code>.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Live aggregate of prepared-statement cache hits across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use <code>pg_doorman_servers_prepared_hits_total</code> for rates.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Live aggregate of prepared-statement cache misses across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use <code>pg_doorman_servers_prepared_misses_total</code> for rates.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_hits_total</code></td><td>Counter form of prepared-statement cache hits across all backends of each pool, by user and database. Use <code>rate()</code> over this metric for hit throughput.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses_total</code></td><td>Counter form of prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger <code>server_prepared_statements_cache_size</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="per-client-prepared-statement-cache-metrics"><a class="header" href="#per-client-prepared-statement-cache-metrics">Per-Client Prepared Statement Cache Metrics</a></h3>
@@ -6722,6 +6782,16 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <tr><td><code>pg_doorman_clients_prepared_named_entries</code></td><td>Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends <code>DEALLOCATE</code>. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer.</td></tr>
 <tr><td><code>pg_doorman_clients_prepared_anonymous_entries</code></td><td>Gauge by user and database. Sum of Anonymous entries across every connected client's cache. Each client's Anonymous part is capped at <code>client_anonymous_prepared_cache_size</code>, so this gauge approaches at most <code>connected_clients * cache_size</code>.</td></tr>
 <tr><td><code>pg_doorman_clients_prepared_anonymous_evictions_total</code></td><td>Counter by user and database. Cumulative count of Anonymous LRU evictions across all clients of the pool. A sustained non-zero rate signals that <code>client_anonymous_prepared_cache_size</code> is too small for the workload and the LRU is recycling entries faster than the application reuses them. The counter is monotonic per pool; an upgrade restarts it from zero.</td></tr>
+</tbody></table>
+</div>
+<h3 id="query-interner-metrics"><a class="header" href="#query-interner-metrics">Query Interner Metrics</a></h3>
+<p>The query interner is process-global. These metrics have no pool, user, or database labels; use the prepared-statement metrics above to locate the affected pool.</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_query_interner_entries</code></td><td>Gauge by <code>kind</code> (<code>named</code> or <code>anonymous</code>). Number of interned query texts. Refreshed once per GC sweep.</td></tr>
+<tr><td><code>pg_doorman_query_interner_bytes</code></td><td>Gauge by <code>kind</code> (<code>named</code> or <code>anonymous</code>). Total bytes of interned query text. Refreshed once per GC sweep.</td></tr>
+<tr><td><code>pg_doorman_query_interner_evictions_total</code></td><td>Counter by <code>kind</code> and <code>reason</code> (<code>gc_passive</code> or <code>ttl_expired</code>). Named entries are removed when no cache outside the interner still holds them; anonymous entries are removed after the idle TTL.</td></tr>
+<tr><td><code>pg_doorman_query_interner_synthetic_misses_total</code></td><td>Counter of synthetic SQLSTATE <code>26000</code> responses for anonymous prepared statements whose state was no longer available when a later <code>Bind</code> or <code>Describe</code> referenced it. Check client Anonymous LRU evictions, WARN logs, <code>RESET INTERNER</code>, and TTL evictions before increasing <code>query_interner_anon_idle_ttl_seconds</code>.</td></tr>
+<tr><td><code>pg_doorman_query_interner_gc_duration_seconds</code></td><td>Histogram of one interner GC sweep (named and anonymous combined), in seconds. Use this to detect large interners that make sweep time visible.</td></tr>
 </tbody></table>
 </div>
 <h2 id="grafana-dashboard"><a class="header" href="#grafana-dashboard">Grafana Dashboard</a></h2>

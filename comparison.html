@@ -258,7 +258,7 @@
 <tr><td><code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td><code>SHOW INTERNER</code> (per-kind entries / bytes / preview)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Bounded prepared-statement cache (TTL on anonymous, per-client LRU split)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (named only, unbounded <code>max_prepared_statements</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Bounded prepared-statement cache (TTL on anonymous, per-client LRU split)</td><td style="text-align: center">Yes</td><td style="text-align: center">Named only, bounded by <code>max_prepared_statements</code>; no anonymous cache</td><td style="text-align: center">No</td></tr>
 <tr><td><code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>SHOW RULES</code> (dump effective routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 <tr><td>Server-side TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>

@@ -167,7 +167,7 @@
 <p>Or via <code>psql</code> connection string:</p>
 <pre><code class="language-bash">psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 </code></pre>
-<p>Admin commands are read with <code>SHOW &lt;subcommand&gt;</code> or executed with bare verbs (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
+<p>Admin commands are read with <code>SHOW &lt;subcommand&gt;</code> or executed with bare verbs (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>RESET INTERNER</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
 <h2 id="show-commands"><a class="header" href="#show-commands">SHOW commands</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>SHOW HELP</code></td><td>List available commands.</td></tr>
@@ -179,6 +179,8 @@
 <tr><td><code>SHOW POOL_COORDINATOR</code></td><td>Pool Coordinator state per database: current connections, reserve usage, eviction count. See <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</td></tr>
 <tr><td><code>SHOW POOL_SCALING</code></td><td>Anticipation/burst metrics: in-flight creates, gate waits, anticipation notifies/timeouts.</td></tr>
 <tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td>Cached prepared statements per pool: hash, name, query text, hit count.</td></tr>
+<tr><td><code>SHOW INTERNER</code></td><td>Query interner summary: entry count and bytes for named and anonymous halves.</td></tr>
+<tr><td><code>SHOW INTERNER &lt;N&gt;</code></td><td>Top N interned query texts by byte size, with hash, kind, idle age, and SQL preview.</td></tr>
 <tr><td><code>SHOW CLIENTS</code></td><td>Active clients: ID, database, user, app name, address, TLS state, transaction/query/error counts, age.</td></tr>
 <tr><td><code>SHOW SERVERS</code></td><td>Active backend connections: server ID, backend PID, database, user, TLS, state, transaction/query counts, prepare cache hits/misses, bytes.</td></tr>
 <tr><td><code>SHOW CONNECTIONS</code></td><td>Connection counts by type: total, errors, TLS, plain, cancel.</td></tr>
@@ -200,8 +202,9 @@
 <tr><td><code>RESUME</code> / <code>RESUME &lt;database&gt;</code></td><td>Resume after <code>PAUSE</code>.</td></tr>
 <tr><td><code>RECONNECT</code> / <code>RECONNECT &lt;database&gt;</code></td><td>Force-recycle backend connections (close idle, drain active). New connections come from PostgreSQL.</td></tr>
 <tr><td><code>RELOAD</code></td><td>Same as <code>SIGHUP</code> — reload config from disk.</td></tr>
-<tr><td><code>SHUTDOWN</code></td><td>Same as <code>SIGTERM</code> — graceful shutdown.</td></tr>
+<tr><td><code>SHUTDOWN</code></td><td>Sends <code>SIGINT</code> to the current process. See <a href="../operations/signals.html">Signals</a> before using it in daemon mode.</td></tr>
 <tr><td><code>KILL &lt;database&gt;</code></td><td>Drop all clients connected to a specific pool.</td></tr>
+<tr><td><code>RESET INTERNER</code></td><td>Clear named and anonymous query interner entries. Diagnostic command; active clients re-Parse on next reuse.</td></tr>
 <tr><td><code>SET log_level = '&lt;level&gt;'</code></td><td>Change runtime log level (<code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>).</td></tr>
 </tbody></table>
 </div>

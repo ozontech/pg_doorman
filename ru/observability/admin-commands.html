@@ -167,7 +167,7 @@
 <p>Или через connection string <code>psql</code>:</p>
 <pre><code class="language-bash">psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
 </code></pre>
-<p>Команды администратора читаются через <code>SHOW &lt;subcommand&gt;</code> или выполняются голыми глаголами (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
+<p>Команды администратора читаются через <code>SHOW &lt;subcommand&gt;</code> или выполняются голыми глаголами (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>RESET INTERNER</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
 <h2 id="Команды-show"><a class="header" href="#Команды-show">Команды SHOW</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Команда</th><th>Назначение</th></tr></thead><tbody>
 <tr><td><code>SHOW HELP</code></td><td>Список доступных команд.</td></tr>
@@ -179,6 +179,8 @@
 <tr><td><code>SHOW POOL_COORDINATOR</code></td><td>Состояние координатора пулов на базу: текущие соединения, использование резерва, число вытеснений. См. <a href="../concepts/pool-coordinator.html">Координатор пулов</a>.</td></tr>
 <tr><td><code>SHOW POOL_SCALING</code></td><td>Метрики anticipation/burst: in-flight create-операции, ожидания на воротах, anticipation notifies/timeouts.</td></tr>
 <tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td>Закэшированные prepared statements на пул: hash, имя, текст запроса, число попаданий.</td></tr>
+<tr><td><code>SHOW INTERNER</code></td><td>Сводка query interner: число записей и байты для named- и anonymous-половины.</td></tr>
+<tr><td><code>SHOW INTERNER &lt;N&gt;</code></td><td>N самых крупных интернированных текстов запросов: hash, kind, idle age и предпросмотр SQL.</td></tr>
 <tr><td><code>SHOW CLIENTS</code></td><td>Активные клиенты: ID, database, user, имя приложения, адрес, состояние TLS, счётчики transaction/query/error, возраст.</td></tr>
 <tr><td><code>SHOW SERVERS</code></td><td>Активные соединения с бэкендом: ID сервера, PID бэкенда, database, user, TLS, состояние, счётчики transaction/query, попадания/промахи кэша prepare, байты.</td></tr>
 <tr><td><code>SHOW CONNECTIONS</code></td><td>Число соединений по типу: total, errors, TLS, plain, cancel.</td></tr>
@@ -200,8 +202,9 @@
 <tr><td><code>RESUME</code> / <code>RESUME &lt;database&gt;</code></td><td>Возобновить после <code>PAUSE</code>.</td></tr>
 <tr><td><code>RECONNECT</code> / <code>RECONNECT &lt;database&gt;</code></td><td>Принудительно пересоздать соединения с PostgreSQL (закрыть простаивающие, дренировать активные). Новые соединения берутся из PostgreSQL.</td></tr>
 <tr><td><code>RELOAD</code></td><td>То же, что и <code>SIGHUP</code> — перезагрузить конфиг с диска.</td></tr>
-<tr><td><code>SHUTDOWN</code></td><td>То же, что и <code>SIGTERM</code> — плавное завершение работы.</td></tr>
+<tr><td><code>SHUTDOWN</code></td><td>Отправляет <code>SIGINT</code> текущему процессу. Перед использованием в daemon mode см. <a href="../operations/signals.html">Сигналы</a>.</td></tr>
 <tr><td><code>KILL &lt;database&gt;</code></td><td>Сбросить всех клиентов, подключённых к конкретному пулу.</td></tr>
+<tr><td><code>RESET INTERNER</code></td><td>Очистить named- и anonymous-записи query interner. Диагностическая команда; активные клиенты заново делают <code>Parse</code> при следующем использовании.</td></tr>
 <tr><td><code>SET log_level = '&lt;level&gt;'</code></td><td>Изменить уровень логирования в рантайме (<code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>).</td></tr>
 </tbody></table>
 </div>

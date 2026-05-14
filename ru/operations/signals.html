@@ -165,8 +165,8 @@
 <h2 id="Краткая-справка"><a class="header" href="#Краткая-справка">Краткая справка</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Эффект</th><th>Существующие соединения</th><th>Когда применять</th></tr></thead><tbody>
 <tr><td><code>SIGHUP</code></td><td>Перезагрузить конфиг с диска.</td><td>Сохраняются.</td><td>Подкрутить пулы, ротировать серверные TLS-сертификаты, отредактировать <code>pg_hba.conf</code>.</td></tr>
-<tr><td><code>SIGTERM</code></td><td>Плавное завершение работы.</td><td>Дренируются до простоя, затем закрываются.</td><td>Остановка сервиса.</td></tr>
-<tr><td><code>SIGUSR2</code></td><td>Плавное обновление бинарника.</td><td>Мигрируют в новый процесс.</td><td>Замена бинарника без простоя.</td></tr>
+<tr><td><code>SIGTERM</code></td><td>Немедленное завершение.</td><td>Закрываются.</td><td>Остановка сервиса, когда переподключения допустимы.</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Обновление бинарника и дренирование старого процесса.</td><td>Мигрируют в новый процесс, где это возможно.</td><td>Замена бинарника без простоя.</td></tr>
 <tr><td><code>SIGINT</code></td><td>Зависит от TTY (см. ниже).</td><td>По-разному.</td><td>Ctrl+C при разработке; устарело для промышленной эксплуатации.</td></tr>
 </tbody></table>
 </div>
@@ -185,57 +185,65 @@
 <p>Что <strong>не</strong> перезагружается:</p>
 <ul>
 <li><code>general.host</code>, <code>general.port</code> — слушающий сокет фиксируется при старте.</li>
-<li>Клиентские TLS-сертификаты — нужен перезапуск процесса или используйте обновление бинарника.</li>
+<li>TLS-сертификаты для входящих клиентских подключений — нужен перезапуск
+процесса. Не ротируйте их во время обновления, где нужна миграция
+TLS-сессий.</li>
 <li>Число рабочих потоков и параметры рантайма Tokio.</li>
 </ul>
 <p>После перезагрузки <code>SHOW CONFIG</code> отображает новые значения. Существующие клиентские соединения не перепроверяются по новому <code>pg_hba.conf</code> — только новые соединения.</p>
-<h2 id="Плавное-завершение-работы-sigterm"><a class="header" href="#Плавное-завершение-работы-sigterm">Плавное завершение работы (<code>SIGTERM</code>)</a></h2>
+<h2 id="Немедленное-завершение-sigterm"><a class="header" href="#Немедленное-завершение-sigterm">Немедленное завершение (<code>SIGTERM</code>)</a></h2>
 <pre><code class="language-bash">kill -TERM $(pidof pg_doorman)
 </code></pre>
-<p>pg_doorman:</p>
-<ol>
-<li>Прекращает принимать новые соединения.</li>
-<li>Закрывает простаивающие соединения с бэкендом.</li>
-<li>Логирует, сколько клиентов ещё в транзакциях.</li>
-<li>Ждёт до <code>shutdown_timeout</code> (по умолчанию 10 с), пока клиенты завершат работу.</li>
-<li>Выходит.</li>
-</ol>
-<p><code>shutdown_timeout</code> — жёсткий потолок. Клиенты, всё ещё находящиеся в транзакциях по его истечении, получают закрытие соединения.</p>
-<pre><code class="language-yaml">general:
-  shutdown_timeout: "30s"
-</code></pre>
-<p>Для systemd установите <code>TimeoutStopSec</code> больше, чем <code>shutdown_timeout</code>, чтобы systemd не отправил <code>SIGKILL</code>, пока pg_doorman ещё дренирует.</p>
+<p>pg_doorman логирует, сколько клиентов ещё в транзакциях, и выходит. Он
+не ждёт <code>shutdown_timeout</code> и не мигрирует активные транзакции. Все
+клиентские соединения закрываются при выходе процесса.</p>
+<p><code>shutdown_timeout</code> относится к дренированию при обновлении бинарника
+через <code>SIGUSR2</code>, а не к обычному завершению по <code>SIGTERM</code>.</p>
 <h2 id="Обновление-бинарника-sigusr2"><a class="header" href="#Обновление-бинарника-sigusr2">Обновление бинарника (<code>SIGUSR2</code>)</a></h2>
 <pre><code class="language-bash">kill -USR2 $(pidof pg_doorman)
 </code></pre>
 <p>Рекомендуемый способ заменить бинарник, не теряя клиентов:</p>
 <ol>
-<li>Замените бинарник на диске новой версией.</li>
+<li>Замените бинарник на диске новой версией через атомарный <code>rename</code>.</li>
 <li>Отправьте <code>SIGUSR2</code> работающему процессу.</li>
+<li>Текущий процесс проверяет новый бинарник через <code>-t</code>.</li>
 <li>Текущий процесс порождает дочерний с новым бинарником, передаёт ему слушающий сокет и продолжает обслуживать существующих клиентов до их завершения.</li>
 <li>Новые клиенты сразу подключаются к дочернему процессу.</li>
 <li>Старый процесс выходит, когда последняя клиентская транзакция завершится (или по <code>shutdown_timeout</code>).</li>
 </ol>
-<p>Дочерний процесс отправляет <code>sd_notify MAINPID=&lt;new_pid&gt;</code>, чтобы юниты systemd с <code>Type=notify</code> бесшовно обновили свой главный PID.</p>
-<p>Полный протокол, миграцию TLS и откат смотрите в <a href="../tutorials/binary-upgrade.html">плавном обновлении бинаря</a>.</p>
+<p>Дочерний процесс отправляет <code>sd_notify MAINPID=&lt;new_pid&gt;</code>, чтобы юниты
+systemd с <code>Type=notify</code> корректно отслеживали новый главный PID.</p>
+<p>Полный протокол, миграцию TLS и откат смотрите в <a href="../tutorials/binary-upgrade.html">обновлении бинарника без переподключения</a>.</p>
 <h2 id="sigint-ctrlc"><a class="header" href="#sigint-ctrlc"><code>SIGINT</code> (Ctrl+C)</a></h2>
 <p><code>SIGINT</code> зависит от контекста:</p>
 <ul>
-<li><strong>На переднем плане с TTY</strong> (разработка, <code>cargo run</code>): только плавное завершение работы.</li>
-<li><strong>В режиме демона или без TTY</strong>: запускает обновление бинарника и плавное завершение работы, как <code>SIGUSR2</code>, для совместимости со старыми установками.</li>
+<li><strong>На переднем плане с TTY</strong> (разработка, <code>cargo run</code>): только завершение работы.</li>
+<li><strong>В режиме демона или без TTY</strong>: запускает обновление бинарника и
+дренирование старого процесса, как <code>SIGUSR2</code>, для совместимости со
+старыми установками.</li>
 </ul>
 <p>Путь обновления через <code>SIGINT</code> существует ради обратной совместимости с инсталляциями, которые отправляют <code>SIGINT</code> из init-скриптов. Новые инсталляции должны явно использовать <code>SIGUSR2</code> для обновления и <code>SIGTERM</code> для остановки.</p>
 <h2 id="Интеграция-с-systemd"><a class="header" href="#Интеграция-с-systemd">Интеграция с systemd</a></h2>
 <p>pg_doorman поддерживает <code>Type=notify</code>. Поставляемый юнит <code>pg_doorman.service</code> запускает бинарник в основном процессе и уведомляет systemd через <code>sd_notify</code>:</p>
 <pre><code class="language-ini">[Service]
 Type=notify
-ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.yaml
-ExecReload=/bin/kill -HUP $MAINPID
-KillSignal=SIGTERM
+NotifyAccess=exec
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+ExecStop=/bin/kill -SIGTERM $MAINPID
+SyslogIdentifier=pg_doorman
+KillMode=mixed
 TimeoutStopSec=60
 Restart=on-failure
+Nice=-15
+User=postgres
+Group=postgres
+LimitNOFILE=65536
 </code></pre>
 <p><code>sd_notify READY=1</code> отправляется после привязки слушающего сокета и инициализации пулов. <code>sd_notify MAINPID=&lt;child&gt;</code> отправляется при обновлении бинарника, чтобы systemd корректно отслеживал новый процесс.</p>
+<p>С таким юнитом <code>systemctl reload pg_doorman</code> означает обновление
+бинарника (<code>SIGUSR2</code>), а не перечитывание конфига (<code>SIGHUP</code>). Если нужно
+только перечитать конфиг, используйте <code>kill -HUP &lt;pid&gt;</code>.</p>
 <p>Если переходите с <code>Type=forking</code> + <code>--daemon</code>, уберите <code>--daemon</code> и переключитесь на <code>Type=notify</code> — меньше движущихся частей и корректное отслеживание готовности. Старые инсталляции с <code>--daemon</code> продолжают работать, но не получают преимуществ <code>sd_notify</code>.</p>
 <h2 id="Режим-демона"><a class="header" href="#Режим-демона">Режим демона</a></h2>
 <p><code>pg_doorman --daemon</code> ответвляется в фон и пишет PID в <code>daemon_pid_file</code> (по умолчанию <code>/tmp/pg_doorman.pid</code>). Под systemd предпочитайте <code>Type=notify</code> вместо <code>--daemon</code>.</p>
@@ -244,9 +252,9 @@ Restart=on-failure
 </code></pre>
 <h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
 <ul>
-<li><a href="../tutorials/binary-upgrade.html">Плавное обновление бинаря</a> — полный протокол обновления с миграцией TLS.</li>
+<li><a href="../tutorials/binary-upgrade.html">Обновление бинарника без переподключения</a> — полный протокол обновления с миграцией TLS.</li>
 <li><a href="../tutorials/troubleshooting.html">Диагностика</a> — что проверить, когда перезагрузка не подхватывает изменения.</li>
-<li><a href="../guides/tls.html#%D0%93%D0%BE%D1%80%D1%8F%D1%87%D0%B0%D1%8F-%D0%BF%D0%B5%D1%80%D0%B5%D0%B7%D0%B0%D0%B3%D1%80%D1%83%D0%B7%D0%BA%D0%B0">TLS</a> — семантика перезагрузки серверных сертификатов по <code>SIGHUP</code>.</li>
+<li><a href="../guides/tls.html">TLS</a> — семантика перезагрузки серверных сертификатов по <code>SIGHUP</code>.</li>
 </ul>
 
                     </main>

@@ -161,23 +161,23 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="prometheus-settings"><a class="header" href="#prometheus-settings">Prometheus Settings</a></h1>
-<p>pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.</p>
+<p>pg_doorman exposes Prometheus metrics on the <code>[web]</code> listener. Enable <code>/metrics</code> through <code>[web]</code>; the tables below map metric names to the pooler state they report.</p>
 <h2 id="enabling-the-web-listener"><a class="header" href="#enabling-the-web-listener">Enabling the Web Listener</a></h2>
 <p>Both the Prometheus metrics endpoint (<code>/metrics</code>) and the optional operator console (the SPA on <code>/</code>, <code>/api/*</code>) are served by the same <code>[web]</code> listener. The legacy <code>prometheus.*</code> config keys are accepted as aliases for <code>web.*</code>.</p>
 <pre><code class="language-yaml">web:
-  enabled: true     # Bind the listener (Prometheus only)
+  enabled: true     # Bind the HTTP listener for /metrics
   host: "0.0.0.0"
   port: 9127
-  # Operator console (off by default; see the Web UI guide)
+  # Operator console is off by default; see the Web UI guide
   ui: false
   ui_anonymous: false
 </code></pre>
 <h3 id="configuration-options"><a class="header" href="#configuration-options">Configuration Options</a></h3>
-<p>Full list — including UI-related fields — lives in <a href="web.html">Web Settings</a>. The minimum to expose <code>/metrics</code> is:</p>
+<p>For UI settings, see <a href="../guides/web-ui.html">Web UI</a>. The minimum to expose <code>/metrics</code> is:</p>
 <div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th><th>Default</th></tr></thead><tbody>
-<tr><td><code>enabled</code></td><td>Enable or disable the Prometheus metrics exporter.</td><td><code>false</code></td></tr>
-<tr><td><code>host</code></td><td>The host on which the Prometheus metrics exporter will listen.</td><td><code>"0.0.0.0"</code></td></tr>
-<tr><td><code>port</code></td><td>The port on which the Prometheus metrics exporter will listen.</td><td><code>9127</code></td></tr>
+<tr><td><code>enabled</code></td><td>Enable the <code>[web]</code> HTTP listener. <code>/metrics</code> is available when this is true; the operator console also requires <code>ui = true</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>host</code></td><td>Bind address for the <code>[web]</code> HTTP listener.</td><td><code>"0.0.0.0"</code></td></tr>
+<tr><td><code>port</code></td><td>Port for the <code>[web]</code> HTTP listener.</td><td><code>9127</code></td></tr>
 </tbody></table>
 </div>
 <h2 id="configuring-prometheus"><a class="header" href="#configuring-prometheus">Configuring Prometheus</a></h2>
@@ -253,8 +253,10 @@
 </div>
 <h3 id="server-metrics"><a class="header" href="#server-metrics">Server Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Cumulative prepared-statement cache hits across all backends of each pool, by user and database. Compare with <code>pg_doorman_servers_prepared_misses</code> to derive hit ratio.</td></tr>
-<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Cumulative prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger <code>server_prepared_statement_cache_size</code>.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Live aggregate of prepared-statement cache hits across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use <code>pg_doorman_servers_prepared_hits_total</code> for rates.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Live aggregate of prepared-statement cache misses across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use <code>pg_doorman_servers_prepared_misses_total</code> for rates.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_hits_total</code></td><td>Counter form of prepared-statement cache hits across all backends of each pool, by user and database. Use <code>rate()</code> over this metric for hit throughput.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses_total</code></td><td>Counter form of prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger <code>server_prepared_statements_cache_size</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="per-client-prepared-statement-cache-metrics"><a class="header" href="#per-client-prepared-statement-cache-metrics">Per-Client Prepared Statement Cache Metrics</a></h3>
@@ -263,6 +265,16 @@
 <tr><td><code>pg_doorman_clients_prepared_named_entries</code></td><td>Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends <code>DEALLOCATE</code>. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer.</td></tr>
 <tr><td><code>pg_doorman_clients_prepared_anonymous_entries</code></td><td>Gauge by user and database. Sum of Anonymous entries across every connected client's cache. Each client's Anonymous part is capped at <code>client_anonymous_prepared_cache_size</code>, so this gauge approaches at most <code>connected_clients * cache_size</code>.</td></tr>
 <tr><td><code>pg_doorman_clients_prepared_anonymous_evictions_total</code></td><td>Counter by user and database. Cumulative count of Anonymous LRU evictions across all clients of the pool. A sustained non-zero rate signals that <code>client_anonymous_prepared_cache_size</code> is too small for the workload and the LRU is recycling entries faster than the application reuses them. The counter is monotonic per pool; an upgrade restarts it from zero.</td></tr>
+</tbody></table>
+</div>
+<h3 id="query-interner-metrics"><a class="header" href="#query-interner-metrics">Query Interner Metrics</a></h3>
+<p>The query interner is process-global. These metrics have no pool, user, or database labels; use the prepared-statement metrics above to locate the affected pool.</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_query_interner_entries</code></td><td>Gauge by <code>kind</code> (<code>named</code> or <code>anonymous</code>). Number of interned query texts. Refreshed once per GC sweep.</td></tr>
+<tr><td><code>pg_doorman_query_interner_bytes</code></td><td>Gauge by <code>kind</code> (<code>named</code> or <code>anonymous</code>). Total bytes of interned query text. Refreshed once per GC sweep.</td></tr>
+<tr><td><code>pg_doorman_query_interner_evictions_total</code></td><td>Counter by <code>kind</code> and <code>reason</code> (<code>gc_passive</code> or <code>ttl_expired</code>). Named entries are removed when no cache outside the interner still holds them; anonymous entries are removed after the idle TTL.</td></tr>
+<tr><td><code>pg_doorman_query_interner_synthetic_misses_total</code></td><td>Counter of synthetic SQLSTATE <code>26000</code> responses for anonymous prepared statements whose state was no longer available when a later <code>Bind</code> or <code>Describe</code> referenced it. Check client Anonymous LRU evictions, WARN logs, <code>RESET INTERNER</code>, and TTL evictions before increasing <code>query_interner_anon_idle_ttl_seconds</code>.</td></tr>
+<tr><td><code>pg_doorman_query_interner_gc_duration_seconds</code></td><td>Histogram of one interner GC sweep (named and anonymous combined), in seconds. Use this to detect large interners that make sweep time visible.</td></tr>
 </tbody></table>
 </div>
 <h2 id="grafana-dashboard"><a class="header" href="#grafana-dashboard">Grafana Dashboard</a></h2>
