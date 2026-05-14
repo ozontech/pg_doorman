@@ -22,21 +22,16 @@ cipher state with the `tls-migration` build (Linux, opt-in).
 
 ```admonish tip title="Use the distro package whenever you can"
 On hosts where pg_doorman comes from `apt install pg-doorman` /
-`dnf install pg-doorman`, the package manager handles step 1 atomically
-(`dpkg` stages into a temp path and renames into place; `rpm` does the
-same). `apt-get install --only-upgrade pg-doorman` or `dnf upgrade
-pg-doorman` is the idiomatic devops path. The manual `install` below is
-for direct-binary deployments where no package manager is in scope.
+`dnf install pg-doorman`, use the package manager for the binary
+replacement. `apt-get install --only-upgrade pg-doorman` or
+`dnf upgrade pg-doorman` is the idiomatic devops path. The manual
+`install` below is for direct-binary deployments where no package
+manager is in scope.
 ```
 
 ```bash
-# 1. Stage the new binary in the same directory, then rename it over
-#    the target. The final `mv` is atomic on one filesystem, so the
-#    running process keeps its old inode. Do not `cp` over the target:
-#    that overwrites the live inode and can crash the old pg_doorman
-#    with SIGBUS / SIGSEGV.
-install -m 0755 pg_doorman_new /usr/bin/pg_doorman.next
-mv -f /usr/bin/pg_doorman.next /usr/bin/pg_doorman
+# 1. Install the new binary at the path used by the running service.
+install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
 # 2. Validate the new binary against the live config before triggering
 #    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
@@ -127,11 +122,11 @@ sent, not that validation and migration have finished.
 ### Phase 1: Config validation
 
 The running process executes the same binary path it was started with,
-using `-t` and the current config file. After the atomic replacement in
-the quick start, that path points to the new binary, so the check
-validates the binary that will take over. If validation fails, the
-upgrade is aborted and the old process keeps serving traffic. An error
-banner appears in the logs:
+using `-t` and the current config file. After the install in the quick
+start, that path points to the new binary, so the check validates the
+binary that will take over. If validation fails, the upgrade is aborted
+and the old process keeps serving traffic. An error banner appears in
+the logs:
 
 ```
 !!!  BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED  !!!
