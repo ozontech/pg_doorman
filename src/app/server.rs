@@ -981,26 +981,9 @@ async fn binary_upgrade_and_shutdown(
                         }
 
                         let mut buf: [u8; 1] = [0];
-                        let mut read_fds: libc::fd_set = unsafe { std::mem::zeroed() };
-                        unsafe {
-                            libc::FD_ZERO(&mut read_fds);
-                            libc::FD_SET(pipe_read_fd, &mut read_fds);
-                        }
-                        let mut timeout = libc::timeval {
-                            tv_sec: 10,
-                            tv_usec: 0,
-                        };
-                        let select_result = unsafe {
-                            libc::select(
-                                pipe_read_fd + 1,
-                                &mut read_fds,
-                                std::ptr::null_mut(),
-                                std::ptr::null_mut(),
-                                &mut timeout,
-                            )
-                        };
+                        let ready = wait_for_pipe_readiness(pipe_read_fd, 10_000);
 
-                        if select_result > 0 {
+                        if ready {
                             unsafe {
                                 libc::read(pipe_read_fd, buf.as_mut_ptr() as *mut libc::c_void, 1);
                             }
@@ -1016,7 +999,15 @@ async fn binary_upgrade_and_shutdown(
                                 warn!("sd_notify MAINPID failed: {e}. systemd may restart the service after old process exits.");
                             }
                         } else {
-                            warn!("Timeout waiting for new process readiness");
+                            // No POLLIN within the deadline. Either the
+                            // 10s timer elapsed, or the child closed the
+                            // pipe before writing the readiness byte
+                            // (poll reports POLLHUP without POLLIN, and
+                            // `wait_for_pipe_readiness` filters those
+                            // out). Either way the new process did not
+                            // confirm it is serving, so keep the
+                            // listener and skip the MainPID handoff.
+                            warn!("New process did not signal readiness within 10s (timeout or early exit)");
                         }
 
                         unsafe {
@@ -1068,6 +1059,36 @@ async fn binary_upgrade_and_shutdown(
 
     spawn_shutdown_timer(exit_tx.clone(), shutdown_timeout);
     migration_handles
+}
+
+/// Wait up to `timeout_ms` for `pipe_read_fd` to become readable.
+///
+/// Uses `poll(2)`, not `select(2)`. select's `fd_set` is a 1024-bit
+/// bitmap; `libc::FD_SET` indexes a fixed-size array (16 longs on
+/// x86_64) and any fd >= 1024 panics with `index out of bounds`,
+/// taking the parent process down before it can drain clients or
+/// hand `MainPID` off to systemd. With `LimitNOFILE` well above
+/// 1024 in production, the readiness pipe created during a binary
+/// upgrade routinely lands above that cap. poll takes a `pollfd`
+/// array and accepts any fd.
+///
+/// The predicate is strict on `POLLIN`: if the child closes the
+/// write end without writing the readiness byte, poll reports
+/// `POLLHUP` alone and the function returns `false`. This is a
+/// deliberate change from the previous `select(2)` implementation,
+/// which treated "ready to read EOF" as "ready" and forwarded
+/// `sd_notify(MAINPID=child)` to systemd for an already-dead child.
+/// Returning `false` keeps systemd tracking the still-living parent
+/// until the next upgrade attempt.
+#[cfg(not(windows))]
+fn wait_for_pipe_readiness(pipe_read_fd: libc::c_int, timeout_ms: libc::c_int) -> bool {
+    let mut pfd = libc::pollfd {
+        fd: pipe_read_fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let result = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+    result > 0 && (pfd.revents & libc::POLLIN) != 0
 }
 
 /// Spawn a task that waits for all clients to disconnect (or timeout) and then signals exit.
@@ -1609,5 +1630,108 @@ mod umask_guard_tests {
             assert_eq!(inside & 0o077, 0o077);
         }
         unsafe { libc::umask(prior) };
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod wait_for_pipe_readiness_tests {
+    use super::wait_for_pipe_readiness;
+
+    /// Build a pipe and reserve any fd we are handed so the test
+    /// always closes both ends, even when `dup2` to a high fd fails.
+    struct Pipe {
+        read: libc::c_int,
+        write: libc::c_int,
+    }
+
+    impl Pipe {
+        fn new() -> Self {
+            let mut fds = [0_i32; 2];
+            let r = unsafe { libc::pipe(fds.as_mut_ptr()) };
+            assert_eq!(r, 0, "pipe(2) failed: {}", std::io::Error::last_os_error());
+            Self {
+                read: fds[0],
+                write: fds[1],
+            }
+        }
+    }
+
+    impl Drop for Pipe {
+        fn drop(&mut self) {
+            if self.read >= 0 {
+                unsafe { libc::close(self.read) };
+            }
+            if self.write >= 0 {
+                unsafe { libc::close(self.write) };
+            }
+        }
+    }
+
+    #[test]
+    fn returns_false_on_timeout() {
+        let pipe = Pipe::new();
+        // 50 ms timeout, nothing was written — poll must return 0.
+        assert!(!wait_for_pipe_readiness(pipe.read, 50));
+    }
+
+    #[test]
+    fn returns_true_when_byte_is_pending() {
+        let pipe = Pipe::new();
+        let byte: u8 = 1;
+        let written =
+            unsafe { libc::write(pipe.write, &byte as *const u8 as *const libc::c_void, 1) };
+        assert_eq!(written, 1, "write to pipe failed");
+        assert!(wait_for_pipe_readiness(pipe.read, 1_000));
+    }
+
+    /// POLLHUP without POLLIN: the child closes the pipe before
+    /// writing the readiness byte. The previous `select(2)` code
+    /// considered the fd "ready", read 0 bytes, and forwarded
+    /// `sd_notify(MAINPID=child)` for an already-dead child;
+    /// the poll-based predicate requires `POLLIN` and returns false.
+    /// Guards against a future "simplification" that drops the
+    /// `POLLIN` mask in the predicate.
+    #[test]
+    fn returns_false_when_writer_closes_without_writing() {
+        let mut pipe = Pipe::new();
+        unsafe { libc::close(pipe.write) };
+        pipe.write = -1;
+        assert!(!wait_for_pipe_readiness(pipe.read, 1_000));
+    }
+
+    /// Regression: select(2) on `fd >= 1024` panics inside
+    /// `libc::FD_SET` (`index out of bounds: the len is 16 but the
+    /// index is 16`) and kills the parent of the binary-upgrade
+    /// handshake. poll(2) accepts any fd, so the same scenario must
+    /// resolve as "ready" without panicking.
+    #[test]
+    fn handles_fd_above_fd_setsize() {
+        let pipe = Pipe::new();
+        // Pick a target fd well above the 1023 cap select(2)
+        // tolerates. dup2 closes the destination if it was open.
+        let target_fd: libc::c_int = 1500;
+        let dup_result = unsafe { libc::dup2(pipe.read, target_fd) };
+        if dup_result == -1 {
+            // CI sandbox without enough RLIMIT_NOFILE headroom: skip.
+            // The default soft limit on GitHub-hosted runners is well
+            // above 1500, so this should rarely trigger.
+            eprintln!(
+                "skipping handles_fd_above_fd_setsize: dup2 to {target_fd} failed ({})",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        // Pre-fill so poll has data to read immediately.
+        let byte: u8 = 1;
+        let written =
+            unsafe { libc::write(pipe.write, &byte as *const u8 as *const libc::c_void, 1) };
+        assert_eq!(written, 1, "write to pipe failed");
+
+        // This call would panic on the pre-poll implementation.
+        let ready = wait_for_pipe_readiness(target_fd, 1_000);
+
+        // Always close the dup'd fd so the runner does not leak it.
+        unsafe { libc::close(target_fd) };
+        assert!(ready, "poll must observe POLLIN on a high-numbered fd");
     }
 }
