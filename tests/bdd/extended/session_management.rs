@@ -553,6 +553,86 @@ pub async fn session_should_receive_datarow(
     );
 }
 
+#[then(regex = r#"^session "([^"]+)" should receive ParseComplete$"#)]
+pub async fn session_should_receive_parse_complete(world: &mut DoormanWorld, session_name: String) {
+    expect_message_tag(world, &session_name, '1', "ParseComplete", None);
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive BindComplete$"#)]
+pub async fn session_should_receive_bind_complete(world: &mut DoormanWorld, session_name: String) {
+    expect_message_tag(world, &session_name, '2', "BindComplete", None);
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive CommandComplete "([^"]+)"$"#)]
+pub async fn session_should_receive_command_complete(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_tag: String,
+) {
+    expect_message_tag(
+        world,
+        &session_name,
+        'C',
+        "CommandComplete",
+        Some(expected_tag.as_bytes()),
+    );
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive ReadyForQuery "([^"]+)"$"#)]
+pub async fn session_should_receive_ready_for_query(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_status: String,
+) {
+    let expected = expected_status.as_bytes();
+    assert_eq!(
+        expected.len(),
+        1,
+        "ReadyForQuery status must be a single byte ('I'/'T'/'E'), got {:?}",
+        expected_status
+    );
+    expect_message_tag(world, &session_name, 'Z', "ReadyForQuery", Some(expected));
+}
+
+/// Scan stored session messages for a frame with the given backend tag.
+/// When `expected_body_prefix` is `Some`, the matching frame's body must
+/// also start with those bytes — the caller uses this for tag-bearing
+/// messages such as CommandComplete ("BEGIN\0") and ReadyForQuery ("I").
+fn expect_message_tag(
+    world: &DoormanWorld,
+    session_name: &str,
+    tag: char,
+    label: &str,
+    expected_body_prefix: Option<&[u8]>,
+) {
+    let messages = world
+        .session_messages
+        .get(session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    for (msg_type, data) in messages {
+        if *msg_type != tag {
+            continue;
+        }
+        let Some(expected) = expected_body_prefix else {
+            return;
+        };
+        if data.starts_with(expected) {
+            return;
+        }
+    }
+
+    panic!(
+        "No {} received from session '{}' (looking for tag '{}'{})",
+        label,
+        session_name,
+        tag,
+        expected_body_prefix
+            .map(|p| format!(" with body starting {:?}", String::from_utf8_lossy(p)))
+            .unwrap_or_default(),
+    );
+}
+
 #[then(regex = r#"^session "([^"]+)" should receive error containing "([^"]+)"$"#)]
 pub async fn session_should_receive_error_containing(
     world: &mut DoormanWorld,
