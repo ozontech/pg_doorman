@@ -152,8 +152,6 @@ pub struct General {
     // pooler_check_query: ping pooler with simple query like '/* ping pooler */;'.
     #[serde(default = "General::default_pooler_check_query")]
     pub pooler_check_query: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pooler_check_query_request_bytes: Option<Vec<u8>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_certificate: Option<String>,
@@ -492,9 +490,6 @@ impl General {
     }
 
     pub fn poller_check_query_request_bytes_vec(&self) -> Vec<u8> {
-        if let Some(ref bytes) = self.pooler_check_query_request_bytes {
-            return bytes.clone();
-        }
         let mut buf = BytesMut::from(&b"Q"[..]);
         buf.put_i32(self.pooler_check_query.len() as i32 + mem::size_of::<i32>() as i32 + 1);
         buf.put_slice(self.pooler_check_query.as_bytes());
@@ -601,7 +596,6 @@ impl Default for General {
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
             pooler_check_query: Self::default_pooler_check_query(),
-            pooler_check_query_request_bytes: None,
             backlog: Self::default_backlog(),
         }
     }

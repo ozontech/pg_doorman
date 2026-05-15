@@ -2252,11 +2252,10 @@ mod tests {
 
         // Structural/internal fields that don't have their own fields.yaml entry
         let structural_fields: &[&str] = &[
-            "users",                            // nested sub-section
-            "pools",                            // top-level section
-            "path",                             // internal runtime field
-            "pooler_check_query_request_bytes", // derived from pooler_check_query
-            "auth_query",                       // nested struct, checked via "auth_query" section
+            "users",      // nested sub-section
+            "pools",      // top-level section
+            "path",       // internal runtime field
+            "auth_query", // nested struct, checked via "auth_query" section
         ];
 
         // AuthQueryConfig pub fields live in pool.rs alongside Pool pub fields.
