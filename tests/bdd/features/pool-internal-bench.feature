@@ -1,4 +1,4 @@
-@pool
+@rust @rust-1 @pool
 Feature: Internal Pool.get benchmarks
   These benchmarks measure the internal Pool.get operation performance
   with real PostgreSQL connections.

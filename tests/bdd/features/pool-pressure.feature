@@ -1,4 +1,4 @@
-@pool @pool-pressure
+@rust @rust-2 @pool @pool-pressure
 Feature: Pool under sustained client pressure
   Regression harness for Phase 4 anticipation behavior and pool sizing
   decisions. Each scenario pins a specific property of `Pool::timeout_get`

@@ -1,4 +1,4 @@
-@flush-timeout
+@rust @rust-1 @flush-timeout
 Feature: Flush timeout should send proper ErrorResponse to client
   When pg_doorman's 5s flush timeout fires (server TCP write blocks),
   the client must receive a PostgreSQL ErrorResponse message, not a

@@ -1,4 +1,4 @@
-@rust @admin @pools-memory
+@rust @rust-4 @admin @pools-memory
 Feature: Admin console SHOW POOLS_MEMORY and SHOW PREPARED_STATEMENTS commands
   Test that pg_doorman admin console correctly handles memory monitoring commands
 

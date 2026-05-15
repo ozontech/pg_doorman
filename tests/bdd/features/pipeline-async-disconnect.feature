@@ -1,4 +1,4 @@
-@rust @pipeline-async-disconnect
+@rust @rust-4 @pipeline-async-disconnect
 Feature: Async pipeline disconnect (Flush mode)
   When a client uses Flush (async/pipeline mode) instead of Sync, and disconnects
   before reading all responses, checkin_cleanup is skipped for async connections.

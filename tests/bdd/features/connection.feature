@@ -1,4 +1,4 @@
-@connection
+@rust @rust-2 @connection
 Feature: Connection through pg_doorman
 
   Scenario: Successful connection to PostgreSQL through pg_doorman

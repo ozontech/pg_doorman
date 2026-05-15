@@ -1,4 +1,4 @@
-@rust @prepared-cache @bug
+@rust @rust-1 @prepared-cache @bug
 Feature: Prepared statement cache desync on client disconnect before Sync
 
   When a client sends Parse but disconnects before Sync/Flush,
