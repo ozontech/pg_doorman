@@ -1,4 +1,4 @@
-@pooler-check-query-cache
+@rust @rust-2 @pooler-check-query-cache
 Feature: pooler_check_query response cache
   The first SimpleQuery matching general.pooler_check_query in a pool's
   lifetime is forwarded to PostgreSQL. The response is cached per pool
