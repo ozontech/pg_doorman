@@ -346,6 +346,7 @@ mod tests {
             config_hash: 0,
             per_user_startup_overlay_hash: crate::pool::empty_overlay_hash(),
             prepared_statement_cache: None,
+            check_query_cache: Arc::new(crate::pool::CheckQueryCache::new()),
             coordinator: None,
             replenish_failures: Arc::new(AtomicU32::new(0)),
             created_at: std::time::Instant::now(),

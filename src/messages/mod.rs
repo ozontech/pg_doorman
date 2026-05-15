@@ -21,8 +21,8 @@ pub use config_socket::{configure_tcp_socket, configure_unix_socket};
 pub use error::PgErrorMsg;
 pub use extended::{close_complete, Bind, Close, Describe, ExtendedProtocolData, Parse};
 pub use protocol::{
-    check_query_response, command_complete, data_row, data_row_nullable, deallocate_response,
-    error_message, error_response, error_response_terminal, flush,
+    command_complete, data_row, data_row_nullable, deallocate_response, error_message,
+    error_response, error_response_terminal, flush, has_error_response,
     insert_close_complete_after_last_close_complete, insert_close_complete_before_ready_for_query,
     insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
     md5_challenge, md5_hash_password, md5_hash_second_pass, md5_password, md5_password_with_hash,

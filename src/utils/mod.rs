@@ -1,3 +1,4 @@
+pub mod buffering_writer;
 pub mod clock;
 pub mod core_affinity;
 pub mod dashmap;

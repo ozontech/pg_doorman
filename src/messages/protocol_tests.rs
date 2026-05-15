@@ -685,3 +685,87 @@ fn test_insert_parse_complete_before_param_desc_complex_scenario() {
     .concat();
     assert_eq!(result.as_ref(), &expected[..]);
 }
+
+fn empty_query_response_msg() -> Vec<u8> {
+    vec![b'I', 0, 0, 0, 4]
+}
+
+fn data_row_single_text(value: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.push(b'D');
+    let body_len = 4 + 2 + 4 + value.len();
+    msg.extend_from_slice(&(body_len as i32).to_be_bytes());
+    msg.extend_from_slice(&1i16.to_be_bytes());
+    msg.extend_from_slice(&(value.len() as i32).to_be_bytes());
+    msg.extend_from_slice(value);
+    msg
+}
+
+fn error_response_msg(sqlstate: &str) -> Vec<u8> {
+    let message = b"backend error";
+    let mut msg = Vec::new();
+    msg.push(b'E');
+    let body_len = 4 + 1 + sqlstate.len() + 1 + 1 + message.len() + 1 + 1;
+    msg.extend_from_slice(&(body_len as i32).to_be_bytes());
+    msg.push(b'C');
+    msg.extend_from_slice(sqlstate.as_bytes());
+    msg.push(0);
+    msg.push(b'M');
+    msg.extend_from_slice(message);
+    msg.push(0);
+    msg.push(0);
+    msg
+}
+
+#[test]
+fn has_error_response_empty_buffer_returns_false() {
+    assert!(!super::protocol::has_error_response(&[]));
+}
+
+#[test]
+fn has_error_response_only_ready_for_query_returns_false() {
+    let buf = ready_for_query_msg(b'I');
+    assert!(!super::protocol::has_error_response(&buf));
+}
+
+#[test]
+fn has_error_response_empty_query_plus_rfq_returns_false() {
+    let mut buf = empty_query_response_msg();
+    buf.extend_from_slice(&ready_for_query_msg(b'I'));
+    assert!(!super::protocol::has_error_response(&buf));
+}
+
+#[test]
+fn has_error_response_data_row_plus_command_complete_plus_rfq_returns_false() {
+    let mut buf = data_row_single_text(b"1");
+    buf.extend_from_slice(&command_complete_msg("SELECT 1"));
+    buf.extend_from_slice(&ready_for_query_msg(b'I'));
+    assert!(!super::protocol::has_error_response(&buf));
+}
+
+#[test]
+fn has_error_response_error_response_plus_rfq_returns_true() {
+    let mut buf = error_response_msg("57P01");
+    buf.extend_from_slice(&ready_for_query_msg(b'E'));
+    assert!(super::protocol::has_error_response(&buf));
+}
+
+#[test]
+fn has_error_response_error_response_in_middle_returns_true() {
+    let mut buf = data_row_single_text(b"x");
+    buf.extend_from_slice(&error_response_msg("42P01"));
+    buf.extend_from_slice(&ready_for_query_msg(b'E'));
+    assert!(super::protocol::has_error_response(&buf));
+}
+
+#[test]
+fn has_error_response_truncated_frame_returns_false_without_panic() {
+    let buf = vec![b'D', 0, 0, 0, 100, 0xAA, 0xBB];
+    assert!(!super::protocol::has_error_response(&buf));
+}
+
+#[test]
+fn has_error_response_truncated_length_field_returns_false() {
+    let buf = vec![b'D', 0, 0];
+    assert!(!super::protocol::has_error_response(&buf));
+}

@@ -17,12 +17,14 @@ use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
-    check_query_response, deallocate_response, error_response, error_response_terminal,
+    deallocate_response, error_response, error_response_terminal, has_error_response,
     insert_close_complete_after_last_close_complete, read_message_reuse, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
+use crate::utils::buffering_writer::BufferingWriter;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
+use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_CACHE_TOTAL};
 
 // =============================================================================
 // PostgreSQL Extended Query Protocol - Documentation
@@ -317,11 +319,14 @@ where
             return Ok(false);
         }
 
-        // Check for pooler health check query
+        // Pooler health-check query — byte-for-byte match against the
+        // pre-encoded `general.pooler_check_query`. First probe goes to
+        // PostgreSQL and the response is cached per pool; subsequent probes
+        // are served from cache. ErrorResponse is never cached.
         if message.len() == self.pooler_check_query_request_vec.len()
             && self.pooler_check_query_request_vec.as_slice() == &message[..]
         {
-            write_all_flush(&mut self.write, &check_query_response()).await?;
+            self.handle_pooler_check_query(message).await?;
             return Ok(true);
         }
 
@@ -368,6 +373,61 @@ where
         }
 
         Ok(false)
+    }
+
+    /// Serve a `general.pooler_check_query` SimpleQuery. The first probe in
+    /// the pool's lifetime (and the first after a RELOAD that changes the
+    /// value) forwards the query to PostgreSQL; subsequent probes answer
+    /// from the per-pool response cache without touching the backend.
+    /// `ErrorResponse` from the backend is forwarded to the client as-is
+    /// and never cached.
+    async fn handle_pooler_check_query(&mut self, message: &BytesMut) -> Result<(), Error> {
+        let pool = self.get_pool().await?;
+        let current_query = crate::config::get_config()
+            .general
+            .pooler_check_query
+            .clone();
+
+        if let Some(cached) = pool.check_query_cache.get(&current_query) {
+            POOLER_CHECK_QUERY_CACHE_TOTAL.inc();
+            write_all_flush(&mut self.write, cached.as_ref()).await?;
+            return Ok(());
+        }
+
+        let mut conn = pool.database.get().await.map_err(|e| {
+            Error::ClientError(format!(
+                "pooler_check_query: failed to acquire backend: {e}"
+            ))
+        })?;
+
+        conn.send_and_flush(message).await?;
+        POOLER_CHECK_QUERY_BACKEND_TOTAL.inc();
+
+        // Server::recv must be drained in a loop until is_data_available()
+        // is false; otherwise responses larger than BUFFER_FLUSH_THRESHOLD
+        // leave bytes in the backend socket and the next checked-out client
+        // reads a desynced stream.
+        let mut response = BytesMut::new();
+        loop {
+            let mut overflow_buf = BytesMut::new();
+            let writer = BufferingWriter::new(&mut overflow_buf);
+            let chunk = conn.recv(writer, None).await?;
+            response.extend_from_slice(&chunk);
+            if !overflow_buf.is_empty() {
+                response.extend_from_slice(&overflow_buf);
+            }
+            if !conn.is_data_available() {
+                break;
+            }
+        }
+
+        write_all_flush(&mut self.write, &response).await?;
+
+        if !has_error_response(&response) {
+            pool.check_query_cache.set(current_query, response.freeze());
+        }
+
+        Ok(())
     }
 
     /// Handle simple query (Q message).

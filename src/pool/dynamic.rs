@@ -18,8 +18,8 @@ use crate::stats::AddressStats;
 use super::types::{PoolConfig, QueueMode, Timeouts};
 use super::{
     build_server_tls_for_pool, get_auth_query_state, get_coordinator, get_pool,
-    register_dynamic_pool, resolve_server_cache_size, Address, ConnectionPool, Pool,
-    PoolIdentifier, PoolSettings, PreparedStatementCache, ServerPool, POOLS,
+    register_dynamic_pool, resolve_server_cache_size, Address, CheckQueryCache, ConnectionPool,
+    Pool, PoolIdentifier, PoolSettings, PreparedStatementCache, ServerPool, POOLS,
 };
 
 /// Create a dynamic data pool for auth_query passthrough mode.
@@ -265,6 +265,7 @@ pub fn create_dynamic_pool(
                 config.general.worker_threads,
             ))),
         },
+        check_query_cache: Arc::new(CheckQueryCache::new()),
         coordinator: get_coordinator(pool_name),
         replenish_failures: Arc::new(AtomicU32::new(0)),
         created_at: std::time::Instant::now(),

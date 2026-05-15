@@ -29,6 +29,7 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 pub use crate::server::PreparedStatementCache;
 
 mod auth_query_state;
+mod check_query_cache;
 mod dynamic;
 mod eviction;
 pub mod gc;
@@ -40,6 +41,7 @@ pub mod startup_resolver;
 pub mod fallback;
 
 pub use auth_query_state::AuthQueryState;
+pub use check_query_cache::CheckQueryCache;
 pub use dynamic::create_dynamic_pool;
 pub use eviction::PoolEvictionSource;
 pub use server_pool::ServerPool;
@@ -324,6 +326,12 @@ pub struct ConnectionPool {
 
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
+
+    /// Per-pool cache for the response to `general.pooler_check_query`.
+    /// Populated on the first matching SimpleQuery from any client; subsequent
+    /// matches answer from this cache without touching the backend. The cache
+    /// self-invalidates when `general.pooler_check_query` changes via RELOAD.
+    pub check_query_cache: Arc<CheckQueryCache>,
 
     /// Database-level connection coordinator. `Some` when `max_db_connections > 0`
     /// in the pool config, `None` otherwise (disabled, zero overhead).
@@ -622,6 +630,7 @@ impl ConnectionPool {
                             config.general.worker_threads,
                         ))),
                     },
+                    check_query_cache: Arc::new(CheckQueryCache::new()),
                     coordinator: coordinators.get(pool_name).cloned(),
                     replenish_failures: Arc::new(AtomicU32::new(0)),
                     created_at: std::time::Instant::now(),
@@ -846,6 +855,7 @@ impl ConnectionPool {
                                     config.general.worker_threads,
                                 ))),
                             },
+                            check_query_cache: Arc::new(CheckQueryCache::new()),
                             coordinator: coordinators.get(pool_name).cloned(),
                             replenish_failures: Arc::new(AtomicU32::new(0)),
                             created_at: std::time::Instant::now(),
