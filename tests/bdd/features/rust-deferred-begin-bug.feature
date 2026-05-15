@@ -1,4 +1,4 @@
-@rust @rust-4 @rust-deferred-begin-bug
+@rust @rust-deferred-begin-bug
 Feature: Deferred BEGIN optimization bug with extended protocol
   Test that pg_doorman correctly handles transaction state when deferred BEGIN
   is followed by ROLLBACK without any actual queries in extended protocol.

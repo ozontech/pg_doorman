@@ -1,4 +1,4 @@
-@rust @rust-4 @pool-size-show-pools
+@rust @pool-size-show-pools
 Feature: pool_size column in SHOW POOLS
   Verify that SHOW POOLS exposes the configured pool_size for both
   static (config-defined) and dynamic (auth_query passthrough) pools.

@@ -23,5 +23,5 @@ func Test_HbaDeny(t *testing.T) {
 	defer db.Close()
 	_, err := db.Exec("select 1")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Connection from IP address 127.0.0.1 to example_user_nopassword@example_db (TLS: false)")
+	assert.Contains(t, err.Error(), "to example_user_nopassword@example_db (TLS: false) is not permitted by HBA configuration")
 }
