@@ -26,8 +26,8 @@ impl CheckQueryCache {
     /// Returns `Some(bytes)` when the cache holds a response for `current_query`.
     /// Returns `None` when the cache is empty or the stored query no longer matches.
     pub fn get(&self, current_query: &str) -> Option<Bytes> {
-        let snapshot = self.inner.load_full();
-        match snapshot.as_ref() {
+        let guard = self.inner.load();
+        match guard.as_ref() {
             Some((q, bytes)) if q == current_query => Some(bytes.clone()),
             _ => None,
         }

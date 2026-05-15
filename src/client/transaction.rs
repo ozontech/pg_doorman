@@ -17,8 +17,9 @@ use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
-    deallocate_response, error_response, error_response_terminal, has_error_response,
-    insert_close_complete_after_last_close_complete, read_message_reuse, write_all_flush,
+    deallocate_response, ends_with_idle_ready_for_query, error_response, error_response_terminal,
+    has_error_response, insert_close_complete_after_last_close_complete, read_message_reuse,
+    write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
@@ -314,19 +315,26 @@ where
     /// Returns `Ok(true)` if query was handled (caller should continue to next iteration),
     /// `Ok(false)` if query needs normal processing.
     #[inline]
-    async fn try_handle_without_server(&mut self, message: &BytesMut) -> Result<bool, Error> {
+    async fn try_handle_without_server(
+        &mut self,
+        message: &BytesMut,
+        pool: &crate::pool::ConnectionPool,
+    ) -> Result<bool, Error> {
         if message[0] != b'Q' {
             return Ok(false);
         }
 
         // Pooler health-check query — byte-for-byte match against the
-        // pre-encoded `general.pooler_check_query`. First probe goes to
-        // PostgreSQL and the response is cached per pool; subsequent probes
-        // are served from cache. ErrorResponse is never cached.
-        if message.len() == self.pooler_check_query_request_vec.len()
-            && self.pooler_check_query_request_vec.as_slice() == &message[..]
+        // pre-encoded `general.pooler_check_query`. The same snapshot is
+        // used as the cache key in `handle_pooler_check_query`, so a
+        // RELOAD that races with an in-flight probe can never mix
+        // request bytes from one config with a cache key from another.
+        let snapshot = crate::config::POOLER_CHECK_QUERY_SNAPSHOT.load_full();
+        if message.len() == snapshot.request_bytes.len()
+            && snapshot.request_bytes.as_ref() == &message[..]
         {
-            self.handle_pooler_check_query(message).await?;
+            self.handle_pooler_check_query(message, pool, &snapshot)
+                .await?;
             return Ok(true);
         }
 
@@ -379,16 +387,17 @@ where
     /// the pool's lifetime (and the first after a RELOAD that changes the
     /// value) forwards the query to PostgreSQL; subsequent probes answer
     /// from the per-pool response cache without touching the backend.
-    /// `ErrorResponse` from the backend is forwarded to the client as-is
-    /// and never cached.
-    async fn handle_pooler_check_query(&mut self, message: &BytesMut) -> Result<(), Error> {
-        let pool = self.get_pool().await?;
-        let current_query = crate::config::get_config()
-            .general
-            .pooler_check_query
-            .clone();
-
-        if let Some(cached) = pool.check_query_cache.get(&current_query) {
+    /// `ErrorResponse` and any response that does not end in
+    /// `ReadyForQuery('I')dle` are forwarded to the client as-is and
+    /// never cached — caching them would freeze a non-idle backend state
+    /// and replay it to later probes.
+    async fn handle_pooler_check_query(
+        &mut self,
+        message: &BytesMut,
+        pool: &crate::pool::ConnectionPool,
+        snapshot: &crate::config::PoolerCheckQuerySnapshot,
+    ) -> Result<(), Error> {
+        if let Some(cached) = pool.check_query_cache.get(&snapshot.query) {
             POOLER_CHECK_QUERY_CACHE_TOTAL.inc();
             write_all_flush(&mut self.write, cached.as_ref()).await?;
             return Ok(());
@@ -400,7 +409,17 @@ where
             ))
         })?;
 
-        conn.send_and_flush(message).await?;
+        if let Err(err) = conn.checkin_cleanup().await {
+            conn.mark_bad(&format!(
+                "pooler_check_query: checkin_cleanup failed: {err}"
+            ));
+            return Err(err);
+        }
+
+        if let Err(err) = conn.send_and_flush(message).await {
+            conn.mark_bad(&format!("pooler_check_query: send failed: {err}"));
+            return Err(err);
+        }
         POOLER_CHECK_QUERY_BACKEND_TOTAL.inc();
 
         // Server::recv must be drained in a loop until is_data_available()
@@ -411,7 +430,13 @@ where
         loop {
             let mut overflow_buf = BytesMut::new();
             let writer = BufferingWriter::new(&mut overflow_buf);
-            let chunk = conn.recv(writer, None).await?;
+            let chunk = match conn.recv(writer, None).await {
+                Ok(chunk) => chunk,
+                Err(err) => {
+                    conn.mark_bad(&format!("pooler_check_query: recv failed: {err}"));
+                    return Err(err);
+                }
+            };
             response.extend_from_slice(&chunk);
             if !overflow_buf.is_empty() {
                 response.extend_from_slice(&overflow_buf);
@@ -423,8 +448,9 @@ where
 
         write_all_flush(&mut self.write, &response).await?;
 
-        if !has_error_response(&response) {
-            pool.check_query_cache.set(current_query, response.freeze());
+        if !has_error_response(&response) && ends_with_idle_ready_for_query(&response) {
+            pool.check_query_cache
+                .set(snapshot.query.clone(), response.freeze());
         }
 
         Ok(())
@@ -750,7 +776,10 @@ where
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
-            if self.try_handle_without_server(&message).await? {
+            if self
+                .try_handle_without_server(&message, current_pool)
+                .await?
+            {
                 continue;
             }
 

@@ -615,6 +615,15 @@ pub fn parse_complete() -> BytesMut {
     bytes
 }
 
+/// Returns `true` iff `bytes` ends with a complete `ReadyForQuery('I')dle`
+/// frame: `Z 00 00 00 05 I`. The check confirms that the backend left the
+/// SimpleQuery cycle cleanly and is not in a transaction or error block —
+/// the only state in which the response is safe to cache and replay.
+pub fn ends_with_idle_ready_for_query(bytes: &[u8]) -> bool {
+    const RFQ_IDLE: &[u8] = &[b'Z', 0, 0, 0, 5, b'I'];
+    bytes.ends_with(RFQ_IDLE)
+}
+
 /// Scan a buffered response stream for an `ErrorResponse` (tag `b'E'`) frame.
 /// Returns `true` if any frame in `bytes` has the error tag.
 ///

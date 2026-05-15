@@ -769,3 +769,41 @@ fn has_error_response_truncated_length_field_returns_false() {
     let buf = vec![b'D', 0, 0];
     assert!(!super::protocol::has_error_response(&buf));
 }
+
+#[test]
+fn ends_with_idle_rfq_empty_buffer_returns_false() {
+    assert!(!super::protocol::ends_with_idle_ready_for_query(&[]));
+}
+
+#[test]
+fn ends_with_idle_rfq_only_idle_rfq_returns_true() {
+    let buf = ready_for_query_msg(b'I');
+    assert!(super::protocol::ends_with_idle_ready_for_query(&buf));
+}
+
+#[test]
+fn ends_with_idle_rfq_transaction_rfq_returns_false() {
+    let buf = ready_for_query_msg(b'T');
+    assert!(!super::protocol::ends_with_idle_ready_for_query(&buf));
+}
+
+#[test]
+fn ends_with_idle_rfq_error_state_rfq_returns_false() {
+    let buf = ready_for_query_msg(b'E');
+    assert!(!super::protocol::ends_with_idle_ready_for_query(&buf));
+}
+
+#[test]
+fn ends_with_idle_rfq_select_then_idle_returns_true() {
+    let mut buf = data_row_single_text(b"1");
+    buf.extend_from_slice(&command_complete_msg("SELECT 1"));
+    buf.extend_from_slice(&ready_for_query_msg(b'I'));
+    assert!(super::protocol::ends_with_idle_ready_for_query(&buf));
+}
+
+#[test]
+fn ends_with_idle_rfq_truncated_trailing_byte_returns_false() {
+    // Tail is one byte short of a full RFQ frame.
+    let buf = vec![b'Z', 0, 0, 0, 5];
+    assert!(!super::protocol::ends_with_idle_ready_for_query(&buf));
+}

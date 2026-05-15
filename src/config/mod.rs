@@ -27,6 +27,7 @@ mod duration;
 mod general;
 mod include;
 mod pool;
+mod pooler_check_query;
 pub mod startup_parameters;
 mod talos;
 pub mod tls;
@@ -43,6 +44,9 @@ pub use duration::Duration;
 pub use general::General;
 pub use include::{GeneralWithInclude, Include, ServerConfig};
 pub use pool::{AuthQueryConfig, Pool};
+pub use pooler_check_query::{
+    update_pooler_check_query_snapshot, PoolerCheckQuerySnapshot, POOLER_CHECK_QUERY_SNAPSHOT,
+};
 pub use talos::Talos;
 pub use tls::{ServerTlsConfig, ServerTlsMode};
 pub use user::User;
@@ -862,6 +866,7 @@ pub async fn parse(path: &str) -> Result<(), Error> {
 
     // Update the configuration globally.
     CONFIG.store(Arc::new(config.clone()));
+    update_pooler_check_query_snapshot(&config.general.pooler_check_query);
 
     Ok(())
 }

@@ -2149,7 +2149,7 @@ mod tests {
                 if !trimmed.starts_with("pub ") || !trimmed.contains(':') {
                     return None;
                 }
-                // Skip pub fn, pub mod, pub struct, pub enum, pub use, pub type, pub const
+                // Skip pub fn, pub mod, pub struct, pub enum, pub use, pub type, pub const, pub static
                 if trimmed.starts_with("pub fn ")
                     || trimmed.starts_with("pub mod ")
                     || trimmed.starts_with("pub struct ")
@@ -2157,6 +2157,7 @@ mod tests {
                     || trimmed.starts_with("pub use ")
                     || trimmed.starts_with("pub type ")
                     || trimmed.starts_with("pub const ")
+                    || trimmed.starts_with("pub static ")
                 {
                     return None;
                 }

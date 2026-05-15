@@ -1,9 +1,7 @@
 //! General configuration settings for the connection pooler.
 
-use bytes::{BufMut, BytesMut};
 use ipnet::IpNet;
 use serde_derive::{Deserialize, Serialize};
-use std::mem;
 
 use super::tls;
 use super::{ByteSize, Duration, Include};
@@ -487,14 +485,6 @@ impl General {
 
     pub fn default_pooler_check_query() -> String {
         ";".to_string()
-    }
-
-    pub fn poller_check_query_request_bytes_vec(&self) -> Vec<u8> {
-        let mut buf = BytesMut::from(&b"Q"[..]);
-        buf.put_i32(self.pooler_check_query.len() as i32 + mem::size_of::<i32>() as i32 + 1);
-        buf.put_slice(self.pooler_check_query.as_bytes());
-        buf.put_u8(b'\0');
-        buf.to_vec()
     }
 
     pub fn default_hba() -> Vec<IpNet> {

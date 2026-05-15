@@ -458,7 +458,6 @@ where
             prepared: PreparedStatementState::new(prepared_statements_enabled, anon_cache_size),
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: config.general.max_memory_usage.as_bytes(),
-            pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
             client_pending_begin: None,
             #[cfg(unix)]
             raw_fd,
@@ -501,7 +500,6 @@ where
             session_xact_start: None,
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: 128 * 1024 * 1024,
-            pooler_check_query_request_vec: Vec::new(),
             client_pending_begin: None,
             #[cfg(unix)]
             raw_fd: None,
