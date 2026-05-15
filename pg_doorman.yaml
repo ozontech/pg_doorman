@@ -275,8 +275,10 @@ general:
   # Default: "1MB" (1048576 bytes)
   message_size_to_be_stream: "1MB"
 
-  # Query intercepted by pg_doorman and answered locally (never reaches PostgreSQL).
-  # Used by load balancers and monitoring to check if the pooler is alive.
+  # SimpleQuery used by load balancers and monitoring as a liveness probe.
+  # The first match per pool is forwarded to PostgreSQL; the response is cached
+  # and reused for every subsequent match without touching the backend.
+  # The query must be stable (same input → same output) and side-effect free.
   # Default: ";"
   pooler_check_query: ";"
 

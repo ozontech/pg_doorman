@@ -1,5 +1,65 @@
 # Changelog
 
+### 3.10.0
+
+Per-pool response cache for `general.pooler_check_query`. The first
+matching SimpleQuery in each pool's lifetime is forwarded to PostgreSQL;
+every subsequent matching probe is answered from the cache without
+touching the backend.
+
+#### Behavior change for cold pools
+
+Before this release pg_doorman answered any `pooler_check_query` match
+locally with a hardcoded empty result. The default `;` came back instantly
+without ever talking to PostgreSQL, and a non-empty value such as `select 1`
+returned an empty response that did not match what a real PostgreSQL would
+have produced.
+
+The first probe per pool now does one PostgreSQL round-trip and captures
+the real response. If PostgreSQL is unreachable at that moment, the
+probing client sees a probe failure instead of an unconditional OK; the
+earlier hardcode reported the pooler as healthy even when PostgreSQL was
+down. Typical JDBC keepalive queries such as `select 1` (WildFly, HikariCP)
+and `select 'pg_doorman'` now return the expected row.
+
+#### Cache lifecycle
+
+The cache is per pool and keyed by the query string. A `RELOAD` that
+changes `pooler_check_query` invalidates the cache on the next ping; the
+new value triggers one fresh backend probe and is then served from cache
+until the value changes again. A reload that keeps the same value keeps
+the cached response. `ErrorResponse` from the backend is forwarded to
+the client unchanged and is never cached, so the next probe retries
+against PostgreSQL.
+
+#### Operator contract
+
+`pooler_check_query` must be stable: the same input must produce the
+same bytes, with no side effects. Safe values: `;`, `select 1`,
+`select 'pg_doorman'`, `select version()`.
+
+Unsafe values that the cache will silently freeze:
+
+- `select now()`, `select clock_timestamp()` — the cached timestamp
+  never advances.
+- `select pg_is_in_recovery()` — a failover flips the role on
+  PostgreSQL but the cached response still reports the old role.
+- `select count(*) from <table>` — the cached count is whatever the
+  first probe observed.
+- `UPDATE`, `INSERT`, `DELETE`, `CALL`, `DO` — the side effect runs
+  once and the success response is cached forever.
+
+#### New metrics
+
+- `pg_doorman_pooler_check_query_backend_total` — counter, increments
+  on each probe forwarded to PostgreSQL (cache miss or
+  RELOAD-induced re-probe).
+- `pg_doorman_pooler_check_query_cache_total` — counter, increments
+  on each probe served from the cache.
+
+The ratio `cache_total / (cache_total + backend_total)` is the cache
+hit rate.
+
 ### 3.9.1
 
 Web admin console refresh and a follow-up pass on `startup_parameters`.

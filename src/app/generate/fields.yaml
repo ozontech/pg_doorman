@@ -758,15 +758,49 @@ fields:
     pooler_check_query:
       config:
         en: |
-          Query intercepted by pg_doorman and answered locally (never reaches PostgreSQL).
-          Used by load balancers and monitoring to check if the pooler is alive.
+          SimpleQuery used by load balancers and monitoring as a liveness probe.
+          The first match per pool is forwarded to PostgreSQL; the response is cached
+          and reused for every subsequent match without touching the backend.
+          The query must be stable (same input → same output) and side-effect free.
         ru: |
-          Запрос, перехватываемый pg_doorman и отвечаемый локально (не доходит до PostgreSQL).
-          Используется балансировщиками и мониторингом для проверки живости пулера.
+          SimpleQuery, который балансировщики и мониторинг используют как проверку живости.
+          Первое совпадение в пуле отправляется в PostgreSQL; ответ кешируется и переиспользуется
+          для всех последующих совпадений без обращения к бэкенду.
+          Запрос должен быть детерминированным и без побочных эффектов.
       doc: |
-        When a client sends this exact query as a SimpleQuery, pg_doorman responds immediately
-        without forwarding it to PostgreSQL. Useful for health checks from load balancers (HAProxy, pgbouncer-style `SELECT 1`)
-        or application-level keepalive probes. The default `;` (empty statement) is the lightest possible check.
+        When a client sends this exact query as a SimpleQuery, pg_doorman serves it through a per-pool
+        response cache. The first matching probe in each pool's lifetime is forwarded to PostgreSQL and
+        the full response is captured. Subsequent matching probes are answered from the cache without
+        touching the backend.
+
+        The cache is keyed by the query string. A `RELOAD` that changes `pooler_check_query` invalidates
+        the cache on the next ping; the new value triggers one fresh backend probe and is then served
+        from cache until the value changes again. A reload that keeps the same value keeps the cached
+        response. `ErrorResponse` from the backend is forwarded to the client unchanged and is never
+        cached, so the next probe retries against PostgreSQL.
+
+        Cold-pool behavior changed: the first probe per pool now does one PostgreSQL round-trip even
+        for the default `;`. If PostgreSQL is unreachable at that moment, the probing client sees a
+        probe failure instead of an unconditional OK. The earlier hardcoded local answer reported the
+        pooler as healthy even when PostgreSQL was down, and made non-empty values such as `select 1`
+        return an empty response.
+
+        **Operator contract.** The query must be stable: the same input must always produce the same
+        bytes, with no side effects. Safe values: `;`, `select 1`, `select 'pg_doorman'`, `select version()`.
+
+        Unsafe values that the cache will silently freeze:
+
+        - `select now()`, `select clock_timestamp()` — the cached timestamp never advances.
+        - `select pg_is_in_recovery()` — a failover flips the role on PostgreSQL but the cached response
+          still reports the old role.
+        - `select count(*) from <table>` — the cached count is whatever the first probe observed.
+        - `UPDATE`, `INSERT`, `DELETE`, `CALL`, `DO` — the side effect runs once and the success
+          response is cached forever.
+
+        Cache hit rate is exported as two counters without labels:
+        `pg_doorman_pooler_check_query_backend_total` (probes forwarded to PostgreSQL) and
+        `pg_doorman_pooler_check_query_cache_total` (probes served from cache). The ratio
+        `cache_total / (cache_total + backend_total)` is the hit rate.
       default: '";"'
 
     prepared_statements:
