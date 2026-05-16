@@ -1,4 +1,4 @@
-@rust @session-mode-error
+@rust @rust-2 @session-mode-error
 Feature: Session mode does not destroy connections on SQL errors
   When pg_doorman runs in session mode and the server is in async protocol mode (Flush),
   a PostgreSQL ErrorResponse (syntax error, division by zero) should not mark the server

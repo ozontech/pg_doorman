@@ -1,4 +1,4 @@
-@pool @session-mode
+@rust @rust-4 @pool @session-mode
 Feature: Session mode statistics accuracy
   Regression test for query_time and xact_time percentiles in session mode.
   Without the fix, both metrics accumulate the entire session duration

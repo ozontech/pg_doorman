@@ -508,7 +508,9 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_query_interner_bytes` | Gauge by `kind` (`named` or `anonymous`). Total bytes of interned query text. Refreshed once per GC sweep. |");
     let _ = writeln!(out, "| `pg_doorman_query_interner_evictions_total` | Counter by `kind` and `reason` (`gc_passive` or `ttl_expired`). Named entries are removed when no cache outside the interner still holds them; anonymous entries are removed after the idle TTL. |");
     let _ = writeln!(out, "| `pg_doorman_query_interner_synthetic_misses_total` | Counter of synthetic SQLSTATE `26000` responses for anonymous prepared statements whose state was no longer available when a later `Bind` or `Describe` referenced it. Check client Anonymous LRU evictions, WARN logs, `RESET INTERNER`, and TTL evictions before increasing `query_interner_anon_idle_ttl_seconds`. |");
-    let _ = writeln!(out, "| `pg_doorman_query_interner_gc_duration_seconds` | Histogram of one interner GC sweep (named and anonymous combined), in seconds. Use this to detect large interners that make sweep time visible. |\n");
+    let _ = writeln!(out, "| `pg_doorman_query_interner_gc_duration_seconds` | Histogram of one interner GC sweep (named and anonymous combined), in seconds. Use this to detect large interners that make sweep time visible. |");
+    let _ = writeln!(out, "| `pg_doorman_pooler_check_query_backend_total` | Counter of `pooler_check_query` probes forwarded to PostgreSQL (cache miss or RELOAD-induced re-probe). Steady-state value should be flat after warmup; a continuously rising rate means the per-pool cache is not retaining its entry. |");
+    let _ = writeln!(out, "| `pg_doorman_pooler_check_query_cache_total` | Counter of `pooler_check_query` probes answered from the per-pool response cache without touching the backend. Hit rate = `cache_total / (cache_total + backend_total)`. |\n");
 
     // Grafana Dashboard
     let _ = writeln!(out, "## Grafana Dashboard\n");

@@ -1,4 +1,4 @@
-@pool @direct-handoff
+@rust @rust-4 @pool @direct-handoff
 Feature: Direct handoff — return_object delivers via oneshot channel
   Regression harness for the oneshot-channel handoff path in
   return_object. When a connection is returned and the waiters queue

@@ -585,8 +585,6 @@ pub struct Client<S, T> {
 
     pub(crate) client_last_messages_in_tx: PooledBuffer,
 
-    pub(crate) pooler_check_query_request_vec: Vec<u8>,
-
     /// Pending BEGIN message for deferred connection optimization.
     /// When client sends standalone "begin;", we synthesize response
     /// and defer actual BEGIN until next query arrives.

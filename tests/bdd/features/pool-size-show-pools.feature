@@ -1,4 +1,4 @@
-@rust @pool-size-show-pools
+@rust @rust-4 @pool-size-show-pools
 Feature: pool_size column in SHOW POOLS
   Verify that SHOW POOLS exposes the configured pool_size for both
   static (config-defined) and dynamic (auth_query passthrough) pools.
@@ -71,8 +71,7 @@ Feature: pool_size column in SHOW POOLS
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            pool_size: 1
-            default_pool_size: 3
+            pool_size: 3
             cache_ttl: "1h"
             cache_failure_ttl: "30s"
             min_interval: "0s"

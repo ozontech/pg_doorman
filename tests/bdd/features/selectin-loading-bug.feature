@@ -1,4 +1,4 @@
-@selectin
+@rust @rust-1 @selectin
 Feature: Selectin loading bug reproduction (asyncpg + SQLAlchemy)
   Reproduces protocol desync when pg_doorman's prepared statement cache eviction
   happens while async_mode=true (between Flush and Sync).

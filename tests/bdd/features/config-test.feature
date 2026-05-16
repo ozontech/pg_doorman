@@ -1,4 +1,4 @@
-@config-test
+@rust @rust-1 @config-test
 Feature: Configuration test mode (-t / --test-config)
   pg_doorman should support nginx-style configuration validation with -t flag.
   This allows validating configuration files before deployment without starting the server.

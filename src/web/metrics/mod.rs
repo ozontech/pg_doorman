@@ -696,6 +696,37 @@ pub(crate) static QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL: Lazy<IntCounter> = Lazy
     counter
 });
 
+/// Times pg_doorman forwarded a `pooler_check_query` SimpleQuery to the
+/// backend because the per-pool cache was empty or the cached query no
+/// longer matches `general.pooler_check_query`. The first probe after
+/// process start and the first probe after a RELOAD that changes the
+/// value both add to this counter.
+pub(crate) static POOLER_CHECK_QUERY_BACKEND_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let counter = IntCounter::new(
+        "pg_doorman_pooler_check_query_backend_total",
+        "Pooler check queries forwarded to PostgreSQL because the per-pool \
+         response cache was empty or the cached query no longer matches the \
+         current general.pooler_check_query value.",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Times pg_doorman answered a `pooler_check_query` SimpleQuery from the
+/// per-pool response cache without touching the backend. The ratio
+/// `cache_total / (cache_total + backend_total)` is the cache hit rate.
+pub(crate) static POOLER_CHECK_QUERY_CACHE_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let counter = IntCounter::new(
+        "pg_doorman_pooler_check_query_cache_total",
+        "Pooler check queries answered from the per-pool response cache \
+         without forwarding to PostgreSQL.",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 /// Wall-clock time spent in a single GC sweep cycle (named + anonymous
 /// combined). Custom buckets target sweep durations from 100 µs to 1 s
 /// because shard-scan time scales with interner size.

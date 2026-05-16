@@ -1,4 +1,4 @@
-@hba
+@rust @rust-2 @hba
 Feature: HBA authentication tests
   Test pg_doorman HBA trust authentication and deny rules
 

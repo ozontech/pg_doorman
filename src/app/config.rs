@@ -1,6 +1,3 @@
-use log::error;
-use std::io::{self, IsTerminal, Write};
-
 use crate::config::{get_config, Config};
 use tokio::runtime::Builder;
 
@@ -15,13 +12,10 @@ pub fn init_config(args: &Args) -> Result<Config, Box<dyn std::error::Error>> {
             match crate::config::parse(args.config_file.as_str()).await {
                 Ok(_) => (),
                 Err(err) => {
-                    let stdin = io::stdin();
-                    if stdin.is_terminal() {
-                        eprintln!("Config parse error: {err}");
-                        io::stdout().flush().unwrap();
-                    } else {
-                        error!("Config parse error: {err:?}");
-                    }
+                    // Always write to stderr — the logger has not been
+                    // initialized yet, so `log::error!` is swallowed on
+                    // non-terminal stdin (CI, supervisor).
+                    eprintln!("Config parse error: {err}");
                     std::process::exit(exitcode::CONFIG);
                 }
             };

@@ -1,5 +1,7 @@
 //! Tests for configuration module.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use super::*;
 use serial_test::serial;
 use std::io::Write;

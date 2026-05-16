@@ -42,7 +42,7 @@ Feature: Deferred BEGIN optimization bug with extended protocol
     # This test reproduces the bug using pure extended protocol
 
     # Session 1: Create connection, send BEGIN via extended protocol
-    When we create extended session "session1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    When we create session "session1" to pg_doorman as "example_user_1" with password "" and database "example_db"
 
     # Send Parse for BEGIN
     And we send Parse "" with query "BEGIN" to session "session1"
@@ -79,7 +79,7 @@ Feature: Deferred BEGIN optimization bug with extended protocol
     # Session 2: Reuse the connection from pool
     # BUG: If pg_doorman doesn't properly reset transaction state,
     # the next client might see stale state
-    When we create extended session "session2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    When we create session "session2" to pg_doorman as "example_user_1" with password "" and database "example_db"
 
     # Try to start a new transaction
     And we send Parse "" with query "BEGIN" to session "session2"
@@ -144,7 +144,7 @@ Feature: Deferred BEGIN optimization bug with extended protocol
   Scenario: Multiple empty transactions in sequence
     # Stress test: multiple BEGIN/ROLLBACK cycles without queries
 
-    When we create extended session "client" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    When we create session "client" to pg_doorman as "example_user_1" with password "" and database "example_db"
 
     # Iteration 1: BEGIN + ROLLBACK
     And we send Parse "" with query "BEGIN" to session "client"
@@ -215,7 +215,7 @@ Feature: Deferred BEGIN optimization bug with extended protocol
   Scenario: Deferred BEGIN followed by ROLLBACK in pipeline mode
     # Test async pipeline mode with deferred BEGIN
 
-    When we create extended session "client" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    When we create session "client" to pg_doorman as "example_user_1" with password "" and database "example_db"
 
     # Send BEGIN + ROLLBACK in pipeline (multiple messages before Sync)
     And we send Parse "" with query "BEGIN" to session "client"

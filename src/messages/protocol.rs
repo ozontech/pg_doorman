@@ -1,6 +1,5 @@
 // Standard library imports
 use std::collections::HashMap;
-use std::mem;
 // External crate imports
 use crate::messages::constants::SCRAM_SHA_256;
 use bytes::{Buf, BufMut, BytesMut};
@@ -616,16 +615,47 @@ pub fn parse_complete() -> BytesMut {
     bytes
 }
 
-/// Create a check query response message.
-pub fn check_query_response() -> BytesMut {
-    let mut bytes = BytesMut::with_capacity(11);
+/// Returns `true` iff `bytes` ends with a complete `ReadyForQuery('I')dle`
+/// frame: `Z 00 00 00 05 I`. The check confirms that the backend left the
+/// SimpleQuery cycle cleanly and is not in a transaction or error block —
+/// the only state in which the response is safe to cache and replay.
+pub fn ends_with_idle_ready_for_query(bytes: &[u8]) -> bool {
+    const RFQ_IDLE: &[u8] = &[b'Z', 0, 0, 0, 5, b'I'];
+    bytes.ends_with(RFQ_IDLE)
+}
 
-    bytes.put_u8(b'I');
-    bytes.put_i32(mem::size_of::<i32>() as i32);
-    bytes.put_u8(b'Z');
-    bytes.put_i32(mem::size_of::<i32>() as i32 + 1);
-    bytes.put_u8(b'I');
-    bytes
+/// Scan a buffered response stream for an `ErrorResponse` (tag `b'E'`) frame.
+/// Returns `true` if any frame in `bytes` has the error tag.
+///
+/// The buffer is expected to contain zero or more PostgreSQL backend messages
+/// in wire format (`tag:1 + len:4 + body`). A truncated trailing frame is
+/// treated as "no error here" and stops the scan without panicking.
+pub fn has_error_response(bytes: &[u8]) -> bool {
+    let mut offset = 0;
+    while offset + 5 <= bytes.len() {
+        let tag = bytes[offset];
+        if tag == b'E' {
+            return true;
+        }
+        let len = i32::from_be_bytes([
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+            bytes[offset + 4],
+        ]);
+        if len < 4 {
+            return false;
+        }
+        let frame_end = match offset.checked_add(1 + len as usize) {
+            Some(end) => end,
+            None => return false,
+        };
+        if frame_end > bytes.len() {
+            return false;
+        }
+        offset = frame_end;
+    }
+    false
 }
 
 /// Create a deallocate response message.

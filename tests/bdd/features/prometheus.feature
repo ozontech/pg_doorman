@@ -1,4 +1,4 @@
-@prometheus
+@rust @rust-2 @prometheus
 Feature: Prometheus metrics tests
   Test pg_doorman Prometheus metrics endpoint
 

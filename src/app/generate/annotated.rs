@@ -2149,7 +2149,7 @@ mod tests {
                 if !trimmed.starts_with("pub ") || !trimmed.contains(':') {
                     return None;
                 }
-                // Skip pub fn, pub mod, pub struct, pub enum, pub use, pub type, pub const
+                // Skip pub fn, pub mod, pub struct, pub enum, pub use, pub type, pub const, pub static
                 if trimmed.starts_with("pub fn ")
                     || trimmed.starts_with("pub mod ")
                     || trimmed.starts_with("pub struct ")
@@ -2157,6 +2157,7 @@ mod tests {
                     || trimmed.starts_with("pub use ")
                     || trimmed.starts_with("pub type ")
                     || trimmed.starts_with("pub const ")
+                    || trimmed.starts_with("pub static ")
                 {
                     return None;
                 }
@@ -2252,11 +2253,10 @@ mod tests {
 
         // Structural/internal fields that don't have their own fields.yaml entry
         let structural_fields: &[&str] = &[
-            "users",                            // nested sub-section
-            "pools",                            // top-level section
-            "path",                             // internal runtime field
-            "pooler_check_query_request_bytes", // derived from pooler_check_query
-            "auth_query",                       // nested struct, checked via "auth_query" section
+            "users",      // nested sub-section
+            "pools",      // top-level section
+            "path",       // internal runtime field
+            "auth_query", // nested struct, checked via "auth_query" section
         ];
 
         // AuthQueryConfig pub fields live in pool.rs alongside Pool pub fields.
