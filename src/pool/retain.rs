@@ -297,7 +297,7 @@ pub fn drain_all_pools() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::Duration;
 
     use crate::config::{Address, PoolMode, User};
@@ -349,7 +349,7 @@ mod tests {
             check_query_cache: Arc::new(crate::pool::CheckQueryCache::new()),
             coordinator: None,
             replenish_failures: Arc::new(AtomicU32::new(0)),
-            created_at: std::time::Instant::now(),
+            init_complete: Arc::new(AtomicBool::new(true)),
         }
     }
 
