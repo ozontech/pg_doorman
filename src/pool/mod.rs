@@ -5,7 +5,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::{
@@ -33,6 +33,7 @@ mod check_query_cache;
 mod dynamic;
 mod eviction;
 pub mod gc;
+mod init_guard;
 pub mod pool_coordinator;
 pub mod retain;
 mod server_pool;
@@ -44,6 +45,7 @@ pub use auth_query_state::AuthQueryState;
 pub use check_query_cache::CheckQueryCache;
 pub use dynamic::create_dynamic_pool;
 pub use eviction::PoolEvictionSource;
+pub use init_guard::PoolInitGuard;
 pub use server_pool::ServerPool;
 
 pub type ProcessId = i32;
@@ -342,9 +344,14 @@ pub struct ConnectionPool {
     /// Reset to 0 on successful replenish.
     pub(crate) replenish_failures: Arc<AtomicU32>,
 
-    /// When this pool was created. Used by GC to avoid removing
-    /// dynamic pools that are still establishing their first connection.
-    pub(crate) created_at: std::time::Instant,
+    /// Whether the pool has completed initialization (first server
+    /// connection established). Static pools start with `true`. Dynamic
+    /// pools start with `false` and are flipped to `true` by
+    /// `PoolInitGuard::commit` once `get_server_parameters` succeeds.
+    /// GC skips pools with `init_complete == false` so a pool that is
+    /// still establishing its first connection cannot be reaped while
+    /// `pool_state().size` is still zero.
+    pub(crate) init_complete: Arc<AtomicBool>,
 }
 
 impl ConnectionPool {
@@ -633,7 +640,7 @@ impl ConnectionPool {
                     check_query_cache: Arc::new(CheckQueryCache::new()),
                     coordinator: coordinators.get(pool_name).cloned(),
                     replenish_failures: Arc::new(AtomicU32::new(0)),
-                    created_at: std::time::Instant::now(),
+                    init_complete: Arc::new(AtomicBool::new(true)),
                 };
 
                 // There is one pool per database/user pair.
@@ -858,7 +865,7 @@ impl ConnectionPool {
                             check_query_cache: Arc::new(CheckQueryCache::new()),
                             coordinator: coordinators.get(pool_name).cloned(),
                             replenish_failures: Arc::new(AtomicU32::new(0)),
-                            created_at: std::time::Instant::now(),
+                            init_complete: Arc::new(AtomicBool::new(true)),
                         };
 
                         new_pools.insert(identifier.clone(), conn_pool);

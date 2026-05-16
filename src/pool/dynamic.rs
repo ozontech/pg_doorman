@@ -5,7 +5,7 @@
 //! and garbage-collected when idle. On RELOAD, dynamic pools are dropped and recreated
 //! on the next client connection with fresh settings.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use log::{debug, info, warn};
@@ -37,7 +37,7 @@ pub fn create_dynamic_pool(
     backend_auth: Option<BackendAuthMethod>,
     fetched_overlay: Arc<std::collections::HashMap<String, String>>,
     fetched_overlay_hash: u64,
-) -> Result<ConnectionPool, Error> {
+) -> Result<(ConnectionPool, super::PoolInitGuard), Error> {
     // Fast path: pool already exists. The cache-side refetch path
     // already drops the live pool when an auth_query refetch changes
     // the overlay (see `drop_dynamic_pool_if_overlay_drifted`), but a
@@ -68,7 +68,7 @@ pub fn create_dynamic_pool(
                     *ba_lock.write() = new_ba.clone();
                 }
             }
-            return Ok(existing);
+            return Ok((existing, super::PoolInitGuard::already_committed()));
         }
         if super::drop_dynamic_pool(&identifier) {
             info!(
@@ -268,7 +268,7 @@ pub fn create_dynamic_pool(
         check_query_cache: Arc::new(CheckQueryCache::new()),
         coordinator: get_coordinator(pool_name),
         replenish_failures: Arc::new(AtomicU32::new(0)),
-        created_at: std::time::Instant::now(),
+        init_complete: Arc::new(AtomicBool::new(false)),
     };
 
     // Atomic insert into POOLS
@@ -300,7 +300,7 @@ pub fn create_dynamic_pool(
                     *ba_lock.write() = new_ba.read().clone();
                 }
             }
-            return Ok(existing.clone());
+            return Ok((existing.clone(), super::PoolInitGuard::already_committed()));
         }
         info!(
             "[{username}@{pool_name}] auth_query: per-user startup_parameters overlay drift on slow-path race — replacing concurrently-built pool"
@@ -348,7 +348,9 @@ pub fn create_dynamic_pool(
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    Ok(conn_pool)
+    let guard =
+        super::PoolInitGuard::for_new_pool(identifier, Arc::clone(&conn_pool.init_complete));
+    Ok((conn_pool, guard))
 }
 
 /// Decide whether `create_dynamic_pool` should replace an existing
