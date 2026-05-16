@@ -664,9 +664,36 @@ hostnossl all      all    192.168.1.0/24  trust
 в административной SQL-консоли и через <code>/api/pools</code> в веб-интерфейсе.</p>
 <p>По умолчанию: <code>{}</code>.</p>
 <h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
-<p>Когда клиент отправляет ровно этот запрос как SimpleQuery, pg_doorman отвечает немедленно
-без перенаправления его в PostgreSQL. Полезно для health checks от балансировщиков нагрузки (HAProxy, в стиле pgbouncer <code>SELECT 1</code>)
-или keepalive-проб уровня приложения. Значение по умолчанию <code>;</code> (пустой statement) — самая лёгкая возможная проверка.</p>
+<p>Когда клиент отправляет ровно этот запрос как SimpleQuery, pg_doorman обслуживает его через
+кеш ответа на уровне пула. Первая совпадающая проба за время жизни каждого пула отправляется
+в PostgreSQL, и полный ответ сохраняется. Последующие совпадающие пробы отвечаются из кеша
+без обращения к бэкенду.</p>
+<p>Кеш индексируется по строке запроса. <code>RELOAD</code> с другим значением <code>pooler_check_query</code>
+инвалидирует кеш на следующей пробе; новое значение вызывает одну свежую пробу к бэкенду
+и затем обслуживается из кеша, пока значение снова не изменится. <code>RELOAD</code> с тем же значением
+не сбрасывает кеш. <code>ErrorResponse</code> от бэкенда передаётся клиенту без изменений и не кешируется,
+поэтому следующая проба снова идёт в PostgreSQL.</p>
+<p>Поведение на холодном пуле изменилось: первая проба в каждом пуле теперь делает один
+round-trip к PostgreSQL даже для значения по умолчанию <code>;</code>. Если PostgreSQL в этот момент
+недоступен, клиент-пробер увидит ошибку пробы вместо безусловного OK. Прежний хардкод
+локального ответа сообщал, что пулер здоров, даже когда PostgreSQL лежал, и для непустых
+значений вроде <code>select 1</code> возвращал пустой ответ.</p>
+<p><strong>Контракт для оператора.</strong> Запрос должен быть детерминированным: один и тот же ввод
+обязан давать один и тот же набор байт, без побочных эффектов. Безопасные значения:
+<code>;</code>, <code>select 1</code>, <code>select 'pg_doorman'</code>, <code>select version()</code>.</p>
+<p>Небезопасные значения, которые кеш молча заморозит:</p>
+<ul>
+<li><code>select now()</code>, <code>select clock_timestamp()</code> — закешированный timestamp перестанет идти вперёд.</li>
+<li><code>select pg_is_in_recovery()</code> — failover поменяет роль на PostgreSQL, но закешированный ответ
+всё ещё будет показывать прежнюю роль.</li>
+<li><code>select count(*) from &lt;table&gt;</code> — закешированное число останется тем, что увидела первая проба.</li>
+<li><code>UPDATE</code>, <code>INSERT</code>, <code>DELETE</code>, <code>CALL</code>, <code>DO</code> — побочный эффект выполнится один раз, а ответ
+об успехе закешируется навсегда.</li>
+</ul>
+<p>Доля попаданий в кеш экспортируется двумя счётчиками без меток:
+<code>pg_doorman_pooler_check_query_backend_total</code> (пробы, отправленные в PostgreSQL) и
+<code>pg_doorman_pooler_check_query_cache_total</code> (пробы, обслуженные из кеша). Отношение
+<code>cache_total / (cache_total + backend_total)</code> — это hit rate.</p>
 <p>По умолчанию: <code>";"</code>.</p>
 
                     </main>

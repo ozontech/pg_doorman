@@ -270,6 +270,8 @@
 <tr><td><code>pg_doorman_query_interner_evictions_total</code></td><td>Counter по <code>kind</code> и <code>reason</code> (<code>gc_passive</code> или <code>ttl_expired</code>). Named-записи удаляются, когда их больше не держит ни один кеш вне interner; anonymous-записи удаляются после idle TTL.</td></tr>
 <tr><td><code>pg_doorman_query_interner_synthetic_misses_total</code></td><td>Counter синтетических ответов SQLSTATE <code>26000</code> для anonymous prepared statements, состояние которых уже недоступно при последующем <code>Bind</code> или <code>Describe</code>. Перед увеличением <code>query_interner_anon_idle_ttl_seconds</code> проверьте вытеснения из клиентского Anonymous LRU, WARN-логи, <code>RESET INTERNER</code> и TTL-вытеснения.</td></tr>
 <tr><td><code>pg_doorman_query_interner_gc_duration_seconds</code></td><td>Гистограмма времени одного прохода GC interner (named и anonymous вместе), в секундах. Помогает увидеть, когда большой interner делает обход заметным.</td></tr>
+<tr><td><code>pg_doorman_pooler_check_query_backend_total</code></td><td>Counter пробов <code>pooler_check_query</code>, отправленных в PostgreSQL (промах кеша или повторная проба после RELOAD). После прогрева значение должно быть стабильным; постоянно растущий rate означает, что популовый кеш не удерживает запись.</td></tr>
+<tr><td><code>pg_doorman_pooler_check_query_cache_total</code></td><td>Counter пробов <code>pooler_check_query</code>, обслуженных из популового кеша ответа без обращения к бэкенду. Hit rate = <code>cache_total / (cache_total + backend_total)</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-серверного-tls"><a class="header" href="#Метрики-серверного-tls">Метрики серверного TLS</a></h3>

@@ -6604,9 +6604,36 @@ hostnossl all      all    192.168.1.0/24  trust
 в административной SQL-консоли и через <code>/api/pools</code> в веб-интерфейсе.</p>
 <p>По умолчанию: <code>{}</code>.</p>
 <h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
-<p>Когда клиент отправляет ровно этот запрос как SimpleQuery, pg_doorman отвечает немедленно
-без перенаправления его в PostgreSQL. Полезно для health checks от балансировщиков нагрузки (HAProxy, в стиле pgbouncer <code>SELECT 1</code>)
-или keepalive-проб уровня приложения. Значение по умолчанию <code>;</code> (пустой statement) — самая лёгкая возможная проверка.</p>
+<p>Когда клиент отправляет ровно этот запрос как SimpleQuery, pg_doorman обслуживает его через
+кеш ответа на уровне пула. Первая совпадающая проба за время жизни каждого пула отправляется
+в PostgreSQL, и полный ответ сохраняется. Последующие совпадающие пробы отвечаются из кеша
+без обращения к бэкенду.</p>
+<p>Кеш индексируется по строке запроса. <code>RELOAD</code> с другим значением <code>pooler_check_query</code>
+инвалидирует кеш на следующей пробе; новое значение вызывает одну свежую пробу к бэкенду
+и затем обслуживается из кеша, пока значение снова не изменится. <code>RELOAD</code> с тем же значением
+не сбрасывает кеш. <code>ErrorResponse</code> от бэкенда передаётся клиенту без изменений и не кешируется,
+поэтому следующая проба снова идёт в PostgreSQL.</p>
+<p>Поведение на холодном пуле изменилось: первая проба в каждом пуле теперь делает один
+round-trip к PostgreSQL даже для значения по умолчанию <code>;</code>. Если PostgreSQL в этот момент
+недоступен, клиент-пробер увидит ошибку пробы вместо безусловного OK. Прежний хардкод
+локального ответа сообщал, что пулер здоров, даже когда PostgreSQL лежал, и для непустых
+значений вроде <code>select 1</code> возвращал пустой ответ.</p>
+<p><strong>Контракт для оператора.</strong> Запрос должен быть детерминированным: один и тот же ввод
+обязан давать один и тот же набор байт, без побочных эффектов. Безопасные значения:
+<code>;</code>, <code>select 1</code>, <code>select 'pg_doorman'</code>, <code>select version()</code>.</p>
+<p>Небезопасные значения, которые кеш молча заморозит:</p>
+<ul>
+<li><code>select now()</code>, <code>select clock_timestamp()</code> — закешированный timestamp перестанет идти вперёд.</li>
+<li><code>select pg_is_in_recovery()</code> — failover поменяет роль на PostgreSQL, но закешированный ответ
+всё ещё будет показывать прежнюю роль.</li>
+<li><code>select count(*) from &lt;table&gt;</code> — закешированное число останется тем, что увидела первая проба.</li>
+<li><code>UPDATE</code>, <code>INSERT</code>, <code>DELETE</code>, <code>CALL</code>, <code>DO</code> — побочный эффект выполнится один раз, а ответ
+об успехе закешируется навсегда.</li>
+</ul>
+<p>Доля попаданий в кеш экспортируется двумя счётчиками без меток:
+<code>pg_doorman_pooler_check_query_backend_total</code> (пробы, отправленные в PostgreSQL) и
+<code>pg_doorman_pooler_check_query_cache_total</code> (пробы, обслуженные из кеша). Отношение
+<code>cache_total / (cache_total + backend_total)</code> — это hit rate.</p>
 <p>По умолчанию: <code>";"</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h2 id="Настройки-пула"><a class="header" href="#Настройки-пула">Настройки пула</a></h2>
 <p>Каждая запись в pool — это имя виртуальной базы данных, к которой может подключиться клиент pg_doorman.</p>
@@ -6969,6 +6996,8 @@ username = "exampledb-user-0" # Виртуальный пользователь,
 <tr><td><code>pg_doorman_query_interner_evictions_total</code></td><td>Counter по <code>kind</code> и <code>reason</code> (<code>gc_passive</code> или <code>ttl_expired</code>). Named-записи удаляются, когда их больше не держит ни один кеш вне interner; anonymous-записи удаляются после idle TTL.</td></tr>
 <tr><td><code>pg_doorman_query_interner_synthetic_misses_total</code></td><td>Counter синтетических ответов SQLSTATE <code>26000</code> для anonymous prepared statements, состояние которых уже недоступно при последующем <code>Bind</code> или <code>Describe</code>. Перед увеличением <code>query_interner_anon_idle_ttl_seconds</code> проверьте вытеснения из клиентского Anonymous LRU, WARN-логи, <code>RESET INTERNER</code> и TTL-вытеснения.</td></tr>
 <tr><td><code>pg_doorman_query_interner_gc_duration_seconds</code></td><td>Гистограмма времени одного прохода GC interner (named и anonymous вместе), в секундах. Помогает увидеть, когда большой interner делает обход заметным.</td></tr>
+<tr><td><code>pg_doorman_pooler_check_query_backend_total</code></td><td>Counter пробов <code>pooler_check_query</code>, отправленных в PostgreSQL (промах кеша или повторная проба после RELOAD). После прогрева значение должно быть стабильным; постоянно растущий rate означает, что популовый кеш не удерживает запись.</td></tr>
+<tr><td><code>pg_doorman_pooler_check_query_cache_total</code></td><td>Counter пробов <code>pooler_check_query</code>, обслуженных из популового кеша ответа без обращения к бэкенду. Hit rate = <code>cache_total / (cache_total + backend_total)</code>.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Метрики-серверного-tls"><a class="header" href="#Метрики-серверного-tls">Метрики серверного TLS</a></h3>

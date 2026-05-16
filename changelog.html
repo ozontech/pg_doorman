@@ -161,6 +161,56 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3100"><a class="header" href="#3100">3.10.0</a></h3>
+<p>Per-pool response cache for <code>general.pooler_check_query</code>. The first
+matching SimpleQuery in each pool's lifetime is forwarded to PostgreSQL;
+every subsequent matching probe is answered from the cache without
+touching the backend.</p>
+<h4 id="behavior-change-for-cold-pools"><a class="header" href="#behavior-change-for-cold-pools">Behavior change for cold pools</a></h4>
+<p>Before this release pg_doorman answered any <code>pooler_check_query</code> match
+locally with a hardcoded empty result. The default <code>;</code> came back instantly
+without ever talking to PostgreSQL, and a non-empty value such as <code>select 1</code>
+returned an empty response that did not match what a real PostgreSQL would
+have produced.</p>
+<p>The first probe per pool now does one PostgreSQL round-trip and captures
+the real response. If PostgreSQL is unreachable at that moment, the
+probing client sees a probe failure instead of an unconditional OK; the
+earlier hardcode reported the pooler as healthy even when PostgreSQL was
+down. Typical JDBC keepalive queries such as <code>select 1</code> (WildFly, HikariCP)
+and <code>select 'pg_doorman'</code> now return the expected row.</p>
+<h4 id="cache-lifecycle"><a class="header" href="#cache-lifecycle">Cache lifecycle</a></h4>
+<p>The cache is per pool and keyed by the query string. A <code>RELOAD</code> that
+changes <code>pooler_check_query</code> invalidates the cache on the next ping; the
+new value triggers one fresh backend probe and is then served from cache
+until the value changes again. A reload that keeps the same value keeps
+the cached response. <code>ErrorResponse</code> from the backend is forwarded to
+the client unchanged and is never cached, so the next probe retries
+against PostgreSQL.</p>
+<h4 id="operator-contract"><a class="header" href="#operator-contract">Operator contract</a></h4>
+<p><code>pooler_check_query</code> must be stable: the same input must produce the
+same bytes, with no side effects. Safe values: <code>;</code>, <code>select 1</code>,
+<code>select 'pg_doorman'</code>, <code>select version()</code>.</p>
+<p>Unsafe values that the cache will silently freeze:</p>
+<ul>
+<li><code>select now()</code>, <code>select clock_timestamp()</code> — the cached timestamp
+never advances.</li>
+<li><code>select pg_is_in_recovery()</code> — a failover flips the role on
+PostgreSQL but the cached response still reports the old role.</li>
+<li><code>select count(*) from &lt;table&gt;</code> — the cached count is whatever the
+first probe observed.</li>
+<li><code>UPDATE</code>, <code>INSERT</code>, <code>DELETE</code>, <code>CALL</code>, <code>DO</code> — the side effect runs
+once and the success response is cached forever.</li>
+</ul>
+<h4 id="new-metrics"><a class="header" href="#new-metrics">New metrics</a></h4>
+<ul>
+<li><code>pg_doorman_pooler_check_query_backend_total</code> — counter, increments
+on each probe forwarded to PostgreSQL (cache miss or
+RELOAD-induced re-probe).</li>
+<li><code>pg_doorman_pooler_check_query_cache_total</code> — counter, increments
+on each probe served from the cache.</li>
+</ul>
+<p>The ratio <code>cache_total / (cache_total + backend_total)</code> is the cache
+hit rate.</p>
 <h3 id="391"><a class="header" href="#391">3.9.1</a></h3>
 <p>Web admin console refresh and a follow-up pass on <code>startup_parameters</code>.</p>
 <p>Upgrade notes for operators monitoring 3.9.0:</p>

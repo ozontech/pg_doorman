@@ -647,9 +647,35 @@ hostnossl all      all    192.168.1.0/24  trust
 <li>For Talos/JWT/PAM flows configured at the pool/user level, <code>trust</code> still bypasses the client password prompt; however, those modes may be used when <code>trust</code> does not match.</li>
 </ul>
 <h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
-<p>When a client sends this exact query as a SimpleQuery, pg_doorman responds immediately
-without forwarding it to PostgreSQL. Useful for health checks from load balancers (HAProxy, pgbouncer-style <code>SELECT 1</code>)
-or application-level keepalive probes. The default <code>;</code> (empty statement) is the lightest possible check.</p>
+<p>When a client sends this exact query as a SimpleQuery, pg_doorman serves it through a per-pool
+response cache. The first matching probe in each pool's lifetime is forwarded to PostgreSQL and
+the full response is captured. Subsequent matching probes are answered from the cache without
+touching the backend.</p>
+<p>The cache is keyed by the query string. A <code>RELOAD</code> that changes <code>pooler_check_query</code> invalidates
+the cache on the next ping; the new value triggers one fresh backend probe and is then served
+from cache until the value changes again. A reload that keeps the same value keeps the cached
+response. <code>ErrorResponse</code> from the backend is forwarded to the client unchanged and is never
+cached, so the next probe retries against PostgreSQL.</p>
+<p>Cold-pool behavior changed: the first probe per pool now does one PostgreSQL round-trip even
+for the default <code>;</code>. If PostgreSQL is unreachable at that moment, the probing client sees a
+probe failure instead of an unconditional OK. The earlier hardcoded local answer reported the
+pooler as healthy even when PostgreSQL was down, and made non-empty values such as <code>select 1</code>
+return an empty response.</p>
+<p><strong>Operator contract.</strong> The query must be stable: the same input must always produce the same
+bytes, with no side effects. Safe values: <code>;</code>, <code>select 1</code>, <code>select 'pg_doorman'</code>, <code>select version()</code>.</p>
+<p>Unsafe values that the cache will silently freeze:</p>
+<ul>
+<li><code>select now()</code>, <code>select clock_timestamp()</code> — the cached timestamp never advances.</li>
+<li><code>select pg_is_in_recovery()</code> — a failover flips the role on PostgreSQL but the cached response
+still reports the old role.</li>
+<li><code>select count(*) from &lt;table&gt;</code> — the cached count is whatever the first probe observed.</li>
+<li><code>UPDATE</code>, <code>INSERT</code>, <code>DELETE</code>, <code>CALL</code>, <code>DO</code> — the side effect runs once and the success
+response is cached forever.</li>
+</ul>
+<p>Cache hit rate is exported as two counters without labels:
+<code>pg_doorman_pooler_check_query_backend_total</code> (probes forwarded to PostgreSQL) and
+<code>pg_doorman_pooler_check_query_cache_total</code> (probes served from cache). The ratio
+<code>cache_total / (cache_total + backend_total)</code> is the hit rate.</p>
 <p>Default: <code>";"</code>.</p>
 <h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
 <p>Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend <code>StartupMessage</code>; PostgreSQL stores them as the session reset defaults, so client <code>RESET ALL</code> / <code>DISCARD ALL</code> returns to these values.</p>

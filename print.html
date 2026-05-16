@@ -6434,9 +6434,35 @@ hostnossl all      all    192.168.1.0/24  trust
 <li>For Talos/JWT/PAM flows configured at the pool/user level, <code>trust</code> still bypasses the client password prompt; however, those modes may be used when <code>trust</code> does not match.</li>
 </ul>
 <h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
-<p>When a client sends this exact query as a SimpleQuery, pg_doorman responds immediately
-without forwarding it to PostgreSQL. Useful for health checks from load balancers (HAProxy, pgbouncer-style <code>SELECT 1</code>)
-or application-level keepalive probes. The default <code>;</code> (empty statement) is the lightest possible check.</p>
+<p>When a client sends this exact query as a SimpleQuery, pg_doorman serves it through a per-pool
+response cache. The first matching probe in each pool's lifetime is forwarded to PostgreSQL and
+the full response is captured. Subsequent matching probes are answered from the cache without
+touching the backend.</p>
+<p>The cache is keyed by the query string. A <code>RELOAD</code> that changes <code>pooler_check_query</code> invalidates
+the cache on the next ping; the new value triggers one fresh backend probe and is then served
+from cache until the value changes again. A reload that keeps the same value keeps the cached
+response. <code>ErrorResponse</code> from the backend is forwarded to the client unchanged and is never
+cached, so the next probe retries against PostgreSQL.</p>
+<p>Cold-pool behavior changed: the first probe per pool now does one PostgreSQL round-trip even
+for the default <code>;</code>. If PostgreSQL is unreachable at that moment, the probing client sees a
+probe failure instead of an unconditional OK. The earlier hardcoded local answer reported the
+pooler as healthy even when PostgreSQL was down, and made non-empty values such as <code>select 1</code>
+return an empty response.</p>
+<p><strong>Operator contract.</strong> The query must be stable: the same input must always produce the same
+bytes, with no side effects. Safe values: <code>;</code>, <code>select 1</code>, <code>select 'pg_doorman'</code>, <code>select version()</code>.</p>
+<p>Unsafe values that the cache will silently freeze:</p>
+<ul>
+<li><code>select now()</code>, <code>select clock_timestamp()</code> — the cached timestamp never advances.</li>
+<li><code>select pg_is_in_recovery()</code> — a failover flips the role on PostgreSQL but the cached response
+still reports the old role.</li>
+<li><code>select count(*) from &lt;table&gt;</code> — the cached count is whatever the first probe observed.</li>
+<li><code>UPDATE</code>, <code>INSERT</code>, <code>DELETE</code>, <code>CALL</code>, <code>DO</code> — the side effect runs once and the success
+response is cached forever.</li>
+</ul>
+<p>Cache hit rate is exported as two counters without labels:
+<code>pg_doorman_pooler_check_query_backend_total</code> (probes forwarded to PostgreSQL) and
+<code>pg_doorman_pooler_check_query_cache_total</code> (probes served from cache). The ratio
+<code>cache_total / (cache_total + backend_total)</code> is the hit rate.</p>
 <p>Default: <code>";"</code>.</p>
 <h3 id="startup_parameters"><a class="header" href="#startup_parameters">startup_parameters</a></h3>
 <p>Map of PostgreSQL configuration parameter names to string values. pg_doorman writes them into each new backend <code>StartupMessage</code>; PostgreSQL stores them as the session reset defaults, so client <code>RESET ALL</code> / <code>DISCARD ALL</code> returns to these values.</p>
@@ -6792,6 +6818,8 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <tr><td><code>pg_doorman_query_interner_evictions_total</code></td><td>Counter by <code>kind</code> and <code>reason</code> (<code>gc_passive</code> or <code>ttl_expired</code>). Named entries are removed when no cache outside the interner still holds them; anonymous entries are removed after the idle TTL.</td></tr>
 <tr><td><code>pg_doorman_query_interner_synthetic_misses_total</code></td><td>Counter of synthetic SQLSTATE <code>26000</code> responses for anonymous prepared statements whose state was no longer available when a later <code>Bind</code> or <code>Describe</code> referenced it. Check client Anonymous LRU evictions, WARN logs, <code>RESET INTERNER</code>, and TTL evictions before increasing <code>query_interner_anon_idle_ttl_seconds</code>.</td></tr>
 <tr><td><code>pg_doorman_query_interner_gc_duration_seconds</code></td><td>Histogram of one interner GC sweep (named and anonymous combined), in seconds. Use this to detect large interners that make sweep time visible.</td></tr>
+<tr><td><code>pg_doorman_pooler_check_query_backend_total</code></td><td>Counter of <code>pooler_check_query</code> probes forwarded to PostgreSQL (cache miss or RELOAD-induced re-probe). Steady-state value should be flat after warmup; a continuously rising rate means the per-pool cache is not retaining its entry.</td></tr>
+<tr><td><code>pg_doorman_pooler_check_query_cache_total</code></td><td>Counter of <code>pooler_check_query</code> probes answered from the per-pool response cache without touching the backend. Hit rate = <code>cache_total / (cache_total + backend_total)</code>.</td></tr>
 </tbody></table>
 </div>
 <h2 id="grafana-dashboard"><a class="header" href="#grafana-dashboard">Grafana Dashboard</a></h2>
@@ -7037,6 +7065,56 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3100"><a class="header" href="#3100">3.10.0</a></h3>
+<p>Per-pool response cache for <code>general.pooler_check_query</code>. The first
+matching SimpleQuery in each pool's lifetime is forwarded to PostgreSQL;
+every subsequent matching probe is answered from the cache without
+touching the backend.</p>
+<h4 id="behavior-change-for-cold-pools"><a class="header" href="#behavior-change-for-cold-pools">Behavior change for cold pools</a></h4>
+<p>Before this release pg_doorman answered any <code>pooler_check_query</code> match
+locally with a hardcoded empty result. The default <code>;</code> came back instantly
+without ever talking to PostgreSQL, and a non-empty value such as <code>select 1</code>
+returned an empty response that did not match what a real PostgreSQL would
+have produced.</p>
+<p>The first probe per pool now does one PostgreSQL round-trip and captures
+the real response. If PostgreSQL is unreachable at that moment, the
+probing client sees a probe failure instead of an unconditional OK; the
+earlier hardcode reported the pooler as healthy even when PostgreSQL was
+down. Typical JDBC keepalive queries such as <code>select 1</code> (WildFly, HikariCP)
+and <code>select 'pg_doorman'</code> now return the expected row.</p>
+<h4 id="cache-lifecycle"><a class="header" href="#cache-lifecycle">Cache lifecycle</a></h4>
+<p>The cache is per pool and keyed by the query string. A <code>RELOAD</code> that
+changes <code>pooler_check_query</code> invalidates the cache on the next ping; the
+new value triggers one fresh backend probe and is then served from cache
+until the value changes again. A reload that keeps the same value keeps
+the cached response. <code>ErrorResponse</code> from the backend is forwarded to
+the client unchanged and is never cached, so the next probe retries
+against PostgreSQL.</p>
+<h4 id="operator-contract"><a class="header" href="#operator-contract">Operator contract</a></h4>
+<p><code>pooler_check_query</code> must be stable: the same input must produce the
+same bytes, with no side effects. Safe values: <code>;</code>, <code>select 1</code>,
+<code>select 'pg_doorman'</code>, <code>select version()</code>.</p>
+<p>Unsafe values that the cache will silently freeze:</p>
+<ul>
+<li><code>select now()</code>, <code>select clock_timestamp()</code> — the cached timestamp
+never advances.</li>
+<li><code>select pg_is_in_recovery()</code> — a failover flips the role on
+PostgreSQL but the cached response still reports the old role.</li>
+<li><code>select count(*) from &lt;table&gt;</code> — the cached count is whatever the
+first probe observed.</li>
+<li><code>UPDATE</code>, <code>INSERT</code>, <code>DELETE</code>, <code>CALL</code>, <code>DO</code> — the side effect runs
+once and the success response is cached forever.</li>
+</ul>
+<h4 id="new-metrics"><a class="header" href="#new-metrics">New metrics</a></h4>
+<ul>
+<li><code>pg_doorman_pooler_check_query_backend_total</code> — counter, increments
+on each probe forwarded to PostgreSQL (cache miss or
+RELOAD-induced re-probe).</li>
+<li><code>pg_doorman_pooler_check_query_cache_total</code> — counter, increments
+on each probe served from the cache.</li>
+</ul>
+<p>The ratio <code>cache_total / (cache_total + backend_total)</code> is the cache
+hit rate.</p>
 <h3 id="391"><a class="header" href="#391">3.9.1</a></h3>
 <p>Web admin console refresh and a follow-up pass on <code>startup_parameters</code>.</p>
 <p>Upgrade notes for operators monitoring 3.9.0:</p>
