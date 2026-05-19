@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use crate::app::server::{
     CLIENTS_IN_TRANSACTIONS, CURRENT_CLIENT_COUNT, MIGRATION_IN_PROGRESS, SHUTDOWN_IN_PROGRESS,
-    STARTED_AT,
+    STARTED_AT, STARTED_AT_MS,
 };
 use crate::pool::PoolIdentifier;
 use crate::stats::pool::PoolStats;
@@ -96,6 +96,7 @@ pub(crate) fn collect_overview() -> OverviewDto {
 
         rss_bytes: get_process_memory_usage(),
         uptime_seconds: STARTED_AT.elapsed().map(|d| d.as_secs()).unwrap_or(0),
+        started_at_ms: *STARTED_AT_MS,
         pid: std::process::id(),
         current_clients: CURRENT_CLIENT_COUNT.load(Ordering::Relaxed),
         clients_in_transactions: CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed),

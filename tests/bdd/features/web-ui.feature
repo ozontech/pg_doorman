@@ -169,3 +169,27 @@ Feature: Web UI listener
     And the command output should contain '"key":"web.host"'
     And the command output should contain '"key":"web.port"'
     And the command output should contain '"changeable":"no"'
+
+  # /api/events must carry a PROCESS_START entry as the first event after
+  # boot. The Web UI uses this to draw the "process started" annotation on
+  # Overview/Wall without waiting for the first admin command.
+  Scenario: /api/events emits PROCESS_START as the first lifecycle event
+    When I run shell command:
+      """
+      curl -s --user 'admin:webui_bdd' 'http://127.0.0.1:9127/api/events?since=0&max=10'
+      """
+    Then the command should succeed
+    And the command output should contain '"target":"PROCESS_START"'
+    And the command output should contain '"message":"pg_doorman '
+
+  # /api/overview must carry started_at_ms next to pid so the frontend can
+  # detect a real restart by comparing identity tuples rather than by
+  # watching counters fall.
+  Scenario: /api/overview includes started_at_ms for identity-based restart detection
+    When I run shell command:
+      """
+      curl -s --user 'admin:webui_bdd' http://127.0.0.1:9127/api/overview
+      """
+    Then the command should succeed
+    And the command output should contain '"started_at_ms":'
+    And the command output should contain '"pid":'

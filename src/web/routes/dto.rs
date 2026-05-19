@@ -57,6 +57,12 @@ pub(crate) struct OverviewDto {
     pub rss_bytes: u64,
     /// Seconds since the binary started (`STARTED_AT` lazy in app/server.rs).
     pub uptime_seconds: u64,
+    /// Unix milliseconds at which `STARTED_AT` was captured — the same
+    /// value `ProcessDto.started_at_ms` exposes, mirrored here so the
+    /// frontend can do identity-based restart detection without paying
+    /// the extra `/api/process` round-trip on every Overview poll. Pair
+    /// with `pid` and treat a change of *either* field as a restart.
+    pub started_at_ms: u64,
     /// OS process id. Useful when correlating with external tools (`htop`,
     /// `lsof`, `gdb`) on the same host.
     pub pid: u32,

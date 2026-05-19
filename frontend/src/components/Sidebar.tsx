@@ -14,9 +14,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useProcessIdentityToast } from "../hooks/useProcessIdentity";
 import { fmtRate, fmtUptime } from "../lib/format";
 import { getSsoTokenUsername } from "../lib/jwt";
 import { ThemeToggle } from "./ThemeToggle";
@@ -155,6 +155,12 @@ export function Sidebar() {
   // Derive QPS / errors-per-second from the previous snapshot whenever
   // /api/overview returns. Persisted prevRef survives mounts so the
   // very first response after a page change immediately yields a rate.
+  //
+  // Counter rollback alone is NOT a restart signal: RELOAD and dynamic
+  // pool GC drop pools from `pool_lookup`, which is what the backend
+  // sums to produce query_count_total — so totals legitimately fall
+  // without the process going anywhere. Real restart detection lives
+  // in useProcessIdentity() and is fed by pid + started_at_ms.
   useEffect(() => {
     if (!overview) return;
     const cur: PrevTotals = {
@@ -167,22 +173,24 @@ export function Sidebar() {
       const dt = (cur.ts - prev.ts) / 1000;
       const counterReset =
         cur.queries < prev.queries || cur.errors < prev.errors;
-      if (counterReset) {
-        // pg_doorman restarted between polls — counters rolled back to
-        // zero. Showing "0 qps" would mislead the operator into thinking
-        // traffic stopped; keep the previous rate visible and pick up a
-        // real delta on the next tick against the new baseline below.
-        toast.info("pg_doorman restarted — rate baseline reset");
-      } else if (dt > 0 && dt < 60) {
+      if (!counterReset && dt > 0 && dt < 60) {
         setRate({
           qps: Math.max(0, (cur.queries - prev.queries) / dt),
           errsPerSec: Math.max(0, (cur.errors - prev.errors) / dt),
         });
       }
+      // counterReset = drop a tick rather than show a fake spike; the
+      // next /api/overview poll establishes a fresh baseline against
+      // the post-RELOAD pool set.
     }
     prevRef.current = cur;
     savePrevTotals(cur);
   }, [overview]);
+
+  // Identity-based restart detection — toast once per real restart, where
+  // "real" means pid or started_at_ms moved. Counter behaviour is
+  // ignored here on purpose.
+  useProcessIdentityToast(overview);
 
   const health = useMemo(() => {
     if (!overview || !pools) return null;

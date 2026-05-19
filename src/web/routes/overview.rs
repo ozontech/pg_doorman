@@ -4,7 +4,7 @@ use crate::web::routes::collect::collect_overview;
 use crate::web::server::Response;
 
 pub(crate) fn handle_overview() -> Response {
-    Response::ok_json(&collect_overview())
+    Response::ok_json(&collect_overview()).with_header("Cache-Control", "no-store")
 }
 
 #[cfg(test)]

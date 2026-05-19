@@ -66,7 +66,16 @@ pub async fn reload_now() -> Result<bool, Error> {
     let csm = get_client_server_map()
         .ok_or_else(|| Error::SocketError("client_server_map not initialised".into()))?;
     info!("Reloading config (via /api/admin/reload)");
-    let changed = reload_config(csm).await?;
+    let changed = match reload_config(csm).await {
+        Ok(c) => c,
+        Err(e) => {
+            crate::admin::events::push_event_rate_limited(
+                "CONFIG_VALIDATION_ERROR",
+                format!("/api/admin/reload rejected: {e}"),
+            );
+            return Err(e);
+        }
+    };
     crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
     crate::config::get_config().show();
     Ok(changed)

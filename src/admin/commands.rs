@@ -20,8 +20,24 @@ where
 {
     info!("Reloading config");
 
-    reload_config(client_server_map).await?;
-    crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
+    // Surface validation errors on the events ring so the Web UI shows a
+    // CONFIG_VALIDATION_ERROR annotation alongside the error returned to
+    // psql — the operator at the admin protocol gets the SQL error
+    // immediately, but the operator watching the UI is the one who
+    // usually needs the visual breadcrumb when the deploy step quietly
+    // fails.
+    match reload_config(client_server_map).await {
+        Ok(_) => {
+            crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
+        }
+        Err(e) => {
+            crate::admin::events::push_event_rate_limited(
+                "CONFIG_VALIDATION_ERROR",
+                format!("admin RELOAD rejected: {e}"),
+            );
+            return Err(e);
+        }
+    }
 
     get_config().show();
 

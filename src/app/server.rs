@@ -56,6 +56,18 @@ pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 pub static STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
     std::sync::LazyLock::new(std::time::SystemTime::now);
 
+/// `STARTED_AT` rendered as milliseconds since the Unix epoch. Mirrors
+/// the wall-clock format the Web UI consumes via `OverviewDto.started_at_ms`
+/// and `ProcessDto.started_at_ms`; computing it once and sharing the
+/// `LazyLock` keeps the two endpoints in lockstep without repeating the
+/// `duration_since(UNIX_EPOCH)` call on every poll.
+pub static STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+    STARTED_AT
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+});
+
 /// Channel sender for migration payloads. Set once when migration starts.
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
     std::sync::OnceLock::new();
@@ -309,6 +321,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             crate::pool::gc::spawn_dynamic_pool_gc(gc_interval);
         }
 
+        // One-shot lifecycle marker so /api/events has at least one entry
+        // immediately after boot — operators opening the UI on a fresh
+        // pooler get a "process started" annotation on Overview/Wall
+        // without waiting for the first admin command. Force `STARTED_AT`
+        // to materialize here so the cached timestamp matches what
+        // `/api/overview` and `/api/process` report.
+        let _ = *STARTED_AT;
+        crate::admin::events::push_event(
+            "PROCESS_START",
+            format!(
+                "pg_doorman {} started, pid={}",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id()
+            ),
+        );
+
         // Query interner GC: bounds NAMED via passive Arc::strong_count and
         // ANON via per-entry TTL. Sweep ticks at gc_interval / 4 so an entry
         // marked on cycle N has roughly a quarter-interval to be touched and
@@ -543,7 +571,25 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 // kill -SIGHUP $(pgrep pg_doorman)
                 _ = sighup_signal.recv() => {
                     info!("Reloading config");
-                    _ = reload_config(client_server_map.clone()).await;
+                    match reload_config(client_server_map.clone()).await {
+                        Ok(true) => {
+                            crate::admin::events::push_event("RELOAD", "config reloaded (SIGHUP)".to_string());
+                        }
+                        Ok(false) => {
+                            // No-op reload — file re-parsed identically. Still
+                            // emit a RELOAD entry with "config unchanged" so
+                            // audit-driven SIGHUP'ing leaves a trace; one
+                            // event per signal is the natural rate.
+                            crate::admin::events::push_event("RELOAD", "config unchanged (SIGHUP)".to_string());
+                        }
+                        Err(e) => {
+                            error!("Config reload rejected: {e}");
+                            crate::admin::events::push_event_rate_limited(
+                                "CONFIG_VALIDATION_ERROR",
+                                format!("SIGHUP reload rejected: {e}"),
+                            );
+                        }
+                    }
                     get_config().show();
                 },
 
