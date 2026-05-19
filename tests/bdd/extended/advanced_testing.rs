@@ -461,6 +461,46 @@ pub async fn verify_error_response_with_sqlstate(
     );
 }
 
+/// Drain every pending message on the session and assert none of them is an
+/// `ErrorResponse` whose `C` field matches `forbidden_sqlstate`. Used to pin
+/// negative invariants — for example, that a backend's planner-time 42P01
+/// is the only error the client sees, with no follow-up 26000 surfacing
+/// because pg_doorman skipped a re-Parse against a poisoned LRU.
+#[then(
+    regex = r#"^session "([^"]+)" should not receive ErrorResponse with SQLSTATE "([^"]+)"$"#
+)]
+pub async fn verify_no_error_response_with_sqlstate(
+    world: &mut DoormanWorld,
+    session_name: String,
+    forbidden_sqlstate: String,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    while let Ok(Ok((msg_type, data))) =
+        tokio::time::timeout(std::time::Duration::from_millis(500), conn.read_message()).await
+    {
+        if msg_type != 'E' {
+            continue;
+        }
+        let mut i = 0;
+        while i < data.len() && data[i] != 0 {
+            let field_byte = data[i] as char;
+            i += 1;
+            let start = i;
+            while i < data.len() && data[i] != 0 {
+                i += 1;
+            }
+            let value = String::from_utf8_lossy(&data[start..i]).to_string();
+            i += 1;
+            if field_byte == 'C' && value == forbidden_sqlstate {
+                panic!(
+                    "Session '{session_name}': received forbidden ErrorResponse with SQLSTATE '{forbidden_sqlstate}'",
+                );
+            }
+        }
+    }
+}
+
 // =============================================================================
 // PostgreSQL server log inspection steps
 // =============================================================================
