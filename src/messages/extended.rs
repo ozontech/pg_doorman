@@ -1,5 +1,6 @@
 // Standard library imports
 use std::collections::hash_map::DefaultHasher;
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::hash::Hasher;
 use std::mem;
@@ -190,6 +191,30 @@ impl Parse {
 
             hasher.finish()
         }
+    }
+
+    /// Hash variant that folds the client's effective `startup_parameters`
+    /// into the cache key. Two clients with identical Parse text but
+    /// different `search_path`, `default_transaction_isolation`,
+    /// `timezone`, or any other planner-visible GUC parse the query
+    /// against different planner state — caching them under one server-
+    /// side statement name lets the second client receive a plan built
+    /// for the first. Folding the map into the hash splits the cache
+    /// along the boundary that matters.
+    ///
+    /// The map is iterated in key order (BTreeMap is sorted) so two
+    /// clients with the same set of parameters produce the same hash
+    /// regardless of insertion order.
+    ///
+    /// **NOTE (TDD step 1):** this implementation is a deliberate stub
+    /// that ignores `startup_parameters` and delegates to `get_hash`.
+    /// The dedicated unit test will fail against this stub; the next
+    /// commit replaces the body with the real folding logic.
+    pub fn get_hash_with_startup_parameters(
+        &self,
+        _startup_parameters: &BTreeMap<String, String>,
+    ) -> u64 {
+        self.get_hash()
     }
 
     pub fn anonymous(&self) -> bool {
@@ -761,5 +786,71 @@ mod tests {
 
         let p3 = Parse::from_parts("SELECT $1", &[25]); // different param type
         assert_ne!(p1.get_hash(), p3.get_hash());
+    }
+
+    /// Bug reproduction: two clients sending the *same* Parse text against
+    /// the same pool but with different effective `startup_parameters`
+    /// (e.g. distinct `search_path`) currently collide on the cache key
+    /// returned by `get_hash`. The pool's prepared-statement cache is
+    /// shared across clients of the same `user@db`, so the second client
+    /// receives the `DOORMAN_N` name allocated for the first — and the
+    /// backend's cached plan was built against the first client's GUC
+    /// state.
+    ///
+    /// `get_hash_with_startup_parameters` must distinguish the two by
+    /// folding the parameter map into the digest. The current stub
+    /// implementation forwards to `get_hash` (ignoring the map), so this
+    /// assertion fails until the next commit replaces the stub with the
+    /// real implementation.
+    #[test]
+    fn parse_hash_distinguishes_clients_with_different_startup_parameters() {
+        let parse = Parse::from_parts("SELECT val FROM t", &[]);
+        let mut sp_a = BTreeMap::new();
+        sp_a.insert("search_path".to_string(), "schema_a".to_string());
+        let mut sp_b = BTreeMap::new();
+        sp_b.insert("search_path".to_string(), "schema_b".to_string());
+
+        let h_a = parse.get_hash_with_startup_parameters(&sp_a);
+        let h_b = parse.get_hash_with_startup_parameters(&sp_b);
+        assert_ne!(
+            h_a, h_b,
+            "different startup_parameters must produce different hashes"
+        );
+    }
+
+    /// Order-independence of the folded map: two clients with the same
+    /// parameter *set* must agree on the hash regardless of how the
+    /// underlying map was built. BTreeMap iterates in key order, so
+    /// even if the call sites assemble the map differently the digest
+    /// stays stable.
+    #[test]
+    fn parse_hash_with_startup_parameters_is_order_independent() {
+        let parse = Parse::from_parts("SELECT val FROM t", &[]);
+        let mut sp1 = BTreeMap::new();
+        sp1.insert("search_path".to_string(), "schema_a".to_string());
+        sp1.insert("timezone".to_string(), "UTC".to_string());
+        let mut sp2 = BTreeMap::new();
+        sp2.insert("timezone".to_string(), "UTC".to_string());
+        sp2.insert("search_path".to_string(), "schema_a".to_string());
+
+        assert_eq!(
+            parse.get_hash_with_startup_parameters(&sp1),
+            parse.get_hash_with_startup_parameters(&sp2),
+            "identical parameter sets must hash identically"
+        );
+    }
+
+    /// Empty parameter map collapses to the original `get_hash` result.
+    /// That is the path the existing call sites take until they are
+    /// wired up to the real parameter set, so the bridge must be
+    /// behaviour-preserving for "no extra context".
+    #[test]
+    fn parse_hash_with_empty_startup_parameters_matches_get_hash() {
+        let parse = Parse::from_parts("SELECT 1", &[23]);
+        let empty: BTreeMap<String, String> = BTreeMap::new();
+        assert_eq!(
+            parse.get_hash(),
+            parse.get_hash_with_startup_parameters(&empty),
+        );
     }
 }
