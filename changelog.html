@@ -211,6 +211,54 @@ on each probe served from the cache.</li>
 </ul>
 <p>The ratio <code>cache_total / (cache_total + backend_total)</code> is the cache
 hit rate.</p>
+<h4 id="eviction-visibility-for-prepared-statement-caches"><a class="header" href="#eviction-visibility-for-prepared-statement-caches">Eviction visibility for prepared-statement caches</a></h4>
+<p>Per-eviction events from the named and anonymous query interner and
+from the per-client anonymous LRU are now emitted as <code>TRACE</code> log
+lines. The default <code>INFO</code> level is unchanged; turn them on at
+runtime with</p>
+<pre><code>SET log_level = 'info,pg_doorman::server::prepared_statement_cache=trace,pg_doorman::client::protocol=trace';
+</code></pre>
+<p>The GC sweep task additionally emits one <code>DEBUG</code> aggregate line per
+cycle that actually evicted something. Operators that previously had
+only the aggregate <code>pg_doorman_query_interner_evictions_total</code> and
+<code>pg_doorman_clients_prepared_anonymous_evictions_total</code> Prometheus
+counters can now follow individual evictions during an incident.</p>
+<p>The 80-char-with-ellipsis and 120-char preview helpers used in those
+log lines live in a new <code>utils::strings</code> module and replace three
+inline copies that had drifted apart.</p>
+<h4 id="web-ui-lifecycle-events"><a class="header" href="#web-ui-lifecycle-events">Web UI lifecycle events</a></h4>
+<p>The sidebar used to toast "pg_doorman restarted — rate baseline reset"
+on every routine RELOAD. Totals are summed across the live pool set,
+and RELOAD plus dynamic-pool GC drop pools from that set, so the sum
+legitimately falls without the process going anywhere. The heuristic
+is gone. A real restart is detected by a change in <code>pid</code>,
+<code>started_at_ms</code>, or <code>uptime_seconds</code>.</p>
+<p><code>/api/events</code> grows two new event targets:</p>
+<ul>
+<li><code>PROCESS_START</code> — emitted once when setup finishes; carries the
+binary version and pid.</li>
+<li><code>CONFIG_VALIDATION_ERROR</code> — emitted when SIGHUP, admin RELOAD, or
+<code>/api/admin/reload</code> rejects the new config. Rate-limited to one
+per second per target so a SIGHUP loop with a bad config cannot
+fill the 1024-entry ring with duplicates.</li>
+</ul>
+<p>A persistent banner across the top of the UI replaces the transient
+toast for conditions an operator must not miss:</p>
+<ul>
+<li><code>shutdown_in_progress</code> — pg_doorman is draining.</li>
+<li><code>migration_in_progress</code> — binary upgrade in flight.</li>
+<li>Last unresolved <code>CONFIG_VALIDATION_ERROR</code> — stays up until a
+successful <code>RELOAD</code> clears it.</li>
+<li><code>/api/overview</code> silent for &gt;15 s — banner switches to
+"pg_doorman unreachable — last contact 23s ago", so the operator
+knows the rest of the page is no longer trustworthy.</li>
+</ul>
+<p>A no-op SIGHUP (config file re-parsed identically) now emits a
+<code>RELOAD</code> entry with message <code>config unchanged</code> instead of going
+silent — one event per signal keeps the audit timeline complete.</p>
+<p><code>/api/events</code> and <code>/api/overview</code> send <code>Cache-Control: no-store</code> so
+intermediate proxies cannot collapse two consecutive polls into the
+same response.</p>
 <h3 id="391"><a class="header" href="#391">3.9.1</a></h3>
 <p>Web admin console refresh and a follow-up pass on <code>startup_parameters</code>.</p>
 <p>Upgrade notes for operators monitoring 3.9.0:</p>
