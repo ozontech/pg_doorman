@@ -174,8 +174,14 @@ where
         let client_given_name = Parse::get_name(&message)?;
         let parse: Parse = (&message).try_into()?;
 
-        // Compute the hash of the parse statement
-        let hash = parse.get_hash();
+        // Compute the hash of the parse statement. Fold the client's
+        // current session parameters (search_path, DateStyle, TimeZone,
+        // and every other GUC it set via startup packet or SET) into
+        // the key so two clients of the same user@db pool with
+        // different planner-visible state cannot share a backend
+        // prepared statement whose plan was built for the other's GUCs.
+        let sp = self.server_parameters.as_btreemap_for_planner();
+        let hash = parse.get_hash_with_startup_parameters(&sp);
 
         // Always use pool cache to get shared Arc<Parse> (saves memory for async clients too)
         let name_arg = if client_given_name.is_empty() {

@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::config::VERSION;
 
@@ -128,6 +128,25 @@ impl ServerParameters {
         self.parameters.clone()
     }
 
+    /// Sorted snapshot of every session parameter pg_doorman has observed
+    /// for this client — startup packet + every `SET` it has issued.
+    /// Used as part of the prepared-statement cache key so two clients
+    /// of the same `user@db` pool with different `search_path` /
+    /// `DateStyle` / `TimeZone` etc. do not collapse onto one server-
+    /// side prepared statement (whose plan was built for the first
+    /// client's GUC state).
+    ///
+    /// `application_name` is intentionally excluded — it does not
+    /// influence the planner, so including it would fragment the
+    /// prepared-statement cache without correctness benefit.
+    pub fn as_btreemap_for_planner(&self) -> BTreeMap<String, String> {
+        self.parameters
+            .iter()
+            .filter(|(k, _)| k != &"application_name")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
     fn add_parameter_message(key: &str, value: &str, buffer: &mut BytesMut) {
         buffer.put_u8(b'S');
 
@@ -156,7 +175,7 @@ impl From<&ServerParameters> for BytesMut {
 
 #[cfg(test)]
 mod tests {
-    use super::canonicalize_param_name;
+    use super::{canonicalize_param_name, ServerParameters};
 
     #[test]
     fn canonicalize_timezone_matches_any_case() {
@@ -211,5 +230,32 @@ mod tests {
             canonicalize_param_name("Statement_Timeout".to_string()),
             "statement_timeout"
         );
+    }
+
+    #[test]
+    fn as_btreemap_for_planner_drops_application_name() {
+        // application_name is identity metadata, not planner input — folding
+        // it into the prepared-statement cache key would shatter the cache
+        // by client without any correctness benefit.
+        let mut sp = ServerParameters::new();
+        sp.set_param("application_name", "client-A", true);
+        sp.set_param("search_path", "schema_a", true);
+        let view = sp.as_btreemap_for_planner();
+        assert!(view.contains_key("search_path"));
+        assert!(!view.contains_key("application_name"));
+        assert_eq!(view.get("search_path"), Some(&"schema_a".to_string()));
+    }
+
+    #[test]
+    fn as_btreemap_for_planner_iterates_in_key_order() {
+        // BTreeMap is sorted by key on iteration, which is what makes the
+        // resulting hash stable across clients that happened to populate
+        // the same parameter set in different order.
+        let mut sp = ServerParameters::new();
+        sp.set_param("z_param", "z", true);
+        sp.set_param("a_param", "a", true);
+        sp.set_param("m_param", "m", true);
+        let keys: Vec<String> = sp.as_btreemap_for_planner().keys().cloned().collect();
+        assert_eq!(keys, vec!["a_param", "m_param", "z_param"]);
     }
 }

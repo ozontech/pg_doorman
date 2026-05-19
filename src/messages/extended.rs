@@ -143,6 +143,24 @@ impl TryFrom<&Parse> for BytesMut {
     }
 }
 
+/// Fold a sorted `startup_parameters` map into an existing `Hasher`.
+/// Each entry contributes its key bytes, a NUL separator, value bytes,
+/// and a record separator NUL so that
+/// `{"search":"a","path":"b"}` and `{"searcha":"","path":"b"}` cannot
+/// collapse to the same digest. The NUL separators are safe because
+/// PostgreSQL forbids NUL inside GUC names and values.
+fn fold_startup_parameters<H: Hasher>(hasher: &mut H, sp: &BTreeMap<String, String>) {
+    // Stable counter so two different-sized maps cannot collide via
+    // padding alone — the prefix records "how many entries follow".
+    hasher.write_u32(sp.len() as u32);
+    for (k, v) in sp.iter() {
+        hasher.write(k.as_bytes());
+        hasher.write_u8(0);
+        hasher.write(v.as_bytes());
+        hasher.write_u8(0);
+    }
+}
+
 impl Parse {
     /// Renames the prepared statement to a new name based on the global counter
     pub fn rewrite(mut self) -> Self {
@@ -202,19 +220,36 @@ impl Parse {
     /// for the first. Folding the map into the hash splits the cache
     /// along the boundary that matters.
     ///
-    /// The map is iterated in key order (BTreeMap is sorted) so two
-    /// clients with the same set of parameters produce the same hash
-    /// regardless of insertion order.
+    /// Iteration order is the BTreeMap key order, so two clients with
+    /// the same parameter set hash identically regardless of how the
+    /// underlying map was assembled.
     ///
-    /// **NOTE (TDD step 1):** this implementation is a deliberate stub
-    /// that ignores `startup_parameters` and delegates to `get_hash`.
-    /// The dedicated unit test will fail against this stub; the next
-    /// commit replaces the body with the real folding logic.
+    /// An empty map collapses to the original `get_hash` result. Until
+    /// every call site is wired to the live parameter set, that path
+    /// preserves the byte-identical hash existing callers expect.
     pub fn get_hash_with_startup_parameters(
         &self,
-        _startup_parameters: &BTreeMap<String, String>,
+        startup_parameters: &BTreeMap<String, String>,
     ) -> u64 {
-        self.get_hash()
+        if startup_parameters.is_empty() {
+            return self.get_hash();
+        }
+
+        if self.query.len() >= 64 {
+            let mut hasher = Xxh3::default();
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+            fold_startup_parameters(&mut hasher, startup_parameters);
+            hasher.finish()
+        } else {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+            fold_startup_parameters(&mut hasher, startup_parameters);
+            hasher.finish()
+        }
     }
 
     pub fn anonymous(&self) -> bool {
