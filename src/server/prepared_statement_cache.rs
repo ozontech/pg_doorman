@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use log::info;
+use log::{info, log_enabled, trace, Level};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -312,12 +312,22 @@ where
 pub fn gc_sweep_named() -> GcStats {
     let mut stats = GcStats::default();
     for (hash, entry) in named_snapshot() {
+        let text_len = entry.text.len() as u64;
         sweep_entry(
             Arc::strong_count(&entry.text) == 1,
             &entry.gc_state,
-            entry.text.len() as u64,
+            text_len,
             &mut stats,
-            || NAMED_INTERNER.remove(&hash).is_some(),
+            || {
+                let removed = NAMED_INTERNER.remove(&hash).is_some();
+                if removed && log_enabled!(Level::Trace) {
+                    trace!(
+                        "query_interner evict named: hash={hash:#x}, bytes={text_len}, query=\"{}\"",
+                        truncate_query_for_log(&entry.text)
+                    );
+                }
+                removed
+            },
         );
     }
     stats
@@ -332,15 +342,49 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
     let now = now_monotonic_ms();
     let mut stats = GcStats::default();
     for (hash, entry) in anon_snapshot() {
+        let text_len = entry.text.len() as u64;
+        let idle_ms = entry.idle_ms(now);
         sweep_entry(
-            entry.idle_ms(now) > anon_idle_ttl_ms,
+            idle_ms > anon_idle_ttl_ms,
             &entry.gc_state,
-            entry.text.len() as u64,
+            text_len,
             &mut stats,
-            || ANON_INTERNER.remove(&hash).is_some(),
+            || {
+                let removed = ANON_INTERNER.remove(&hash).is_some();
+                if removed && log_enabled!(Level::Trace) {
+                    trace!(
+                        "query_interner evict anon: hash={hash:#x}, bytes={text_len}, idle_ms={idle_ms}, query=\"{}\"",
+                        truncate_query_for_log(&entry.text)
+                    );
+                }
+                removed
+            },
         );
     }
     stats
+}
+
+/// Maximum number of characters (not bytes — query text may contain
+/// multi-byte UTF-8) kept when a query is rendered into a log line.
+/// Long queries are truncated with an ellipsis so a runaway statement
+/// can't blow up a log shipper.
+pub(crate) const LOG_QUERY_MAX_CHARS: usize = 80;
+
+/// Render a query string into a compact form safe for a single log line:
+/// newlines collapsed to spaces (one CR/LF = one space) and trimmed to
+/// `LOG_QUERY_MAX_CHARS` characters with a trailing "..." when truncated.
+/// Always allocates; the `log` crate's macros already short-circuit
+/// argument evaluation below the active level, so a bare `trace!(...)`
+/// call is enough — explicit `log_enabled!` guards are only useful on
+/// hot paths where avoiding the allocation matters.
+pub fn truncate_query_for_log(query: &str) -> String {
+    let cleaned = query.replace(['\n', '\r'], " ");
+    if cleaned.chars().count() <= LOG_QUERY_MAX_CHARS {
+        return cleaned;
+    }
+    let mut out: String = cleaned.chars().take(LOG_QUERY_MAX_CHARS).collect();
+    out.push_str("...");
+    out
 }
 
 /// Bit set when at least one client has Parse'd this hash with a non-empty name.
@@ -651,18 +695,12 @@ impl PreparedStatementCache {
             if let Some((_, entry)) = self.cache.remove(&key) {
                 self.total_memory_bytes
                     .fetch_sub(entry_bytes(&entry.parse), Ordering::Relaxed);
-                let query = entry.parse.query().replace(['\n', '\r'], " ");
-                let truncated: String = query.chars().take(80).collect();
-                let ellipsis = if query.chars().count() > 80 {
-                    "..."
-                } else {
-                    ""
-                };
                 info!(
-                    "Pool cache eviction: hash={:#x}, kind={}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
+                    "Pool cache eviction: hash={:#x}, kind={}, name={}, query=\"{}\", size={}/{}",
                     key,
                     entry.kind().as_str(),
                     entry.parse.name,
+                    truncate_query_for_log(entry.parse.query()),
                     self.cache.len(),
                     self.max_size,
                 );
@@ -1064,5 +1102,51 @@ mod tests {
         let snap = super::named_snapshot();
         let (_, e) = snap.iter().find(|(h, _)| *h == 0xD00D00).unwrap();
         assert_eq!(e.total_duration_us(), 350);
+    }
+
+    #[test]
+    fn truncate_query_for_log_keeps_short_query_intact() {
+        assert_eq!(truncate_query_for_log("select 1"), "select 1");
+    }
+
+    #[test]
+    fn truncate_query_for_log_collapses_newlines_to_spaces() {
+        assert_eq!(
+            truncate_query_for_log("select\n1\rfrom\r\nt"),
+            "select 1 from  t"
+        );
+    }
+
+    #[test]
+    fn truncate_query_for_log_no_ellipsis_at_exact_limit() {
+        let q: String = "a".repeat(LOG_QUERY_MAX_CHARS);
+        let out = truncate_query_for_log(&q);
+        assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS);
+        assert!(!out.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_query_for_log_appends_ellipsis_past_limit() {
+        let q: String = "a".repeat(LOG_QUERY_MAX_CHARS + 5);
+        let out = truncate_query_for_log(&q);
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS + 3);
+    }
+
+    #[test]
+    fn truncate_query_for_log_empty_input() {
+        assert_eq!(truncate_query_for_log(""), "");
+    }
+
+    #[test]
+    fn truncate_query_for_log_truncates_by_chars_not_bytes() {
+        // Multi-byte chars: Cyrillic 'а' is 2 bytes. LOG_QUERY_MAX_CHARS
+        // characters of 'а' is 2 * LOG_QUERY_MAX_CHARS bytes; truncation
+        // must count chars, not bytes — otherwise a UTF-8 boundary slice
+        // panics or produces invalid UTF-8.
+        let q: String = "а".repeat(LOG_QUERY_MAX_CHARS + 10);
+        let out = truncate_query_for_log(&q);
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS + 3);
     }
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
 #[cfg(not(windows))]
@@ -366,6 +366,26 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let elapsed = started.elapsed().as_secs_f64();
 
                     record_interner_gc(named_stats, anon_stats, elapsed);
+
+                    // Aggregate sweep summary. Suppressed when nothing was
+                    // evicted so a quiet pooler at default INFO sees no churn,
+                    // but visible at DEBUG during an incident — together with
+                    // the per-entry TRACE lines in `gc_sweep_named` /
+                    // `gc_sweep_anon` this is enough to reconstruct what the
+                    // interner dropped without scraping Prometheus.
+                    if named_stats.evicted > 0 || anon_stats.evicted > 0 {
+                        debug!(
+                            "query_interner GC: named marked={}, evicted={}, bytes={}; anon marked={}, evicted={}, bytes={}, ttl_ms={}; elapsed={:.3}ms",
+                            named_stats.marked,
+                            named_stats.evicted,
+                            named_stats.bytes,
+                            anon_stats.marked,
+                            anon_stats.evicted,
+                            anon_stats.bytes,
+                            anon_ttl_ms,
+                            elapsed * 1000.0,
+                        );
+                    }
                 }
             });
         }
