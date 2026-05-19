@@ -60,6 +60,64 @@ Unsafe values that the cache will silently freeze:
 The ratio `cache_total / (cache_total + backend_total)` is the cache
 hit rate.
 
+#### Eviction visibility for prepared-statement caches
+
+Per-eviction events from the named and anonymous query interner and
+from the per-client anonymous LRU are now emitted as `TRACE` log
+lines. The default `INFO` level is unchanged; turn them on at
+runtime with
+
+```
+SET log_level = 'info,pg_doorman::server::prepared_statement_cache=trace,pg_doorman::client::protocol=trace';
+```
+
+The GC sweep task additionally emits one `DEBUG` aggregate line per
+cycle that actually evicted something. Operators that previously had
+only the aggregate `pg_doorman_query_interner_evictions_total` and
+`pg_doorman_clients_prepared_anonymous_evictions_total` Prometheus
+counters can now follow individual evictions during an incident.
+
+The 80-char-with-ellipsis and 120-char preview helpers used in those
+log lines live in a new `utils::strings` module and replace three
+inline copies that had drifted apart.
+
+#### Web UI lifecycle events
+
+The sidebar used to toast "pg_doorman restarted — rate baseline reset"
+on every routine RELOAD. Totals are summed across the live pool set,
+and RELOAD plus dynamic-pool GC drop pools from that set, so the sum
+legitimately falls without the process going anywhere. The heuristic
+is gone. A real restart is detected by a change in `pid`,
+`started_at_ms`, or `uptime_seconds`.
+
+`/api/events` grows two new event targets:
+
+- `PROCESS_START` — emitted once when setup finishes; carries the
+  binary version and pid.
+- `CONFIG_VALIDATION_ERROR` — emitted when SIGHUP, admin RELOAD, or
+  `/api/admin/reload` rejects the new config. Rate-limited to one
+  per second per target so a SIGHUP loop with a bad config cannot
+  fill the 1024-entry ring with duplicates.
+
+A persistent banner across the top of the UI replaces the transient
+toast for conditions an operator must not miss:
+
+- `shutdown_in_progress` — pg_doorman is draining.
+- `migration_in_progress` — binary upgrade in flight.
+- Last unresolved `CONFIG_VALIDATION_ERROR` — stays up until a
+  successful `RELOAD` clears it.
+- `/api/overview` silent for >15 s — banner switches to
+  "pg_doorman unreachable — last contact 23s ago", so the operator
+  knows the rest of the page is no longer trustworthy.
+
+A no-op SIGHUP (config file re-parsed identically) now emits a
+`RELOAD` entry with message `config unchanged` instead of going
+silent — one event per signal keeps the audit timeline complete.
+
+`/api/events` and `/api/overview` send `Cache-Control: no-store` so
+intermediate proxies cannot collapse two consecutive polls into the
+same response.
+
 ### 3.9.1
 
 Web admin console refresh and a follow-up pass on `startup_parameters`.
