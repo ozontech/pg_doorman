@@ -391,17 +391,25 @@ where
         // `server_parameters`, so a concurrent RELOAD or auth_query
         // overlay refetch between authentication and this filter
         // cannot make the two views diverge.
+        // `startup = true` means "record this key into ServerParameters
+        // regardless of whether it is in TRACKED_PARAMETERS". Without
+        // it, names like `search_path`, `default_transaction_isolation`,
+        // `role` — anything outside the wire-presentation set —
+        // silently vanish, and `sync_parameters` on checkout never
+        // pushes them to the backend. SET_FORBIDDEN_PARAMETERS handles
+        // the inverse safety concern: read-only GUCs the client might
+        // try to put through are rejected at sync_parameters, not here.
         match auth_outcome.operator_managed_keys {
             Some(keys) if !keys.is_empty() => {
                 for (key, value) in &parameters {
                     let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
                     if !keys.contains(&canonical) {
-                        server_parameters.set_param(key.clone(), value.clone(), false);
+                        let _ = server_parameters.set_param(key.clone(), value.clone(), true);
                     }
                 }
             }
             _ => {
-                server_parameters.set_from_hashmap(&parameters, false);
+                let _ = server_parameters.set_from_hashmap(&parameters, true);
             }
         }
         let mut buf = BytesMut::new();

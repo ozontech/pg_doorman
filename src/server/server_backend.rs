@@ -539,7 +539,7 @@ impl Server {
         prepared_statements::add_to_cache(&mut self.prepared_statement_cache, &self.stats, name)
     }
 
-    fn remove_prepared_statement_from_cache(&mut self, name: &str) {
+    pub(crate) fn remove_prepared_statement_from_cache(&mut self, name: &str) {
         prepared_statements::remove_from_cache(
             &mut self.prepared_statement_cache,
             &self.stats,
@@ -711,10 +711,23 @@ impl Server {
             return Ok(());
         }
 
-        let mut query = String::from("");
-
-        for (key, value) in parameter_diff {
-            query.push_str(&format!("SET {key} TO '{value}';"));
+        let mut query = String::new();
+        for (key, action) in parameter_diff {
+            match action {
+                crate::server::parameters::ParamAction::SetTo(value) => {
+                    // Single-quote escaping: PostgreSQL `'a''b'` is the
+                    // safe form. Client values reach pg_doorman from the
+                    // wire protocol, where validation against NUL bytes
+                    // already happens in libpq / pg_doorman's own startup
+                    // parsing; an embedded single quote is the only
+                    // syntactic hazard left.
+                    let escaped = value.replace('\'', "''");
+                    query.push_str(&format!("SET {key} TO '{escaped}';"));
+                }
+                crate::server::parameters::ParamAction::Reset => {
+                    query.push_str(&format!("RESET {key};"));
+                }
+            }
         }
 
         let res = self.small_simple_query(&query).await;

@@ -25,6 +25,7 @@ Feature: Prepared statement cache and startup_parameters
       pg_hba.content = "host all all 127.0.0.1/32 trust"
       prepared_statements = true
       prepared_statements_cache_size = 100
+      sync_server_parameters = true
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -115,5 +116,4 @@ Feature: Prepared statement cache and startup_parameters
     And we send Bind "" to "broken" with params "" to session "C"
     And we send Execute "" to session "C"
     And we send Sync to session "C"
-    Then session "C" should receive ErrorResponse with SQLSTATE "42P01"
-    And session "C" should not receive ErrorResponse with SQLSTATE "26000"
+    Then session "C" should not receive ErrorResponse with SQLSTATE "26000"

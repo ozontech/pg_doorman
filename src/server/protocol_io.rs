@@ -348,6 +348,29 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
         server.cleanup_state.needs_cleanup_prepare = true;
     }
 
+    // Drop every name that `register_prepared_statement` had
+    // optimistically inserted into the LRU before the Parse round-trip
+    // finished. Without this rollback, a Parse that PostgreSQL rejects
+    // (`42P01` on a missing table, anything else the planner refuses)
+    // leaves a phantom DOORMAN_N entry in the cache. The next Bind on
+    // the same client-given name then takes the cache-hit path,
+    // pg_doorman skips re-emitting Parse, and PostgreSQL answers with
+    // `26000 prepared statement "DOORMAN_N" does not exist` — an error
+    // whose blame falls on a cache the client never created.
+    //
+    // ErrorResponse on Parse means none of the pending names were
+    // installed on the backend, so it is correct to drop all of them.
+    if !server.registering_prepared_statement.is_empty() {
+        let pending: Vec<String> = server.registering_prepared_statement.drain(..).collect();
+        for name in &pending {
+            server.remove_prepared_statement_from_cache(name);
+        }
+        // The deferred-Parse path also set this flag when it pushed the
+        // first pending name; with nothing left to flush, clear it so
+        // the checkin reset is not redundant.
+        server.has_pending_cache_entries = false;
+    }
+
     // Handle async mode errors
     if server.is_async() {
         server.data_available = false;
@@ -686,8 +709,16 @@ where
             'c' => (),
 
             // ParseComplete
-            // Response to Parse message in extended query protocol
+            // Response to Parse message in extended query protocol.
+            // Confirms the head of `registering_prepared_statement` was
+            // accepted by PostgreSQL: drop it from the pending list so a
+            // later ErrorResponse only rolls back the still-unconfirmed
+            // names. Without this pop, an error on Parse #N rolled back
+            // every Parse in the batch — even the ones PG had already
+            // ParseComplete'd — which Java pgjdbc surfaced as
+            // "Connection reset by peer" on its eighth pipelined batch.
             '1' => {
+                let _ = server.registering_prepared_statement.pop_front();
                 if server.is_async() {
                     server.decrement_expected();
                 }

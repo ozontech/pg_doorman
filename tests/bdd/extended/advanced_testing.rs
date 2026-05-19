@@ -466,9 +466,7 @@ pub async fn verify_error_response_with_sqlstate(
 /// negative invariants — for example, that a backend's planner-time 42P01
 /// is the only error the client sees, with no follow-up 26000 surfacing
 /// because pg_doorman skipped a re-Parse against a poisoned LRU.
-#[then(
-    regex = r#"^session "([^"]+)" should not receive ErrorResponse with SQLSTATE "([^"]+)"$"#
-)]
+#[then(regex = r#"^session "([^"]+)" should not receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
 pub async fn verify_no_error_response_with_sqlstate(
     world: &mut DoormanWorld,
     session_name: String,

@@ -27,8 +27,6 @@ pub(crate) mod wire;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-pub(crate) use listener::start_web_server;
 pub use listener::{bind_web_listener, serve_on};
 pub use state::{refresh_options_from_config, WebServerOptions};
 pub(crate) use wire::Response;

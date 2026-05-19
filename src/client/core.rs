@@ -575,7 +575,10 @@ pub struct Client<S, T> {
     /// Postgres user for this client (This comes from the user in the connection string)
     pub(crate) username: String,
 
-    /// Server startup and session parameters that we're going to track
+    /// Server startup and session parameters that we're going to track.
+    /// Owns the lazy planner-hash cache used by
+    /// `Parse::get_hash_with_planner_params` on every Parse — see
+    /// `ServerParameters::planner_param_hash`.
     pub(crate) server_parameters: ServerParameters,
 
     /// Prepared statements state (caching, batch operations, etc.)

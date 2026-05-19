@@ -14,8 +14,6 @@ pub mod server;
 pub mod sso;
 pub mod static_assets;
 
-#[cfg(test)]
-pub(crate) use server::start_web_server;
 pub use server::{bind_web_listener, refresh_options_from_config, serve_on, WebServerOptions};
 
 #[cfg(test)]

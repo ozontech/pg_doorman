@@ -192,6 +192,38 @@ impl Parse {
         }
     }
 
+    /// Cache-key variant that folds a precomputed planner-parameter hash
+    /// into the digest. Two clients of the same user@db pool with
+    /// different `search_path` (or any other `PLANNER_KEYS` member)
+    /// get distinct hashes and therefore distinct server-side
+    /// `DOORMAN_N` names, so PostgreSQL prepares one plan per planner
+    /// state and never serves a stale plan from a peer client.
+    ///
+    /// `planner_param_hash == 0` collapses to the legacy `get_hash`
+    /// result — used by code paths that do not yet have a client
+    /// session at hand (tests, migration replay) so we keep
+    /// byte-compatibility for the empty-planner-state case.
+    pub fn get_hash_with_planner_params(&self, planner_param_hash: u64) -> u64 {
+        if planner_param_hash == 0 {
+            return self.get_hash();
+        }
+        if self.query.len() >= 64 {
+            let mut hasher = Xxh3::default();
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+            hasher.write_u64(planner_param_hash);
+            hasher.finish()
+        } else {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+            hasher.write_u64(planner_param_hash);
+            hasher.finish()
+        }
+    }
+
     pub fn anonymous(&self) -> bool {
         self.name.is_empty()
     }
@@ -761,5 +793,55 @@ mod tests {
 
         let p3 = Parse::from_parts("SELECT $1", &[25]); // different param type
         assert_ne!(p1.get_hash(), p3.get_hash());
+    }
+
+    /// `planner_param_hash == 0` is the "no planner GUC set" path —
+    /// `get_hash_with_planner_params` must collapse to the legacy
+    /// `get_hash` so existing prepared-cache entries on a fresh client
+    /// stay byte-identical and rolling-upgrade replan storms are
+    /// bounded to clients that actually pin GUCs.
+    #[test]
+    fn get_hash_with_planner_params_zero_matches_legacy() {
+        let p = Parse::from_parts("SELECT 1", &[23]);
+        assert_eq!(p.get_hash(), p.get_hash_with_planner_params(0));
+    }
+
+    /// Non-zero planner hash must move the digest. A client running
+    /// the same Parse text under a different planner state gets a
+    /// fresh DOORMAN_N name, so the cached plan PostgreSQL hands back
+    /// is the one built under the matching GUCs.
+    #[test]
+    fn get_hash_with_planner_params_nonzero_changes_digest() {
+        let p = Parse::from_parts("SELECT 1", &[23]);
+        let base = p.get_hash();
+        assert_ne!(base, p.get_hash_with_planner_params(0x1234_5678_9ABC_DEF0));
+    }
+
+    /// Different planner hashes must produce different digests — the
+    /// whole reason for the mix-in. Without this guarantee two clients
+    /// would still collide on the cache key.
+    #[test]
+    fn get_hash_with_planner_params_distinct_for_distinct_planner_hashes() {
+        let p = Parse::from_parts("SELECT 1", &[23]);
+        let h_a = p.get_hash_with_planner_params(0x1111_1111_1111_1111);
+        let h_b = p.get_hash_with_planner_params(0x2222_2222_2222_2222);
+        assert_ne!(h_a, h_b);
+    }
+
+    /// Long queries hit the Xxh3 branch (>=64 bytes), short ones hit
+    /// DefaultHasher. Both must respect the planner-hash mix-in.
+    #[test]
+    fn get_hash_with_planner_params_works_on_both_hasher_branches() {
+        let short = Parse::from_parts("SELECT 1", &[]);
+        let long_query = format!("SELECT {} FROM t", "a".repeat(80));
+        let long = Parse::from_parts(&long_query, &[]);
+        assert_ne!(
+            short.get_hash(),
+            short.get_hash_with_planner_params(0xDEAD_BEEF)
+        );
+        assert_ne!(
+            long.get_hash(),
+            long.get_hash_with_planner_params(0xDEAD_BEEF)
+        );
     }
 }
