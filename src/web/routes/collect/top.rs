@@ -1,8 +1,9 @@
 use std::sync::atomic::Ordering;
 
 use crate::pool::get_all_pools;
-use crate::server::{anon_snapshot, named_snapshot, preview_query};
+use crate::server::{anon_snapshot, named_snapshot};
 use crate::stats::get_client_stats;
+use crate::utils::strings::preview_query;
 use crate::web::routes::dto::{
     TopClientBy, TopClientFilters, TopClientRowDto, TopClientsDto, TopPreparedBy, TopPreparedDto,
     TopPreparedFilters, TopPreparedRowDto, TopQueriesDto, TopQueryBy, TopQueryFilters,

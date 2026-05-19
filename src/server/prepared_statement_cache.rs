@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::messages::Parse;
 use crate::utils::dashmap::new_dashmap_with_capacity;
+use crate::utils::strings::truncate_query_for_log;
 
 /// Worker-thread hint for the lazy interner DashMaps. `run_server` calls
 /// `set_interner_worker_threads(config.general.worker_threads)` before any
@@ -362,42 +363,6 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
         );
     }
     stats
-}
-
-/// Maximum number of characters (not bytes — query text may contain
-/// multi-byte UTF-8) kept when a query is rendered into a log line.
-/// Long queries are truncated with an ellipsis so a runaway statement
-/// can't blow up a log shipper.
-pub(crate) const LOG_QUERY_MAX_CHARS: usize = 80;
-
-/// Maximum characters preserved in API/admin previews of a query
-/// (`/api/top/queries`, `/api/interner`, `SHOW QUERIES`). Wider than the
-/// log line because the consumer is interactive UI / `psql` output that
-/// can wrap rather than a single-line shipper.
-pub const PREVIEW_QUERY_MAX_CHARS: usize = 120;
-
-/// First `PREVIEW_QUERY_MAX_CHARS` characters of `query`, verbatim. No
-/// ellipsis, no newline collapse — preview surfaces are expected to
-/// render the text as-is so operators can read the original statement.
-pub fn preview_query(query: &str) -> String {
-    query.chars().take(PREVIEW_QUERY_MAX_CHARS).collect()
-}
-
-/// Render a query string into a compact form safe for a single log line:
-/// newlines collapsed to spaces (one CR/LF = one space) and trimmed to
-/// `LOG_QUERY_MAX_CHARS` characters with a trailing "..." when truncated.
-/// Always allocates; the `log` crate's macros already short-circuit
-/// argument evaluation below the active level, so a bare `trace!(...)`
-/// call is enough — explicit `log_enabled!` guards are only useful on
-/// hot paths where avoiding the allocation matters.
-pub fn truncate_query_for_log(query: &str) -> String {
-    let cleaned = query.replace(['\n', '\r'], " ");
-    if cleaned.chars().count() <= LOG_QUERY_MAX_CHARS {
-        return cleaned;
-    }
-    let mut out: String = cleaned.chars().take(LOG_QUERY_MAX_CHARS).collect();
-    out.push_str("...");
-    out
 }
 
 /// Bit set when at least one client has Parse'd this hash with a non-empty name.
@@ -1115,71 +1080,5 @@ mod tests {
         let snap = super::named_snapshot();
         let (_, e) = snap.iter().find(|(h, _)| *h == 0xD00D00).unwrap();
         assert_eq!(e.total_duration_us(), 350);
-    }
-
-    #[test]
-    fn truncate_query_for_log_keeps_short_query_intact() {
-        assert_eq!(truncate_query_for_log("select 1"), "select 1");
-    }
-
-    #[test]
-    fn truncate_query_for_log_collapses_newlines_to_spaces() {
-        assert_eq!(
-            truncate_query_for_log("select\n1\rfrom\r\nt"),
-            "select 1 from  t"
-        );
-    }
-
-    #[test]
-    fn truncate_query_for_log_no_ellipsis_at_exact_limit() {
-        let q: String = "a".repeat(LOG_QUERY_MAX_CHARS);
-        let out = truncate_query_for_log(&q);
-        assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS);
-        assert!(!out.ends_with("..."));
-    }
-
-    #[test]
-    fn truncate_query_for_log_appends_ellipsis_past_limit() {
-        let q: String = "a".repeat(LOG_QUERY_MAX_CHARS + 5);
-        let out = truncate_query_for_log(&q);
-        assert!(out.ends_with("..."));
-        assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS + 3);
-    }
-
-    #[test]
-    fn truncate_query_for_log_empty_input() {
-        assert_eq!(truncate_query_for_log(""), "");
-    }
-
-    #[test]
-    fn truncate_query_for_log_truncates_by_chars_not_bytes() {
-        // Multi-byte chars: Cyrillic 'а' is 2 bytes. LOG_QUERY_MAX_CHARS
-        // characters of 'а' is 2 * LOG_QUERY_MAX_CHARS bytes; truncation
-        // must count chars, not bytes — otherwise a UTF-8 boundary slice
-        // panics or produces invalid UTF-8.
-        let q: String = "а".repeat(LOG_QUERY_MAX_CHARS + 10);
-        let out = truncate_query_for_log(&q);
-        assert!(out.ends_with("..."));
-        assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS + 3);
-    }
-
-    #[test]
-    fn preview_query_keeps_short_input_untouched() {
-        assert_eq!(preview_query("SELECT 1\nFROM t"), "SELECT 1\nFROM t");
-    }
-
-    #[test]
-    fn preview_query_caps_at_preview_max_no_ellipsis() {
-        let q: String = "a".repeat(PREVIEW_QUERY_MAX_CHARS + 50);
-        let out = preview_query(&q);
-        assert_eq!(out.chars().count(), PREVIEW_QUERY_MAX_CHARS);
-        assert!(!out.ends_with("..."));
-    }
-
-    #[test]
-    fn preview_query_handles_multi_byte_chars() {
-        let q: String = "ы".repeat(PREVIEW_QUERY_MAX_CHARS + 5);
-        let out = preview_query(&q);
-        assert_eq!(out.chars().count(), PREVIEW_QUERY_MAX_CHARS);
     }
 }

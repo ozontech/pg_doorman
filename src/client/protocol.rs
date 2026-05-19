@@ -7,7 +7,8 @@ use std::sync::Arc;
 use crate::errors::Error;
 use crate::messages::{error_response, Bind, Close, Describe, Parse};
 use crate::pool::ConnectionPool;
-use crate::server::{now_monotonic_ms, truncate_query_for_log, Server};
+use crate::server::{now_monotonic_ms, Server};
+use crate::utils::strings::truncate_query_for_log;
 
 /// Throttle for the synthetic-miss WARN line. Without rate-limiting a
 /// driver hammering the pooler at 10k RPS would write 10k WARN lines per
