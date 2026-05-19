@@ -122,6 +122,20 @@ impl PgConnection {
     }
 
     pub async fn send_startup(&mut self, user: &str, database: &str) -> tokio::io::Result<()> {
+        self.send_startup_with_params(user, database, &[]).await
+    }
+
+    /// Send a StartupMessage with arbitrary extra parameters appended to
+    /// `user`/`database`. Each entry is rendered as a NUL-terminated
+    /// key, NUL-terminated value pair — exactly what the wire protocol
+    /// expects. Useful for BDD scenarios that pin
+    /// per-session GUCs (e.g. `search_path`) at connection time.
+    pub async fn send_startup_with_params(
+        &mut self,
+        user: &str,
+        database: &str,
+        extras: &[(&str, &str)],
+    ) -> tokio::io::Result<()> {
         let mut msg = Vec::new();
         msg.extend_from_slice(&196608i32.to_be_bytes()); // protocol version 3.0
         msg.extend_from_slice(b"user\0");
@@ -130,6 +144,12 @@ impl PgConnection {
         msg.extend_from_slice(b"database\0");
         msg.extend_from_slice(database.as_bytes());
         msg.push(0);
+        for (key, value) in extras {
+            msg.extend_from_slice(key.as_bytes());
+            msg.push(0);
+            msg.extend_from_slice(value.as_bytes());
+            msg.push(0);
+        }
         msg.push(0);
 
         let len = (msg.len() + 4) as i32;

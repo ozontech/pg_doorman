@@ -29,6 +29,55 @@ pub async fn create_named_session(
     world.named_sessions.insert(session_name, conn);
 }
 
+/// Variant that lets a feature pin extra startup parameters at
+/// connection time (e.g. `search_path=schema_a`). Format of the
+/// `extras` capture: `key=value` pairs separated by commas, optional
+/// whitespace around the comma. Used to reproduce the prepared-cache
+/// hash collision when two sessions of the same `user@db` pool differ
+/// only in the GUCs they sent in their StartupMessage.
+#[when(
+    regex = r#"^we create session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)" and startup parameters "([^"]+)"$"#
+)]
+pub async fn create_named_session_with_startup_params(
+    world: &mut DoormanWorld,
+    session_name: String,
+    user: String,
+    password: String,
+    database: String,
+    extras: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    let parsed: Vec<(String, String)> = extras
+        .split(',')
+        .filter_map(|entry| {
+            let trimmed = entry.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let (k, v) = trimmed.split_once('=')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect();
+    let extras_ref: Vec<(&str, &str)> = parsed
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let mut conn = PgConnection::connect(&doorman_addr)
+        .await
+        .expect("Failed to connect to pg_doorman");
+    conn.send_startup_with_params(&user, &database, &extras_ref)
+        .await
+        .expect("Failed to send startup with params to pg_doorman");
+    conn.authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to pg_doorman");
+
+    world.named_sessions.insert(session_name, conn);
+}
+
 #[when(
     regex = r#"^we create (\d+) sessions with prefix "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
 )]
