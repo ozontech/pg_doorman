@@ -51,7 +51,7 @@ pub(crate) fn collect_interner_top(n: u64) -> InternerTopDto {
                 Handle::Named(e) => e.text().clone(),
                 Handle::Anon(e) => e.text().clone(),
             };
-            let preview: String = text.chars().take(120).collect();
+            let preview = crate::server::preview_query(&text);
             InternerTopRowDto {
                 hash: format!("{:#x}", hash),
                 kind: kind.to_string(),

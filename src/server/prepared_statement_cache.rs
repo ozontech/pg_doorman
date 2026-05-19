@@ -370,6 +370,19 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
 /// can't blow up a log shipper.
 pub(crate) const LOG_QUERY_MAX_CHARS: usize = 80;
 
+/// Maximum characters preserved in API/admin previews of a query
+/// (`/api/top/queries`, `/api/interner`, `SHOW QUERIES`). Wider than the
+/// log line because the consumer is interactive UI / `psql` output that
+/// can wrap rather than a single-line shipper.
+pub const PREVIEW_QUERY_MAX_CHARS: usize = 120;
+
+/// First `PREVIEW_QUERY_MAX_CHARS` characters of `query`, verbatim. No
+/// ellipsis, no newline collapse — preview surfaces are expected to
+/// render the text as-is so operators can read the original statement.
+pub fn preview_query(query: &str) -> String {
+    query.chars().take(PREVIEW_QUERY_MAX_CHARS).collect()
+}
+
 /// Render a query string into a compact form safe for a single log line:
 /// newlines collapsed to spaces (one CR/LF = one space) and trimmed to
 /// `LOG_QUERY_MAX_CHARS` characters with a trailing "..." when truncated.
@@ -1148,5 +1161,25 @@ mod tests {
         let out = truncate_query_for_log(&q);
         assert!(out.ends_with("..."));
         assert_eq!(out.chars().count(), LOG_QUERY_MAX_CHARS + 3);
+    }
+
+    #[test]
+    fn preview_query_keeps_short_input_untouched() {
+        assert_eq!(preview_query("SELECT 1\nFROM t"), "SELECT 1\nFROM t");
+    }
+
+    #[test]
+    fn preview_query_caps_at_preview_max_no_ellipsis() {
+        let q: String = "a".repeat(PREVIEW_QUERY_MAX_CHARS + 50);
+        let out = preview_query(&q);
+        assert_eq!(out.chars().count(), PREVIEW_QUERY_MAX_CHARS);
+        assert!(!out.ends_with("..."));
+    }
+
+    #[test]
+    fn preview_query_handles_multi_byte_chars() {
+        let q: String = "ы".repeat(PREVIEW_QUERY_MAX_CHARS + 5);
+        let out = preview_query(&q);
+        assert_eq!(out.chars().count(), PREVIEW_QUERY_MAX_CHARS);
     }
 }
