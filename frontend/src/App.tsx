@@ -4,8 +4,10 @@ import { Toaster } from "sonner";
 import { AuthGate } from "./components/AuthGate";
 import { CommandPalette } from "./components/CommandPalette";
 import { HelpModal } from "./components/HelpModal";
+import { LifecycleBanner } from "./components/LifecycleBanner";
 import { Sidebar } from "./components/Sidebar";
 import { SilentCallback } from "./components/SilentCallback";
+import { useLifecycleEvents } from "./hooks/useLifecycleEvents";
 import { AdminAuthProvider } from "./hooks/useAdminAuth";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import Overview from "./pages/Overview";
@@ -83,17 +85,35 @@ function AppMain() {
       <ThemeProvider>
         <AdminAuthProvider>
           <BrowserRouter>
-            <div className="flex min-h-screen bg-bg text-text">
-              <Sidebar />
-              <RoutedShell />
-            </div>
-            <CommandPalette />
-            <HelpModal />
-            <AppToaster />
+            <Shell />
           </BrowserRouter>
         </AdminAuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
+  );
+}
+
+/**
+ * Inner shell. Splits out from `AppMain` because it needs to be inside
+ * `AdminAuthProvider` to read `authHeader` from the lifecycle-events
+ * hook — that hook polls `/api/events`, which goes through the same
+ * auth path as every other UI request.
+ */
+function Shell() {
+  useLifecycleEvents();
+  return (
+    <>
+      <div className="flex min-h-screen flex-col bg-bg text-text">
+        <LifecycleBanner />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar />
+          <RoutedShell />
+        </div>
+      </div>
+      <CommandPalette />
+      <HelpModal />
+      <AppToaster />
+    </>
   );
 }
 

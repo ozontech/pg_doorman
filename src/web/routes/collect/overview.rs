@@ -96,6 +96,10 @@ pub(crate) fn collect_overview() -> OverviewDto {
 
         rss_bytes: get_process_memory_usage(),
         uptime_seconds: STARTED_AT.elapsed().map(|d| d.as_secs()).unwrap_or(0),
+        started_at_ms: STARTED_AT
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
         pid: std::process::id(),
         current_clients: CURRENT_CLIENT_COUNT.load(Ordering::Relaxed),
         clients_in_transactions: CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed),

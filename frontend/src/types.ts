@@ -31,6 +31,10 @@ export interface OverviewDto {
   // Process tile fields (added in the backend P0 inventory wedge).
   rss_bytes: number;
   uptime_seconds: number;
+  // Unix milliseconds the process started at. Pair with `pid` for
+  // identity-based restart detection — a change in either field is
+  // a real restart, counter rollback alone is not.
+  started_at_ms: number;
   pid: number;
   current_clients: number;
   clients_in_transactions: number;
@@ -120,7 +124,10 @@ export type Severity = "ok" | "degraded" | "critical";
 export interface EventEntryDto {
   seq: number;
   ts_ms: number;
-  // RELOAD, PAUSE, RESUME, RECONNECT (admin commands).
+  // Open enum on the wire — treat anything outside the known set as a
+  // neutral target so an older UI build keeps rendering future events.
+  // Known: PROCESS_START, RELOAD, PAUSE, RESUME, RECONNECT,
+  // CONFIG_VALIDATION_ERROR.
   target: string;
   message: string;
 }

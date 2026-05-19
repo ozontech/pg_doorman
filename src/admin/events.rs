@@ -1,6 +1,18 @@
-//! Bounded ring buffer of admin command events (RELOAD, PAUSE, RESUME,
-//! RECONNECT). Frontend reads via `/api/events?since=<seq>&max=` to
-//! render vertical-line annotations on Overview graphs.
+//! Bounded ring buffer of lifecycle events. Frontend reads via
+//! `/api/events?since=<seq>&max=` to render vertical-line annotations
+//! on Overview/Wall graphs and to drive the restart/reload notifications
+//! in the sidebar. Targets currently emitted:
+//!
+//! * `PROCESS_START` — pushed once when the binary finishes setup.
+//!   Carries pid and version so a fresh tab opening the UI can
+//!   reconcile its cached identity without waiting for the first
+//!   `/api/overview` poll.
+//! * `RELOAD` / `PAUSE` / `RESUME` / `RECONNECT` — admin commands
+//!   (`src/admin/commands.rs`, `src/admin/operations.rs`).
+//! * `CONFIG_VALIDATION_ERROR` — pushed when a config reload (admin
+//!   RELOAD or `SIGHUP`) is rejected by `Config::validate`. Carries
+//!   the validator's message so the operator sees *why* the new
+//!   config did not take effect.
 //!
 //! This module is intentionally simple: a single Mutex<VecDeque>, no
 //! lock-free fancy. Admin commands fire on the order of one per few
@@ -23,7 +35,11 @@ pub struct EventEntry {
     pub seq: u64,
     /// Wall-clock timestamp in milliseconds since unix epoch.
     pub ts_ms: u64,
-    /// One of `"RELOAD"`, `"PAUSE"`, `"RESUME"`, `"RECONNECT"`.
+    /// One of `"PROCESS_START"`, `"RELOAD"`, `"PAUSE"`, `"RESUME"`,
+    /// `"RECONNECT"`, `"CONFIG_VALIDATION_ERROR"`. Treat as an open enum:
+    /// the frontend maps unknown targets to a neutral chip rather than
+    /// failing, so adding a new target on the backend never breaks an
+    /// older UI build.
     pub target: &'static str,
     /// Human-readable description of the event (e.g. `"pool main@db1 paused"`).
     pub message: String,

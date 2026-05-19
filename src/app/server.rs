@@ -309,6 +309,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             crate::pool::gc::spawn_dynamic_pool_gc(gc_interval);
         }
 
+        // One-shot lifecycle marker so /api/events has at least one entry
+        // immediately after boot — operators opening the UI on a fresh
+        // pooler get a "process started" annotation on Overview/Wall
+        // without waiting for the first admin command. Force `STARTED_AT`
+        // to materialize here so the cached timestamp matches what
+        // `/api/overview` and `/api/process` report.
+        let _ = *STARTED_AT;
+        crate::admin::events::push_event(
+            "PROCESS_START",
+            format!(
+                "pg_doorman {} started, pid={}",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id()
+            ),
+        );
+
         // Query interner GC: bounds NAMED via passive Arc::strong_count and
         // ANON via per-entry TTL. Sweep ticks at gc_interval / 4 so an entry
         // marked on cycle N has roughly a quarter-interval to be touched and
@@ -543,7 +559,24 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 // kill -SIGHUP $(pgrep pg_doorman)
                 _ = sighup_signal.recv() => {
                     info!("Reloading config");
-                    _ = reload_config(client_server_map.clone()).await;
+                    match reload_config(client_server_map.clone()).await {
+                        Ok(true) => {
+                            crate::admin::events::push_event("RELOAD", "config reloaded (SIGHUP)".to_string());
+                        }
+                        Ok(false) => {
+                            // No-op reload — file re-parsed identically to the
+                            // live config. Skip the event so the UI timeline
+                            // does not collect noise from operators kicking
+                            // SIGHUP "just to be sure".
+                        }
+                        Err(e) => {
+                            error!("Config reload rejected: {e}");
+                            crate::admin::events::push_event(
+                                "CONFIG_VALIDATION_ERROR",
+                                format!("SIGHUP reload rejected: {e}"),
+                            );
+                        }
+                    }
                     get_config().show();
                 },
 
