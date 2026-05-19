@@ -250,6 +250,18 @@ impl Response {
         self
     }
 
+    /// Append (or overwrite) an HTTP header on a Response in flight.
+    /// Used by live-data endpoints (`/api/overview`, `/api/events`) to
+    /// pin `Cache-Control: no-store` so intermediate proxies and the
+    /// browser never collapse two consecutive polls into one stale
+    /// response.
+    pub(crate) fn with_header(mut self, name: &'static str, value: &'static str) -> Self {
+        self.extra_headers
+            .retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
+        self.extra_headers.push((name, value.into()));
+        self
+    }
+
     pub(crate) fn ok_json<T: serde::Serialize>(value: &T) -> Self {
         match serde_json::to_vec(value) {
             Ok(body) => Response {

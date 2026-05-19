@@ -56,6 +56,18 @@ pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 pub static STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
     std::sync::LazyLock::new(std::time::SystemTime::now);
 
+/// `STARTED_AT` rendered as milliseconds since the Unix epoch. Mirrors
+/// the wall-clock format the Web UI consumes via `OverviewDto.started_at_ms`
+/// and `ProcessDto.started_at_ms`; computing it once and sharing the
+/// `LazyLock` keeps the two endpoints in lockstep without repeating the
+/// `duration_since(UNIX_EPOCH)` call on every poll.
+pub static STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+    STARTED_AT
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+});
+
 /// Channel sender for migration payloads. Set once when migration starts.
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
     std::sync::OnceLock::new();
@@ -564,14 +576,15 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             crate::admin::events::push_event("RELOAD", "config reloaded (SIGHUP)".to_string());
                         }
                         Ok(false) => {
-                            // No-op reload — file re-parsed identically to the
-                            // live config. Skip the event so the UI timeline
-                            // does not collect noise from operators kicking
-                            // SIGHUP "just to be sure".
+                            // No-op reload — file re-parsed identically. Still
+                            // emit a RELOAD entry with "config unchanged" so
+                            // audit-driven SIGHUP'ing leaves a trace; one
+                            // event per signal is the natural rate.
+                            crate::admin::events::push_event("RELOAD", "config unchanged (SIGHUP)".to_string());
                         }
                         Err(e) => {
                             error!("Config reload rejected: {e}");
-                            crate::admin::events::push_event(
+                            crate::admin::events::push_event_rate_limited(
                                 "CONFIG_VALIDATION_ERROR",
                                 format!("SIGHUP reload rejected: {e}"),
                             );

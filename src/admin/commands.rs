@@ -31,7 +31,7 @@ where
             crate::admin::events::push_event("RELOAD", "config reloaded".to_string());
         }
         Err(e) => {
-            crate::admin::events::push_event(
+            crate::admin::events::push_event_rate_limited(
                 "CONFIG_VALIDATION_ERROR",
                 format!("admin RELOAD rejected: {e}"),
             );

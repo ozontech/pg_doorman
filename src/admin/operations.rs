@@ -69,7 +69,7 @@ pub async fn reload_now() -> Result<bool, Error> {
     let changed = match reload_config(csm).await {
         Ok(c) => c,
         Err(e) => {
-            crate::admin::events::push_event(
+            crate::admin::events::push_event_rate_limited(
                 "CONFIG_VALIDATION_ERROR",
                 format!("/api/admin/reload rejected: {e}"),
             );

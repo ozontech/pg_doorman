@@ -15,7 +15,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
 
-use crate::app::server::STARTED_AT;
+use crate::app::server::{STARTED_AT, STARTED_AT_MS};
 use crate::web::metrics::system::get_process_memory_usage;
 use crate::web::routes::dto::{
     CgroupMemoryDto, JemallocStatsDto, MemoryBreakdownDto, MemoryCategoryDto, ProcessDto,
@@ -37,12 +37,6 @@ static CPU_CORES: LazyLock<u32> = LazyLock::new(|| num_cpus::get() as u32);
 static PID: LazyLock<u32> = LazyLock::new(std::process::id);
 #[cfg(target_os = "linux")]
 static FD_LIMIT: LazyLock<u64> = LazyLock::new(read_linux_fd_limit_uncached);
-static STARTED_AT_MS: LazyLock<u64> = LazyLock::new(|| {
-    STARTED_AT
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-});
 
 pub(crate) fn collect_process() -> ProcessDto {
     let pid = *PID;

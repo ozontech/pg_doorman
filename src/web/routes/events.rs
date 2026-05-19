@@ -9,7 +9,7 @@ use crate::web::server::Response;
 pub(crate) fn handle_events(query: &BTreeMap<String, Vec<String>>) -> Response {
     let since = parse_u64(query, "since", 0);
     let max = parse_u64(query, "max", 200);
-    Response::ok_json(&collect_events(since, max))
+    Response::ok_json(&collect_events(since, max)).with_header("Cache-Control", "no-store")
 }
 
 #[cfg(test)]

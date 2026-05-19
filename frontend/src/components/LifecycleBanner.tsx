@@ -1,33 +1,69 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../api";
 import { useAdminAuth } from "../hooks/useAdminAuth";
+import { useValidationErrorState } from "../hooks/useLifecycleEvents";
 import type { OverviewDto } from "../types";
 
 /**
- * Persistent banner shown while the pooler is in a transient lifecycle
- * state — draining for shutdown or migrating clients to a new binary.
- * Toasts disappear after a few seconds and are easy to miss; a banner
- * stays visible until the underlying flag clears, which is what an
- * operator watching the dashboard needs.
+ * Persistent banner for lifecycle conditions an operator must not miss:
  *
- * Polls `/api/overview` independently of the Sidebar so the banner
- * renders even on pages whose own data source ignores the lifecycle
- * fields.
+ * 1. Config validation error — the last deploy step rejected the new
+ *    config; the live config is whatever pg_doorman loaded before. The
+ *    banner stays up until a successful RELOAD lands.
+ * 2. Shutdown — pg_doorman is draining, no new transactions.
+ * 3. Migration — binary upgrade in progress, clients moving to the
+ *    new process.
+ * 4. Unreachable — `/api/overview` has not answered for ~15 s. The UI
+ *    is talking to a dead pooler; do not trust the rest of the page.
+ *
+ * Banners are persistent on purpose: toasts vanish in a few seconds
+ * and miss operators who alt-tabbed to a terminal to act on the alert.
  */
 
 const POLL_MS = 5_000;
+const STALE_MS = 15_000;
 
 export function LifecycleBanner() {
   const { authHeader } = useAdminAuth();
-  const { data } = useQuery({
-    queryKey: ["lifecycle-banner.overview", authHeader],
+  // Share the `/api/overview` cache with Sidebar — same queryKey means
+  // TanStack Query deduplicates the HTTP call, so two banners-worth of
+  // polling do not show up on the wire.
+  const { data, dataUpdatedAt, isError } = useQuery({
+    queryKey: ["sidebar.overview", authHeader],
     queryFn: ({ signal }) =>
       apiGet<OverviewDto>("/api/overview", authHeader, signal),
     refetchInterval: POLL_MS,
   });
+  const validationError = useValidationErrorState();
 
-  if (!data) return null;
-  if (data.shutdown_in_progress) {
+  // Unreachable: either the last successful fetch is older than the
+  // staleness threshold or the most recent attempt errored. Both
+  // are operator-visible "the pooler is not talking" signals.
+  const lastContactMs = dataUpdatedAt > 0 ? Date.now() - dataUpdatedAt : 0;
+  const unreachable =
+    (!!data && lastContactMs > STALE_MS) || (isError && !data);
+  if (unreachable) {
+    return (
+      <Bar
+        kind="error"
+        text={`pg_doorman unreachable — last contact ${formatAgo(lastContactMs)}.`}
+      />
+    );
+  }
+
+  // Validation error sticks until a successful RELOAD lands. The
+  // backend rate-limits the event push to 1/sec, so even a SIGHUP loop
+  // produces a single visible banner instead of stacking entries.
+  if (validationError) {
+    return (
+      <Bar
+        kind="error"
+        text={`Config reload rejected: ${validationError.message}`}
+      />
+    );
+  }
+
+  if (data?.shutdown_in_progress) {
     return (
       <Bar
         kind="shutdown"
@@ -35,7 +71,7 @@ export function LifecycleBanner() {
       />
     );
   }
-  if (data.migration_in_progress) {
+  if (data?.migration_in_progress) {
     return (
       <Bar
         kind="migration"
@@ -46,12 +82,17 @@ export function LifecycleBanner() {
   return null;
 }
 
-function Bar({ kind, text }: { kind: "shutdown" | "migration"; text: string }) {
-  // Amber for shutdown (operator-impacting), cyan for migration (informational).
+type BarKind = "shutdown" | "migration" | "error";
+
+function Bar({ kind, text }: { kind: BarKind; text: string }) {
+  // Amber for shutdown (operator-impacting). Red for error states
+  // (validation reject, unreachable). Accent for migration (info).
   const cls =
-    kind === "shutdown"
-      ? "bg-warning/15 text-warning-strong border-warning/40"
-      : "bg-accent/15 text-accent-strong border-accent/40";
+    kind === "error"
+      ? "bg-danger/15 text-danger border-danger/40"
+      : kind === "shutdown"
+        ? "bg-warning/15 text-warning border-warning/40"
+        : "bg-accent/15 text-accent border-accent/40";
   return (
     <div
       role="status"
@@ -60,4 +101,11 @@ function Bar({ kind, text }: { kind: "shutdown" | "migration"; text: string }) {
       {text}
     </div>
   );
+}
+
+function formatAgo(ms: number): string {
+  if (ms < 1_000) return "just now";
+  if (ms < 60_000) return `${Math.round(ms / 1_000)}s ago`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  return `${Math.round(ms / 3_600_000)}h ago`;
 }

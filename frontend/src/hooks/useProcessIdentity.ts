@@ -14,6 +14,7 @@ import type { OverviewDto } from "../types";
 interface ProcessIdentity {
   pid: number;
   started_at_ms: number;
+  uptime_seconds: number;
 }
 
 // Host-scoped so two pooler tabs do not overwrite each other's last
@@ -29,7 +30,8 @@ function load(): ProcessIdentity | null {
     const parsed = JSON.parse(raw) as Partial<ProcessIdentity>;
     if (
       typeof parsed.pid !== "number" ||
-      typeof parsed.started_at_ms !== "number"
+      typeof parsed.started_at_ms !== "number" ||
+      typeof parsed.uptime_seconds !== "number"
     ) {
       return null;
     }
@@ -55,13 +57,23 @@ function save(v: ProcessIdentity) {
  * - `prev` is null (first poll after a fresh tab load — nothing to
  *   compare against; we accept the current identity as the baseline
  *   without notifying).
+ *
+ * Three independent signals because PID recycle is a real risk on
+ * long-running hosts (Linux `kernel.pid_max` defaults to 32 768) and
+ * STARTED_AT is captured lazily on first read, so a back-to-back
+ * restart can in principle yield identical pid + started_at_ms tuples.
+ * `uptime_seconds < prev.uptime_seconds` closes that loophole.
  */
 export function isRealRestart(
   prev: ProcessIdentity | null,
   cur: ProcessIdentity,
 ): boolean {
   if (!prev) return false;
-  return prev.pid !== cur.pid || prev.started_at_ms !== cur.started_at_ms;
+  return (
+    prev.pid !== cur.pid ||
+    prev.started_at_ms !== cur.started_at_ms ||
+    cur.uptime_seconds < prev.uptime_seconds
+  );
 }
 
 /**
@@ -77,6 +89,7 @@ export function useProcessIdentityToast(overview: OverviewDto | null) {
     const cur: ProcessIdentity = {
       pid: overview.pid,
       started_at_ms: overview.started_at_ms,
+      uptime_seconds: overview.uptime_seconds,
     };
     if (isRealRestart(prevRef.current, cur)) {
       const prev = prevRef.current!;
