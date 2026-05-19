@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 use crate::pool::get_all_pools;
 use crate::server::{anon_snapshot, named_snapshot};
 use crate::stats::get_client_stats;
+use crate::utils::strings::preview_query;
 use crate::web::routes::dto::{
     TopClientBy, TopClientFilters, TopClientRowDto, TopClientsDto, TopPreparedBy, TopPreparedDto,
     TopPreparedFilters, TopPreparedRowDto, TopQueriesDto, TopQueryBy, TopQueryFilters,
@@ -139,7 +140,7 @@ pub(crate) fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
         } else {
             total_duration_us as f64 / count as f64 / 1_000.0
         };
-        let preview: String = entry.text().chars().take(120).collect();
+        let preview = preview_query(entry.text());
         rows.push(TopQueryRowDto {
             hash: format!("{:#x}", hash),
             kind: "named".to_string(),
@@ -157,7 +158,7 @@ pub(crate) fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
         } else {
             total_duration_us as f64 / count as f64 / 1_000.0
         };
-        let preview: String = entry.text().chars().take(120).collect();
+        let preview = preview_query(entry.text());
         rows.push(TopQueryRowDto {
             hash: format!("{:#x}", hash),
             kind: "anonymous".to_string(),

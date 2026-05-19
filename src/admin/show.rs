@@ -285,7 +285,7 @@ where
             InternerHandle::Named(e) => e.text().clone(),
             InternerHandle::Anon(e) => e.text().clone(),
         };
-        let preview: String = text.chars().take(120).collect();
+        let preview = crate::utils::strings::preview_query(&text);
         res.put(data_row(&[
             format!("{hash:#x}"),
             kind.to_string(),

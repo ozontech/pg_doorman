@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use log::{debug, warn};
+use log::{debug, log_enabled, trace, warn, Level};
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -8,6 +8,7 @@ use crate::errors::Error;
 use crate::messages::{error_response, Bind, Close, Describe, Parse};
 use crate::pool::ConnectionPool;
 use crate::server::{now_monotonic_ms, Server};
+use crate::utils::strings::truncate_query_for_log;
 
 /// Throttle for the synthetic-miss WARN line. Without rate-limiting a
 /// driver hammering the pooler at 10k RPS would write 10k WARN lines per
@@ -51,16 +52,9 @@ where
         let cached = self.prepared.cache.get(&key).cloned();
         match cached {
             Some(cached) => {
-                if log::log_enabled!(log::Level::Debug) {
-                    let query = cached.parse.query().replace(['\n', '\r'], " ");
-                    let q: String = query.chars().take(80).collect();
-                    let el = if query.chars().count() > 80 {
-                        "..."
-                    } else {
-                        ""
-                    };
+                if log_enabled!(Level::Debug) {
                     debug!(
-                        "[{}@{} #c{}] client cache hit: {} query=\"{q}{el}\"",
+                        "[{}@{} #c{}] client cache hit: {} query=\"{}\"",
                         self.username,
                         self.pool_name,
                         self.connection_id,
@@ -68,7 +62,8 @@ where
                             PreparedStatementKey::Named(name) => format!("name=`{name}`"),
                             PreparedStatementKey::Anonymous(hash) =>
                                 format!("hash={hash:#x} (unnamed)"),
-                        }
+                        },
+                        truncate_query_for_log(cached.parse.query()),
                     );
                 }
                 // Get the server-side name (may be async_name for async clients)
@@ -208,16 +203,9 @@ where
             None
         };
 
-        if log::log_enabled!(log::Level::Debug) {
-            let query = shared_parse.query().replace(['\n', '\r'], " ");
-            let truncated: String = query.chars().take(80).collect();
-            let ellipsis = if query.chars().count() > 80 {
-                "..."
-            } else {
-                ""
-            };
+        if log_enabled!(Level::Debug) {
             debug!(
-                "[{}@{} #c{}] mapped statement `{}` -> `{}` (hash={:#x}{}) query=\"{truncated}{ellipsis}\"",
+                "[{}@{} #c{}] mapped statement `{}` -> `{}` (hash={:#x}{}) query=\"{}\"",
                 self.username,
                 self.pool_name,
                 self.connection_id,
@@ -227,7 +215,8 @@ where
                 async_name
                     .as_ref()
                     .map(|n| format!(", async_name={n}"))
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
+                truncate_query_for_log(shared_parse.query()),
             );
         }
 
@@ -247,9 +236,21 @@ where
         // re-Parse of the same anonymous hash) and Inserted must not bump
         // the operator counter — that was the bug behind a non-zero
         // eviction rate at zero capacity pressure.
-        if let PutOutcome::Evicted(_) = self.prepared.cache.put(cache_key, cached) {
+        if let PutOutcome::Evicted(evicted) = self.prepared.cache.put(cache_key, cached) {
             self.prepared.anonymous_evictions += 1;
             crate::web::metrics::observe_anonymous_eviction(&self.username, &self.pool_name);
+            if log_enabled!(Level::Trace) {
+                trace!(
+                    "[{}@{} #c{}] anonymous LRU evict: hash={:#x}, lru_size={}, evicted_total={}, query=\"{}\"",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    evicted.hash,
+                    self.prepared.cache.anonymous_count(),
+                    self.prepared.anonymous_evictions,
+                    truncate_query_for_log(evicted.parse.query()),
+                );
+            }
         }
 
         // Update prepared cache stats after modification

@@ -4,18 +4,7 @@ use futures::future::select_all;
 use log::{debug, error, warn};
 
 use super::types::ClusterResponse;
-
-/// Truncate a string to at most `max_bytes`, ensuring the cut falls on a char boundary.
-fn truncate_str(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
+use crate::utils::strings::truncate_bytes;
 
 /// Errors from the Patroni REST API client.
 #[derive(Debug)]
@@ -84,7 +73,7 @@ impl PatroniClient {
                         if !resp.status().is_success() {
                             let status = resp.status();
                             let body = resp.text().await.unwrap_or_default();
-                            return Err(format!("HTTP {status}: {}", truncate_str(&body, 512)));
+                            return Err(format!("HTTP {status}: {}", truncate_bytes(&body, 512)));
                         }
 
                         let body = resp
@@ -92,7 +81,7 @@ impl PatroniClient {
                             .await
                             .map_err(|e| format!("reading body: {e}"))?;
                         serde_json::from_str::<ClusterResponse>(&body).map_err(|e| {
-                            format!("json parse: {e}, body: {}", truncate_str(&body, 512))
+                            format!("json parse: {e}, body: {}", truncate_bytes(&body, 512))
                         })
                     }
                     .await;

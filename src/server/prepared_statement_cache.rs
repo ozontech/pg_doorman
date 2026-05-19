@@ -1,11 +1,12 @@
 use dashmap::DashMap;
-use log::info;
+use log::{info, log_enabled, trace, Level};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::messages::Parse;
 use crate::utils::dashmap::new_dashmap_with_capacity;
+use crate::utils::strings::truncate_query_for_log;
 
 /// Worker-thread hint for the lazy interner DashMaps. `run_server` calls
 /// `set_interner_worker_threads(config.general.worker_threads)` before any
@@ -312,12 +313,22 @@ where
 pub fn gc_sweep_named() -> GcStats {
     let mut stats = GcStats::default();
     for (hash, entry) in named_snapshot() {
+        let text_len = entry.text.len() as u64;
         sweep_entry(
             Arc::strong_count(&entry.text) == 1,
             &entry.gc_state,
-            entry.text.len() as u64,
+            text_len,
             &mut stats,
-            || NAMED_INTERNER.remove(&hash).is_some(),
+            || {
+                let removed = NAMED_INTERNER.remove(&hash).is_some();
+                if removed && log_enabled!(Level::Trace) {
+                    trace!(
+                        "query_interner evict named: hash={hash:#x}, bytes={text_len}, query=\"{}\"",
+                        truncate_query_for_log(&entry.text)
+                    );
+                }
+                removed
+            },
         );
     }
     stats
@@ -332,12 +343,23 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
     let now = now_monotonic_ms();
     let mut stats = GcStats::default();
     for (hash, entry) in anon_snapshot() {
+        let text_len = entry.text.len() as u64;
+        let idle_ms = entry.idle_ms(now);
         sweep_entry(
-            entry.idle_ms(now) > anon_idle_ttl_ms,
+            idle_ms > anon_idle_ttl_ms,
             &entry.gc_state,
-            entry.text.len() as u64,
+            text_len,
             &mut stats,
-            || ANON_INTERNER.remove(&hash).is_some(),
+            || {
+                let removed = ANON_INTERNER.remove(&hash).is_some();
+                if removed && log_enabled!(Level::Trace) {
+                    trace!(
+                        "query_interner evict anon: hash={hash:#x}, bytes={text_len}, idle_ms={idle_ms}, query=\"{}\"",
+                        truncate_query_for_log(&entry.text)
+                    );
+                }
+                removed
+            },
         );
     }
     stats
@@ -651,18 +673,12 @@ impl PreparedStatementCache {
             if let Some((_, entry)) = self.cache.remove(&key) {
                 self.total_memory_bytes
                     .fetch_sub(entry_bytes(&entry.parse), Ordering::Relaxed);
-                let query = entry.parse.query().replace(['\n', '\r'], " ");
-                let truncated: String = query.chars().take(80).collect();
-                let ellipsis = if query.chars().count() > 80 {
-                    "..."
-                } else {
-                    ""
-                };
                 info!(
-                    "Pool cache eviction: hash={:#x}, kind={}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
+                    "Pool cache eviction: hash={:#x}, kind={}, name={}, query=\"{}\", size={}/{}",
                     key,
                     entry.kind().as_str(),
                     entry.parse.name,
+                    truncate_query_for_log(entry.parse.query()),
                     self.cache.len(),
                     self.max_size,
                 );
