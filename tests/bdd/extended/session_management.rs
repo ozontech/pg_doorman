@@ -1,6 +1,75 @@
 use crate::pg_connection::PgConnection;
 use crate::world::DoormanWorld;
 use cucumber::{then, when};
+use log::info;
+use std::time::Duration;
+use tokio::time::timeout;
+
+/// Best-effort batch session creation. Used by migration-fd-budget scenarios
+/// where the daemon's nofile limit is intentionally tight, so a subset of
+/// connect attempts is expected to be rejected. Each step is wrapped in a
+/// short timeout so a refusing daemon (or a kernel still retransmitting SYN
+/// on an unacked TCP open) does not stall the scenario for minutes.
+/// Successful sessions are stored under names `idle-0`, `idle-1`, ... so
+/// later steps can address them individually if needed.
+#[when(
+    regex = r#"^we attempt to create (\d+) idle sessions to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
+)]
+pub async fn attempt_create_idle_sessions(
+    world: &mut DoormanWorld,
+    count: usize,
+    user: String,
+    password: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    let step_timeout = Duration::from_millis(500);
+
+    let mut accepted = 0usize;
+    let mut timed_out = 0usize;
+    for idx in 0..count {
+        // PgConnection::authenticate panics on protocol-level FATAL (e.g.
+        // SQLSTATE 53300 "too many clients already") which is exactly what
+        // the server returns under overload — and the whole point of this
+        // step is to tolerate that. Spawn each attempt so JoinError catches
+        // the panic without taking the scenario down.
+        let user = user.clone();
+        let password = password.clone();
+        let database = database.clone();
+        let doorman_addr = doorman_addr.clone();
+        let attempt = tokio::spawn(async move {
+            let mut conn = match timeout(step_timeout, PgConnection::connect(&doorman_addr)).await {
+                Ok(Ok(c)) => c,
+                Ok(Err(_)) => return Err("connect_err"),
+                Err(_) => return Err("connect_timeout"),
+            };
+            match timeout(step_timeout, conn.send_startup(&user, &database)).await {
+                Ok(Ok(())) => {}
+                _ => return Err("startup_failed"),
+            }
+            match timeout(step_timeout, conn.authenticate(&user, &password)).await {
+                Ok(Ok(())) => {}
+                _ => return Err("authenticate_failed"),
+            }
+            Ok(conn)
+        })
+        .await;
+        match attempt {
+            Ok(Ok(conn)) => {
+                world.named_sessions.insert(format!("idle-{idx}"), conn);
+                accepted += 1;
+            }
+            Ok(Err("connect_timeout")) => timed_out += 1,
+            _ => {}
+        }
+    }
+    info!(
+        "attempt_create_idle_sessions: requested {count}, accepted {accepted} (rejected {}, timed_out {timed_out})",
+        count - accepted
+    );
+}
 
 #[when(
     regex = r#"^we create session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#

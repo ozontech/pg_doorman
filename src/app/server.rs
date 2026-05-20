@@ -39,6 +39,11 @@ use crate::client::migration::{migration_receiver_task, migration_sender_task};
 /// Global counter for clients currently connected to the pg_doorman
 pub static CURRENT_CLIENT_COUNT: AtomicI64 = AtomicI64::new(0);
 
+/// Unix-epoch second of the last EMFILE/ENFILE error logged from the
+/// listener accept loop. Used to rate-limit the message so an exhausted
+/// fd table does not produce hundreds of identical lines per second.
+static ACCEPT_RESOURCE_LOG_LAST: AtomicI64 = AtomicI64::new(0);
+
 /// Global flag indicating graceful shutdown is in progress
 pub static SHUTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
@@ -656,7 +661,37 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {
-                            error!("Failed to accept new connection: {err}");
+                            // EMFILE/ENFILE on accept means the process fd
+                            // table is full. Without a backoff the loop
+                            // re-arms immediately on every queued SYN —
+                            // CPU spins, the log gets thousands of
+                            // identical lines per millisecond, and nothing
+                            // is freed by the loop itself. Sleep so the
+                            // kernel can drain its SYN-ack retry budget
+                            // (clients eventually give up) and so other
+                            // tasks have a chance to release fds. The log
+                            // is throttled to one line per 5 s; the
+                            // backoff prevents tight-loop CPU burn.
+                            if matches!(
+                                err.raw_os_error(),
+                                Some(libc::EMFILE) | Some(libc::ENFILE)
+                            ) {
+                                let now_secs = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs() as i64)
+                                    .unwrap_or(0);
+                                let last = ACCEPT_RESOURCE_LOG_LAST
+                                    .swap(now_secs, Ordering::Relaxed);
+                                if now_secs - last >= 5 {
+                                    error!(
+                                        "Failed to accept new connection: {err} \
+                                         (process fd table exhausted; backing off)"
+                                    );
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            } else {
+                                error!("Failed to accept new connection: {err}");
+                            }
                             continue;
                         }
                     };
@@ -718,7 +753,29 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (socket, _unix_addr) = match new_unix {
                         Ok(pair) => pair,
                         Err(err) => {
-                            error!("Failed to accept Unix connection: {err}");
+                            // Same EMFILE/ENFILE backoff as the TCP accept
+                            // loop above. Without it an exhausted fd table
+                            // turns this branch into a tight loop.
+                            if matches!(
+                                err.raw_os_error(),
+                                Some(libc::EMFILE) | Some(libc::ENFILE)
+                            ) {
+                                let now_secs = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs() as i64)
+                                    .unwrap_or(0);
+                                let last = ACCEPT_RESOURCE_LOG_LAST
+                                    .swap(now_secs, Ordering::Relaxed);
+                                if now_secs - last >= 5 {
+                                    error!(
+                                        "Failed to accept Unix connection: {err} \
+                                         (process fd table exhausted; backing off)"
+                                    );
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            } else {
+                                error!("Failed to accept Unix connection: {err}");
+                            }
                             continue;
                         }
                     };
@@ -909,19 +966,50 @@ async fn binary_upgrade_and_shutdown(
                 info!("Configuration validation successful");
             }
             Err(e) => {
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                error!("!!!                    CRITICAL ERROR                               !!!");
-                error!("!!!         FAILED TO VALIDATE CONFIGURATION                       !!!");
-                error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                error!("");
-                error!("Could not execute configuration test: {}", e);
-                error!("Binary path: {}", exe_path);
-                error!("");
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                return None;
+                // EMFILE/ENFILE here means the local fd table is full, so
+                // `Command::output()` can't even spawn the validator. That
+                // is a local resource state, not a config problem; aborting
+                // the upgrade keeps the parent stuck in the same exhausted
+                // state. Skip the pre-flight check, log a WARN, and let the
+                // upgrade proceed so the child can take over and the
+                // parent's fds drain through client migration.
+                if matches!(e.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE)) {
+                    warn!(
+                        "Skipping pre-flight configuration validation: local fd \
+                         table exhausted ({e}). Proceeding with binary upgrade so \
+                         the child can drain the parent's fds via migration."
+                    );
+                } else {
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!(
+                        "!!!                    CRITICAL ERROR                               !!!"
+                    );
+                    error!(
+                        "!!!         FAILED TO VALIDATE CONFIGURATION                       !!!"
+                    );
+                    error!(
+                        "!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!"
+                    );
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!("");
+                    error!("Could not execute configuration test: {}", e);
+                    error!("Binary path: {}", exe_path);
+                    error!("");
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!(
+                        "!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!"
+                    );
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    return None;
+                }
             }
         }
     }

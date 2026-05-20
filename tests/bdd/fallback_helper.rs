@@ -116,6 +116,46 @@ pub async fn pg_doorman_log_contains(world: &mut DoormanWorld, needle: String) {
     );
 }
 
+/// Negative substring assertion on captured pg_doorman log. Useful for
+/// regression checks where a specific error message must not appear under
+/// normal operation (e.g. `Too many open files` after a binary upgrade
+/// where the migration buffer respects the configured nofile budget).
+#[then(expr = "pg_doorman log does not contain {string}")]
+pub async fn pg_doorman_log_does_not_contain(world: &mut DoormanWorld, needle: String) {
+    let path = world
+        .doorman_log_path
+        .as_ref()
+        .expect("log capture not enabled — add `Given pg_doorman log capture enabled`");
+    let body = std::fs::read_to_string(path).expect("failed to read doorman log file");
+    assert!(
+        !body.contains(&needle),
+        "pg_doorman log unexpectedly contained {needle:?}. Full log:\n{body}"
+    );
+}
+
+/// Count-bounded substring assertion. Lets fd-exhaustion scenarios verify
+/// that the accept-loop log is rate-limited (a handful of WARN/DEBUG lines
+/// are fine) without forbidding the substring entirely, since legitimate
+/// diagnostic output may still mention it.
+#[then(expr = "pg_doorman log contains {string} at most {int} times")]
+pub async fn pg_doorman_log_contains_at_most(
+    world: &mut DoormanWorld,
+    needle: String,
+    max_count: usize,
+) {
+    let path = world
+        .doorman_log_path
+        .as_ref()
+        .expect("log capture not enabled — add `Given pg_doorman log capture enabled`");
+    let body = std::fs::read_to_string(path).expect("failed to read doorman log file");
+    let count = body.matches(&needle).count();
+    assert!(
+        count <= max_count,
+        "pg_doorman log contained {needle:?} {count} times (max allowed {max_count}). \
+         Full log:\n{body}"
+    );
+}
+
 /// Regex assertion on captured pg_doorman log. Pattern is whatever `regex`
 /// crate accepts; multiline (`(?m)`) is on by default.
 #[then(expr = "pg_doorman log matches {string}")]
