@@ -111,6 +111,14 @@ tcp_no_delay = true
 # Default: 60
 tcp_user_timeout = 60
 
+# Kernel SO_RCVBUF/SO_SNDBUF limits for accepted client TCP sockets and outbound backend TCP sockets.
+# `0` (default) keeps Linux TCP autotuning active.
+# A non-zero value sets fixed send/receive buffer limits and disables autotuning for the socket.
+# Linux applies/reports doubled values and may clamp them by net.core.rmem_max/net.core.wmem_max.
+# Start with 64KB–256KB for OLTP in one datacenter; measure before going lower, higher, or over WAN.
+# Default: 0 (disabled; Linux TCP autotuning remains active)
+tcp_socket_buffer_size = 0
+
 # Buffer size for read/write operations when connecting via unix socket.
 # Default: 1048576 (1048576 bytes)
 unix_socket_buffer_size = 1048576

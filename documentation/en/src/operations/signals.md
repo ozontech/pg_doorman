@@ -29,11 +29,14 @@ Re-reads the config file and applies changes. What reloads:
 What does **not** reload:
 
 - `general.host`, `general.port` — listening socket is fixed at startup.
+- `general.tcp_socket_buffer_size` on existing sockets — the new value
+  is applied only when pg_doorman accepts a new client TCP socket or
+  opens a new backend TCP socket.
 - Client-facing TLS certificates — process restart required. Do not rotate
   them during an upgrade where TLS session migration is required.
 - Worker thread count and Tokio runtime parameters.
 
-After reload, `SHOW CONFIG` reflects the new values. Existing client connections are not re-evaluated against the new `pg_hba.conf` — only new connections.
+After reload, `SHOW CONFIG` reflects the new values. Existing client connections are not re-evaluated against the new `pg_hba.conf` — only new connections. Existing TCP sockets also keep the socket buffer size that was applied when the socket was created.
 
 ## Immediate shutdown (`SIGTERM`)
 
@@ -65,6 +68,11 @@ The recommended way to replace the binary without dropping clients:
 
 The child sends `sd_notify MAINPID=<new_pid>` so systemd `Type=notify`
 units track the new main PID correctly.
+
+Migrated client TCP sockets are configured again in the child process, so
+a changed `general.tcp_socket_buffer_size` applies to those clients during
+binary upgrade. Backend TCP sockets are opened by the new process and use
+the new value when they connect.
 
 For the full protocol, TLS migration, and rollback, see [Binary Upgrade](../tutorials/binary-upgrade.md).
 

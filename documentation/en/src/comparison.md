@@ -133,6 +133,7 @@ See [Prometheus metrics reference](reference/prometheus.md), [Admin commands](ob
 | `SIGHUP` reload | Yes (server TLS certs included; client TLS still requires restart) | Yes (`auth_file`, `auth_hba_file`, server and client TLS certs) | Yes |
 | systemd `sd-notify` (`Type=notify`) integration | Yes | No | No |
 | Memory cap (`max_memory_usage`) | Yes | No | No |
+| TCP socket buffer cap | Yes (`tcp_socket_buffer_size`, client and backend TCP sockets) | Yes (`tcp_socket_buffer`) | No |
 
 See [Binary upgrade](tutorials/binary-upgrade.md), [Signals](operations/signals.md).
 

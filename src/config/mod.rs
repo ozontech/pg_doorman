@@ -544,6 +544,16 @@ impl Config {
         General::parse_unix_socket_mode(&self.general.unix_socket_mode)
             .map_err(|err| Error::BadConfig(format!("general.{err}")))?;
 
+        let tcp_socket_buffer_size = self.general.tcp_socket_buffer_size.as_bytes();
+        if (1..65_536).contains(&tcp_socket_buffer_size) {
+            warn!(
+                "general.tcp_socket_buffer_size = {tcp_socket_buffer_size} disables Linux TCP \
+                 autotuning with a very small buffer. This can hurt throughput and tail latency \
+                 for COPY, wide rows, large result sets, cross-zone traffic, or WAN links. Use at \
+                 least 64 KiB unless measurements show a smaller value is safe."
+            );
+        }
+
         // Validate mutual exclusion for HBA settings
         if self.general.pg_hba.is_some() && !self.general.hba.is_empty() {
             return Err(Error::BadConfig(

@@ -609,6 +609,16 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     w.kv(fi, "tcp_user_timeout", &w.num_val(g.tcp_user_timeout));
     w.blank();
 
+    write_field_desc(w, fi, "general", "tcp_socket_buffer_size");
+    write_byte_size_value(
+        w,
+        fi,
+        "tcp_socket_buffer_size",
+        g.tcp_socket_buffer_size.as_bytes(),
+        "0",
+        "disabled; Linux TCP autotuning remains active",
+    );
+
     write_field_desc(w, fi, "general", "unix_socket_buffer_size");
     write_byte_size_value(
         w,
@@ -2041,13 +2051,20 @@ fn write_byte_size_value(
             w.kv(indent, key, &w.num_val(bytes));
         }
         ConfigFormat::Yaml => {
-            w.comment(
-                indent,
-                &format!(
-                    "Supports human-readable format: \"{human_readable}\", \"{}\", or {bytes} (bytes)",
-                    human_readable.replace("MB", "M").replace("GB", "G"),
-                ),
-            );
+            if bytes == 0 && human_readable == "0" {
+                w.comment(
+                    indent,
+                    "Supports human-readable format: \"64KB\", \"64K\", or 65536 (bytes)",
+                );
+            } else {
+                w.comment(
+                    indent,
+                    &format!(
+                        "Supports human-readable format: \"{human_readable}\", \"{}\", or {bytes} (bytes)",
+                        human_readable.replace("MB", "M").replace("GB", "G"),
+                    ),
+                );
+            }
             w.comment(
                 indent,
                 &format!("Default: \"{human_readable}\" ({bytes_str})"),
