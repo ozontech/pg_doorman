@@ -184,7 +184,7 @@ where
         // `planner_param_hash` caches the digest inside
         // `ServerParameters` and invalidates it on `set_param` whenever
         // a planner-visible key actually changes, so the steady-state
-        // cost on the hot path is a single `Cell` load.
+        // cost on the hot path is a single `AtomicU64::load(Relaxed)`.
         let planner_hash = self.server_parameters.planner_param_hash();
         let hash = parse.get_hash_with_planner_params(planner_hash);
 

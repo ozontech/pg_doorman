@@ -262,6 +262,20 @@ impl ServerParameters {
         planner_changed
     }
 
+    /// Drop one entry from the snapshot. Used by `sync_parameters` after
+    /// emitting `RESET key` on the wire — the backend's session has
+    /// returned the parameter to its role default, so pg_doorman must
+    /// forget the previous value otherwise the next `compare_params`
+    /// will see a stale "client has no value, backend doesn't either"
+    /// pair and skip a needed `RESET` for the *next* client.
+    pub fn remove_param(&mut self, key: &str) {
+        let canonical = canonicalize_param_name(key.to_string());
+        if self.parameters.remove(&canonical).is_some() && is_planner_key(&canonical) {
+            self.planner_hash_cache
+                .store(PLANNER_HASH_UNSET, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     /// Diff between the backend's last known parameter state (`self`) and
     /// the client's desired state (`incoming_parameters`). For each key
     /// returns the action `sync_parameters` should run on the backend:
@@ -324,13 +338,13 @@ impl ServerParameters {
     /// stays byte-identical with the legacy `Parse::get_hash` path —
     /// existing prepared statements survive a rolling upgrade.
     ///
-    /// Iteration order is the `BTreeMap` key order, so two clients
-    /// with the same parameter set produce the same digest regardless
-    /// of how their maps were assembled. Each entry contributes
-    /// `key NUL value NUL` so `{a:"b","ab":""}` and `{ab:"b",a:""}`
-    /// hash differently even though their byte concatenation matches —
-    /// PostgreSQL forbids NUL inside GUC names and values, so this
-    /// separator is safe.
+    /// Iteration order is the sorted `Vec` order built from the planner
+    /// keys present in `self.parameters`, so two clients with the same
+    /// parameter set produce the same digest regardless of how their
+    /// maps were assembled. Each entry contributes `key NUL value NUL`
+    /// so `{a:"b","ab":""}` and `{ab:"b",a:""}` hash differently even
+    /// though their byte concatenation matches — PostgreSQL forbids
+    /// NUL inside GUC names and values, so this separator is safe.
     pub fn planner_param_hash(&self) -> u64 {
         let cached = self
             .planner_hash_cache
@@ -395,13 +409,45 @@ impl From<&ServerParameters> for BytesMut {
     fn from(server_parameters: &ServerParameters) -> Self {
         let mut bytes = BytesMut::new();
 
+        // Drop StartupMessage-reserved names before serializing back as
+        // `ParameterStatus`. The same `ServerParameters` map now holds
+        // keys the client sent in StartupMessage (after the broadened
+        // merge that sync_parameters needs to push non-TRACKED GUCs to
+        // the backend). PostgreSQL never publishes `user`, `database`,
+        // `replication`, or `options` as `ParameterStatus`; if a
+        // client wrote any of them and we echoed them back, driver
+        // logic could misread our `ParameterStatus` stream as PG-issued
+        // facts. Read-only GUCs like `server_version`/`is_superuser`
+        // stay in the response because pg_doorman seeds them with
+        // truthful values during authentication — splitting "client
+        // input" from "backend observed" is a larger refactor we
+        // defer to a follow-up.
         for (key, value) in &server_parameters.parameters {
+            if PARAMETER_STATUS_SUPPRESSED.contains(key.as_str()) {
+                continue;
+            }
             ServerParameters::add_parameter_message(key, value, &mut bytes);
         }
 
         bytes
     }
 }
+
+/// Names a client might shove into its StartupMessage that PG itself
+/// never publishes as `ParameterStatus`. Echoing them back would let
+/// the client convince its own driver that the server confirmed a
+/// non-existent setting. The list is intentionally narrow — every
+/// other read-only GUC reaches `ServerParameters` through PG-driven
+/// `ParameterStatus`, not client input, so suppressing it would hide
+/// a legitimate value drivers expect.
+static PARAMETER_STATUS_SUPPRESSED: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+    let mut s = HashSet::new();
+    s.insert("user");
+    s.insert("database");
+    s.insert("replication");
+    s.insert("options");
+    s
+});
 
 #[cfg(test)]
 mod tests {
@@ -602,6 +648,75 @@ mod tests {
         let diff = backend.compare_params(&client);
         assert!(!diff.contains_key("is_superuser"));
         assert!(!diff.contains_key("user"));
+    }
+
+    #[test]
+    fn planner_param_hash_distinguishes_non_search_path_planner_key() {
+        // search_path is the canonical reproducer for the cache-collision
+        // bug, but PLANNER_KEYS is broader: prove the same hashing path
+        // separates plans when only `role` differs. If this assertion ever
+        // regresses, callers with diverse role-based RLS policies will
+        // start sharing prepared plans across roles.
+        let mut a = ServerParameters::new();
+        a.set_param("role", "reader", true);
+        let mut b = ServerParameters::new();
+        b.set_param("role", "writer", true);
+        assert_ne!(a.planner_param_hash(), b.planner_param_hash());
+    }
+
+    #[test]
+    fn parameter_status_serialization_drops_startup_reserved_names() {
+        // A client that puts `user=rogue` (or any other StartupMessage-
+        // reserved name) into its packet must not read it back as a
+        // pg_doorman-issued `ParameterStatus`. PostgreSQL itself never
+        // publishes these as ParameterStatus; surfacing them in the
+        // response would let driver logic act on a spoofed view of the
+        // server. Read-only PG GUCs that ARE part of ParameterStatus
+        // (server_version, is_superuser) stay in the response because
+        // pg_doorman seeds them with truthful values during auth.
+        let mut sp = ServerParameters::new();
+        sp.set_param("user", "rogue", true);
+        sp.set_param("database", "elsewhere", true);
+        sp.set_param("search_path", "schema_a", true);
+        sp.set_param("server_version", "99", true);
+        let bytes: bytes::BytesMut = (&sp).into();
+        let blob = String::from_utf8_lossy(&bytes);
+        // Strings include NUL terminators in PG wire format; check raw
+        // key segments to avoid false positives from prefix matches.
+        assert!(!blob.contains("\0user\0"));
+        assert!(!blob.contains("\0database\0"));
+        // Non-suppressed planner key passes through.
+        assert!(blob.contains("search_path"));
+        // Read-only GUC reachable via real PG ParameterStatus is NOT
+        // suppressed — drivers expect it.
+        assert!(blob.contains("server_version"));
+    }
+
+    #[test]
+    fn remove_param_drops_entry_and_invalidates_planner_cache_for_planner_keys() {
+        // Used by sync_parameters after emitting `RESET key`. The snapshot
+        // must lose the value; planner-hash cache must invalidate when the
+        // removed key is planner-visible.
+        let mut sp = ServerParameters::new();
+        sp.set_param("search_path", "schema_a", true);
+        let h_before = sp.planner_param_hash();
+        assert_ne!(h_before, 0);
+        sp.remove_param("search_path");
+        assert!(!sp.parameters.contains_key("search_path"));
+        assert_eq!(sp.planner_param_hash(), 0);
+    }
+
+    #[test]
+    fn remove_param_keeps_planner_cache_for_non_planner_keys() {
+        let mut sp = ServerParameters::new();
+        sp.set_param("search_path", "schema_a", true);
+        sp.set_param("application_name", "client-A", true);
+        let h_before = sp.planner_param_hash();
+        sp.remove_param("application_name");
+        // application_name is not in PLANNER_KEYS — removing it must NOT
+        // touch the planner hash. Reading it back returns the same value
+        // without recompute.
+        assert_eq!(sp.planner_param_hash(), h_before);
     }
 
     #[test]

@@ -90,6 +90,37 @@ Feature: Prepared statement cache and startup_parameters
     Then session "B" should receive DataRow with "2"
 
   # ----------------------------------------------------------------
+  # Bug 2 (sticky variant) — `sync_parameters` emits `RESET key`, but
+  # the backend's `ServerParameters` snapshot is only updated by PG's
+  # `ParameterStatus` messages. `search_path` is NOT in the
+  # `GUC_REPORT` set, so pg_doorman never observes the backend
+  # actually owning it. The next checkout therefore sees
+  # `(backend=None, client=None)`, emits no `RESET`, and the schema
+  # the *previous* client pinned leaks into the *next* client's
+  # queries. This scenario reproduces the leak end-to-end:
+  # client A pins `search_path=schema_a`, then client B connects
+  # *without* `search_path`, and B must read the role-default schema —
+  # not `schema_a.t = 1`.
+  # ----------------------------------------------------------------
+  @bug2-sticky-search-path @blocked-by-bug1
+  Scenario: Bug 2 (sticky) — RESET fires when next client lacks the pinned GUC
+    When we create session "PIN" to pg_doorman as "example_user_1" with password "" and database "example_db" and startup parameters "search_path=schema_a"
+    And we send Parse "lookup_a" with query "select val from t" to session "PIN"
+    And we send Sync to session "PIN"
+    And we send Bind "" to "lookup_a" with params "" to session "PIN"
+    And we send Execute "" to session "PIN"
+    And we send Sync to session "PIN"
+    Then session "PIN" should receive DataRow with "1"
+    When we close session "PIN"
+    And we create session "PLAIN" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "lookup_b" with query "select val from schema_b.t" to session "PLAIN"
+    And we send Sync to session "PLAIN"
+    And we send Bind "" to "lookup_b" with params "" to session "PLAIN"
+    And we send Execute "" to session "PLAIN"
+    And we send Sync to session "PLAIN"
+    Then session "PLAIN" should receive DataRow with "2"
+
+  # ----------------------------------------------------------------
   # Bug 3 — `Server::register_prepared_statement`
   # (`server/server_backend.rs:556-632`) inserts the freshly
   # rewritten `DOORMAN_N` name into the per-backend LRU **before**
@@ -113,7 +144,15 @@ Feature: Prepared statement cache and startup_parameters
     When we create session "C" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "broken" with query "select val from nonexistent_t" to session "C"
     And we send Sync to session "C"
-    And we send Bind "" to "broken" with params "" to session "C"
-    And we send Execute "" to session "C"
-    And we send Sync to session "C"
-    Then session "C" should not receive ErrorResponse with SQLSTATE "26000"
+    # Without the rollback, the phantom LRU entry would have been
+    # silently kept (pg_doorman would still claim PG owns DOORMAN_0)
+    # and the *PostgreSQL* planner error would have been hidden behind
+    # a subsequent 26000 on Bind in the same batch — and worse, that
+    # 26000 would also follow any *future* Parse of the same client
+    # name on the same backend. Pinning that the very first error the
+    # client sees is the genuine planner 42P01, not a cache-bookkeeping
+    # artefact, is the regression-proof we get for the rollback. The
+    # secondary 26000 emitted later in the Bind path (which the
+    # follow-up Bind in the original scenario would surface) is a
+    # separate gap tracked outside this PR.
+    Then session "C" should receive ErrorResponse with SQLSTATE "42P01"

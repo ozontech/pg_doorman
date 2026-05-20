@@ -410,41 +410,47 @@ pub async fn verify_error_response_on_flush_timeout(
 }
 
 /// Verify that the client received an ErrorResponse with the given SQLSTATE
-/// code. Reads messages until an ErrorResponse ('E') is found, parses the
-/// field-tagged body, and asserts the 'C' (Code/SQLSTATE) field matches.
+/// code. First scans messages already drained into `world.session_messages`
+/// by a preceding `we send Sync` step; falls back to live socket reads for
+/// scenarios that issue raw Bind/Describe without a prior Sync. This
+/// dual-source lookup is what lets a single step assertion work both for
+/// "Bind on missing statement" scenarios (no Sync first, message still on
+/// the wire) and for full Parse+Sync+Bind+Execute+Sync flows (Sync already
+/// drained everything into `session_messages`).
 #[then(regex = r#"^session "([^"]+)" should receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
 pub async fn verify_error_response_with_sqlstate(
     world: &mut DoormanWorld,
     session_name: String,
     expected_sqlstate: String,
 ) {
-    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
-
     let mut got_error: Option<String> = None;
-    while let Ok(Ok((msg_type, data))) =
-        tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await
-    {
-        if msg_type == 'E' {
-            // ErrorResponse body: repeated <field-byte><cstring> until null.
-            let mut i = 0;
-            while i < data.len() && data[i] != 0 {
-                let field_byte = data[i] as char;
-                i += 1;
-                let start = i;
-                while i < data.len() && data[i] != 0 {
-                    i += 1;
-                }
-                let value = String::from_utf8_lossy(&data[start..i]).to_string();
-                i += 1; // skip null terminator
-                if field_byte == 'C' {
-                    got_error = Some(value);
-                    break;
-                }
+
+    if let Some(messages) = world.session_messages.get(&session_name) {
+        for (msg_type, data) in messages {
+            if *msg_type != 'E' {
+                continue;
             }
-            break;
+            if let Some(code) = extract_error_code(data) {
+                got_error = Some(code);
+                break;
+            }
         }
-        if msg_type == 'Z' {
-            break;
+    }
+
+    if got_error.is_none() {
+        let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+        while let Ok(Ok((msg_type, data))) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await
+        {
+            if msg_type == 'E' {
+                if let Some(code) = extract_error_code(&data) {
+                    got_error = Some(code);
+                }
+                break;
+            }
+            if msg_type == 'Z' {
+                break;
+            }
         }
     }
 
@@ -461,23 +467,53 @@ pub async fn verify_error_response_with_sqlstate(
     );
 }
 
-/// Drain every pending message on the session and assert none of them is an
-/// `ErrorResponse` whose `C` field matches `forbidden_sqlstate`. Used to pin
-/// negative invariants — for example, that a backend's planner-time 42P01
-/// is the only error the client sees, with no follow-up 26000 surfacing
-/// because pg_doorman skipped a re-Parse against a poisoned LRU.
+/// Pull the SQLSTATE (`C` field) out of a PostgreSQL ErrorResponse body.
+/// ErrorResponse format: a sequence of `<field-byte><c-string>` pairs
+/// terminated by a NUL byte; the `C` field carries the 5-char SQLSTATE.
+fn extract_error_code(data: &[u8]) -> Option<String> {
+    let mut i = 0;
+    while i < data.len() && data[i] != 0 {
+        let field_byte = data[i] as char;
+        i += 1;
+        let start = i;
+        while i < data.len() && data[i] != 0 {
+            i += 1;
+        }
+        let value = String::from_utf8_lossy(&data[start..i]).to_string();
+        i += 1; // skip null terminator
+        if field_byte == 'C' {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Scan the messages already stored by the most recent `we send Sync`
+/// for an `ErrorResponse` whose `C` field equals `forbidden_sqlstate`.
+/// Reads from `world.session_messages` (which `we send Sync` drains
+/// off the socket) rather than from the live socket — otherwise the
+/// previous Sync would have already consumed every byte and a check
+/// against an empty socket would always pass.
+///
+/// Used to pin negative invariants — for example, that a backend's
+/// planner-time 42P01 is the only error the client sees, with no
+/// follow-up 26000 surfacing because pg_doorman skipped a re-Parse
+/// against a poisoned LRU.
 #[then(regex = r#"^session "([^"]+)" should not receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
 pub async fn verify_no_error_response_with_sqlstate(
     world: &mut DoormanWorld,
     session_name: String,
     forbidden_sqlstate: String,
 ) {
-    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| {
+            panic!("Session '{session_name}': no stored messages — did you forget to send Sync?");
+        });
 
-    while let Ok(Ok((msg_type, data))) =
-        tokio::time::timeout(std::time::Duration::from_millis(500), conn.read_message()).await
-    {
-        if msg_type != 'E' {
+    for (msg_type, data) in messages {
+        if *msg_type != 'E' {
             continue;
         }
         let mut i = 0;

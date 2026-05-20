@@ -712,7 +712,7 @@ impl Server {
         }
 
         let mut query = String::new();
-        for (key, action) in parameter_diff {
+        for (key, action) in &parameter_diff {
             match action {
                 crate::server::parameters::ParamAction::SetTo(value) => {
                     // Single-quote escaping: PostgreSQL `'a''b'` is the
@@ -731,6 +731,28 @@ impl Server {
         }
 
         let res = self.small_simple_query(&query).await;
+
+        // On success, mirror the diff onto the backend's snapshot.
+        // PostgreSQL emits `ParameterStatus` only for the GUC_REPORT set
+        // (`search_path`, `role`, `default_transaction_isolation`,
+        // `work_mem`, and most planner-affecting GUCs are NOT in it).
+        // Without this mirror the next `compare_params` would see
+        // "backend has no record" for those keys and skip the `RESET`
+        // they need — letting the previous client's `search_path`
+        // schema leak into the next client's queries. The mirror is
+        // the explicit equivalent of the missing `ParameterStatus`.
+        if res.is_ok() {
+            for (key, action) in parameter_diff {
+                match action {
+                    crate::server::parameters::ParamAction::SetTo(value) => {
+                        let _ = self.server_parameters.set_param(&key, value, true);
+                    }
+                    crate::server::parameters::ParamAction::Reset => {
+                        self.server_parameters.remove_param(&key);
+                    }
+                }
+            }
+        }
 
         self.cleanup_state.reset();
 
