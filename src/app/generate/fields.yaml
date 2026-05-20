@@ -722,22 +722,67 @@ fields:
     sync_server_parameters:
       config:
         en: |
-          Track and replay a subset of session parameters on each new backend in transaction mode.
-          Tracked parameters: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
-          Adds a SET roundtrip per checkout. Disabled by default.
-          If you only need application_name, use the pool-level application_name setting instead.
+          Replay session parameters on each new backend in transaction mode.
+          Two channels feed the replay: PG-reported ParameterStatus updates
+          (client_encoding, DateStyle, IntervalStyle, TimeZone,
+          standard_conforming_strings, application_name) and the client's
+          StartupMessage keys (excluding read-only / reserved names).
+          Replay is startup-only: runtime SET on non-GUC_REPORT names is NOT
+          tracked. Prepared-statement cache key folds startup-pinned planner
+          GUCs (search_path, default_transaction_isolation,
+          default_transaction_read_only, default_text_search_config, role).
+          Adds a SET roundtrip per non-empty diff. Disabled by default.
         ru: |
-          Отслеживать и воспроизводить подмножество параметров сессии на каждом новом бэкенде в транзакционном режиме.
-          Отслеживаемые параметры: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
-          Добавляет SET-запрос при каждом checkout. Отключено по умолчанию.
-          Если нужен только application_name, используйте настройку application_name на уровне пула.
+          Воспроизводить параметры сессии на каждом новом бэкенде в транзакционном режиме.
+          Два канала: обновления PG ParameterStatus (client_encoding, DateStyle, IntervalStyle,
+          TimeZone, standard_conforming_strings, application_name) и ключи клиентского
+          StartupMessage (кроме read-only / reserved имён). Replay работает только для startup:
+          runtime SET для не-GUC_REPORT имён НЕ отслеживается. Ключ кэша prepared statement
+          включает digest startup-pinned planner GUC (search_path,
+          default_transaction_isolation, default_transaction_read_only,
+          default_text_search_config, role). Дополнительный SET roundtrip при непустом diff.
+          Отключено по умолчанию.
       doc: |
         In transaction mode, each transaction may land on a different backend. With `sync_server_parameters = true`,
-        pg_doorman tracks changes to a fixed set of session parameters and replays them via SET on each new backend
-        before executing the transaction. Tracked parameters: `client_encoding`, `DateStyle`, `TimeZone`,
-        `standard_conforming_strings`, `application_name`. Other SET commands (e.g., `statement_timeout`, `work_mem`)
-        are NOT tracked. This costs one extra roundtrip per checkout. If you only need `application_name` visibility
-        in `pg_stat_activity`, use the pool-level `application_name` setting instead.
+        pg_doorman replays session parameters on each new backend before executing the transaction so the
+        backend sees the same session state the client requested.
+
+        Two channels feed the replay:
+
+        1. **PG `ParameterStatus` updates** (always tracked when enabled): `client_encoding`, `DateStyle`,
+           `IntervalStyle`, `TimeZone`, `standard_conforming_strings`, `application_name`. These are the
+           GUCs PostgreSQL itself reports back as the client mutates them.
+
+        2. **Client `StartupMessage` keys** (new in pg_doorman ≥ 3.10): every parameter the client sent in
+           its connection packet, except read-only / server-managed names (`is_superuser`, `server_version`,
+           `lc_collate`, `transaction_isolation`, …) and the protocol-reserved `_pq_.` prefix. This is what
+           lets clients pin `search_path`, `default_transaction_isolation`, `role`, and similar
+           planner-visible GUCs at connect time and have pg_doorman push them to whichever backend the
+           transaction lands on. Operator-managed `startup_parameters` always win over the client packet.
+
+        **Scope limits — read before relying on this for correctness:**
+
+        - Replay is **startup-only**. A client that issues `SET search_path = …` (or any other planner
+          GUC) *after* `Backend AuthenticationOK` mutates the backend's session state but does **not**
+          update pg_doorman's per-client snapshot — PG emits no `ParameterStatus` for non-`GUC_REPORT`
+          names, so pg_doorman has no signal to track. The next prepared-statement reuse on that backend
+          may then hit a plan built under stale GUC state. Clients that rely on runtime planner-GUC
+          mutation should either set them in their `StartupMessage` instead, issue `DISCARD ALL` /
+          reconnect after the mutation, or disable `prepared_statements` for the pool.
+
+        - The prepared-statement cache key folds a digest of the *startup-pinned* planner GUCs
+          (`PLANNER_KEYS = {search_path, default_transaction_isolation, default_transaction_read_only,
+          default_text_search_config, role}`) on top of the legacy `query text + parameter OID` key.
+          Other planner-relevant GUCs that pg_doorman pushes via this same channel — `TimeZone`,
+          `DateStyle`, `plan_cache_mode`, `enable_*`, JIT cost knobs, extension GUCs — are **not** part
+          of the cache key. Two clients that share the same `query` + `param OIDs` but pin different
+          values for those keys will share a single cache entry and therefore a single plan. If you mix
+          workloads that prepare the same query text under such differing GUCs, disable
+          `prepared_statements` for the pool or pin the GUC at the role/database level instead.
+
+        Costs one extra roundtrip per checkout when there is a non-empty diff. If you only need
+        `application_name` visibility in `pg_stat_activity`, use the pool-level `application_name`
+        setting instead.
       default: "false"
 
     message_size_to_be_stream:

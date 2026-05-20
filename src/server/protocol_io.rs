@@ -328,6 +328,11 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
         }
         error!("{details}");
         server.address.stats.error_with_sqlstate(&msg.code);
+        // Capture so `small_simple_query` can surface this as `Err`.
+        // Keeps the most recent error per round-trip; the caller is
+        // expected to reset before each query (`small_simple_query`
+        // does this in its prologue).
+        server.last_sql_error = Some((msg.code.clone(), msg.message.clone()));
     } else {
         error!(
             "[{}@{}] server error pid={}: could not parse error details",
@@ -336,6 +341,14 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
             server.get_process_id(),
         );
         server.address.stats.error();
+        // SQLSTATE XX000 = `internal_error`: closest standard match for
+        // "PG sent an ErrorResponse we couldn't parse". 00000 would
+        // collide with `successful_completion` and pollute SQLSTATE
+        // dashboards.
+        server.last_sql_error = Some((
+            "XX000".to_string(),
+            "<unparseable ErrorResponse>".to_string(),
+        ));
     }
 
     // Exit COPY mode on error

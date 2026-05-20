@@ -93,7 +93,16 @@ takes a third option.
 
 On every anonymous `Parse` from the client, PgDoorman:
 
-1. Hashes the query text plus parameter type OIDs.
+1. Hashes the query text plus parameter type OIDs plus a digest of the
+   client's startup-pinned planner GUCs (`search_path`,
+   `default_transaction_isolation`, `default_transaction_read_only`,
+   `default_text_search_config`, `role`). Two clients that send the
+   same `query` + parameter OIDs but pinned different `search_path`
+   values therefore get separate cache entries and separate plans.
+   Other planner-relevant GUCs (`TimeZone`, `DateStyle`,
+   `plan_cache_mode`, `enable_*`, JIT cost knobs) are **not** part of
+   the digest — see the `sync_server_parameters` reference for the
+   scope and how to handle workloads that need broader coverage.
 2. Looks up the hash in the **pool-level** cache (shared across all
    clients of this pool). On miss, it allocates a fresh
    `DOORMAN_<counter>` name and registers an `Arc<Parse>` entry.

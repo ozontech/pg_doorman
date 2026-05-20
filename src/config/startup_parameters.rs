@@ -45,7 +45,7 @@ pub const RESERVED_PREFIX: &str = "_pq_.";
 /// `auto_explain.log_min_duration`). Equivalent to the regex
 /// `^[A-Za-z_][A-Za-z0-9_.]*$`; hand-rolled to keep `regex` out of the
 /// runtime dependency set.
-fn is_valid_guc_name(key: &str) -> bool {
+pub fn is_valid_guc_name(key: &str) -> bool {
     let mut bytes = key.bytes();
     let Some(first) = bytes.next() else {
         return false;

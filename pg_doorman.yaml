@@ -262,10 +262,16 @@ general:
   # Default: false
   server_round_robin: false
 
-  # Track and replay a subset of session parameters on each new backend in transaction mode.
-  # Tracked parameters: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
-  # Adds a SET roundtrip per checkout. Disabled by default.
-  # If you only need application_name, use the pool-level application_name setting instead.
+  # Replay session parameters on each new backend in transaction mode.
+  # Two channels feed the replay: PG-reported ParameterStatus updates
+  # (client_encoding, DateStyle, IntervalStyle, TimeZone,
+  # standard_conforming_strings, application_name) and the client's
+  # StartupMessage keys (excluding read-only / reserved names).
+  # Replay is startup-only: runtime SET on non-GUC_REPORT names is NOT
+  # tracked. Prepared-statement cache key folds startup-pinned planner
+  # GUCs (search_path, default_transaction_isolation,
+  # default_transaction_read_only, default_text_search_config, role).
+  # Adds a SET roundtrip per non-empty diff. Disabled by default.
   # Default: false
   sync_server_parameters: false
 

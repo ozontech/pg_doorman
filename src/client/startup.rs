@@ -384,33 +384,32 @@ where
         // server defaults. Operator-managed startup_parameters must
         // win over the client packet; otherwise ParameterStatus
         // reports the client value while the backend keeps the
-        // operator default, a protocol-visible mismatch. The
-        // backend's sync_parameters already applies the same filter
-        // on checkout, so this aligns the two client views. The key
-        // set comes from the same pool snapshot that produced
-        // `server_parameters`, so a concurrent RELOAD or auth_query
-        // overlay refetch between authentication and this filter
-        // cannot make the two views diverge.
-        // `startup = true` means "record this key into ServerParameters
-        // regardless of whether it is in TRACKED_PARAMETERS". Without
-        // it, names like `search_path`, `default_transaction_isolation`,
-        // `role` — anything outside the wire-presentation set —
-        // silently vanish, and `sync_parameters` on checkout never
-        // pushes them to the backend. SET_FORBIDDEN_PARAMETERS handles
-        // the inverse safety concern: read-only GUCs the client might
-        // try to put through are rejected at sync_parameters, not here.
-        match auth_outcome.operator_managed_keys {
-            Some(keys) if !keys.is_empty() => {
-                for (key, value) in &parameters {
-                    let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
-                    if !keys.contains(&canonical) {
-                        let _ = server_parameters.set_param(key.clone(), value.clone(), true);
-                    }
+        // operator default, a protocol-visible mismatch.
+        //
+        // `is_safe_client_startup_key` is the SAFE-LIST gate that
+        // stands between the client wire and `sync_parameters`. Two
+        // gaps it closes:
+        //   * SQL-injection through the key slot of the future
+        //     `SET <key> TO '...'` simple query.
+        //   * `ParameterStatus` spoofing: a client `server_version=99`
+        //     would otherwise sit in `ServerParameters` and ship back
+        //     as a pg_doorman-issued ParameterStatus, letting drivers
+        //     act on a server fact PG never reported.
+        // `startup = true` keeps these keys in `ServerParameters` even
+        // when they fall outside `TRACKED_PARAMETERS` (search_path,
+        // role, default_transaction_isolation, …) so the checkout sync
+        // path can push them to the backend.
+        for (key, value) in &parameters {
+            if !crate::server::parameters::is_safe_client_startup_key(key) {
+                continue;
+            }
+            if let Some(keys) = auth_outcome.operator_managed_keys.as_ref() {
+                let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
+                if keys.contains(&canonical) {
+                    continue;
                 }
             }
-            _ => {
-                let _ = server_parameters.set_from_hashmap(&parameters, true);
-            }
+            let _ = server_parameters.set_param(key.clone(), value.clone(), true);
         }
         let mut buf = BytesMut::new();
         {

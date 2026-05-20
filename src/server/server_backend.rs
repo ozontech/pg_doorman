@@ -171,6 +171,17 @@ pub struct Server {
     /// `Arc` because every spawn from the same pool sees the same set;
     /// without the share each backend allocated its own `HashSet<String>`.
     operator_managed_startup_keys: Arc<HashSet<String>>,
+
+    /// Most recent `ErrorResponse` SQLSTATE+message captured during the
+    /// current backend exchange, or `None` if no error has been observed
+    /// since the slot was last cleared. `small_simple_query` clears it
+    /// before sending and reads it after `ReadyForQuery` so PG-level
+    /// failures surface as `Err` instead of getting silently logged.
+    /// Without this, a `SET <key> TO '<bad value>'` that PG rejects
+    /// ends up reported as `Ok(())` and the caller mirrors the
+    /// rejected action onto the backend snapshot, drifting
+    /// pg_doorman's view from the real backend state.
+    pub(crate) last_sql_error: Option<(String, String)>,
 }
 
 impl std::fmt::Display for Server {
@@ -195,6 +206,12 @@ impl Server {
     pub async fn small_simple_query(&mut self, query: &str) -> Result<(), Error> {
         let query = simple_query(query);
 
+        // Reset SQL-error capture for this round-trip. Without this,
+        // a previous unrelated ErrorResponse would still be in the
+        // slot when this query's `ReadyForQuery` arrived, and the
+        // post-loop check would mis-attribute it to the current query.
+        self.last_sql_error = None;
+
         self.send_and_flush(&query).await?;
 
         let mut noop = tokio::io::sink();
@@ -207,6 +224,17 @@ impl Server {
             if !self.data_available {
                 break;
             }
+        }
+
+        // Transport success ≠ SQL success. PG may have returned
+        // `ErrorResponse`, which `handle_error_response` logs and
+        // captures into `last_sql_error` without breaking the read
+        // loop. Surface it so callers like `sync_parameters` don't
+        // mirror a rejected `SET` onto the backend snapshot.
+        if let Some((sqlstate, message)) = self.last_sql_error.take() {
+            return Err(Error::QueryError(format!(
+                "backend rejected query (SQLSTATE {sqlstate}): {message}"
+            )));
         }
 
         Ok(())
@@ -711,6 +739,7 @@ impl Server {
             return Ok(());
         }
 
+        use std::fmt::Write as _;
         let mut query = String::new();
         for (key, action) in &parameter_diff {
             match action {
@@ -721,11 +750,15 @@ impl Server {
                     // already happens in libpq / pg_doorman's own startup
                     // parsing; an embedded single quote is the only
                     // syntactic hazard left.
-                    let escaped = value.replace('\'', "''");
-                    query.push_str(&format!("SET {key} TO '{escaped}';"));
+                    if value.contains('\'') {
+                        let escaped = value.replace('\'', "''");
+                        let _ = write!(query, "SET {key} TO '{escaped}';");
+                    } else {
+                        let _ = write!(query, "SET {key} TO '{value}';");
+                    }
                 }
                 crate::server::parameters::ParamAction::Reset => {
-                    query.push_str(&format!("RESET {key};"));
+                    let _ = write!(query, "RESET {key};");
                 }
             }
         }
@@ -1124,6 +1157,7 @@ impl Server {
                         close_reason: None,
                         override_lifetime_ms: None,
                         operator_managed_startup_keys,
+                        last_sql_error: None,
                     };
                     server.stats.update_process_id(process_id);
                     server.stats.set_tls(connected_with_tls);

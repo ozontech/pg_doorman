@@ -105,6 +105,43 @@ pub fn is_set_forbidden(name: &str) -> bool {
     SET_FORBIDDEN_PARAMETERS.contains(name)
 }
 
+/// SAFE-LIST gate for keys that arrive from the client `StartupMessage`.
+///
+/// `sync_parameters` builds simple-query SQL of the shape
+/// `SET <key> TO '<escaped>'` and ships it under the pooled backend's
+/// identity. Values are single-quote-escaped, but the *key* slot is raw,
+/// so a malicious StartupMessage key such as
+/// `app TO 'x'; DEALLOCATE ALL; --` would inject a second statement
+/// into the checkout query. Rejecting unsafe shapes here is the only
+/// trusted boundary before the SQL is assembled.
+///
+/// A key passes when it
+///   * is non-empty and matches `^[A-Za-z_][A-Za-z0-9_.]*$` — the
+///     PostgreSQL GUC name shape, identical to the rule operators face
+///     in `startup_parameters` (see [`crate::config::startup_parameters::is_valid_guc_name`]);
+///   * does not collide with `SET_FORBIDDEN_PARAMETERS` (read-only or
+///     server-managed GUCs that PG would refuse and that would burn the
+///     pooled backend on 55P02 / 42704);
+///   * does not use the `_pq_.` protocol-extension prefix that PG
+///     reserves for its own negotiation channel.
+pub fn is_safe_client_startup_key(key: &str) -> bool {
+    if !crate::config::startup_parameters::is_valid_guc_name(key) {
+        return false;
+    }
+    // `_pq_.` prefix check is case-insensitive on purpose: canonicalisation
+    // lowercases non-tracked keys before they reach the wire, so `_PQ_.foo`
+    // would otherwise pass the byte-shape gate and emerge as `_pq_.foo` in
+    // the SET text.
+    const PQ_PREFIX: &[u8] = b"_pq_.";
+    if key.len() >= PQ_PREFIX.len()
+        && key.as_bytes()[..PQ_PREFIX.len()].eq_ignore_ascii_case(PQ_PREFIX)
+    {
+        return false;
+    }
+    let canonical = canonicalize_param_name(key.to_string());
+    !is_set_forbidden(&canonical)
+}
+
 /// Canonicalise a PostgreSQL session parameter name. PG GUC lookups are
 /// case-insensitive, so pg_doorman needs one normalised form per name
 /// for every internal compare-by-key path (operator_managed key set,
@@ -283,10 +320,15 @@ impl ServerParameters {
     ///   * `SetTo(value)` — `SET key TO 'value'`
     ///   * `Reset` — `RESET key` (backend has a value the client lacks)
     ///
-    /// The iteration walks the union of both key sets, skipping read-only
-    /// names listed in `SET_FORBIDDEN_PARAMETERS`. Anything the client
-    /// puts in `is_superuser` or `server_version` is therefore ignored,
-    /// not turned into a `SET` that would crash the backend with 55P02.
+    /// Two-pass implementation: one walk of the incoming map covers
+    /// `SetTo` (insert + value change), one walk of the backend map
+    /// covers `Reset` (backend-only entries). No intermediate
+    /// `HashSet` union of borrowed keys, since this runs on every
+    /// transaction-mode checkout when `sync_server_parameters=true`.
+    ///
+    /// `SET_FORBIDDEN_PARAMETERS` names are skipped on both passes —
+    /// pushing `SET is_superuser TO …` or `RESET user` would 55P02 /
+    /// 42704 and poison the backend.
     #[inline(always)]
     pub(crate) fn compare_params(
         &self,
@@ -294,28 +336,24 @@ impl ServerParameters {
     ) -> HashMap<String, ParamAction> {
         let mut diff = HashMap::new();
 
-        let mut keys: HashSet<&String> = HashSet::new();
-        keys.extend(self.parameters.keys());
-        keys.extend(incoming_parameters.parameters.keys());
-
-        for key in keys {
+        for (key, client_value) in &incoming_parameters.parameters {
             if is_set_forbidden(key) {
                 continue;
             }
-            match (
-                self.parameters.get(key),
-                incoming_parameters.parameters.get(key),
-            ) {
-                (Some(server_value), Some(client_value)) if server_value != client_value => {
+            match self.parameters.get(key) {
+                Some(backend_value) if backend_value == client_value => {}
+                _ => {
                     diff.insert(key.clone(), ParamAction::SetTo(client_value.clone()));
                 }
-                (Some(_), None) => {
-                    diff.insert(key.clone(), ParamAction::Reset);
-                }
-                (None, Some(client_value)) => {
-                    diff.insert(key.clone(), ParamAction::SetTo(client_value.clone()));
-                }
-                _ => {}
+            }
+        }
+
+        for key in self.parameters.keys() {
+            if is_set_forbidden(key) {
+                continue;
+            }
+            if !incoming_parameters.parameters.contains_key(key) {
+                diff.insert(key.clone(), ParamAction::Reset);
             }
         }
 
@@ -717,6 +755,69 @@ mod tests {
         // touch the planner hash. Reading it back returns the same value
         // without recompute.
         assert_eq!(sp.planner_param_hash(), h_before);
+    }
+
+    #[test]
+    fn is_safe_client_startup_key_accepts_session_mutable_names() {
+        // The standard cases the cascade and the client SAFE-LIST must
+        // both pass — pg_doorman applies these to the backend with a
+        // SET <name> TO '...' simple query, so the name has to round-trip
+        // intact as a SQL identifier.
+        assert!(is_safe_client_startup_key("search_path"));
+        assert!(is_safe_client_startup_key("application_name"));
+        assert!(is_safe_client_startup_key("work_mem"));
+        // Namespaced extension GUC — the dot is allowed inside an
+        // identifier-shape name, even though PG itself parses the dot
+        // as a schema separator. is_valid_guc_name keeps this allowed.
+        assert!(is_safe_client_startup_key("auto_explain.log_min_duration"));
+    }
+
+    #[test]
+    fn is_safe_client_startup_key_rejects_set_forbidden_names() {
+        // SQL-injection-adjacent: the BLOCKER is not "client tries to
+        // change is_superuser" (PG would reject the SET anyway) but
+        // pg_doorman issuing the SET in the first place, which burns
+        // the backend on 55P02 and is doubly bad if the name was crafted
+        // to break out of the identifier slot. Even well-formed forbidden
+        // names must not pass the client SAFE-LIST.
+        assert!(!is_safe_client_startup_key("is_superuser"));
+        assert!(!is_safe_client_startup_key("server_version"));
+        assert!(!is_safe_client_startup_key("lc_collate"));
+        assert!(!is_safe_client_startup_key("user"));
+        assert!(!is_safe_client_startup_key("database"));
+        assert!(!is_safe_client_startup_key("transaction_isolation"));
+    }
+
+    #[test]
+    fn is_safe_client_startup_key_rejects_injection_shaped_names() {
+        // Without this gate, the key reaches `sync_parameters` as raw
+        // text inside `SET {key} TO '...'`. A semicolon (or any non-
+        // identifier byte) terminates the SET and the rest becomes a
+        // second statement issued under the pooled-backend identity.
+        // PgBouncer-style multi-statement simple-query is exactly the
+        // primitive an attacker chains here.
+        assert!(!is_safe_client_startup_key(""));
+        assert!(!is_safe_client_startup_key("1foo")); // leading digit
+        assert!(!is_safe_client_startup_key("foo bar"));
+        assert!(!is_safe_client_startup_key("foo;bar"));
+        assert!(!is_safe_client_startup_key("foo'bar"));
+        assert!(!is_safe_client_startup_key("foo\"bar"));
+        assert!(!is_safe_client_startup_key("foo--"));
+        // The crafted payload from the review: turns into
+        //   SET app TO 'x'; DEALLOCATE ALL; -- TO '...'.
+        assert!(!is_safe_client_startup_key(
+            "app TO 'x'; DEALLOCATE ALL; --"
+        ));
+    }
+
+    #[test]
+    fn is_safe_client_startup_key_rejects_protocol_reserved_prefix() {
+        // PG reserves the `_pq_.` prefix for protocol extension negotiation
+        // (`_pq_.report_parameter`, etc); pg_doorman must not push them
+        // as SET to the backend. Case-insensitive because canonicalisation
+        // lowercases non-tracked keys before they reach the wire.
+        assert!(!is_safe_client_startup_key("_pq_.foo"));
+        assert!(!is_safe_client_startup_key("_PQ_.foo"));
     }
 
     #[test]
