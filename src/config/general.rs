@@ -53,6 +53,18 @@ pub struct General {
     #[serde(default = "General::default_unix_socket_buffer_size")]
     pub unix_socket_buffer_size: ByteSize,
 
+    /// Kernel SO_RCVBUF/SO_SNDBUF limits for accepted client TCP sockets
+    /// and outbound backend TCP sockets. `0` (default) keeps Linux TCP
+    /// autotuning active. A non-zero value sets fixed send/receive buffer
+    /// limits for the socket and disables autotuning. Linux internally
+    /// doubles the requested values and may clamp them by
+    /// `net.core.rmem_max` / `net.core.wmem_max`. Use 64 KiB-256 KiB as
+    /// a starting range for OLTP in one datacenter; measure before using
+    /// smaller values, larger values, or WAN links.
+    /// Default: 0 (disabled — kernel autotuning).
+    #[serde(default = "General::default_tcp_socket_buffer_size")]
+    pub tcp_socket_buffer_size: ByteSize,
+
     #[serde(default)]
     pub unix_socket_dir: Option<String>,
 
@@ -326,6 +338,10 @@ impl General {
         ByteSize::from_mb(1) // 1mb
     }
 
+    pub fn default_tcp_socket_buffer_size() -> ByteSize {
+        ByteSize::from_bytes(0) // disabled — kernel autotuning
+    }
+
     /// Default permission mode for the Unix socket file: `0600` (owner read/write only).
     pub fn default_unix_socket_mode() -> String {
         "0600".to_string()
@@ -547,6 +563,7 @@ impl Default for General {
             tcp_no_delay: Self::default_tcp_no_delay(),
             tcp_user_timeout: Self::default_tcp_user_timeout(),
             unix_socket_buffer_size: Self::default_unix_socket_buffer_size(),
+            tcp_socket_buffer_size: Self::default_tcp_socket_buffer_size(),
             unix_socket_dir: None,
             unix_socket_mode: Self::default_unix_socket_mode(),
             log_client_connections: true,
@@ -674,6 +691,45 @@ mod tests {
     fn parse_unix_socket_mode_rejects_whitespace_only() {
         let err = General::parse_unix_socket_mode("   ").unwrap_err();
         assert!(err.contains("empty"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn tcp_socket_buffer_size_defaults_to_zero() {
+        // Default = 0 keeps PgBouncer-compatible behaviour: setsockopt is
+        // skipped entirely and the Linux TCP autotuner stays in charge.
+        // Any change to this default needs explicit operator opt-in
+        // because pinning the buffer disables autotuning permanently.
+        let g = General::default();
+        assert_eq!(g.tcp_socket_buffer_size.as_bytes(), 0);
+    }
+
+    #[test]
+    fn tcp_socket_buffer_size_accepts_explicit_bytes() {
+        let yaml = r#"
+host: "0.0.0.0"
+port: 6432
+admin_username: "admin"
+admin_password: "x"
+tcp_socket_buffer_size: 65536
+"#;
+        let parsed: General = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.tcp_socket_buffer_size.as_bytes(), 65_536);
+    }
+
+    #[test]
+    fn tcp_socket_buffer_size_accepts_human_readable() {
+        // ByteSize parses "64KB" / "256KB" — the human-readable form is
+        // what the docs recommend operators write, so the parser must
+        // accept it.
+        let yaml = r#"
+host: "0.0.0.0"
+port: 6432
+admin_username: "admin"
+admin_password: "x"
+tcp_socket_buffer_size: "64KB"
+"#;
+        let parsed: General = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.tcp_socket_buffer_size.as_bytes(), 64 * 1024);
     }
 
     #[test]

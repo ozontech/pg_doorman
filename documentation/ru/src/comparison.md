@@ -133,6 +133,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | Перезагрузка по `SIGHUP` | Да (серверные TLS-сертификаты включены; клиентский TLS требует рестарта) | Да (`auth_file`, `auth_hba_file`, server и client TLS certs) | Да |
 | systemd `sd-notify` (`Type=notify`) | Да | Нет | Нет |
 | Лимит памяти (`max_memory_usage`) | Да | Нет | Нет |
+| Лимит TCP-буферов | Да (`tcp_socket_buffer_size` для клиентских TCP-сокетов и TCP-сокетов к PostgreSQL) | Да (`tcp_socket_buffer`) | Нет |
 
 См. [Плавное обновление бинаря](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
 

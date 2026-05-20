@@ -485,6 +485,36 @@ fields:
       doc: "Buffer size for read and write operations when connecting to PostgreSQL via a unix socket."
       default: "1048576"
 
+    tcp_socket_buffer_size:
+      config:
+        en: |
+          Kernel SO_RCVBUF/SO_SNDBUF limits for accepted client TCP sockets and outbound backend TCP sockets.
+          `0` (default) keeps Linux TCP autotuning active.
+          A non-zero value sets fixed send/receive buffer limits and disables autotuning for the socket.
+          Linux applies/reports doubled values and may clamp them by net.core.rmem_max/net.core.wmem_max.
+          Start with 64KB–256KB for OLTP in one datacenter; measure before going lower, higher, or over WAN.
+        ru: |
+          Лимиты буферов ядра SO_RCVBUF/SO_SNDBUF для клиентских TCP-сокетов после accept() и исходящих TCP-сокетов к PostgreSQL.
+          `0` (по умолчанию) оставляет включённой автонастройку TCP в Linux.
+          Ненулевое значение задаёт фиксированные лимиты буферов отправки и приёма и отключает автонастройку для сокета.
+          Linux применяет и возвращает удвоенные значения; верхний предел задают net.core.rmem_max и net.core.wmem_max.
+          Для OLTP в одном датацентре начните с 64KB–256KB. Значения ниже или выше этого диапазона, а также работу через WAN проверяйте нагрузочными замерами.
+      doc: |
+        Kernel `SO_RCVBUF`/`SO_SNDBUF` limits for accepted client TCP sockets and outbound backend TCP sockets.
+
+        With the default `0`, pg_doorman does not call `setsockopt(SO_RCVBUF/SO_SNDBUF)` and Linux TCP autotuning stays in charge. Per-connection receive buffers can grow on demand up to `net.ipv4.tcp_rmem[2]` (commonly 6 MiB on Ubuntu/RHEL). That memory is not process RSS; depending on kernel and cgroup mode it may appear separately as socket memory, for example as `sock` in cgroup v2 `memory.stat`, or mostly as host-level kernel memory. If `MemFree` jumps after a pg_doorman restart, confirm the source with `ss -m`, `/proc/net/sockstat`, cgroup v2 `memory.current`, and `memory.stat` key `sock`.
+
+        Setting a non-zero value calls `setsockopt(SO_RCVBUF/SO_SNDBUF)` once per configured TCP socket. This disables autotuning for that socket and sets fixed send/receive buffer limits. Linux internally doubles the requested values — see `man 7 socket` — and may clamp them by `net.core.rmem_max` / `net.core.wmem_max`. Check `/proc/sys/net/core/rmem_max` and `/proc/sys/net/core/wmem_max` before choosing values above the OS default. `getsockopt`, `ss -m`, and pg_doorman `DEBUG` logs show the kernel-applied values.
+
+        The rough Linux limit is `4 * tcp_socket_buffer_size * tcp_socket_count`: send and receive buffers are both configured, and Linux doubles each requested value internally. For example, `tcp_socket_buffer_size = 65536` sets about 256 KiB of send+receive limits per TCP socket, so 60 TCP sockets have about 15 MiB of configured kernel buffer limits before `sk_buff` overhead. Count both client TCP sockets and backend TCP sockets. Actual resident memory still depends on queued data.
+
+        This setting is primarily a memory cap. Suggested starting range for OLTP traffic inside one datacenter: **64 KiB – 256 KiB**. Do not set less than 64 KiB unless measurements show it is safe. WAN links, cross-zone traffic, large result sets, and bulk transfers may need a larger value or the default autotuning behaviour.
+
+        The value is applied when pg_doorman configures a TCP socket: on accepted client sockets, outbound backend sockets, and migrated client sockets reconstructed during binary upgrade. `SIGHUP` reload does not revisit already-open sockets. To apply a new value to existing sessions, use binary upgrade for migrated clients, reconnect/drain pools for backend sockets, or restart when reconnects are acceptable.
+
+        Equivalent of PgBouncer's `tcp_socket_buffer` parameter. Odyssey and PgCat have no analogue and inherit the kernel autotuner's behaviour.
+      default: "0"
+
     unix_socket_dir:
       config:
         en: "Directory for Unix socket listener. Creates .s.PGSQL.<port> file. Use psql -h <dir> or pgbench -h <dir> to connect."

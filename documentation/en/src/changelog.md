@@ -1,5 +1,35 @@
 # Changelog
 
+### 3.10.1
+
+#### Configurable kernel TCP socket buffer size
+
+New `general.tcp_socket_buffer_size` (`ByteSize`, default `0`). When set
+to a non-zero value, pg_doorman calls `setsockopt(SO_RCVBUF/SO_SNDBUF)`
+on every accepted client TCP socket and outbound backend TCP socket,
+sets fixed send/receive buffer limits, and disables Linux TCP autotuning
+for that socket. Linux applies/reports doubled values and may clamp them
+by `net.core.rmem_max` / `net.core.wmem_max`.
+
+The default `0` keeps the current behaviour (autotuning on). Operators
+who observe `MemFree` jumping back up after a `pg_doorman` restart with
+many long-lived idle clients may be seeing kernel TCP buffer
+accumulation. This memory is not process RSS; depending on kernel and
+cgroup mode it may show up as socket memory, for example `sock` in
+cgroup v2 `memory.stat`. Those deployments can bound per-socket kernel
+buffer limits by setting this knob to a value in the `64 KiB – 256 KiB`
+range suitable for OLTP traffic in one datacenter. See the
+[`tcp_socket_buffer_size`](reference/general.md#tcp_socket_buffer_size)
+reference for details and trade-offs.
+
+Config reloads do not resize already-open sockets. During `SIGUSR2`
+binary upgrade, migrated client sockets are reconfigured in the new
+process; backend sockets pick up the value only when opened or
+reconnected.
+
+Equivalent of PgBouncer's `tcp_socket_buffer` parameter. Odyssey and
+PgCat have no analogue.
+
 ### 3.10.0
 
 #### Prepared statements and startup-time planner parameters
