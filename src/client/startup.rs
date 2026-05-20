@@ -380,29 +380,22 @@ where
         let mut server_parameters = auth_outcome.server_parameters;
         let prepared_statements_enabled = auth_outcome.prepared_statements_enabled;
 
-        // Merge the startup parameters sent by the client with the
-        // server defaults. Operator-managed startup_parameters must
-        // win over the client packet; otherwise ParameterStatus
-        // reports the client value while the backend keeps the
-        // operator default, a protocol-visible mismatch. The
-        // backend's sync_parameters already applies the same filter
-        // on checkout, so this aligns the two client views. The key
-        // set comes from the same pool snapshot that produced
-        // `server_parameters`, so a concurrent RELOAD or auth_query
-        // overlay refetch between authentication and this filter
-        // cannot make the two views diverge.
-        match auth_outcome.operator_managed_keys {
-            Some(keys) if !keys.is_empty() => {
-                for (key, value) in &parameters {
-                    let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
-                    if !keys.contains(&canonical) {
-                        server_parameters.set_param(key.clone(), value.clone(), false);
-                    }
+        // Merge safe client StartupMessage parameters into the client
+        // snapshot. Configured startup_parameters win, because
+        // the backend will run with those values. `startup = true`
+        // keeps non-ParameterStatus GUCs such as search_path and role
+        // available for checkout sync.
+        for (key, value) in &parameters {
+            if !crate::server::parameters::is_safe_client_startup_key(key) {
+                continue;
+            }
+            if let Some(keys) = auth_outcome.operator_managed_keys.as_ref() {
+                let canonical = crate::server::parameters::canonicalize_param_name(key.clone());
+                if keys.contains(&canonical) {
+                    continue;
                 }
             }
-            _ => {
-                server_parameters.set_from_hashmap(&parameters, false);
-            }
+            let _ = server_parameters.set_param(key.clone(), value.clone(), true);
         }
         let mut buf = BytesMut::new();
         {

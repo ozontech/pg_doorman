@@ -192,6 +192,33 @@ impl Parse {
         }
     }
 
+    /// Cache-key variant that includes a precomputed planner-state hash.
+    /// Different startup-time planner GUCs must produce different
+    /// server-side `DOORMAN_N` names for the same query text.
+    ///
+    /// `planner_param_hash == 0` collapses to the legacy `get_hash`
+    /// result for callers with no planner state to add.
+    pub fn get_hash_with_planner_params(&self, planner_param_hash: u64) -> u64 {
+        if planner_param_hash == 0 {
+            return self.get_hash();
+        }
+        if self.query.len() >= 64 {
+            let mut hasher = Xxh3::default();
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+            hasher.write_u64(planner_param_hash);
+            hasher.finish()
+        } else {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+            hasher.write_u64(planner_param_hash);
+            hasher.finish()
+        }
+    }
+
     pub fn anonymous(&self) -> bool {
         self.name.is_empty()
     }
@@ -761,5 +788,45 @@ mod tests {
 
         let p3 = Parse::from_parts("SELECT $1", &[25]); // different param type
         assert_ne!(p1.get_hash(), p3.get_hash());
+    }
+
+    /// No planner state keeps the legacy prepared-cache key.
+    #[test]
+    fn get_hash_with_planner_params_zero_matches_legacy() {
+        let p = Parse::from_parts("SELECT 1", &[23]);
+        assert_eq!(p.get_hash(), p.get_hash_with_planner_params(0));
+    }
+
+    /// Non-zero planner state must change the prepared-cache key.
+    #[test]
+    fn get_hash_with_planner_params_nonzero_changes_digest() {
+        let p = Parse::from_parts("SELECT 1", &[23]);
+        let base = p.get_hash();
+        assert_ne!(base, p.get_hash_with_planner_params(0x1234_5678_9ABC_DEF0));
+    }
+
+    /// Different planner states must not collide on the mixed key.
+    #[test]
+    fn get_hash_with_planner_params_distinct_for_distinct_planner_hashes() {
+        let p = Parse::from_parts("SELECT 1", &[23]);
+        let h_a = p.get_hash_with_planner_params(0x1111_1111_1111_1111);
+        let h_b = p.get_hash_with_planner_params(0x2222_2222_2222_2222);
+        assert_ne!(h_a, h_b);
+    }
+
+    /// Both hash implementations must include planner state.
+    #[test]
+    fn get_hash_with_planner_params_works_on_both_hasher_branches() {
+        let short = Parse::from_parts("SELECT 1", &[]);
+        let long_query = format!("SELECT {} FROM t", "a".repeat(80));
+        let long = Parse::from_parts(&long_query, &[]);
+        assert_ne!(
+            short.get_hash(),
+            short.get_hash_with_planner_params(0xDEAD_BEEF)
+        );
+        assert_ne!(
+            long.get_hash(),
+            long.get_hash_with_planner_params(0xDEAD_BEEF)
+        );
     }
 }

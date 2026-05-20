@@ -164,13 +164,17 @@ pub struct Server {
     /// they expire before the local backend recovers.
     pub(crate) override_lifetime_ms: Option<u64>,
 
-    /// Names of GUCs that pg_doorman injected through `startup_parameters`
-    /// for this backend. They become `pg_settings.reset_val` for the
-    /// session, so `sync_parameters` must not push a client-side value over
-    /// them on checkout — the operator decision wins over the client.
-    /// `Arc` because every spawn from the same pool sees the same set;
-    /// without the share each backend allocated its own `HashSet<String>`.
+    /// GUC names injected by configured `startup_parameters` for this backend.
+    /// Checkout sync must not overwrite them with client StartupMessage
+    /// values. Shared because every backend from the same pool uses the
+    /// same set.
     operator_managed_startup_keys: Arc<HashSet<String>>,
+
+    /// Most recent PostgreSQL ErrorResponse for the current backend
+    /// exchange. `small_simple_query` uses it to return SQL failures as
+    /// `Err`, so callers do not mirror rejected SET/RESET operations
+    /// into the backend snapshot.
+    pub(crate) last_sql_error: Option<(String, String)>,
 }
 
 impl std::fmt::Display for Server {
@@ -195,6 +199,10 @@ impl Server {
     pub async fn small_simple_query(&mut self, query: &str) -> Result<(), Error> {
         let query = simple_query(query);
 
+        // Reset SQL-error capture for this round trip before reading a
+        // new ReadyForQuery.
+        self.last_sql_error = None;
+
         self.send_and_flush(&query).await?;
 
         let mut noop = tokio::io::sink();
@@ -207,6 +215,14 @@ impl Server {
             if !self.data_available {
                 break;
             }
+        }
+
+        // Transport success is not SQL success: ErrorResponse is captured
+        // by the read loop and surfaced here.
+        if let Some((sqlstate, message)) = self.last_sql_error.take() {
+            return Err(Error::QueryError(format!(
+                "backend rejected query (SQLSTATE {sqlstate}): {message}"
+            )));
         }
 
         Ok(())
@@ -539,7 +555,7 @@ impl Server {
         prepared_statements::add_to_cache(&mut self.prepared_statement_cache, &self.stats, name)
     }
 
-    fn remove_prepared_statement_from_cache(&mut self, name: &str) {
+    pub(crate) fn remove_prepared_statement_from_cache(&mut self, name: &str) {
         prepared_statements::remove_from_cache(
             &mut self.prepared_statement_cache,
             &self.stats,
@@ -701,8 +717,7 @@ impl Server {
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
         let mut parameter_diff = self.server_parameters.compare_params(parameters);
 
-        // Do not let values from the client startup packet overwrite
-        // operator-supplied startup defaults during checkout sync.
+        // Configured startup_parameters win over client StartupMessage values.
         if !self.operator_managed_startup_keys.is_empty() {
             parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
         }
@@ -711,13 +726,42 @@ impl Server {
             return Ok(());
         }
 
-        let mut query = String::from("");
-
-        for (key, value) in parameter_diff {
-            query.push_str(&format!("SET {key} TO '{value}';"));
+        use std::fmt::Write as _;
+        let mut query = String::new();
+        for (key, action) in &parameter_diff {
+            match action {
+                crate::server::parameters::ParamAction::SetTo(value) => {
+                    // Values are single-quoted SQL literals; escape the
+                    // only delimiter that can appear here.
+                    if value.contains('\'') {
+                        let escaped = value.replace('\'', "''");
+                        let _ = write!(query, "SET {key} TO '{escaped}';");
+                    } else {
+                        let _ = write!(query, "SET {key} TO '{value}';");
+                    }
+                }
+                crate::server::parameters::ParamAction::Reset => {
+                    let _ = write!(query, "RESET {key};");
+                }
+            }
         }
 
         let res = self.small_simple_query(&query).await;
+
+        // Mirror successful SET/RESET actions because PostgreSQL does not
+        // emit ParameterStatus for most planner GUCs, including search_path.
+        if res.is_ok() {
+            for (key, action) in parameter_diff {
+                match action {
+                    crate::server::parameters::ParamAction::SetTo(value) => {
+                        let _ = self.server_parameters.set_param(&key, value, true);
+                    }
+                    crate::server::parameters::ParamAction::Reset => {
+                        self.server_parameters.remove_param(&key);
+                    }
+                }
+            }
+        }
 
         self.cleanup_state.reset();
 
@@ -1089,6 +1133,7 @@ impl Server {
                         close_reason: None,
                         override_lifetime_ms: None,
                         operator_managed_startup_keys,
+                        last_sql_error: None,
                     };
                     server.stats.update_process_id(process_id);
                     server.stats.set_tls(connected_with_tls);

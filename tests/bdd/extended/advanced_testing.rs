@@ -409,42 +409,43 @@ pub async fn verify_error_response_on_flush_timeout(
     );
 }
 
-/// Verify that the client received an ErrorResponse with the given SQLSTATE
-/// code. Reads messages until an ErrorResponse ('E') is found, parses the
-/// field-tagged body, and asserts the 'C' (Code/SQLSTATE) field matches.
+/// Assert that the session received an ErrorResponse with the given SQLSTATE.
+/// Prefer messages already drained by `we send Sync`; fall back to the live
+/// socket for steps that have not drained the response yet.
 #[then(regex = r#"^session "([^"]+)" should receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
 pub async fn verify_error_response_with_sqlstate(
     world: &mut DoormanWorld,
     session_name: String,
     expected_sqlstate: String,
 ) {
-    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
-
     let mut got_error: Option<String> = None;
-    while let Ok(Ok((msg_type, data))) =
-        tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await
-    {
-        if msg_type == 'E' {
-            // ErrorResponse body: repeated <field-byte><cstring> until null.
-            let mut i = 0;
-            while i < data.len() && data[i] != 0 {
-                let field_byte = data[i] as char;
-                i += 1;
-                let start = i;
-                while i < data.len() && data[i] != 0 {
-                    i += 1;
-                }
-                let value = String::from_utf8_lossy(&data[start..i]).to_string();
-                i += 1; // skip null terminator
-                if field_byte == 'C' {
-                    got_error = Some(value);
-                    break;
-                }
+
+    if let Some(messages) = world.session_messages.get(&session_name) {
+        for (msg_type, data) in messages {
+            if *msg_type != 'E' {
+                continue;
             }
-            break;
+            if let Some(code) = extract_error_code(data) {
+                got_error = Some(code);
+                break;
+            }
         }
-        if msg_type == 'Z' {
-            break;
+    }
+
+    if got_error.is_none() {
+        let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+        while let Ok(Ok((msg_type, data))) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await
+        {
+            if msg_type == 'E' {
+                if let Some(code) = extract_error_code(&data) {
+                    got_error = Some(code);
+                }
+                break;
+            }
+            if msg_type == 'Z' {
+                break;
+            }
         }
     }
 
@@ -459,6 +460,63 @@ pub async fn verify_error_response_with_sqlstate(
         "Session '{}': SQLSTATE mismatch (expected '{}', got '{}')",
         session_name, expected_sqlstate, got
     );
+}
+
+/// Extract the SQLSTATE (`C` field) from a PostgreSQL ErrorResponse body.
+fn extract_error_code(data: &[u8]) -> Option<String> {
+    let mut i = 0;
+    while i < data.len() && data[i] != 0 {
+        let field_byte = data[i] as char;
+        i += 1;
+        let start = i;
+        while i < data.len() && data[i] != 0 {
+            i += 1;
+        }
+        let value = String::from_utf8_lossy(&data[start..i]).to_string();
+        i += 1; // skip null terminator
+        if field_byte == 'C' {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Assert that messages drained by the last `we send Sync` do not include
+/// the forbidden SQLSTATE.
+#[then(regex = r#"^session "([^"]+)" should not receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
+pub async fn verify_no_error_response_with_sqlstate(
+    world: &mut DoormanWorld,
+    session_name: String,
+    forbidden_sqlstate: String,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| {
+            panic!("Session '{session_name}': no stored messages — did you forget to send Sync?");
+        });
+
+    for (msg_type, data) in messages {
+        if *msg_type != 'E' {
+            continue;
+        }
+        let mut i = 0;
+        while i < data.len() && data[i] != 0 {
+            let field_byte = data[i] as char;
+            i += 1;
+            let start = i;
+            while i < data.len() && data[i] != 0 {
+                i += 1;
+            }
+            let value = String::from_utf8_lossy(&data[start..i]).to_string();
+            i += 1;
+            if field_byte == 'C' && value == forbidden_sqlstate {
+                panic!(
+                    "Session '{session_name}': received forbidden ErrorResponse with SQLSTATE '{forbidden_sqlstate}'",
+                );
+            }
+        }
+    }
 }
 
 // =============================================================================

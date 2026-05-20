@@ -328,6 +328,8 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
         }
         error!("{details}");
         server.address.stats.error_with_sqlstate(&msg.code);
+        // Let `small_simple_query` return SQL-level failures as `Err`.
+        server.last_sql_error = Some((msg.code.clone(), msg.message.clone()));
     } else {
         error!(
             "[{}@{}] server error pid={}: could not parse error details",
@@ -336,6 +338,14 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
             server.get_process_id(),
         );
         server.address.stats.error();
+        // SQLSTATE XX000 = `internal_error`: closest standard match for
+        // "PG sent an ErrorResponse we couldn't parse". 00000 would
+        // collide with `successful_completion` and pollute SQLSTATE
+        // dashboards.
+        server.last_sql_error = Some((
+            "XX000".to_string(),
+            "<unparseable ErrorResponse>".to_string(),
+        ));
     }
 
     // Exit COPY mode on error
@@ -346,6 +356,18 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
     // Reset prepared statements cache on error
     if server.prepared_statement_cache.is_some() {
         server.cleanup_state.needs_cleanup_prepare = true;
+    }
+
+    // A Parse error means PostgreSQL did not install any pending prepared
+    // statement names. Drop the optimistic LRU entries so the next Bind
+    // re-Parses instead of hitting a stale DOORMAN_N.
+    if !server.registering_prepared_statement.is_empty() {
+        let pending: Vec<String> = server.registering_prepared_statement.drain(..).collect();
+        for name in &pending {
+            server.remove_prepared_statement_from_cache(name);
+        }
+        // Nothing pending remains to reconcile at check-in.
+        server.has_pending_cache_entries = false;
     }
 
     // Handle async mode errors
@@ -686,8 +708,16 @@ where
             'c' => (),
 
             // ParseComplete
-            // Response to Parse message in extended query protocol
+            // Response to Parse message in extended query protocol.
+            // Confirms the head of `registering_prepared_statement` was
+            // accepted by PostgreSQL: drop it from the pending list so a
+            // later ErrorResponse only rolls back the still-unconfirmed
+            // names. Without this pop, an error on Parse #N rolled back
+            // every Parse in the batch — even the ones PG had already
+            // ParseComplete'd — which Java pgjdbc surfaced as
+            // "Connection reset by peer" on its eighth pipelined batch.
             '1' => {
+                let _ = server.registering_prepared_statement.pop_front();
                 if server.is_async() {
                     server.decrement_expected();
                 }

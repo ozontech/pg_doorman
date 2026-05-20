@@ -575,7 +575,9 @@ pub struct Client<S, T> {
     /// Postgres user for this client (This comes from the user in the connection string)
     pub(crate) username: String,
 
-    /// Server startup and session parameters that we're going to track
+    /// Server startup and session parameters tracked for this client.
+    /// Also owns the lazy planner-state hash used by prepared-statement
+    /// cache keys.
     pub(crate) server_parameters: ServerParameters,
 
     /// Prepared statements state (caching, batch operations, etc.)

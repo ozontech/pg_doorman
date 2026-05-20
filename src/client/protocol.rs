@@ -174,8 +174,11 @@ where
         let client_given_name = Parse::get_name(&message)?;
         let parse: Parse = (&message).try_into()?;
 
-        // Compute the hash of the parse statement
-        let hash = parse.get_hash();
+        // Include startup-time planner state in the pool cache key.
+        // Clients with different search_path/role settings must get
+        // different server-side prepared statements.
+        let planner_hash = self.server_parameters.planner_param_hash();
+        let hash = parse.get_hash_with_planner_params(planner_hash);
 
         // Always use pool cache to get shared Arc<Parse> (saves memory for async clients too)
         let name_arg = if client_given_name.is_empty() {

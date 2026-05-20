@@ -40,18 +40,6 @@ pub fn bind_web_listener(host: &str) -> std::io::Result<TcpListener> {
     Ok(listener)
 }
 
-/// Test-only convenience that binds and serves in one call. Production
-/// code uses [`bind_web_listener`] + [`serve_on`] so a port collision
-/// fails the whole startup instead of leaving the listener task
-/// panicked behind a successful readiness signal. Gated on `cfg(test)`
-/// so external embedders cannot trip the panic by accident.
-#[cfg(test)]
-pub(crate) async fn start_web_server(host: &str, opts: WebServerOptions) {
-    let listener = bind_web_listener(host)
-        .unwrap_or_else(|e| panic!("Failed to bind web listener on {host}: {e}"));
-    serve_on(listener, opts).await;
-}
-
 /// Drive the accept loop on a pre-bound listener. Used by both
 /// [`start_web_server`] and the production startup path that binds
 /// synchronously before spawning.
