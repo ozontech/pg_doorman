@@ -125,11 +125,8 @@ impl PgConnection {
         self.send_startup_with_params(user, database, &[]).await
     }
 
-    /// Send a StartupMessage with arbitrary extra parameters appended to
-    /// `user`/`database`. Each entry is rendered as a NUL-terminated
-    /// key, NUL-terminated value pair — exactly what the wire protocol
-    /// expects. Useful for BDD scenarios that pin
-    /// per-session GUCs (e.g. `search_path`) at connection time.
+    /// Send a StartupMessage with extra key/value parameters after
+    /// `user` and `database`.
     pub async fn send_startup_with_params(
         &mut self,
         user: &str,

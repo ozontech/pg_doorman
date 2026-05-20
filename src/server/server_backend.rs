@@ -164,23 +164,16 @@ pub struct Server {
     /// they expire before the local backend recovers.
     pub(crate) override_lifetime_ms: Option<u64>,
 
-    /// Names of GUCs that pg_doorman injected through `startup_parameters`
-    /// for this backend. They become `pg_settings.reset_val` for the
-    /// session, so `sync_parameters` must not push a client-side value over
-    /// them on checkout — the operator decision wins over the client.
-    /// `Arc` because every spawn from the same pool sees the same set;
-    /// without the share each backend allocated its own `HashSet<String>`.
+    /// GUC names injected by configured `startup_parameters` for this backend.
+    /// Checkout sync must not overwrite them with client StartupMessage
+    /// values. Shared because every backend from the same pool uses the
+    /// same set.
     operator_managed_startup_keys: Arc<HashSet<String>>,
 
-    /// Most recent `ErrorResponse` SQLSTATE+message captured during the
-    /// current backend exchange, or `None` if no error has been observed
-    /// since the slot was last cleared. `small_simple_query` clears it
-    /// before sending and reads it after `ReadyForQuery` so PG-level
-    /// failures surface as `Err` instead of getting silently logged.
-    /// Without this, a `SET <key> TO '<bad value>'` that PG rejects
-    /// ends up reported as `Ok(())` and the caller mirrors the
-    /// rejected action onto the backend snapshot, drifting
-    /// pg_doorman's view from the real backend state.
+    /// Most recent PostgreSQL ErrorResponse for the current backend
+    /// exchange. `small_simple_query` uses it to return SQL failures as
+    /// `Err`, so callers do not mirror rejected SET/RESET operations
+    /// into the backend snapshot.
     pub(crate) last_sql_error: Option<(String, String)>,
 }
 
@@ -206,10 +199,8 @@ impl Server {
     pub async fn small_simple_query(&mut self, query: &str) -> Result<(), Error> {
         let query = simple_query(query);
 
-        // Reset SQL-error capture for this round-trip. Without this,
-        // a previous unrelated ErrorResponse would still be in the
-        // slot when this query's `ReadyForQuery` arrived, and the
-        // post-loop check would mis-attribute it to the current query.
+        // Reset SQL-error capture for this round trip before reading a
+        // new ReadyForQuery.
         self.last_sql_error = None;
 
         self.send_and_flush(&query).await?;
@@ -226,11 +217,8 @@ impl Server {
             }
         }
 
-        // Transport success ≠ SQL success. PG may have returned
-        // `ErrorResponse`, which `handle_error_response` logs and
-        // captures into `last_sql_error` without breaking the read
-        // loop. Surface it so callers like `sync_parameters` don't
-        // mirror a rejected `SET` onto the backend snapshot.
+        // Transport success is not SQL success: ErrorResponse is captured
+        // by the read loop and surfaced here.
         if let Some((sqlstate, message)) = self.last_sql_error.take() {
             return Err(Error::QueryError(format!(
                 "backend rejected query (SQLSTATE {sqlstate}): {message}"
@@ -729,8 +717,7 @@ impl Server {
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
         let mut parameter_diff = self.server_parameters.compare_params(parameters);
 
-        // Do not let values from the client startup packet overwrite
-        // operator-supplied startup defaults during checkout sync.
+        // Configured startup_parameters win over client StartupMessage values.
         if !self.operator_managed_startup_keys.is_empty() {
             parameter_diff.retain(|k, _| !self.operator_managed_startup_keys.contains(k));
         }
@@ -744,12 +731,8 @@ impl Server {
         for (key, action) in &parameter_diff {
             match action {
                 crate::server::parameters::ParamAction::SetTo(value) => {
-                    // Single-quote escaping: PostgreSQL `'a''b'` is the
-                    // safe form. Client values reach pg_doorman from the
-                    // wire protocol, where validation against NUL bytes
-                    // already happens in libpq / pg_doorman's own startup
-                    // parsing; an embedded single quote is the only
-                    // syntactic hazard left.
+                    // Values are single-quoted SQL literals; escape the
+                    // only delimiter that can appear here.
                     if value.contains('\'') {
                         let escaped = value.replace('\'', "''");
                         let _ = write!(query, "SET {key} TO '{escaped}';");
@@ -765,15 +748,8 @@ impl Server {
 
         let res = self.small_simple_query(&query).await;
 
-        // On success, mirror the diff onto the backend's snapshot.
-        // PostgreSQL emits `ParameterStatus` only for the GUC_REPORT set
-        // (`search_path`, `role`, `default_transaction_isolation`,
-        // `work_mem`, and most planner-affecting GUCs are NOT in it).
-        // Without this mirror the next `compare_params` would see
-        // "backend has no record" for those keys and skip the `RESET`
-        // they need — letting the previous client's `search_path`
-        // schema leak into the next client's queries. The mirror is
-        // the explicit equivalent of the missing `ParameterStatus`.
+        // Mirror successful SET/RESET actions because PostgreSQL does not
+        // emit ParameterStatus for most planner GUCs, including search_path.
         if res.is_ok() {
             for (key, action) in parameter_diff {
                 match action {

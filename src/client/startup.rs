@@ -380,25 +380,11 @@ where
         let mut server_parameters = auth_outcome.server_parameters;
         let prepared_statements_enabled = auth_outcome.prepared_statements_enabled;
 
-        // Merge the startup parameters sent by the client with the
-        // server defaults. Operator-managed startup_parameters must
-        // win over the client packet; otherwise ParameterStatus
-        // reports the client value while the backend keeps the
-        // operator default, a protocol-visible mismatch.
-        //
-        // `is_safe_client_startup_key` is the SAFE-LIST gate that
-        // stands between the client wire and `sync_parameters`. Two
-        // gaps it closes:
-        //   * SQL-injection through the key slot of the future
-        //     `SET <key> TO '...'` simple query.
-        //   * `ParameterStatus` spoofing: a client `server_version=99`
-        //     would otherwise sit in `ServerParameters` and ship back
-        //     as a pg_doorman-issued ParameterStatus, letting drivers
-        //     act on a server fact PG never reported.
-        // `startup = true` keeps these keys in `ServerParameters` even
-        // when they fall outside `TRACKED_PARAMETERS` (search_path,
-        // role, default_transaction_isolation, …) so the checkout sync
-        // path can push them to the backend.
+        // Merge safe client StartupMessage parameters into the client
+        // snapshot. Configured startup_parameters win, because
+        // the backend will run with those values. `startup = true`
+        // keeps non-ParameterStatus GUCs such as search_path and role
+        // available for checkout sync.
         for (key, value) in &parameters {
             if !crate::server::parameters::is_safe_client_startup_key(key) {
                 continue;

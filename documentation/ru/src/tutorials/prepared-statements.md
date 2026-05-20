@@ -96,16 +96,19 @@ psycopg. Прикладной код выглядит как обычный па
 
 На каждый анонимный `Parse` от клиента PgDoorman:
 
-1. Считает хеш по тексту запроса, OID типов параметров и digest'у
-   startup-pinned planner GUC'ов клиента (`search_path`,
+1. Считает хеш по тексту запроса, OID типов параметров и короткому
+   отпечатку параметров планировщика, которые клиент закрепил при
+   подключении (`search_path`,
    `default_transaction_isolation`, `default_transaction_read_only`,
-   `default_text_search_config`, `role`). Два клиента с одинаковым
-   `query` + OID параметров, но разными значениями `search_path` в
-   StartupMessage, получат отдельные записи кэша и отдельные планы.
-   Другие planner-релевантные GUC'и (`TimeZone`, `DateStyle`,
-   `plan_cache_mode`, `enable_*`, JIT cost knobs) в digest **не**
-   входят — описание области и поведения для workload'ов, которым
-   нужно больше, см. в справке про `sync_server_parameters`.
+   `default_text_search_config`, `role`). Поэтому два клиента с
+   одинаковым запросом и OID параметров, но с разными значениями
+   `search_path` в `StartupMessage`, получат разные записи кэша и
+   разные планы PostgreSQL. Другие параметры, которые тоже могут влиять
+   на план (`TimeZone`, `DateStyle`, `plan_cache_mode`, `enable_*`,
+   настройки стоимости JIT), в этот отпечаток **не** входят. Перед тем
+   как использовать один и тот же prepared-запрос с разными значениями
+   таких параметров, посмотрите ограничения в справке по
+   `sync_server_parameters`.
 2. Ищет хеш в общем кеше пула. При промахе выделяет новое имя
    `DOORMAN_<counter>` и регистрирует запись `Arc<Parse>`.
 3. Записывает в клиентский кеш ключ `Anonymous(hash)`, чтобы

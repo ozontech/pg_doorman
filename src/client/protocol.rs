@@ -174,17 +174,9 @@ where
         let client_given_name = Parse::get_name(&message)?;
         let parse: Parse = (&message).try_into()?;
 
-        // Fold the client's planner-visible GUC state into the cache
-        // key. Two clients of the same user@db pool with different
-        // `search_path` / `default_transaction_isolation` / `role`
-        // get different `DOORMAN_N` names on the backend, so
-        // PostgreSQL prepares one plan per planner state and never
-        // serves a stale plan from a peer client.
-        //
-        // `planner_param_hash` caches the digest inside
-        // `ServerParameters` and invalidates it on `set_param` whenever
-        // a planner-visible key actually changes, so the steady-state
-        // cost on the hot path is a single `AtomicU64::load(Relaxed)`.
+        // Include startup-time planner state in the pool cache key.
+        // Clients with different search_path/role settings must get
+        // different server-side prepared statements.
         let planner_hash = self.server_parameters.planner_param_hash();
         let hash = parse.get_hash_with_planner_params(planner_hash);
 

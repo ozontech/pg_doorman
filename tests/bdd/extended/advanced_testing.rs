@@ -409,14 +409,9 @@ pub async fn verify_error_response_on_flush_timeout(
     );
 }
 
-/// Verify that the client received an ErrorResponse with the given SQLSTATE
-/// code. First scans messages already drained into `world.session_messages`
-/// by a preceding `we send Sync` step; falls back to live socket reads for
-/// scenarios that issue raw Bind/Describe without a prior Sync. This
-/// dual-source lookup is what lets a single step assertion work both for
-/// "Bind on missing statement" scenarios (no Sync first, message still on
-/// the wire) and for full Parse+Sync+Bind+Execute+Sync flows (Sync already
-/// drained everything into `session_messages`).
+/// Assert that the session received an ErrorResponse with the given SQLSTATE.
+/// Prefer messages already drained by `we send Sync`; fall back to the live
+/// socket for steps that have not drained the response yet.
 #[then(regex = r#"^session "([^"]+)" should receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
 pub async fn verify_error_response_with_sqlstate(
     world: &mut DoormanWorld,
@@ -467,9 +462,7 @@ pub async fn verify_error_response_with_sqlstate(
     );
 }
 
-/// Pull the SQLSTATE (`C` field) out of a PostgreSQL ErrorResponse body.
-/// ErrorResponse format: a sequence of `<field-byte><c-string>` pairs
-/// terminated by a NUL byte; the `C` field carries the 5-char SQLSTATE.
+/// Extract the SQLSTATE (`C` field) from a PostgreSQL ErrorResponse body.
 fn extract_error_code(data: &[u8]) -> Option<String> {
     let mut i = 0;
     while i < data.len() && data[i] != 0 {
@@ -488,17 +481,8 @@ fn extract_error_code(data: &[u8]) -> Option<String> {
     None
 }
 
-/// Scan the messages already stored by the most recent `we send Sync`
-/// for an `ErrorResponse` whose `C` field equals `forbidden_sqlstate`.
-/// Reads from `world.session_messages` (which `we send Sync` drains
-/// off the socket) rather than from the live socket — otherwise the
-/// previous Sync would have already consumed every byte and a check
-/// against an empty socket would always pass.
-///
-/// Used to pin negative invariants — for example, that a backend's
-/// planner-time 42P01 is the only error the client sees, with no
-/// follow-up 26000 surfacing because pg_doorman skipped a re-Parse
-/// against a poisoned LRU.
+/// Assert that messages drained by the last `we send Sync` do not include
+/// the forbidden SQLSTATE.
 #[then(regex = r#"^session "([^"]+)" should not receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
 pub async fn verify_no_error_response_with_sqlstate(
     world: &mut DoormanWorld,

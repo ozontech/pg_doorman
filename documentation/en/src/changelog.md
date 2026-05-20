@@ -2,6 +2,35 @@
 
 ### 3.10.0
 
+#### Prepared statements and startup-time planner parameters
+
+`sync_server_parameters` now replays safe parameters sent by the client
+in `StartupMessage`, not only the small set of PostgreSQL-reported
+`ParameterStatus` values. This lets transaction-mode pools preserve
+startup-time session state such as `search_path`,
+`default_transaction_isolation`, and `role` when a client transaction
+lands on a different backend connection. Configured
+`startup_parameters` still win over client-supplied values.
+
+The prepared-statement cache key now includes a digest of the
+startup-time planner parameters that pg_doorman can safely replay:
+`search_path`, `default_transaction_isolation`,
+`default_transaction_read_only`, `default_text_search_config`, and
+`role`. Two clients that prepare the same query under different
+`search_path` values now get separate server-side prepared statements
+instead of sharing one PostgreSQL plan.
+
+Runtime `SET` for planner parameters that PostgreSQL does not report is
+still not tracked. Clients that need to change those values after
+connection startup should set them in `StartupMessage`, reconnect or
+run `DISCARD ALL` after changing them, or disable `prepared_statements`
+for that pool.
+
+PgDoorman also rolls back optimistic per-backend prepared-statement LRU
+entries when PostgreSQL rejects `Parse`. Reusing the same client
+statement name after a failed Parse now forces a fresh Parse instead of
+hitting a stale `DOORMAN_<N>` entry and surfacing SQLSTATE `26000`.
+
 Per-pool response cache for `general.pooler_check_query`. The first
 matching SimpleQuery in each pool's lifetime is forwarded to PostgreSQL;
 every subsequent matching probe is answered from the cache without

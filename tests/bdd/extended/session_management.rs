@@ -29,12 +29,8 @@ pub async fn create_named_session(
     world.named_sessions.insert(session_name, conn);
 }
 
-/// Variant that lets a feature pin extra startup parameters at
-/// connection time (e.g. `search_path=schema_a`). Format of the
-/// `extras` capture: `key=value` pairs separated by commas, optional
-/// whitespace around the comma. Used to reproduce the prepared-cache
-/// hash collision when two sessions of the same `user@db` pool differ
-/// only in the GUCs they sent in their StartupMessage.
+/// Create a session with extra StartupMessage parameters.
+/// `extras` is a comma-separated list of `key=value` pairs.
 #[when(
     regex = r#"^we create session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)" and startup parameters "([^"]+)"$"#
 )]

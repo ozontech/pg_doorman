@@ -263,15 +263,15 @@ general:
   server_round_robin: false
 
   # Replay session parameters on each new backend in transaction mode.
-  # Two channels feed the replay: PG-reported ParameterStatus updates
-  # (client_encoding, DateStyle, IntervalStyle, TimeZone,
-  # standard_conforming_strings, application_name) and the client's
-  # StartupMessage keys (excluding read-only / reserved names).
-  # Replay is startup-only: runtime SET on non-GUC_REPORT names is NOT
-  # tracked. Prepared-statement cache key folds startup-pinned planner
-  # GUCs (search_path, default_transaction_isolation,
-  # default_transaction_read_only, default_text_search_config, role).
-  # Adds a SET roundtrip per non-empty diff. Disabled by default.
+  # Values come from PostgreSQL ParameterStatus messages and safe
+  # parameters sent by the client in StartupMessage.
+  # SET after connection startup is not tracked for parameters
+  # PostgreSQL does not report.
+  # Prepared statements are separated by startup-time planner GUCs:
+  # search_path, default_transaction_isolation,
+  # default_transaction_read_only, default_text_search_config, role.
+  # Adds a SET/RESET round trip only when backend state differs.
+  # Disabled by default.
   # Default: false
   sync_server_parameters: false
 

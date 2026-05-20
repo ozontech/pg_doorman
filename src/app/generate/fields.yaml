@@ -723,66 +723,63 @@ fields:
       config:
         en: |
           Replay session parameters on each new backend in transaction mode.
-          Two channels feed the replay: PG-reported ParameterStatus updates
-          (client_encoding, DateStyle, IntervalStyle, TimeZone,
-          standard_conforming_strings, application_name) and the client's
-          StartupMessage keys (excluding read-only / reserved names).
-          Replay is startup-only: runtime SET on non-GUC_REPORT names is NOT
-          tracked. Prepared-statement cache key folds startup-pinned planner
-          GUCs (search_path, default_transaction_isolation,
-          default_transaction_read_only, default_text_search_config, role).
-          Adds a SET roundtrip per non-empty diff. Disabled by default.
+          Values come from PostgreSQL ParameterStatus messages and safe
+          parameters sent by the client in StartupMessage.
+          SET after connection startup is not tracked for parameters
+          PostgreSQL does not report.
+          Prepared statements are separated by startup-time planner GUCs:
+          search_path, default_transaction_isolation,
+          default_transaction_read_only, default_text_search_config, role.
+          Adds a SET/RESET round trip only when backend state differs.
+          Disabled by default.
         ru: |
-          Воспроизводить параметры сессии на каждом новом бэкенде в транзакционном режиме.
-          Два канала: обновления PG ParameterStatus (client_encoding, DateStyle, IntervalStyle,
-          TimeZone, standard_conforming_strings, application_name) и ключи клиентского
-          StartupMessage (кроме read-only / reserved имён). Replay работает только для startup:
-          runtime SET для не-GUC_REPORT имён НЕ отслеживается. Ключ кэша prepared statement
-          включает digest startup-pinned planner GUC (search_path,
-          default_transaction_isolation, default_transaction_read_only,
-          default_text_search_config, role). Дополнительный SET roundtrip при непустом diff.
-          Отключено по умолчанию.
+          Применять параметры сессии на каждом новом серверном соединении
+          в транзакционном режиме. Значения берутся из сообщений PostgreSQL
+          ParameterStatus и из безопасных параметров, которые клиент прислал
+          в StartupMessage. SET после подключения для параметров, о которых
+          PostgreSQL не сообщает, не отслеживается. Кэш prepared statements
+          разделяется по параметрам планировщика, заданным при подключении:
+          search_path, default_transaction_isolation,
+          default_transaction_read_only, default_text_search_config, role.
+          Дополнительный SET/RESET выполняется только если состояние
+          серверного соединения отличается. Отключено по умолчанию.
       doc: |
-        In transaction mode, each transaction may land on a different backend. With `sync_server_parameters = true`,
-        pg_doorman replays session parameters on each new backend before executing the transaction so the
-        backend sees the same session state the client requested.
+        In transaction mode, different transactions from the same client may run on different backend
+        connections. With `sync_server_parameters = true`, pg_doorman applies the client's session
+        parameters to the selected backend before the transaction starts.
 
-        Two channels feed the replay:
+        Values come from two places:
 
-        1. **PG `ParameterStatus` updates** (always tracked when enabled): `client_encoding`, `DateStyle`,
-           `IntervalStyle`, `TimeZone`, `standard_conforming_strings`, `application_name`. These are the
-           GUCs PostgreSQL itself reports back as the client mutates them.
+        1. **PostgreSQL `ParameterStatus` messages**: `client_encoding`, `DateStyle`, `IntervalStyle`,
+           `TimeZone`, `standard_conforming_strings`, `application_name`. PostgreSQL reports changes to
+           these parameters over the protocol.
 
-        2. **Client `StartupMessage` keys** (new in pg_doorman ≥ 3.10): every parameter the client sent in
-           its connection packet, except read-only / server-managed names (`is_superuser`, `server_version`,
-           `lc_collate`, `transaction_isolation`, …) and the protocol-reserved `_pq_.` prefix. This is what
-           lets clients pin `search_path`, `default_transaction_isolation`, `role`, and similar
-           planner-visible GUCs at connect time and have pg_doorman push them to whichever backend the
-           transaction lands on. Operator-managed `startup_parameters` always win over the client packet.
+        2. **Safe client `StartupMessage` parameters** (new in pg_doorman 3.10): any parameter sent by the
+           client during connection startup, except server-managed or read-only names (`is_superuser`,
+           `server_version`, `lc_collate`, `transaction_isolation`, ...) and the protocol-reserved `_pq_.`
+           prefix. This lets clients set `search_path`, `default_transaction_isolation`, `role`, and similar
+           planner inputs once at connection time. Configured `startup_parameters` always override
+           the client packet.
 
-        **Scope limits — read before relying on this for correctness:**
+        **Important limits:**
 
-        - Replay is **startup-only**. A client that issues `SET search_path = …` (or any other planner
-          GUC) *after* `Backend AuthenticationOK` mutates the backend's session state but does **not**
-          update pg_doorman's per-client snapshot — PG emits no `ParameterStatus` for non-`GUC_REPORT`
-          names, so pg_doorman has no signal to track. The next prepared-statement reuse on that backend
-          may then hit a plan built under stale GUC state. Clients that rely on runtime planner-GUC
-          mutation should either set them in their `StartupMessage` instead, issue `DISCARD ALL` /
-          reconnect after the mutation, or disable `prepared_statements` for the pool.
+        - pg_doorman tracks startup parameters and PostgreSQL-reported parameters only. If a client runs
+          `SET search_path = ...` or changes another unreported planner GUC after connection startup,
+          pg_doorman does not see that change. Later prepared-statement reuse can then use a plan built
+          under older planner state. Clients that need runtime planner-GUC changes should set those values
+          in `StartupMessage`, run `DISCARD ALL` or reconnect after changing them, or disable
+          `prepared_statements` for the pool.
 
-        - The prepared-statement cache key folds a digest of the *startup-pinned* planner GUCs
-          (`PLANNER_KEYS = {search_path, default_transaction_isolation, default_transaction_read_only,
-          default_text_search_config, role}`) on top of the legacy `query text + parameter OID` key.
-          Other planner-relevant GUCs that pg_doorman pushes via this same channel — `TimeZone`,
-          `DateStyle`, `plan_cache_mode`, `enable_*`, JIT cost knobs, extension GUCs — are **not** part
-          of the cache key. Two clients that share the same `query` + `param OIDs` but pin different
-          values for those keys will share a single cache entry and therefore a single plan. If you mix
-          workloads that prepare the same query text under such differing GUCs, disable
-          `prepared_statements` for the pool or pin the GUC at the role/database level instead.
+        - The prepared-statement cache key includes the query text, parameter OIDs, and a digest of these
+          startup-time planner GUCs: `search_path`, `default_transaction_isolation`,
+          `default_transaction_read_only`, `default_text_search_config`, `role`. Other planner inputs
+          (`TimeZone`, `DateStyle`, `plan_cache_mode`, `enable_*`, JIT cost knobs, extension GUCs) are
+          not part of the key. If the same prepared query runs under different values of those parameters,
+          disable `prepared_statements` for the pool or pin the parameters at the role/database level.
 
-        Costs one extra roundtrip per checkout when there is a non-empty diff. If you only need
-        `application_name` visibility in `pg_stat_activity`, use the pool-level `application_name`
-        setting instead.
+        Adds one extra SET/RESET round trip only when the backend state differs from the client state. If
+        you only need `application_name` visibility in `pg_stat_activity`, use the pool-level
+        `application_name` setting instead.
       default: "false"
 
     message_size_to_be_stream:

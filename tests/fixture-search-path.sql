@@ -1,7 +1,6 @@
--- Fixture for the @prepared-cache-startup-parameters BDD scenario.
--- Two schemas hold a table named `t` whose `val` column differs, so a
--- client that points `search_path` at the wrong schema receives a
--- visibly-wrong row instead of a more subtle planner mismatch.
+-- Fixture for the @prepared-cache-startup-parameters BDD scenarios.
+-- Each schema has a table named `t` with a different value, making
+-- wrong search_path reuse visible as the wrong row.
 
 \c example_db;
 
@@ -16,12 +15,8 @@ create table if not exists schema_b.t (val int);
 delete from schema_b.t;
 insert into schema_b.t values (2);
 
--- public.t is the role-default-`search_path` witness for the sticky
--- scenario. The PIN client pins `search_path=schema_a`; after PIN
--- disconnects, the PLAIN client connects without `search_path` so
--- the backend's `search_path` must reset to the role default, which
--- resolves the unqualified `t` against `public.t` (val=3), not the
--- previous client's `schema_a.t` (val=1).
+-- public.t proves the sticky case resets to the role-default
+-- search_path after a client that pinned schema_a disconnects.
 create table if not exists public.t (val int);
 delete from public.t;
 insert into public.t values (3);

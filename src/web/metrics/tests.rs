@@ -25,11 +25,8 @@ async fn test_prometheus_server_basic() {
     CANCEL_CONNECTION_COUNTER.store(5, Ordering::SeqCst);
     TOTAL_CONNECTION_COUNTER.store(35, Ordering::SeqCst);
 
-    // Bind on an OS-assigned port (`:0`) so concurrent test runs and
-    // leftover sockets from prior crashes never clash on a hardcoded
-    // number. Binding synchronously also lets the test drive the
-    // accept loop on a listener whose port we already know — no race
-    // between "spawn the server" and "first connect attempt".
+    // Bind on an OS-assigned port and start serving from that listener.
+    // This avoids hardcoded-port clashes in concurrent test runs.
     let listener = bind_web_listener("127.0.0.1:0").expect("bind web listener on ephemeral port");
     let server_addr = listener.local_addr().expect("local_addr").to_string();
     let server_handle = tokio::spawn(async move {
@@ -50,9 +47,7 @@ async fn test_prometheus_server_basic() {
         .await;
     });
 
-    // The listener is already accepting; one TCP connect should suffice.
-    // Keep a short retry window in case the OS hasn't moved the
-    // socket to the accept queue yet on a heavily-loaded box.
+    // Keep a short retry window for slow CI hosts.
     let mut stream = {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -237,9 +232,8 @@ async fn test_prometheus_server_integration() {
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
-    // Same flake fix as in `test_prometheus_server_basic`: bind on an
-    // OS-assigned port and hand the listener to `serve_on`, so the
-    // accept loop is live before the test connects.
+    // Match the basic test: bind an OS-assigned port before spawning
+    // the accept loop.
     let listener = bind_web_listener("127.0.0.1:0").expect("bind ephemeral");
     let server_addr = listener.local_addr().expect("local_addr").to_string();
     let server_handle = tokio::spawn(async move {

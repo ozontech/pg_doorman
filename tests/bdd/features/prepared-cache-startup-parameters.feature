@@ -1,12 +1,9 @@
 @rust @rust-3 @prepared-cache @prepared-cache-startup-parameters
-Feature: Prepared statement cache and startup_parameters
-  Four scenarios covering three bugs the prepared-statement path has
-  when a client uses `startup_parameters` to set planner-visible GUCs:
-  Bug 1 (search_path from StartupMessage), Bug 2 (hash collision +
-  sticky variant), Bug 3 (LRU rollback after Parse error). Pool size
-  of one and transaction mode share a single backend across sessions,
-  which is what surfaces the cache-side collisions without race
-  conditions.
+Feature: Prepared statement cache and StartupMessage parameters
+  These scenarios cover prepared-statement cache bugs that appear when
+  sessions in the same transaction pool use different startup-time
+  planner GUCs. With pool_size=1 all sessions reuse the same backend,
+  so cache collisions and leaked session state are deterministic.
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -40,14 +37,9 @@ Feature: Prepared statement cache and startup_parameters
       """
 
   # ----------------------------------------------------------------
-  # Bug 1 — search_path pinned in the client StartupMessage never
-  # reaches the backend because
-  # `ServerParameters::set_param(_, _, false)` (called from
-  # `client/startup.rs:399,404`) drops every name that is not in
-  # `TRACKED_PARAMETERS` (`server/parameters.rs:7-16`). The backend
-  # starts with the role-default `search_path` and a single-table
-  # query against `t` cannot resolve, so PostgreSQL returns
-  # `42P01 relation "t" does not exist`.
+  # Bug 1: search_path sent in StartupMessage must reach PostgreSQL
+  # before the first Parse. Otherwise unqualified table `t` resolves
+  # against the role default and PostgreSQL returns 42P01.
   # ----------------------------------------------------------------
   @bug1 @bug1-startup-search-path-not-reaching-backend
   Scenario: Bug 1 — search_path from StartupMessage reaches the backend
@@ -60,18 +52,9 @@ Feature: Prepared statement cache and startup_parameters
     Then session "A" should receive DataRow with "1"
 
   # ----------------------------------------------------------------
-  # Bug 2 — `Parse::get_hash` (`messages/extended.rs:174-193`)
-  # folds only `query` + `num_params` + `param_types`, so two
-  # clients of the same `user@db` pool sending the same Parse text
-  # but pinning different `search_path` values collide on the cache
-  # key. The pool hands the second client the `DOORMAN_N` name
-  # allocated for the first; the cached plan was built under the
-  # other client's GUCs.
-  #
-  # This scenario depends on Bug 1's fix to even reach the planner —
-  # before that, the first Parse fails on the backend and the second
-  # client never gets the chance to receive a wrong row. Once both
-  # fixes are in, session B must read `2`, not `1`.
+  # Bug 2: the prepared-cache key must include startup-time planner
+  # state. The same query text under schema_a and schema_b needs two
+  # server-side prepared statements, not one shared plan.
   # ----------------------------------------------------------------
   @bug2 @bug2-hash-collision-across-startup-parameters @blocked-by-bug1
   Scenario: Bug 2 — distinct startup_parameters yield distinct prepared statements
@@ -91,19 +74,9 @@ Feature: Prepared statement cache and startup_parameters
     Then session "B" should receive DataRow with "2"
 
   # ----------------------------------------------------------------
-  # Bug 2 (sticky variant) — `sync_parameters` emits `RESET key`, but
-  # the backend's `ServerParameters` snapshot is only updated by PG's
-  # `ParameterStatus` messages. `search_path` is NOT in the
-  # `GUC_REPORT` set, so pg_doorman never observes the backend
-  # actually owning it. The next checkout therefore sees
-  # `(backend=None, client=None)`, emits no `RESET`, and the schema
-  # the *previous* client pinned leaks into the *next* client's
-  # queries. The scenario asserts on the *unqualified* `t`: client
-  # PIN pins `search_path=schema_a` (reads `schema_a.t = 1`), then
-  # client PLAIN connects without `search_path` and must resolve
-  # the unqualified `t` against the role-default schema
-  # (`public.t = 3`), not the leaked `schema_a.t = 1`. Reading 1
-  # here is the proof of leakage.
+  # Bug 2, sticky variant: when the next client does not pin
+  # search_path, pg_doorman must RESET the backend. PLAIN should read
+  # public.t (3), not schema_a.t (1) left by the previous client.
   # ----------------------------------------------------------------
   @bug2-sticky-search-path @blocked-by-bug1
   Scenario: Bug 2 (sticky) — RESET fires when next client lacks the pinned GUC
@@ -124,24 +97,9 @@ Feature: Prepared statement cache and startup_parameters
     Then session "PLAIN" should receive DataRow with "3"
 
   # ----------------------------------------------------------------
-  # Bug 3 — `Server::register_prepared_statement` inserts the freshly
-  # rewritten `DOORMAN_N` name into the per-backend LRU **before**
-  # the Parse byte stream is flushed to PostgreSQL. When PG replies
-  # with an `ErrorResponse` (here: 42P01, table missing), the LRU
-  # entry must be rolled back. Otherwise the next *re-use of the
-  # same client-given statement name on the same backend* sees a
-  # phantom cache hit, pg_doorman skips re-Parse, and PG answers
-  # `26000 prepared statement "DOORMAN_0" does not exist`.
-  #
-  # The scenario walks both halves of the proof on one backend in
-  # transaction mode (pool_size=1):
-  #   1. negative — Parse a query against a missing table, assert
-  #      the genuine PG planner error (42P01), proving the client
-  #      sees the real cause and not a cache-bookkeeping artefact;
-  #   2. positive — re-use the same client name `broken` for a
-  #      Parse + Bind + Execute on a working table, assert the row.
-  #      A regression of the rollback would surface here as 26000
-  #      (or a panic from the cache mismatch) instead of `1`.
+  # Bug 3: a failed Parse must not leave a stale DOORMAN_N entry in
+  # the backend LRU. Reusing the same client statement name should
+  # force a fresh Parse and then execute normally.
   # ----------------------------------------------------------------
   @bug3 @bug3-parse-error-poisons-lru-cache
   Scenario: Bug 3 — Parse error does not poison the backend prepared-statement LRU
@@ -149,11 +107,8 @@ Feature: Prepared statement cache and startup_parameters
     And we send Parse "broken" with query "select val from nonexistent_t" to session "C"
     And we send Sync to session "C"
     Then session "C" should receive ErrorResponse with SQLSTATE "42P01"
-    # Reuse the same client name on the same backend. If the rollback
-    # were missing, pg_doorman would still claim PG owns `DOORMAN_0`
-    # under name `broken`, skip re-Parse, and the Bind would crash on
-    # 26000. With the rollback the LRU was cleared, pg_doorman
-    # re-Parses, Bind/Execute work, and the client reads `1`.
+    # Reuse the same client name. A missing rollback would skip
+    # re-Parse and fail with 26000; the fixed path reads schema_a.t.
     When we send Parse "broken" with query "select val from schema_a.t" to session "C"
     And we send Bind "" to "broken" with params "" to session "C"
     And we send Execute "" to session "C"
