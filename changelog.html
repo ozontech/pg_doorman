@@ -161,6 +161,30 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3101"><a class="header" href="#3101">3.10.1</a></h3>
+<h4 id="configurable-kernel-tcp-socket-buffer-size"><a class="header" href="#configurable-kernel-tcp-socket-buffer-size">Configurable kernel TCP socket buffer size</a></h4>
+<p>New <code>general.tcp_socket_buffer_size</code> (<code>ByteSize</code>, default <code>0</code>). When set
+to a non-zero value, pg_doorman calls <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code>
+on every accepted client TCP socket and outbound backend TCP socket,
+sets fixed send/receive buffer limits, and disables Linux TCP autotuning
+for that socket. Linux applies/reports doubled values and may clamp them
+by <code>net.core.rmem_max</code> / <code>net.core.wmem_max</code>.</p>
+<p>The default <code>0</code> keeps the current behaviour (autotuning on). Operators
+who observe <code>MemFree</code> jumping back up after a <code>pg_doorman</code> restart with
+many long-lived idle clients may be seeing kernel TCP buffer
+accumulation. This memory is not process RSS; depending on kernel and
+cgroup mode it may show up as socket memory, for example <code>sock</code> in
+cgroup v2 <code>memory.stat</code>. Those deployments can bound per-socket kernel
+buffer limits by setting this knob to a value in the <code>64 KiB – 256 KiB</code>
+range suitable for OLTP traffic in one datacenter. See the
+<a href="reference/general.html#tcp_socket_buffer_size"><code>tcp_socket_buffer_size</code></a>
+reference for details and trade-offs.</p>
+<p>Config reloads do not resize already-open sockets. During <code>SIGUSR2</code>
+binary upgrade, migrated client sockets are reconfigured in the new
+process; backend sockets pick up the value only when opened or
+reconnected.</p>
+<p>Equivalent of PgBouncer's <code>tcp_socket_buffer</code> parameter. Odyssey and
+PgCat have no analogue.</p>
 <h3 id="3100"><a class="header" href="#3100">3.10.0</a></h3>
 <h4 id="prepared-statements-and-startup-time-planner-parameters"><a class="header" href="#prepared-statements-and-startup-time-planner-parameters">Prepared statements and startup-time planner parameters</a></h4>
 <p><code>sync_server_parameters</code> now replays safe parameters sent by the client

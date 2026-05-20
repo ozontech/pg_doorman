@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.10.0</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.10.1</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-built-in-diagnostic-console" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-diagnostic-console-title">
 <div class="admonition-title">
@@ -436,6 +436,7 @@ pools:
 <tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (server TLS certs included; client TLS still requires restart)</td><td style="text-align: center">Yes (<code>auth_file</code>, <code>auth_hba_file</code>, server and client TLS certs)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>systemd <code>sd-notify</code> (<code>Type=notify</code>) integration</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Memory cap (<code>max_memory_usage</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>TCP socket buffer cap</td><td style="text-align: center">Yes (<code>tcp_socket_buffer_size</code>, client and backend TCP sockets)</td><td style="text-align: center">Yes (<code>tcp_socket_buffer</code>)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Signals</a>.</p>
@@ -4973,11 +4974,14 @@ Verify Prometheus metrics show clients on the new process</li>
 <p>What does <strong>not</strong> reload:</p>
 <ul>
 <li><code>general.host</code>, <code>general.port</code> — listening socket is fixed at startup.</li>
+<li><code>general.tcp_socket_buffer_size</code> on existing sockets — the new value
+is applied only when pg_doorman accepts a new client TCP socket or
+opens a new backend TCP socket.</li>
 <li>Client-facing TLS certificates — process restart required. Do not rotate
 them during an upgrade where TLS session migration is required.</li>
 <li>Worker thread count and Tokio runtime parameters.</li>
 </ul>
-<p>After reload, <code>SHOW CONFIG</code> reflects the new values. Existing client connections are not re-evaluated against the new <code>pg_hba.conf</code> — only new connections.</p>
+<p>After reload, <code>SHOW CONFIG</code> reflects the new values. Existing client connections are not re-evaluated against the new <code>pg_hba.conf</code> — only new connections. Existing TCP sockets also keep the socket buffer size that was applied when the socket was created.</p>
 <h2 id="immediate-shutdown-sigterm"><a class="header" href="#immediate-shutdown-sigterm">Immediate shutdown (<code>SIGTERM</code>)</a></h2>
 <pre><code class="language-bash">kill -TERM $(pidof pg_doorman)
 </code></pre>
@@ -5000,6 +5004,10 @@ plain <code>SIGTERM</code> shutdown.</p>
 </ol>
 <p>The child sends <code>sd_notify MAINPID=&lt;new_pid&gt;</code> so systemd <code>Type=notify</code>
 units track the new main PID correctly.</p>
+<p>Migrated client TCP sockets are configured again in the child process, so
+a changed <code>general.tcp_socket_buffer_size</code> applies to those clients during
+binary upgrade. Backend TCP sockets are opened by the new process and use
+the new value when they connect.</p>
 <p>For the full protocol, TLS migration, and rollback, see <a href="operations/../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
 <h2 id="sigint-ctrlc"><a class="header" href="#sigint-ctrlc"><code>SIGINT</code> (Ctrl+C)</a></h2>
 <p><code>SIGINT</code> is context-sensitive:</p>
@@ -6281,6 +6289,15 @@ keepalive cannot help (e.g., during active data transmission).</p>
 <p><strong>Note:</strong> This option is only supported on Linux. On other operating systems, this setting is ignored.</p>
 <p>Set to <code>0</code> to disable (use OS default).</p>
 <p>Default: <code>60</code>.</p>
+<h3 id="tcp_socket_buffer_size"><a class="header" href="#tcp_socket_buffer_size">tcp_socket_buffer_size</a></h3>
+<p>Kernel <code>SO_RCVBUF</code>/<code>SO_SNDBUF</code> limits for accepted client TCP sockets and outbound backend TCP sockets.</p>
+<p>With the default <code>0</code>, pg_doorman does not call <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code> and Linux TCP autotuning stays in charge. Per-connection receive buffers can grow on demand up to <code>net.ipv4.tcp_rmem[2]</code> (commonly 6 MiB on Ubuntu/RHEL). That memory is not process RSS; depending on kernel and cgroup mode it may appear separately as socket memory, for example as <code>sock</code> in cgroup v2 <code>memory.stat</code>, or mostly as host-level kernel memory. If <code>MemFree</code> jumps after a pg_doorman restart, confirm the source with <code>ss -m</code>, <code>/proc/net/sockstat</code>, cgroup v2 <code>memory.current</code>, and <code>memory.stat</code> key <code>sock</code>.</p>
+<p>Setting a non-zero value calls <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code> once per configured TCP socket. This disables autotuning for that socket and sets fixed send/receive buffer limits. Linux internally doubles the requested values — see <code>man 7 socket</code> — and may clamp them by <code>net.core.rmem_max</code> / <code>net.core.wmem_max</code>. Check <code>/proc/sys/net/core/rmem_max</code> and <code>/proc/sys/net/core/wmem_max</code> before choosing values above the OS default. <code>getsockopt</code>, <code>ss -m</code>, and pg_doorman <code>DEBUG</code> logs show the kernel-applied values.</p>
+<p>The rough Linux limit is <code>4 * tcp_socket_buffer_size * tcp_socket_count</code>: send and receive buffers are both configured, and Linux doubles each requested value internally. For example, <code>tcp_socket_buffer_size = 65536</code> sets about 256 KiB of send+receive limits per TCP socket, so 60 TCP sockets have about 15 MiB of configured kernel buffer limits before <code>sk_buff</code> overhead. Count both client TCP sockets and backend TCP sockets. Actual resident memory still depends on queued data.</p>
+<p>This setting is primarily a memory cap. Suggested starting range for OLTP traffic inside one datacenter: <strong>64 KiB – 256 KiB</strong>. Do not set less than 64 KiB unless measurements show it is safe. WAN links, cross-zone traffic, large result sets, and bulk transfers may need a larger value or the default autotuning behaviour.</p>
+<p>The value is applied when pg_doorman configures a TCP socket: on accepted client sockets, outbound backend sockets, and migrated client sockets reconstructed during binary upgrade. <code>SIGHUP</code> reload does not revisit already-open sockets. To apply a new value to existing sessions, use binary upgrade for migrated clients, reconnect/drain pools for backend sockets, or restart when reconnects are acceptable.</p>
+<p>Equivalent of PgBouncer's <code>tcp_socket_buffer</code> parameter. Odyssey and PgCat have no analogue and inherit the kernel autotuner's behaviour.</p>
+<p>Default: <code>0</code>.</p>
 <h3 id="unix_socket_buffer_size"><a class="header" href="#unix_socket_buffer_size">unix_socket_buffer_size</a></h3>
 <p>Buffer size for read and write operations when connecting to PostgreSQL via a unix socket.</p>
 <p>Default: <code>1048576</code>.</p>
@@ -7109,6 +7126,30 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3101"><a class="header" href="#3101">3.10.1</a></h3>
+<h4 id="configurable-kernel-tcp-socket-buffer-size"><a class="header" href="#configurable-kernel-tcp-socket-buffer-size">Configurable kernel TCP socket buffer size</a></h4>
+<p>New <code>general.tcp_socket_buffer_size</code> (<code>ByteSize</code>, default <code>0</code>). When set
+to a non-zero value, pg_doorman calls <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code>
+on every accepted client TCP socket and outbound backend TCP socket,
+sets fixed send/receive buffer limits, and disables Linux TCP autotuning
+for that socket. Linux applies/reports doubled values and may clamp them
+by <code>net.core.rmem_max</code> / <code>net.core.wmem_max</code>.</p>
+<p>The default <code>0</code> keeps the current behaviour (autotuning on). Operators
+who observe <code>MemFree</code> jumping back up after a <code>pg_doorman</code> restart with
+many long-lived idle clients may be seeing kernel TCP buffer
+accumulation. This memory is not process RSS; depending on kernel and
+cgroup mode it may show up as socket memory, for example <code>sock</code> in
+cgroup v2 <code>memory.stat</code>. Those deployments can bound per-socket kernel
+buffer limits by setting this knob to a value in the <code>64 KiB – 256 KiB</code>
+range suitable for OLTP traffic in one datacenter. See the
+<a href="reference/general.html#tcp_socket_buffer_size"><code>tcp_socket_buffer_size</code></a>
+reference for details and trade-offs.</p>
+<p>Config reloads do not resize already-open sockets. During <code>SIGUSR2</code>
+binary upgrade, migrated client sockets are reconfigured in the new
+process; backend sockets pick up the value only when opened or
+reconnected.</p>
+<p>Equivalent of PgBouncer's <code>tcp_socket_buffer</code> parameter. Odyssey and
+PgCat have no analogue.</p>
 <h3 id="3100"><a class="header" href="#3100">3.10.0</a></h3>
 <h4 id="prepared-statements-and-startup-time-planner-parameters"><a class="header" href="#prepared-statements-and-startup-time-planner-parameters">Prepared statements and startup-time planner parameters</a></h4>
 <p><code>sync_server_parameters</code> now replays safe parameters sent by the client

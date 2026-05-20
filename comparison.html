@@ -277,6 +277,7 @@
 <tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (server TLS certs included; client TLS still requires restart)</td><td style="text-align: center">Yes (<code>auth_file</code>, <code>auth_hba_file</code>, server and client TLS certs)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>systemd <code>sd-notify</code> (<code>Type=notify</code>) integration</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Memory cap (<code>max_memory_usage</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>TCP socket buffer cap</td><td style="text-align: center">Yes (<code>tcp_socket_buffer_size</code>, client and backend TCP sockets)</td><td style="text-align: center">Yes (<code>tcp_socket_buffer</code>)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Signals</a>.</p>

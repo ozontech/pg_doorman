@@ -185,11 +185,14 @@
 <p>What does <strong>not</strong> reload:</p>
 <ul>
 <li><code>general.host</code>, <code>general.port</code> — listening socket is fixed at startup.</li>
+<li><code>general.tcp_socket_buffer_size</code> on existing sockets — the new value
+is applied only when pg_doorman accepts a new client TCP socket or
+opens a new backend TCP socket.</li>
 <li>Client-facing TLS certificates — process restart required. Do not rotate
 them during an upgrade where TLS session migration is required.</li>
 <li>Worker thread count and Tokio runtime parameters.</li>
 </ul>
-<p>After reload, <code>SHOW CONFIG</code> reflects the new values. Existing client connections are not re-evaluated against the new <code>pg_hba.conf</code> — only new connections.</p>
+<p>After reload, <code>SHOW CONFIG</code> reflects the new values. Existing client connections are not re-evaluated against the new <code>pg_hba.conf</code> — only new connections. Existing TCP sockets also keep the socket buffer size that was applied when the socket was created.</p>
 <h2 id="immediate-shutdown-sigterm"><a class="header" href="#immediate-shutdown-sigterm">Immediate shutdown (<code>SIGTERM</code>)</a></h2>
 <pre><code class="language-bash">kill -TERM $(pidof pg_doorman)
 </code></pre>
@@ -212,6 +215,10 @@ plain <code>SIGTERM</code> shutdown.</p>
 </ol>
 <p>The child sends <code>sd_notify MAINPID=&lt;new_pid&gt;</code> so systemd <code>Type=notify</code>
 units track the new main PID correctly.</p>
+<p>Migrated client TCP sockets are configured again in the child process, so
+a changed <code>general.tcp_socket_buffer_size</code> applies to those clients during
+binary upgrade. Backend TCP sockets are opened by the new process and use
+the new value when they connect.</p>
 <p>For the full protocol, TLS migration, and rollback, see <a href="../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
 <h2 id="sigint-ctrlc"><a class="header" href="#sigint-ctrlc"><code>SIGINT</code> (Ctrl+C)</a></h2>
 <p><code>SIGINT</code> is context-sensitive:</p>

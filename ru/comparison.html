@@ -277,6 +277,7 @@
 <tr><td>Перезагрузка по <code>SIGHUP</code></td><td style="text-align: center">Да (серверные TLS-сертификаты включены; клиентский TLS требует рестарта)</td><td style="text-align: center">Да (<code>auth_file</code>, <code>auth_hba_file</code>, server и client TLS certs)</td><td style="text-align: center">Да</td></tr>
 <tr><td>systemd <code>sd-notify</code> (<code>Type=notify</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Лимит памяти (<code>max_memory_usage</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Лимит TCP-буферов</td><td style="text-align: center">Да (<code>tcp_socket_buffer_size</code> для клиентских TCP-сокетов и TCP-сокетов к PostgreSQL)</td><td style="text-align: center">Да (<code>tcp_socket_buffer</code>)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="tutorials/binary-upgrade.html">Плавное обновление бинаря</a>, <a href="operations/signals.html">Сигналы</a>.</p>
