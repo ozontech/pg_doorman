@@ -242,7 +242,19 @@ psycopg. Прикладной код выглядит как обычный па
 <h2 id="Что-делает-pgdoorman"><a class="header" href="#Что-делает-pgdoorman">Что делает PgDoorman</a></h2>
 <p>На каждый анонимный <code>Parse</code> от клиента PgDoorman:</p>
 <ol>
-<li>Считает хеш по тексту запроса и OID типов параметров.</li>
+<li>Считает хеш по тексту запроса, OID типов параметров и короткому
+отпечатку параметров планировщика, которые клиент закрепил при
+подключении (<code>search_path</code>,
+<code>default_transaction_isolation</code>, <code>default_transaction_read_only</code>,
+<code>default_text_search_config</code>, <code>role</code>). Поэтому два клиента с
+одинаковым запросом и OID параметров, но с разными значениями
+<code>search_path</code> в <code>StartupMessage</code>, получат разные записи кэша и
+разные планы PostgreSQL. Другие параметры, которые тоже могут влиять
+на план (<code>TimeZone</code>, <code>DateStyle</code>, <code>plan_cache_mode</code>, <code>enable_*</code>,
+настройки стоимости JIT), в этот отпечаток <strong>не</strong> входят. Перед тем
+как использовать один и тот же prepared-запрос с разными значениями
+таких параметров, посмотрите ограничения в справке по
+<code>sync_server_parameters</code>.</li>
 <li>Ищет хеш в общем кеше пула. При промахе выделяет новое имя
 <code>DOORMAN_&lt;counter&gt;</code> и регистрирует запись <code>Arc&lt;Parse&gt;</code>.</li>
 <li>Записывает в клиентский кеш ключ <code>Anonymous(hash)</code>, чтобы

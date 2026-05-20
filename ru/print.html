@@ -2043,7 +2043,19 @@ psycopg. Прикладной код выглядит как обычный па
 <h2 id="Что-делает-pgdoorman-1"><a class="header" href="#Что-делает-pgdoorman-1">Что делает PgDoorman</a></h2>
 <p>На каждый анонимный <code>Parse</code> от клиента PgDoorman:</p>
 <ol>
-<li>Считает хеш по тексту запроса и OID типов параметров.</li>
+<li>Считает хеш по тексту запроса, OID типов параметров и короткому
+отпечатку параметров планировщика, которые клиент закрепил при
+подключении (<code>search_path</code>,
+<code>default_transaction_isolation</code>, <code>default_transaction_read_only</code>,
+<code>default_text_search_config</code>, <code>role</code>). Поэтому два клиента с
+одинаковым запросом и OID параметров, но с разными значениями
+<code>search_path</code> в <code>StartupMessage</code>, получат разные записи кэша и
+разные планы PostgreSQL. Другие параметры, которые тоже могут влиять
+на план (<code>TimeZone</code>, <code>DateStyle</code>, <code>plan_cache_mode</code>, <code>enable_*</code>,
+настройки стоимости JIT), в этот отпечаток <strong>не</strong> входят. Перед тем
+как использовать один и тот же prepared-запрос с разными значениями
+таких параметров, посмотрите ограничения в справке по
+<code>sync_server_parameters</code>.</li>
 <li>Ищет хеш в общем кеше пула. При промахе выделяет новое имя
 <code>DOORMAN_&lt;counter&gt;</code> и регистрирует запись <code>Arc&lt;Parse&gt;</code>.</li>
 <li>Записывает в клиентский кеш ключ <code>Anonymous(hash)</code>, чтобы
@@ -6356,12 +6368,50 @@ pg_doorman generate --no-comments --output config.yaml
 Аналог <code>server_round_robin</code> из PgBouncer.</p>
 <p>По умолчанию: <code>false</code>.</p>
 <h3 id="sync_server_parameters"><a class="header" href="#sync_server_parameters">sync_server_parameters</a></h3>
-<p>В transaction mode каждая транзакция может попасть на разный бэкенд. При <code>sync_server_parameters = true</code>
-pg_doorman отслеживает изменения фиксированного набора параметров сессии и проигрывает их через SET
-на каждом новом бэкенде перед выполнением транзакции. Отслеживаемые параметры: <code>client_encoding</code>, <code>DateStyle</code>, <code>TimeZone</code>,
-<code>standard_conforming_strings</code>, <code>application_name</code>. Другие команды SET (например, <code>statement_timeout</code>, <code>work_mem</code>)
-НЕ отслеживаются. Каждый checkout стоит дополнительного roundtrip. Если вам нужна только видимость
-<code>application_name</code> в <code>pg_stat_activity</code>, используйте параметр <code>application_name</code> на уровне пула.</p>
+<p>В транзакционном режиме разные транзакции одного клиента могут выполняться на разных серверных
+соединениях. Если включить <code>sync_server_parameters</code>, pg_doorman перед началом транзакции применяет
+к выбранному серверному соединению параметры сессии, которые запросил клиент.</p>
+<p>Есть два источника таких параметров:</p>
+<ol>
+<li>
+<p><strong>Сообщения PostgreSQL <code>ParameterStatus</code></strong>: <code>client_encoding</code>,
+<code>DateStyle</code>, <code>IntervalStyle</code>, <code>TimeZone</code>, <code>standard_conforming_strings</code>, <code>application_name</code>.
+PostgreSQL сам сообщает об изменении этих параметров по протоколу.</p>
+</li>
+<li>
+<p><strong>Параметры из клиентского <code>StartupMessage</code></strong> (начиная с pg_doorman 3.10): любой безопасный параметр,
+который клиент прислал при подключении. pg_doorman отбрасывает служебные имена и имена только для чтения
+(<code>is_superuser</code>, <code>server_version</code>, <code>lc_collate</code>, <code>transaction_isolation</code>, ...) и префикс
+<code>_pq_.</code>. Так клиент может задать <code>search_path</code>, <code>default_transaction_isolation</code>, <code>role</code> и
+другие параметры, важные для планировщика, один раз при подключении. После этого pg_doorman
+применит их к любому серверному соединению, на котором окажется транзакция. Значения из
+операторской настройки <code>startup_parameters</code> всегда имеют приоритет над клиентским пакетом.</p>
+</li>
+</ol>
+<p><strong>Ограничения, которые важно учитывать:</strong></p>
+<ul>
+<li>
+<p>pg_doorman отслеживает только параметры, заданные при подключении, и параметры, о которых
+PostgreSQL сам присылает <code>ParameterStatus</code>. Если клиент после подключения выполнит
+<code>SET search_path = ...</code> или изменит другой параметр планировщика, о котором PostgreSQL не
+сообщает, pg_doorman не узнает об этом изменении. В таком случае повторное использование
+prepared statement может попасть на план, построенный при старом состоянии. Для таких
+клиентов лучше задавать параметры в <code>StartupMessage</code>, после изменения выполнять
+<code>DISCARD ALL</code> или переподключаться, либо отключить <code>prepared_statements</code> для пула.</p>
+</li>
+<li>
+<p>В ключ кэша prepared statement входят текст запроса, OID параметров и отпечаток только этих
+параметров планировщика из <code>StartupMessage</code>: <code>search_path</code>, <code>default_transaction_isolation</code>,
+<code>default_transaction_read_only</code>, <code>default_text_search_config</code>, <code>role</code>. Другие параметры,
+которые тоже могут влиять на план (<code>TimeZone</code>, <code>DateStyle</code>, <code>plan_cache_mode</code>, <code>enable_*</code>,
+настройки стоимости JIT, параметры расширений), в ключ <strong>не</strong> входят. Если один и тот же
+запрос готовится под разными значениями таких параметров, отключите <code>prepared_statements</code>
+для пула или закрепите эти параметры на уровне роли или базы.</p>
+</li>
+</ul>
+<p>Когда состояние серверного соединения отличается от состояния клиента, pg_doorman делает
+дополнительный обмен с PostgreSQL для <code>SET</code> или <code>RESET</code>. Если вам нужна только видимость
+<code>application_name</code> в <code>pg_stat_activity</code>, проще задать <code>application_name</code> на уровне пула.</p>
 <p>По умолчанию: <code>false</code>.</p>
 <h3 id="tcp_so_linger"><a class="header" href="#tcp_so_linger">tcp_so_linger</a></h3>
 <p>По умолчанию pg_doorman отправляет <code>RST</code> вместо того, чтобы держать соединение открытым долгое время.</p>

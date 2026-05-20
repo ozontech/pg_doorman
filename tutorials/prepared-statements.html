@@ -239,7 +239,16 @@ takes a third option.</p>
 <h2 id="what-pgdoorman-does"><a class="header" href="#what-pgdoorman-does">What PgDoorman does</a></h2>
 <p>On every anonymous <code>Parse</code> from the client, PgDoorman:</p>
 <ol>
-<li>Hashes the query text plus parameter type OIDs.</li>
+<li>Hashes the query text, parameter type OIDs, and a digest of the
+planner GUCs pinned by the client's StartupMessage (<code>search_path</code>,
+<code>default_transaction_isolation</code>, <code>default_transaction_read_only</code>,
+<code>default_text_search_config</code>, <code>role</code>). Two clients that send the
+same query and parameter OIDs but pin different <code>search_path</code> values
+therefore get separate cache entries and separate PostgreSQL plans.
+Planner GUCs outside this list (<code>TimeZone</code>, <code>DateStyle</code>,
+<code>plan_cache_mode</code>, <code>enable_*</code>, JIT cost knobs) are <strong>not</strong> part of
+the key. See the <code>sync_server_parameters</code> reference before mixing
+the same prepared query across different values of those GUCs.</li>
 <li>Looks up the hash in the <strong>pool-level</strong> cache (shared across all
 clients of this pool). On miss, it allocates a fresh
 <code>DOORMAN_&lt;counter&gt;</code> name and registers an <code>Arc&lt;Parse&gt;</code> entry.</li>

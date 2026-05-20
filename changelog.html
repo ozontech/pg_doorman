@@ -162,6 +162,30 @@
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="3100"><a class="header" href="#3100">3.10.0</a></h3>
+<h4 id="prepared-statements-and-startup-time-planner-parameters"><a class="header" href="#prepared-statements-and-startup-time-planner-parameters">Prepared statements and startup-time planner parameters</a></h4>
+<p><code>sync_server_parameters</code> now replays safe parameters sent by the client
+in <code>StartupMessage</code>, not only the small set of PostgreSQL-reported
+<code>ParameterStatus</code> values. This lets transaction-mode pools preserve
+startup-time session state such as <code>search_path</code>,
+<code>default_transaction_isolation</code>, and <code>role</code> when a client transaction
+lands on a different backend connection. Configured
+<code>startup_parameters</code> still win over client-supplied values.</p>
+<p>The prepared-statement cache key now includes a digest of the
+startup-time planner parameters that pg_doorman can safely replay:
+<code>search_path</code>, <code>default_transaction_isolation</code>,
+<code>default_transaction_read_only</code>, <code>default_text_search_config</code>, and
+<code>role</code>. Two clients that prepare the same query under different
+<code>search_path</code> values now get separate server-side prepared statements
+instead of sharing one PostgreSQL plan.</p>
+<p>Runtime <code>SET</code> for planner parameters that PostgreSQL does not report is
+still not tracked. Clients that need to change those values after
+connection startup should set them in <code>StartupMessage</code>, reconnect or
+run <code>DISCARD ALL</code> after changing them, or disable <code>prepared_statements</code>
+for that pool.</p>
+<p>PgDoorman also rolls back optimistic per-backend prepared-statement LRU
+entries when PostgreSQL rejects <code>Parse</code>. Reusing the same client
+statement name after a failed Parse now forces a fresh Parse instead of
+hitting a stale <code>DOORMAN_&lt;N&gt;</code> entry and surfacing SQLSTATE <code>26000</code>.</p>
 <p>Per-pool response cache for <code>general.pooler_check_query</code>. The first
 matching SimpleQuery in each pool's lifetime is forwarded to PostgreSQL;
 every subsequent matching probe is answered from the cache without

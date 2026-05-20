@@ -2038,7 +2038,16 @@ takes a third option.</p>
 <h2 id="what-pgdoorman-does-1"><a class="header" href="#what-pgdoorman-does-1">What PgDoorman does</a></h2>
 <p>On every anonymous <code>Parse</code> from the client, PgDoorman:</p>
 <ol>
-<li>Hashes the query text plus parameter type OIDs.</li>
+<li>Hashes the query text, parameter type OIDs, and a digest of the
+planner GUCs pinned by the client's StartupMessage (<code>search_path</code>,
+<code>default_transaction_isolation</code>, <code>default_transaction_read_only</code>,
+<code>default_text_search_config</code>, <code>role</code>). Two clients that send the
+same query and parameter OIDs but pin different <code>search_path</code> values
+therefore get separate cache entries and separate PostgreSQL plans.
+Planner GUCs outside this list (<code>TimeZone</code>, <code>DateStyle</code>,
+<code>plan_cache_mode</code>, <code>enable_*</code>, JIT cost knobs) are <strong>not</strong> part of
+the key. See the <code>sync_server_parameters</code> reference before mixing
+the same prepared query across different values of those GUCs.</li>
 <li>Looks up the hash in the <strong>pool-level</strong> cache (shared across all
 clients of this pool). On miss, it allocates a fresh
 <code>DOORMAN_&lt;counter&gt;</code> name and registers an <code>Arc&lt;Parse&gt;</code> entry.</li>
@@ -6204,12 +6213,47 @@ or PostgreSQL restarts).</p>
 Similar to PgBouncer's <code>server_round_robin</code>.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="sync_server_parameters"><a class="header" href="#sync_server_parameters">sync_server_parameters</a></h3>
-<p>In transaction mode, each transaction may land on a different backend. With <code>sync_server_parameters = true</code>,
-pg_doorman tracks changes to a fixed set of session parameters and replays them via SET on each new backend
-before executing the transaction. Tracked parameters: <code>client_encoding</code>, <code>DateStyle</code>, <code>TimeZone</code>,
-<code>standard_conforming_strings</code>, <code>application_name</code>. Other SET commands (e.g., <code>statement_timeout</code>, <code>work_mem</code>)
-are NOT tracked. This costs one extra roundtrip per checkout. If you only need <code>application_name</code> visibility
-in <code>pg_stat_activity</code>, use the pool-level <code>application_name</code> setting instead.</p>
+<p>In transaction mode, different transactions from the same client may run on different backend
+connections. With <code>sync_server_parameters = true</code>, pg_doorman applies the client's session
+parameters to the selected backend before the transaction starts.</p>
+<p>Values come from two places:</p>
+<ol>
+<li>
+<p><strong>PostgreSQL <code>ParameterStatus</code> messages</strong>: <code>client_encoding</code>, <code>DateStyle</code>, <code>IntervalStyle</code>,
+<code>TimeZone</code>, <code>standard_conforming_strings</code>, <code>application_name</code>. PostgreSQL reports changes to
+these parameters over the protocol.</p>
+</li>
+<li>
+<p><strong>Safe client <code>StartupMessage</code> parameters</strong> (new in pg_doorman 3.10): any parameter sent by the
+client during connection startup, except server-managed or read-only names (<code>is_superuser</code>,
+<code>server_version</code>, <code>lc_collate</code>, <code>transaction_isolation</code>, ...) and the protocol-reserved <code>_pq_.</code>
+prefix. This lets clients set <code>search_path</code>, <code>default_transaction_isolation</code>, <code>role</code>, and similar
+planner inputs once at connection time. Configured <code>startup_parameters</code> always override
+the client packet.</p>
+</li>
+</ol>
+<p><strong>Important limits:</strong></p>
+<ul>
+<li>
+<p>pg_doorman tracks startup parameters and PostgreSQL-reported parameters only. If a client runs
+<code>SET search_path = ...</code> or changes another unreported planner GUC after connection startup,
+pg_doorman does not see that change. Later prepared-statement reuse can then use a plan built
+under older planner state. Clients that need runtime planner-GUC changes should set those values
+in <code>StartupMessage</code>, run <code>DISCARD ALL</code> or reconnect after changing them, or disable
+<code>prepared_statements</code> for the pool.</p>
+</li>
+<li>
+<p>The prepared-statement cache key includes the query text, parameter OIDs, and a digest of these
+startup-time planner GUCs: <code>search_path</code>, <code>default_transaction_isolation</code>,
+<code>default_transaction_read_only</code>, <code>default_text_search_config</code>, <code>role</code>. Other planner inputs
+(<code>TimeZone</code>, <code>DateStyle</code>, <code>plan_cache_mode</code>, <code>enable_*</code>, JIT cost knobs, extension GUCs) are
+not part of the key. If the same prepared query runs under different values of those parameters,
+disable <code>prepared_statements</code> for the pool or pin the parameters at the role/database level.</p>
+</li>
+</ul>
+<p>Adds one extra SET/RESET round trip only when the backend state differs from the client state. If
+you only need <code>application_name</code> visibility in <code>pg_stat_activity</code>, use the pool-level
+<code>application_name</code> setting instead.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="tcp_so_linger"><a class="header" href="#tcp_so_linger">tcp_so_linger</a></h3>
 <p>By default, pg_doorman send <code>RST</code> instead of keeping the connection open for a long time.</p>
@@ -7066,6 +7110,30 @@ numbers in production rarely look like the Reconnect rows.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="3100"><a class="header" href="#3100">3.10.0</a></h3>
+<h4 id="prepared-statements-and-startup-time-planner-parameters"><a class="header" href="#prepared-statements-and-startup-time-planner-parameters">Prepared statements and startup-time planner parameters</a></h4>
+<p><code>sync_server_parameters</code> now replays safe parameters sent by the client
+in <code>StartupMessage</code>, not only the small set of PostgreSQL-reported
+<code>ParameterStatus</code> values. This lets transaction-mode pools preserve
+startup-time session state such as <code>search_path</code>,
+<code>default_transaction_isolation</code>, and <code>role</code> when a client transaction
+lands on a different backend connection. Configured
+<code>startup_parameters</code> still win over client-supplied values.</p>
+<p>The prepared-statement cache key now includes a digest of the
+startup-time planner parameters that pg_doorman can safely replay:
+<code>search_path</code>, <code>default_transaction_isolation</code>,
+<code>default_transaction_read_only</code>, <code>default_text_search_config</code>, and
+<code>role</code>. Two clients that prepare the same query under different
+<code>search_path</code> values now get separate server-side prepared statements
+instead of sharing one PostgreSQL plan.</p>
+<p>Runtime <code>SET</code> for planner parameters that PostgreSQL does not report is
+still not tracked. Clients that need to change those values after
+connection startup should set them in <code>StartupMessage</code>, reconnect or
+run <code>DISCARD ALL</code> after changing them, or disable <code>prepared_statements</code>
+for that pool.</p>
+<p>PgDoorman also rolls back optimistic per-backend prepared-statement LRU
+entries when PostgreSQL rejects <code>Parse</code>. Reusing the same client
+statement name after a failed Parse now forces a fresh Parse instead of
+hitting a stale <code>DOORMAN_&lt;N&gt;</code> entry and surfacing SQLSTATE <code>26000</code>.</p>
 <p>Per-pool response cache for <code>general.pooler_check_query</code>. The first
 matching SimpleQuery in each pool's lifetime is forwarded to PostgreSQL;
 every subsequent matching probe is answered from the cache without
