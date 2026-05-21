@@ -161,6 +161,46 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3105"><a class="header" href="#3105">3.10.5</a></h3>
+<h4 id="binary-upgrade-survives-a-tight-rlimit_nofile"><a class="header" href="#binary-upgrade-survives-a-tight-rlimit_nofile">Binary upgrade survives a tight <code>RLIMIT_NOFILE</code></a></h4>
+<p>SIGUSR2 binary upgrade now handles <code>EMFILE</code>/<code>ENFILE</code> from the old
+process without spinning in the accept loop or overfilling the migration
+queue.</p>
+<ul>
+<li>
+<p>The TCP and Unix accept loops treat <code>EMFILE</code>/<code>ENFILE</code> as local resource
+pressure: they sleep for 10 ms and log at most once every 5 seconds.
+Other accept errors still log normally.</p>
+</li>
+<li>
+<p>The migration channel is no longer fixed at 4096 entries. At upgrade
+time pg_doorman reads the current <code>RLIMIT_NOFILE</code>, counts open fds via
+<code>/proc/self/fd</code>, reserves headroom for the handoff pipe/socketpair and
+per-client fd work, and caps the queue by the remaining budget. If no
+safe headroom remains, pg_doorman starts the new process without client
+migration and logs the budget decision.</p>
+</li>
+<li>
+<p>Client migration reserves a channel slot before calling <code>dup()</code> on the
+client fd. A full channel now applies backpressure before creating an
+extra fd.</p>
+</li>
+</ul>
+<p>If the pre-flight <code>pg_doorman -t</code> spawn fails with local <code>EMFILE</code>/<code>ENFILE</code>,
+pg_doorman skips that validation step and continues with the binary
+upgrade. Other validation failures still abort the upgrade before shutdown.</p>
+<h4 id="metrics-scrape-uses-cached-socket-state-counts"><a class="header" href="#metrics-scrape-uses-cached-socket-state-counts"><code>/metrics</code> scrape uses cached socket-state counts</a></h4>
+<p><code>/metrics</code> no longer walks <code>/proc/PID/net/tcp</code> and <code>/proc/PID/net/unix</code>
+on the request path. On hosts with thousands of sockets, that synchronous
+walk could hold worker threads long enough for regular Prometheus scrapes
+to increase client p99.</p>
+<p>Socket-state counts now live in a cached <code>ArcSwap</code> snapshot refreshed by a
+background <code>spawn_blocking</code> task. The <code>/metrics</code> handler, periodic
+<code>print_all_stats</code> output, and admin <code>SHOW SOCKETS</code> command read the cached
+snapshot. The Web UI sockets endpoint still refreshes socket details on
+demand for operator use.</p>
+<p>The cache keeps scrape cost independent of the number of live sockets in
+the common Prometheus path.</p>
 <h3 id="3101"><a class="header" href="#3101">3.10.1</a></h3>
 <h4 id="configurable-kernel-tcp-socket-buffer-size"><a class="header" href="#configurable-kernel-tcp-socket-buffer-size">Configurable kernel TCP socket buffer size</a></h4>
 <p>New <code>general.tcp_socket_buffer_size</code> (<code>ByteSize</code>, default <code>0</code>). When set
@@ -905,7 +945,7 @@ otherwise.</li>
 <p><strong><code>server_lifetime</code> default changed from 5 minutes to 20 minutes</strong>: The previous default of 5 minutes was shorter than <code>idle_timeout</code> (10 minutes), which meant <code>idle_timeout</code> could never trigger — connections were always killed by <code>server_lifetime</code> first. Changed to 20 minutes so that <code>idle_timeout</code> (10 min) handles idle cleanup while <code>server_lifetime</code> (20 min) rotates long-lived connections. Note: <code>idle_timeout</code> only applies to connections that have been used at least once — prewarmed/replenished connections that were never checked out by a client are not subject to <code>idle_timeout</code> and will only be closed when <code>server_lifetime</code> expires.</p>
 </li>
 <li>
-<p><strong><code>idle_timeout = 0</code> did not disable idle timeout</strong>: Setting <code>idle_timeout</code> to <code>0</code> was supposed to disable idle connection cleanup (consistent with PgBouncer's <code>server_idle_timeout = 0</code> semantics and our own <code>server_lifetime = 0</code> behavior). Instead, it closed connections after ~1ms of being idle. Fixed by adding an <code>idle_timeout_ms &gt; 0</code> guard before the elapsed time check.</p>
+<p><strong><code>idle_timeout = 0</code> did not disable idle timeout</strong>: <code>idle_timeout = 0</code> should disable idle connection cleanup, matching PgBouncer's <code>server_idle_timeout = 0</code> and pg_doorman's <code>server_lifetime = 0</code>. Instead, pg_doorman closed connections after ~1 ms of idle time. Fixed by adding an <code>idle_timeout_ms &gt; 0</code> guard before the elapsed-time check.</p>
 </li>
 <li>
 <p><strong><code>idle_timeout</code> had no jitter — synchronized mass closures</strong>: Unlike <code>server_lifetime</code> which applies ±20% per-connection jitter to prevent thundering herd, <code>idle_timeout</code> used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now <code>idle_timeout</code> applies the same ±20% per-connection jitter as <code>server_lifetime</code>.</p>
@@ -1203,7 +1243,7 @@ otherwise.</li>
 </ul>
 <p><strong>Testing:</strong></p>
 <ul>
-<li><strong>Integration fuzz testing framework</strong>: Added comprehensive BDD-based fuzz tests (<code>@fuzz</code> tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages.</li>
+<li><strong>Integration fuzz tests</strong>: Added BDD fuzz tests (<code>@fuzz</code> tag) for malformed PostgreSQL protocol messages.</li>
 <li>All fuzz tests connect and authenticate first, then send malformed data to test post-authentication resilience.</li>
 </ul>
 <p><strong>CI/CD:</strong></p>
@@ -1228,8 +1268,8 @@ otherwise.</li>
 </ul>
 <p><strong>Testing:</strong></p>
 <ul>
-<li>Added comprehensive .NET client tests for Describe flow with cached prepared statements (<code>describe_flow_cached.cs</code>).</li>
-<li>Added aggressive mixed tests combining batch operations, prepared statements, and extended protocol (<code>aggressive_mixed.cs</code>).</li>
+<li>Added .NET client tests for Describe flow with cached prepared statements (<code>describe_flow_cached.cs</code>).</li>
+<li>Added mixed tests combining batch operations, prepared statements, and extended protocol (<code>aggressive_mixed.cs</code>).</li>
 </ul>
 <h3 id="302-jan-14-2026"><a class="header" href="#302-jan-14-2026">3.0.2 <small>Jan 14, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
@@ -1246,11 +1286,12 @@ otherwise.</li>
 <li>Extended Node.js client test coverage with additional scenarios for prepared statements, error handling, transactions, and edge cases.</li>
 </ul>
 <h3 id="300-jan-12-2026"><a class="header" href="#300-jan-12-2026">3.0.0 <small>Jan 12, 2026</small></a></h3>
-<p><strong>Major Release — Complete Architecture Refactoring</strong></p>
-<p>This release represents a significant milestone with a complete codebase refactoring that dramatically improves async protocol support, making PgDoorman the most efficient connection pooler for asynchronous PostgreSQL workloads.</p>
+<p><strong>Architecture refactor</strong></p>
+<p>PgDoorman 3.0.0 reorganizes the client, config, admin, auth, and
+prometheus modules, and adds the <code>patroni_proxy</code> binary.</p>
 <p><strong>New Features:</strong></p>
 <ul>
-<li><strong>patroni_proxy</strong> — A new high-performance TCP proxy for Patroni-managed PostgreSQL clusters:
+<li><strong>patroni_proxy</strong> — a TCP proxy for Patroni-managed PostgreSQL clusters:
 <ul>
 <li>Zero-downtime connection management — existing connections are preserved during cluster topology changes</li>
 <li>Hot upstream updates — automatic discovery of cluster members via Patroni REST API without connection drops</li>
@@ -1262,18 +1303,17 @@ otherwise.</li>
 </ul>
 <p><strong>Improvements:</strong></p>
 <ul>
-<li><strong>Complete codebase refactoring</strong> — modular architecture with better separation of concerns:
+<li><strong>Module split</strong>:
 <ul>
 <li>Client handling split into dedicated modules (core, entrypoint, protocol, startup, transaction)</li>
 <li>Configuration system reorganized into focused modules (general, pool, user, tls, prometheus, talos)</li>
 <li>Admin, auth, and prometheus subsystems extracted into separate modules</li>
-<li>Improved code maintainability and testability</li>
 </ul>
 </li>
-<li><strong>Enhanced async protocol support</strong> — significantly improved handling of asynchronous PostgreSQL protocol, providing better performance than other connection poolers for async workloads</li>
-<li><strong>Extended protocol improvements</strong> — better client buffering and message handling for extended query protocol</li>
+<li><strong>Async protocol support</strong> — improved handling of asynchronous PostgreSQL protocol messages.</li>
+<li><strong>Extended protocol</strong> — improved client buffering and message handling.</li>
 <li><strong>xxhash3 for prepared statement hashing</strong> — faster hash computation for prepared statement cache</li>
-<li><strong>Comprehensive BDD testing framework</strong> — multi-language integration tests (Go, Rust, Python, Node.js, .NET) with Docker-based reproducible environment</li>
+<li><strong>BDD test framework</strong> — multi-language integration tests (Go, Rust, Python, Node.js, .NET) in a Docker-based environment.</li>
 </ul>
 <h3 id="250-nov-18-2025"><a class="header" href="#250-nov-18-2025">2.5.0 <small>Nov 18, 2025</small></a></h3>
 <p><strong>Improvements:</strong></p>
