@@ -77,9 +77,71 @@ pub static STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(||
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
     std::sync::OnceLock::new();
 
-/// Max buffered migration payloads before sender blocks.
-/// Sized to handle all clients migrating simultaneously without contention.
-const MIGRATION_CHANNEL_CAPACITY: usize = 4096;
+/// Upper bound on the migration channel capacity. Past this we stop
+/// growing the buffer regardless of how generous the nofile limit is —
+/// the parent does not need more than a few thousand pending dup'd fds
+/// in flight; beyond that the sender is the bottleneck, not the buffer.
+const MIGRATION_CHANNEL_CAPACITY_MAX: usize = 4096;
+
+/// Floor on the migration channel capacity so migration can make at
+/// least *some* forward progress even on a very tight nofile budget.
+/// 64 still respects the upper budget calculation when soft limit is
+/// barely above it; if it doesn't, migration is broken regardless of
+/// what number we pick.
+const MIGRATION_CHANNEL_CAPACITY_MIN: usize = 64;
+
+/// File descriptors the parent keeps open outside the migration queue:
+/// listeners, backends, runtime internals (epoll, signal fds), stdio,
+/// and the migration socketpair + readiness pipe. Conservative — the
+/// real footprint at the moment migration starts is closer to 30, but
+/// reserving 128 keeps a small safety net for misbehaving plugins or
+/// future additions that quietly take an extra fd.
+const MIGRATION_PARENT_RESERVED_FDS: u64 = 128;
+
+/// Compute a migration channel capacity that respects the current
+/// `RLIMIT_NOFILE` soft limit. Each pending entry on the channel is a
+/// `dup`'d fd in the parent (the original client fd is still open until
+/// the client task finishes after sendmsg succeeds), so the worst-case
+/// fd usage during migration is approximately
+/// `live_clients + channel_depth + reserve`. Once that total crosses the
+/// limit the parent itself starts failing to open new fds — including
+/// the next `connect()` to a backend — which is exactly the EMFILE
+/// pattern this PR is here to prevent.
+///
+/// The formula gives the channel roughly half the available headroom
+/// after the reserve so that even with `live_clients ≈ channel_depth`
+/// (the worst case while migration is in flight) we stay under the
+/// soft limit with room to spare. Numbers from a 6200-limit, ~3K-client
+/// pooler land around capacity ~3000; numbers from a generous 65536
+/// limit land at the ceiling. The capacity is logged once at the start
+/// of migration so operators see what the daemon chose for them.
+#[cfg(unix)]
+fn safe_migration_capacity() -> usize {
+    // SAFETY: `getrlimit` is async-signal-safe and writes only into the
+    // local `rl` buffer we pass in. No global state involved.
+    let soft_limit = unsafe {
+        let mut rl: libc::rlimit = std::mem::zeroed();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
+            rl.rlim_cur as u64
+        } else {
+            // getrlimit cannot really fail for RLIMIT_NOFILE on Linux, but
+            // if it does (foreign kernel, sandbox), fall back to the hard
+            // ceiling so we behave like the previous hard-coded version.
+            MIGRATION_CHANNEL_CAPACITY_MAX as u64
+        }
+    };
+    let budget = soft_limit.saturating_sub(MIGRATION_PARENT_RESERVED_FDS);
+    let capacity = (budget / 2) as usize;
+    capacity.clamp(
+        MIGRATION_CHANNEL_CAPACITY_MIN,
+        MIGRATION_CHANNEL_CAPACITY_MAX,
+    )
+}
+
+#[cfg(not(unix))]
+fn safe_migration_capacity() -> usize {
+    MIGRATION_CHANNEL_CAPACITY_MAX
+}
 
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
     if args.daemon && std::env::var("NOTIFY_SOCKET").is_ok() {
@@ -1178,7 +1240,13 @@ async fn binary_upgrade_and_shutdown(
 
                         // Start client migration if socketpair was created
                         if migration_ok {
-                            let (tx, rx) = mpsc::channel(MIGRATION_CHANNEL_CAPACITY);
+                            let capacity = safe_migration_capacity();
+                            info!(
+                                "Migration channel capacity: {capacity} (clamped to \
+                                 [{MIGRATION_CHANNEL_CAPACITY_MIN}, \
+                                 {MIGRATION_CHANNEL_CAPACITY_MAX}] by current RLIMIT_NOFILE)"
+                            );
+                            let (tx, rx) = mpsc::channel(capacity);
                             let _ = MIGRATION_TX.set(tx);
                             // MIGRATION_IN_PROGRESS already set above (before SHUTDOWN)
                             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
