@@ -1,9 +1,11 @@
 use crate::stats::pool::PoolStats;
 #[cfg(target_os = "linux")]
-use crate::stats::socket::get_socket_states_count;
+use crate::stats::socket::cached_socket_states_count;
 #[cfg(target_os = "linux")]
 use log::error;
 use log::info;
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 pub fn print_all_stats() {
     let pool_lookup = PoolStats::construct_pool_lookup();
@@ -53,12 +55,17 @@ pub fn print_all_stats() {
     });
     #[cfg(target_os = "linux")]
     {
+        // Same 10-s budget as the Prometheus exporter — both consumers go
+        // through the shared cache so they never duplicate the walk through
+        // /proc/<pid>/fd and the kernel socket tables.
+        const SOCKETS_TTL: Duration = Duration::from_secs(10);
+
         if clients_flag {
-            match get_socket_states_count(std::process::id()) {
+            match cached_socket_states_count(std::process::id(), SOCKETS_TTL) {
                 // The `Display` impl now emits the full `[sockets] ...` line
                 // so that grep/awk pipelines can parse it the same way as the
                 // pool-stats lines above.
-                Ok(info) => info!("{info}"),
+                Ok(info) => info!("{}", *info),
                 Err(err) => error!("[sockets] error: {err}"),
             };
         }

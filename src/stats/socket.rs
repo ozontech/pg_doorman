@@ -1,15 +1,19 @@
 use libc::{c_int, mode_t, stat};
 #[cfg(debug_assertions)]
 use log::debug;
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader};
 use std::mem::MaybeUninit;
 #[cfg(debug_assertions)]
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::{fs, mem, ptr, slice};
 
 #[derive(Debug)]
@@ -309,115 +313,189 @@ impl From<std::num::TryFromIntError> for SocketInfoErr {
     }
 }
 
-fn read_proc_file(path: &str) -> Result<Option<String>, SocketInfoErr> {
+/// Open one of the `/proc/<pid>/net/*` files for line-oriented streaming.
+/// Returns `Ok(None)` when the kernel did not expose the file (e.g. no IPv6
+/// in this namespace) so callers can skip it without surfacing the error.
+fn open_proc_file(path: &str) -> Result<Option<BufReader<File>>, SocketInfoErr> {
     match File::open(path) {
-        Ok(mut file) => {
-            let mut content = String::new();
-            file.read_to_string(&mut content)?;
-            Ok(Some(content))
-        }
+        Ok(file) => Ok(Some(BufReader::new(file))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(SocketInfoErr::Io(e)),
     }
 }
 
 pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoErr> {
-    let mut result: SocketStateCount = SocketStateCount {
-        ..Default::default()
-    };
-    let mut inodes: HashSet<String> = HashSet::new();
-    // run through /proc/<pid>/fd to find sockets with their inodes
+    let mut result: SocketStateCount = SocketStateCount::default();
+    // Inodes are decimal integers both in `/proc/<pid>/fd/*` ("socket:[12345]")
+    // and in the `/proc/<pid>/net/*` tables (column 9 for tcp/tcp6, column 6 for
+    // unix). Storing them as u64 lets the matching step go through integer
+    // hashing instead of allocating a `String` per fd and per matched row —
+    // on a pooler with thousands of client connections this is the bulk of
+    // the heap traffic the walk used to produce.
+    let mut inodes: HashSet<u64> = HashSet::with_capacity(64);
+
+    // Step 1: enumerate the socket fds the process holds.
     for entry in fs::read_dir(format!("/proc/{pid}/{FD_DIR}"))? {
-        let path = &entry.unwrap().path();
-        if !is_socket(path) {
+        let path = entry?.path();
+        if !is_socket(&path) {
             continue;
         }
-        let target = fs::read_link(path)?;
+        let target = fs::read_link(&path)?;
         let socket_name = match target.to_str() {
-            Some(socket_name) => socket_name,
+            Some(s) => s,
             None => continue,
         };
-        let inode: String = match get_inode(socket_name) {
-            Some(inode) => String::from(inode),
-            _ => continue,
-        };
-        inodes.insert(inode);
+        if let Some(inode) = get_inode_u64(socket_name) {
+            inodes.insert(inode);
+        }
     }
 
-    if let Some(content) = read_proc_file(&format!("/proc/{pid}/net/tcp"))? {
-        fill_tcp(&content, &mut inodes, &mut result.tcp);
+    // Step 2: classify each by walking the matching kernel tables. Each
+    // table is streamed line-by-line — `/proc/net/tcp` on a busy host is
+    // routinely megabytes, and loading the whole file into a `String`
+    // before parsing wastes both memory and a copy.
+    if let Some(reader) = open_proc_file(&format!("/proc/{pid}/net/tcp"))? {
+        fill_tcp(reader, &mut inodes, &mut result.tcp);
     }
-    if let Some(content) = read_proc_file(&format!("/proc/{pid}/net/tcp6"))? {
-        fill_tcp(&content, &mut inodes, &mut result.tcp6);
+    if let Some(reader) = open_proc_file(&format!("/proc/{pid}/net/tcp6"))? {
+        fill_tcp(reader, &mut inodes, &mut result.tcp6);
     }
-    if let Some(content) = read_proc_file(&format!("/proc/{pid}/net/unix"))? {
-        fill_unix(&content, &mut inodes, &mut result);
+    if let Some(reader) = open_proc_file(&format!("/proc/{pid}/net/unix"))? {
+        fill_unix(reader, &mut inodes, &mut result);
     }
 
     result.unknown += u16::try_from(inodes.len())?;
     Ok(result)
 }
 
-fn fill_tcp(content: &str, h_map: &mut HashSet<String>, counts: &mut TcpStateCount) {
-    for row in content.split('\n') {
+/// Shared cache for the most recent `get_socket_states_count` result. Both
+/// the Prometheus exporter and the periodic stats logger consume the count;
+/// without a shared cache each path walks `/proc/<pid>/fd` and the kernel
+/// socket tables independently, which on a pooler with thousands of
+/// client connections is a measurable syscall storm (the kernel-side
+/// `established_get_first` + `vsnprintf` work dominates user-space CPU
+/// even when the pooler itself is nearly idle).
+struct CachedSocketStates {
+    states: Arc<SocketStateCount>,
+    refreshed_at: Instant,
+}
+
+static CACHE: Lazy<Mutex<Option<CachedSocketStates>>> = Lazy::new(|| Mutex::new(None));
+/// Single-flight gate: only one caller walks `/proc/<pid>/...` at a time.
+/// Latecomers wait, then observe the freshly-stored cache and return without
+/// repeating the work.
+static REFRESH_LOCK: Mutex<()> = Mutex::new(());
+
+/// Returns a snapshot of the process's socket states, reusing a cached value
+/// if it is younger than `ttl`. All callers within the TTL share the same
+/// `Arc<SocketStateCount>`.
+///
+/// Callers pick `ttl` to match their accuracy budget. The metrics exporter
+/// and the periodic stats logger both pass 10 s today, which keeps the
+/// gauges fresh within the typical Prometheus scrape interval while
+/// collapsing concurrent consumers onto a single per-cycle collection.
+pub fn cached_socket_states_count(
+    pid: u32,
+    ttl: Duration,
+) -> Result<Arc<SocketStateCount>, SocketInfoErr> {
+    // Fast path: cache hit.
+    if let Some(snap) = CACHE.lock().as_ref() {
+        if snap.refreshed_at.elapsed() < ttl {
+            return Ok(snap.states.clone());
+        }
+    }
+
+    // Slow path. Serialize refreshes so a burst of consumers (Prometheus
+    // scrape + stats tick happening to align) does the work once.
+    let _refresh = REFRESH_LOCK.lock();
+
+    // Recheck after taking the lock — a peer may have just refreshed.
+    if let Some(snap) = CACHE.lock().as_ref() {
+        if snap.refreshed_at.elapsed() < ttl {
+            return Ok(snap.states.clone());
+        }
+    }
+
+    let states = Arc::new(get_socket_states_count(pid)?);
+    *CACHE.lock() = Some(CachedSocketStates {
+        states: states.clone(),
+        refreshed_at: Instant::now(),
+    });
+    Ok(states)
+}
+
+const TCP_ROW_COLUMNS: usize = 17;
+const UNIX_ROW_MIN_COLUMNS: usize = 7;
+
+fn fill_tcp(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut TcpStateCount) {
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
         // 39: A495FB0A:C566 2730FB0A:1920 01 00000000:00000000 02:00000418 00000000  5432        0 58864734 2 ff151d0987405780 20 4 30 94 -1
         //                                 ^^connection state                                        ^^inode
-        let words: Vec<&str> = row.trim().split(' ').filter(|s| !s.is_empty()).collect();
-        if words.len() != 17 {
+        // Collect once into a fixed-capacity Vec borrowed against `line`.
+        // Reusing a Vec across iterations is impossible here because each
+        // line is freshly allocated by `BufReader::lines` and dropped at
+        // end-of-iteration; the per-row allocation cost is one Vec of
+        // pointers, dwarfed by the kernel-side cost of producing the row.
+        let tokens: Vec<&str> = line.split_ascii_whitespace().collect();
+        if tokens.len() != TCP_ROW_COLUMNS {
             continue;
         }
-        if h_map.contains(words[9]) {
-            match u8::from_str_radix(words[3], 16) {
-                Ok(conn_state) => counts.increase_count(conn_state),
-                Err(_) => continue,
-            };
-            h_map.remove(words[9]);
-            #[cfg(debug_assertions)]
-            {
-                let local_socket = match parse_addr(words[1]) {
-                    Some(l) => l,
-                    None => continue,
-                };
-                let remote_socket = match parse_addr(words[2]) {
-                    Some(l) => l,
-                    None => continue,
-                };
-                debug!("{} <-> {} as {}", local_socket, remote_socket, words[9]);
+        let inode: u64 = match tokens[9].parse() {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        if !h_map.remove(&inode) {
+            continue;
+        }
+        if let Ok(conn_state) = u8::from_str_radix(tokens[3], 16) {
+            counts.increase_count(conn_state);
+        }
+        #[cfg(debug_assertions)]
+        {
+            if let (Some(local), Some(remote)) = (parse_addr(tokens[1]), parse_addr(tokens[2])) {
+                debug!("{local} <-> {remote} as {inode}");
             }
         }
     }
 }
 
-fn fill_unix(content: &str, h_map: &mut HashSet<String>, counts: &mut SocketStateCount) {
-    for row in content.split('\n') {
+fn fill_unix(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut SocketStateCount) {
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
         // ffff9b5456bcb400: 00000003 00000000 00000000 0001 03 281629229 /optional/path
         //                                              ^type ^state ^inode
-        let words: Vec<&str> = row.trim().split(' ').filter(|s| !s.is_empty()).collect();
-        if words.len() < 7 {
+        let tokens: Vec<&str> = line.split_ascii_whitespace().collect();
+        if tokens.len() < UNIX_ROW_MIN_COLUMNS {
             continue;
         }
-        if h_map.contains(words[6]) {
-            let sock_type = match u8::from_str_radix(words[4], 16) {
-                Ok(sock_type) => sock_type,
-                Err(_) => continue,
-            };
-            match sock_type {
-                /*
-                 For SOCK_STREAM sockets, this is
-                 0001; for SOCK_DGRAM sockets, it is 0002; and for
-                 SOCK_SEQPACKET sockets, it is 0005
-                */
-                1 => {
-                    match u8::from_str_radix(words[5], 16) {
-                        Ok(conn_state) => counts.unix_stream.increase_count(conn_state),
-                        Err(_) => continue,
-                    };
+        let inode: u64 = match tokens[6].parse() {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        if !h_map.remove(&inode) {
+            continue;
+        }
+        let sock_type = match u8::from_str_radix(tokens[4], 16) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        match sock_type {
+            // SOCK_STREAM=0001, SOCK_DGRAM=0002, SOCK_SEQPACKET=0005.
+            1 => {
+                if let Ok(conn_state) = u8::from_str_radix(tokens[5], 16) {
+                    counts.unix_stream.increase_count(conn_state);
                 }
-                2 => counts.unix_dgram += 1,
-                5 => counts.unix_seq_packet += 1,
-                _ => continue,
             }
-            h_map.remove(words[6]);
+            2 => counts.unix_dgram += 1,
+            5 => counts.unix_seq_packet += 1,
+            _ => {}
         }
     }
 }
@@ -468,6 +546,12 @@ fn get_inode(content: &str) -> Option<&str> {
         None => return None,
     };
     Some(&content[s_index..e_index])
+}
+
+/// Same logic as `get_inode` but returns the parsed integer directly, so the
+/// hot walk does not have to materialise a `String` for every fd.
+fn get_inode_u64(content: &str) -> Option<u64> {
+    get_inode(content).and_then(|s| s.parse().ok())
 }
 
 #[cfg(debug_assertions)]

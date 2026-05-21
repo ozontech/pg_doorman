@@ -6,11 +6,11 @@ use once_cell::sync::Lazy;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 #[cfg(target_os = "linux")]
-use crate::stats::get_socket_states_count;
+use crate::stats::cached_socket_states_count;
 use crate::stats::pool::PoolStats;
 use crate::stats::{
     CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
@@ -190,48 +190,24 @@ static SERVERS_PREPARED_HITS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
 static SERVERS_PREPARED_MISSES_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
     Lazy::new(CounterDeltaTracker::new);
 
-/// Minimum gap between two real `get_socket_states_count` calls.
+/// Refresh budget for socket-count metrics. Collecting them walks every fd
+/// in `/proc/PID/fd` plus the kernel TCP/UNIX socket tables, which on a
+/// pooler with thousands of client connections is a per-scrape syscall
+/// storm: kernel CPU goes into `established_get_first`, `vsnprintf`,
+/// `format_decode`, `nft_do_chain`, and visibly degrades client-facing p99
+/// even when the daemon's own user-space CPU stays nearly idle.
 ///
-/// Collecting socket states is expensive: it walks every fd in `/proc/PID/fd`
-/// (a readlink per entry) and joins it against `/proc/net/tcp*` and
-/// `/proc/net/unix`. On a pooler with thousands of client connections that
-/// is a per-scrape syscall storm with significant kernel CPU spent in
-/// `established_get_first`, `vsnprintf`, and friends — at high scrape rates
-/// it visibly degrades client-facing p99 even when the daemon's user-space
-/// CPU stays nearly idle.
-///
-/// Prometheus scrape intervals are typically 15–30 s, so a refresh budget
-/// of 10 s keeps the metric "fresh enough" while collapsing concurrent
-/// scrapes onto a single per-cycle collection.
+/// Prometheus scrape intervals are typically 15–30 s, so 10 s of drift on
+/// `pg_doorman_sockets` is a safe trade for collapsing concurrent
+/// consumers onto a single per-cycle collection. The same cache is also
+/// used by the periodic stats logger, so the two paths never duplicate
+/// the walk.
 #[cfg(target_os = "linux")]
 const SOCKET_METRICS_REFRESH: Duration = Duration::from_secs(10);
 
 #[cfg(target_os = "linux")]
-struct SocketMetricsCache {
-    next_refresh_at: parking_lot::Mutex<Instant>,
-}
-
-#[cfg(target_os = "linux")]
-static SOCKET_METRICS_CACHE: Lazy<SocketMetricsCache> = Lazy::new(|| SocketMetricsCache {
-    next_refresh_at: parking_lot::Mutex::new(Instant::now()),
-});
-
-#[cfg(target_os = "linux")]
 fn update_socket_metrics() {
-    // Cooperative TTL: the first scrape past the deadline takes the gauge
-    // refresh and pushes the next deadline forward. All concurrent scrapes
-    // skip the work entirely and continue serving the previously-emitted
-    // gauge values from the Prometheus registry.
-    {
-        let mut next = SOCKET_METRICS_CACHE.next_refresh_at.lock();
-        let now = Instant::now();
-        if now < *next {
-            return;
-        }
-        *next = now + SOCKET_METRICS_REFRESH;
-    }
-
-    match get_socket_states_count(std::process::id()) {
+    match cached_socket_states_count(std::process::id(), SOCKET_METRICS_REFRESH) {
         Ok(states) => {
             let socket_states = [
                 ("tcp", states.get_tcp()),
