@@ -194,6 +194,102 @@ fn set_fd_close_on_exec(fd: libc::c_int, label: &str) {
     }
 }
 
+#[cfg(not(windows))]
+pub fn cleanup_inherited_upgrade_fds(args: &Args) {
+    let Some(mut keep) = inherited_upgrade_fd_allowlist(args) else {
+        return;
+    };
+    keep.sort_unstable();
+    keep.dedup();
+
+    let closed = close_unexpected_fds_below_limit(&keep);
+    if closed > 0 {
+        eprintln!(
+            "binary upgrade: closed {closed} unexpected inherited file descriptor(s) before startup"
+        );
+    }
+}
+
+#[cfg(windows)]
+pub fn cleanup_inherited_upgrade_fds(_args: &Args) {}
+
+#[cfg(not(windows))]
+fn inherited_upgrade_fd_allowlist(args: &Args) -> Option<Vec<libc::c_int>> {
+    let forced_cleanup = std::env::var("PG_DOORMAN_CLOSE_INHERITED_FDS")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+    if !forced_cleanup && args.inherit_fd.is_none() {
+        return None;
+    }
+    std::env::remove_var("PG_DOORMAN_CLOSE_INHERITED_FDS");
+
+    let mut keep = vec![0, 1, 2];
+
+    if let Some(listener_fd) = args.inherit_fd {
+        keep.push(listener_fd);
+    }
+
+    if let Some(fd) = parse_fd_env("PG_DOORMAN_READY_FD") {
+        keep.push(fd);
+    }
+    if let Some(fd) = parse_fd_env("PG_DOORMAN_MIGRATION_FD") {
+        keep.push(fd);
+    }
+
+    Some(keep)
+}
+
+#[cfg(not(windows))]
+fn parse_fd_env(name: &str) -> Option<libc::c_int> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<libc::c_int>().ok())
+        .filter(|fd| *fd >= 0)
+}
+
+#[cfg(not(windows))]
+fn close_unexpected_fds_below_limit(keep: &[libc::c_int]) -> usize {
+    let upper = fd_cleanup_upper_bound();
+    close_unexpected_fds(3..upper, keep)
+}
+
+#[cfg(not(windows))]
+fn close_unexpected_fds<I>(fds: I, keep: &[libc::c_int]) -> usize
+where
+    I: IntoIterator<Item = libc::c_int>,
+{
+    let mut closed = 0usize;
+
+    for fd in fds {
+        if fd <= 2 {
+            continue;
+        }
+        if keep.binary_search(&fd).is_ok() {
+            continue;
+        }
+        // SAFETY: closing an fd affects only this child process. EBADF just
+        // means the slot was already empty; other errors are non-actionable
+        // during best-effort inherited-fd cleanup.
+        if unsafe { libc::close(fd) } == 0 {
+            closed += 1;
+        }
+    }
+
+    closed
+}
+
+#[cfg(not(windows))]
+fn fd_cleanup_upper_bound() -> libc::c_int {
+    // SAFETY: getrlimit writes to the stack-local rlimit struct only.
+    unsafe {
+        let mut rl: libc::rlimit = std::mem::zeroed();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
+            return (rl.rlim_cur as u64).min(libc::c_int::MAX as u64) as libc::c_int;
+        }
+    }
+    65_536
+}
+
 /// Single-flight throttle for the listener's "fd table exhausted" log
 /// line. Returns `true` only when the previous successful emission is
 /// at least `ACCEPT_RESOURCE_LOG_INTERVAL_SECS` in the past.
@@ -1035,6 +1131,7 @@ async fn binary_upgrade_and_shutdown(
         let config_test_result = process::Command::new(exe_path)
             .arg("-t")
             .arg(&config_file)
+            .env("PG_DOORMAN_CLOSE_INHERITED_FDS", "1")
             .stdout(process::Stdio::piped())
             .stderr(process::Stdio::piped())
             .output();
@@ -1978,6 +2075,60 @@ mod umask_guard_tests {
             assert_eq!(inside & 0o077, 0o077);
         }
         unsafe { libc::umask(prior) };
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod inherited_fd_cleanup_tests {
+    use super::close_unexpected_fds;
+
+    fn fd_is_open(fd: libc::c_int) -> bool {
+        unsafe { libc::fcntl(fd, libc::F_GETFD) >= 0 }
+    }
+
+    struct Pipe {
+        read: libc::c_int,
+        write: libc::c_int,
+    }
+
+    impl Pipe {
+        fn new() -> Self {
+            let mut fds = [0_i32; 2];
+            let r = unsafe { libc::pipe(fds.as_mut_ptr()) };
+            assert_eq!(r, 0, "pipe(2) failed: {}", std::io::Error::last_os_error());
+            Self {
+                read: fds[0],
+                write: fds[1],
+            }
+        }
+    }
+
+    impl Drop for Pipe {
+        fn drop(&mut self) {
+            if fd_is_open(self.read) {
+                unsafe { libc::close(self.read) };
+            }
+            if fd_is_open(self.write) {
+                unsafe { libc::close(self.write) };
+            }
+        }
+    }
+
+    #[test]
+    fn close_unexpected_fds_preserves_allowlist() {
+        let keep = Pipe::new();
+        let leaked = Pipe::new();
+
+        let mut allow = vec![0, 1, 2, keep.read, keep.write];
+        allow.sort_unstable();
+        let closed =
+            close_unexpected_fds([keep.read, keep.write, leaked.read, leaked.write], &allow);
+
+        assert!(closed >= 2, "expected to close the leaked pipe fds");
+        assert!(fd_is_open(keep.read), "allowlisted read fd must survive");
+        assert!(fd_is_open(keep.write), "allowlisted write fd must survive");
+        assert!(!fd_is_open(leaked.read), "unexpected read fd must close");
+        assert!(!fd_is_open(leaked.write), "unexpected write fd must close");
     }
 }
 
