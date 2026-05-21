@@ -3,7 +3,7 @@
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use log::{debug, error, warn};
+use log::{error, info, warn};
 use prometheus::{Encoder, TextEncoder};
 use std::io::Write;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -15,9 +15,8 @@ use super::metrics::update_metrics;
 use super::REGISTRY;
 
 /// Above this latency a /metrics response is loud enough that we want to see
-/// it in operator logs by default. Below it we still record the timing at
-/// DEBUG so a profiler-driven investigation can collect the trace without
-/// noise.
+/// it in operator logs by default. Below it the timing is still logged, but
+/// at INFO so it's part of normal operations rather than an alarm.
 const SLOW_RESPONSE_THRESHOLD: Duration = Duration::from_millis(100);
 
 /// Minimum gap between consecutive slow-response WARN lines. Without it a
@@ -87,12 +86,16 @@ pub(crate) async fn write_metrics_response(
         error!("Failed to flush connection: {e}");
     }
 
-    // Surface how long a single /metrics request took. Useful both for
-    // operators watching client p99 regress under a noisy scraper and for
-    // regression checks: a sudden jump in this number on previously-quiet
-    // deployments points straight back at this code path.
+    // Log every /metrics request at INFO so operators see in the normal log
+    // stream how often Prometheus is scraping and how long each call takes
+    // (the typical question after a p99 regression is "did scrape get
+    // slower"). Above SLOW_RESPONSE_THRESHOLD the same event is also raised
+    // to WARN, rate-limited to one warn per
+    // `SLOW_RESPONSE_LOG_INTERVAL_SECS` so a misbehaving scraper does not
+    // turn it into a per-request flood.
     let elapsed = started.elapsed();
     let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+    info!("/metrics request handled in {elapsed_ms:.1} ms (bytes={body_len}, gzip={accepts_gzip})");
     if elapsed >= SLOW_RESPONSE_THRESHOLD {
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -105,19 +108,9 @@ pub(crate) async fn write_metrics_response(
                 .is_ok()
         {
             warn!(
-                "/metrics request handled in {elapsed_ms:.1} ms \
+                "/metrics request slow: {elapsed_ms:.1} ms \
                  (bytes={body_len}, gzip={accepts_gzip}, rate-limited 1/{SLOW_RESPONSE_LOG_INTERVAL_SECS}s)"
             );
-        } else {
-            debug!(
-                "/metrics request handled in {elapsed_ms:.1} ms \
-                 (bytes={body_len}, gzip={accepts_gzip}, slow but warn-rate-limited)"
-            );
         }
-    } else {
-        debug!(
-            "/metrics request handled in {elapsed_ms:.1} ms \
-             (bytes={body_len}, gzip={accepts_gzip})"
-        );
     }
 }
