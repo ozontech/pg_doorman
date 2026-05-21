@@ -60,8 +60,16 @@ Feature: pg_doorman stays within its fd budget
     # lives in the NOFILE=200 scenario below where the budget is wide
     # enough for the new process to settle.
 
-  @client-migration @migration-fd-budget
-  Scenario: Binary upgrade with 50 idle clients under NOFILE=200 completes without EMFILE
+  @client-migration @migration-fd-budget @binary-upgrade-fd-cloexec
+  Scenario: Chained binary upgrade with 50 idle clients keeps fd table stable (FD_CLOEXEC + cleanup)
+    # Catches the production failure mode that the migration channel
+    # reproduces: each migrated client fd was inherited by the next
+    # child generation, doubling the socket fd count on every SIGUSR2.
+    # Without FD_CLOEXEC on the SCM_RIGHTS-received fds the table
+    # grows by ~N each upgrade; with the fix it stays roughly
+    # constant. The assertion that catches the regression is the
+    # non-listener socket fd count *delta* between two consecutive
+    # generations.
     Given pg_doorman log capture enabled
     And pg_doorman started with NOFILE limit 200 and config:
       """
@@ -87,18 +95,46 @@ Feature: pg_doorman stays within its fd budget
     # accept-side bottleneck does not apply here — we expect every
     # client to have settled.
     Then at least 50 idle sessions should be open from the last batch attempt
-    When we store foreground pg_doorman PID as "old_doorman"
+
+    # ----- First SIGUSR2: existing-process → child generation 1 -----
+    When we store foreground pg_doorman PID as "parent"
     And we send SIGUSR2 to foreground pg_doorman
     And we wait for foreground binary upgrade to complete
     Then pg_doorman log does not contain "Too many open files"
     And pg_doorman log does not contain "fallback discovery failed"
     And pg_doorman log does not contain "BINARY UPGRADE ABORTED"
+
+    # Pin the new child PID independent of the original spawn handle.
+    # /api/process is intentionally NOT used here: it depends on web
+    # admin being on and would only see whichever copy of the listener
+    # the kernel hashed our request to under SO_REUSEPORT.
+    When we discover the current pg_doorman PID externally and store as "gen1"
+    And we capture the fd inventory for stored PID "gen1" as "gen1"
+    Then every non-listener socket fd of stored PID "gen1" has FD_CLOEXEC set
+
     # Migrated sessions must be able to round-trip a query through
     # whichever process is now servicing them. The MIGRATION_TX path
     # is only useful if the protocol state survived intact; a healthy
     # `SELECT 1` is the cheapest end-to-end check of that.
-    When we send SimpleQuery "SELECT 1" to the first open idle session and store response as "post-upgrade"
-    Then session "post-upgrade" should receive DataRow with "1"
+    When we send SimpleQuery "SELECT 1" to the first open idle session and store response as "post-upgrade-1"
+    Then session "post-upgrade-1" should receive DataRow with "1"
+
+    # ----- Second SIGUSR2: generation 1 → generation 2 -----
+    # If the child of the first upgrade kept the migrated client fds
+    # inheritable, the child of the second upgrade will end up with
+    # both the fork-inherited and SCM_RIGHTS-received copies. The
+    # non-listener socket count would grow by ~50 (one extra fd per
+    # active client).
+    When we send SIGUSR2 to pg_doorman process at stored PID "gen1"
+    And we wait for foreground binary upgrade to complete
+    And we discover the current pg_doorman PID externally and store as "gen2"
+    And we capture the fd inventory for stored PID "gen2" as "gen2"
+    Then stored PID "gen2" should be different from stored PID "gen1"
+    # Slack of 5: tokio and jemalloc occasionally adjust their internal
+    # fd usage during a process replacement; the FD_CLOEXEC bug doubled
+    # the count by ~50, ten times this bound.
+    And the non-listener socket fd count delta from "gen1" to "gen2" should be at most 5
+    And every non-listener socket fd of stored PID "gen2" has FD_CLOEXEC set
     And a fresh PostgreSQL session to pg_doorman as "example_user_1" with password "" and database "example_db" succeeds
 
   @client-migration @migration-fd-budget @fd-overload
