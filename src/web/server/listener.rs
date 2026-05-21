@@ -4,13 +4,40 @@
 //! [`current_options`].
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::{error, info};
 use tokio::net::{TcpListener, TcpSocket};
 
 use super::http::handle_connection;
 use super::state::{current_options, install_options, WebServerOptions};
+
+static WEB_ACCEPT_RESOURCE_LOG_LAST: AtomicI64 = AtomicI64::new(0);
+const WEB_ACCEPT_RESOURCE_LOG_INTERVAL_SECS: i64 = 5;
+
+#[cfg(unix)]
+fn is_fd_exhaustion_io(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE),)
+}
+
+#[cfg(not(unix))]
+fn is_fd_exhaustion_io(_e: &std::io::Error) -> bool {
+    false
+}
+
+fn should_log_web_accept_resource_now() -> bool {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let last = WEB_ACCEPT_RESOURCE_LOG_LAST.load(Ordering::Relaxed);
+    now_secs.saturating_sub(last) >= WEB_ACCEPT_RESOURCE_LOG_INTERVAL_SECS
+        && WEB_ACCEPT_RESOURCE_LOG_LAST
+            .compare_exchange(last, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+}
 
 /// Bind the listener synchronously and return it. Used by callers that
 /// want to fail fast when the configured port is taken: the daemon's
@@ -55,7 +82,17 @@ pub async fn serve_on(listener: TcpListener, opts: WebServerOptions) {
                 });
             }
             Err(e) => {
-                error!("Failed to accept connection: {e}");
+                if is_fd_exhaustion_io(&e) {
+                    if should_log_web_accept_resource_now() {
+                        error!(
+                            "Failed to accept connection: {e} \
+                             (process fd table exhausted; backing off)"
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                } else {
+                    error!("Failed to accept connection: {e}");
+                }
             }
         }
     }

@@ -173,6 +173,27 @@ fn is_fd_exhaustion_io(e: &std::io::Error) -> bool {
     matches!(e.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE),)
 }
 
+#[cfg(not(windows))]
+fn set_fd_close_on_exec(fd: libc::c_int, label: &str) {
+    // SAFETY: fcntl reads and writes descriptor flags for the supplied fd only.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags < 0 {
+            warn!(
+                "Failed to read close-on-exec flag for {label} fd={fd}: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+        if libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) < 0 {
+            warn!(
+                "Failed to set close-on-exec flag for {label} fd={fd}: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+}
+
 /// Single-flight throttle for the listener's "fd table exhausted" log
 /// line. Returns `true` only when the previous successful emission is
 /// at least `ACCEPT_RESOURCE_LOG_INTERVAL_SECS` in the past.
@@ -286,6 +307,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             // Inherit listener from parent process (binary upgrade in foreground mode)
             info!("Inheriting listener from parent process (fd={})", fd);
             let std_listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
+            set_fd_close_on_exec(std_listener.as_raw_fd(), "inherited listener");
             std_listener.set_nonblocking(true).expect("can't set nonblocking");
             tokio::net::TcpListener::from_std(std_listener).expect("can't create TcpListener from inherited fd")
         } else {
@@ -651,6 +673,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     "Migration socket received from parent (fd={})",
                     migration_fd
                 );
+                set_fd_close_on_exec(migration_fd, "migration receiver socket");
                 std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
                 tokio::spawn(migration_receiver_task(
                     migration_fd,
@@ -1187,9 +1210,13 @@ async fn binary_upgrade_and_shutdown(
             let mut pipe_fds: [libc::c_int; 2] = [0; 2];
             if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
                 error!("Failed to create pipe for binary upgrade");
+                MIGRATION_IN_PROGRESS.store(false, Ordering::Relaxed);
+                SHUTDOWN_IN_PROGRESS.store(false, Ordering::SeqCst);
+                return None;
             } else {
                 let pipe_read_fd = pipe_fds[0];
                 let pipe_write_fd = pipe_fds[1];
+                set_fd_close_on_exec(pipe_read_fd, "readiness pipe read end");
 
                 // Create a Unix socketpair for client migration
                 let mut migration_fds: [libc::c_int; 2] = [0; 2];
@@ -1206,6 +1233,9 @@ async fn binary_upgrade_and_shutdown(
                 }
                 let migration_parent_fd = migration_fds[0]; // kept by old process
                 let migration_child_fd = migration_fds[1]; // passed to new process
+                if migration_ok {
+                    set_fd_close_on_exec(migration_parent_fd, "migration parent socket");
+                }
 
                 // Spawn child process with inherited listener fd, pipe, and migration socket
                 let child_result = unsafe {
@@ -1231,7 +1261,7 @@ async fn binary_upgrade_and_shutdown(
                 };
 
                 match child_result {
-                    Ok(child) => {
+                    Ok(mut child) => {
                         let child_pid = child.id();
                         unsafe {
                             libc::close(pipe_write_fd);
@@ -1268,6 +1298,34 @@ async fn binary_upgrade_and_shutdown(
                             // confirm it is serving, so keep the
                             // listener and skip the MainPID handoff.
                             warn!("New process did not signal readiness within 10s (timeout or early exit)");
+                            unsafe {
+                                libc::close(pipe_read_fd);
+                                if migration_ok {
+                                    libc::close(migration_parent_fd);
+                                }
+                            }
+                            match child.try_wait() {
+                                Ok(Some(status)) => {
+                                    warn!("New process exited before readiness: {status}");
+                                }
+                                Ok(None) => {
+                                    if let Err(e) = child.kill() {
+                                        warn!(
+                                            "Failed to kill unready child process {child_pid}: {e}"
+                                        );
+                                    } else {
+                                        let _ = child.wait();
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to inspect unready child process {child_pid}: {e}"
+                                    );
+                                }
+                            }
+                            MIGRATION_IN_PROGRESS.store(false, Ordering::Relaxed);
+                            SHUTDOWN_IN_PROGRESS.store(false, Ordering::SeqCst);
+                            return None;
                         }
 
                         unsafe {
@@ -1327,6 +1385,7 @@ async fn binary_upgrade_and_shutdown(
                     Err(e) => {
                         error!("Failed to spawn new process: {}", e);
                         MIGRATION_IN_PROGRESS.store(false, Ordering::Relaxed);
+                        SHUTDOWN_IN_PROGRESS.store(false, Ordering::SeqCst);
                         unsafe {
                             libc::close(pipe_read_fd);
                             libc::close(pipe_write_fd);
