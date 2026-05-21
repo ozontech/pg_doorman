@@ -3,10 +3,15 @@ use crate::web::routes::dto::{SocketsDto, TcpCounts, UnixStreamCounts};
 use super::now_unix_ms;
 
 pub(crate) fn collect_sockets() -> Result<SocketsDto, &'static str> {
-    use crate::stats::socket::{get_socket_states_count, TcpStateCount, UnixStreamStateCount};
+    use crate::stats::socket::{cached_socket_states_count, TcpStateCount, UnixStreamStateCount};
 
-    let info = get_socket_states_count(std::process::id())
-        .map_err(|_| "failed to read socket states from /proc")?;
+    // Web UI dashboard is the only consumer that benefits from real-time
+    // freshness here — operators expect the Sockets pane to react when they
+    // click "kill stale clients". `fresh=true` performs the walk and
+    // opportunistically updates the shared cache so the next cached reader
+    // benefits from the work this one already did.
+    let info =
+        cached_socket_states_count(true).map_err(|_| "failed to read socket states from /proc")?;
 
     fn tcp(c: &TcpStateCount) -> TcpCounts {
         TcpCounts {

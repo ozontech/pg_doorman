@@ -107,6 +107,10 @@ path = "src/main.rs"
 name = "patroni_proxy"
 path = "src/bin/patroni_proxy/main.rs"
 
+[[bin]]
+name = "metrics_stress"
+path = "src/bin/metrics_stress.rs"
+
 [[test]]
 name = "bdd"
 harness = false

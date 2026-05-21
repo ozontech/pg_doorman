@@ -1,6 +1,6 @@
 use crate::stats::pool::PoolStats;
 #[cfg(target_os = "linux")]
-use crate::stats::socket::get_socket_states_count;
+use crate::stats::socket::cached_socket_states_count;
 #[cfg(target_os = "linux")]
 use log::error;
 use log::info;
@@ -54,11 +54,13 @@ pub fn print_all_stats() {
     #[cfg(target_os = "linux")]
     {
         if clients_flag {
-            match get_socket_states_count(std::process::id()) {
+            // Background refresher keeps the cache fresh; the periodic
+            // stats logger does not need a real-time walk.
+            match cached_socket_states_count(false) {
                 // The `Display` impl now emits the full `[sockets] ...` line
                 // so that grep/awk pipelines can parse it the same way as the
                 // pool-stats lines above.
-                Ok(info) => info!("{info}"),
+                Ok(info) => info!("{}", *info),
                 Err(err) => error!("[sockets] error: {err}"),
             };
         }

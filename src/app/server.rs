@@ -311,6 +311,13 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             stats_collector.collect().await;
         });
 
+        // Socket-state gauges (and the `[sockets]` line in the periodic
+        // stats logger) read from a background-refreshed cache so neither
+        // path walks /proc/<pid>/fd in the request thread. Refreshing every
+        // 15 s sits comfortably below typical Prometheus scrape intervals.
+        #[cfg(target_os = "linux")]
+        crate::stats::spawn_socket_states_refresh(Duration::from_secs(15));
+
         tokio::task::spawn(async move {
             retain::retain_connections().await;
         });

@@ -80,6 +80,9 @@ WORKERS="${FLAMEGRAPH_WORKERS:-$(nproc)}"
 PERF_FREQ="${FLAMEGRAPH_FREQ:-99}"
 PGBENCH_SCRIPT="${FLAMEGRAPH_SCRIPT:-scripts/noop.sql}"
 OFFCPU="${FLAMEGRAPH_OFFCPU:-0}"
+# When > 0, runs `target/release/metrics_stress` in parallel with pgbench at the
+# given concurrency, so the flamegraph captures CPU consumed by /metrics scrape.
+SCRAPE_CONCURRENCY="${FLAMEGRAPH_SCRAPE_CONCURRENCY:-0}"
 
 # ---------------------------------------------------------------------------
 # Resolve project root (script may be called from any directory)
@@ -310,7 +313,11 @@ phase_start_doorman() {
 host all all 0.0.0.0/0 trust
 HBA
 
-    # Generate config (mirrors bench.feature pattern)
+    METRICS_PORT="$(find_free_port)"
+
+    # Generate config (mirrors bench.feature pattern). The [web] section is
+    # always on so the metrics scrape stress mode (FLAMEGRAPH_SCRAPE_CONCURRENCY)
+    # has a target; enabling it costs nothing when no one scrapes.
     cat > "$TMPDIR/config.toml" <<TOML
 [general]
 host = "127.0.0.1"
@@ -319,6 +326,11 @@ worker_threads = ${WORKERS}
 admin_username = "admin"
 admin_password = "admin"
 pg_hba = {path = "${TMPDIR}/doorman_hba.conf"}
+
+[web]
+enabled = true
+host = "127.0.0.1"
+port = ${METRICS_PORT}
 
 [pools.postgres]
 server_host = "127.0.0.1"
@@ -378,6 +390,26 @@ phase_record() {
         OFFCPU_PID=$!
     fi
 
+    # Start the /metrics scraper if requested. It runs alongside pgbench for
+    # the whole DURATION so perf captures both the client hot path and the
+    # work spent inside /metrics, in the same recording.
+    SCRAPE_PID=""
+    if [ "$SCRAPE_CONCURRENCY" -gt 0 ]; then
+        STRESS_BIN="$PROJECT_ROOT/target/release/metrics_stress"
+        if [ ! -x "$STRESS_BIN" ]; then
+            log "building metrics_stress (release)"
+            (cd "$PROJECT_ROOT" && cargo build --release --bin metrics_stress --quiet) \
+                || die "metrics_stress build failed"
+        fi
+        log "  metrics scrape: concurrency=$SCRAPE_CONCURRENCY url=http://127.0.0.1:$METRICS_PORT/metrics"
+        "$STRESS_BIN" \
+            --url "http://127.0.0.1:$METRICS_PORT/metrics" \
+            --concurrency "$SCRAPE_CONCURRENCY" \
+            --duration-secs "$DURATION" \
+            > "$OUT_DIR/metrics_stress.log" 2>&1 &
+        SCRAPE_PID=$!
+    fi
+
     # Run pgbench as load driver (PGSSLMODE=disable mirrors bench.feature)
     PGSSLMODE=disable pgbench -n \
         -h 127.0.0.1 -p "$DOORMAN_PORT" -U postgres \
@@ -385,6 +417,10 @@ phase_record() {
         --protocol="$PROTOCOL" \
         postgres -f "$PGBENCH_SCRIPT" 2>&1 \
         | tee "$OUT_DIR/pgbench.log"
+
+    if [ -n "$SCRAPE_PID" ]; then
+        wait "$SCRAPE_PID" 2>/dev/null || true
+    fi
 
     # Wait for perf to finish
     wait "$PERF_PID" 2>/dev/null || true

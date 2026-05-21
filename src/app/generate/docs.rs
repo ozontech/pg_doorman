@@ -425,7 +425,7 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "### Socket Metrics (Linux only)\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
-    let _ = writeln!(out, "| `pg_doorman_sockets` | Counter of sockets used by pg_doorman by socket type. Types include: 'tcp' (IPv4 TCP sockets), 'tcp6' (IPv6 TCP sockets), 'unix' (Unix domain sockets), and 'unknown' (sockets of unrecognized type). Only available on Linux systems. |\n");
+    let _ = writeln!(out, "| `pg_doorman_sockets` | Counter of sockets used by pg_doorman by socket type. Types include: 'tcp' (IPv4 TCP sockets), 'tcp6' (IPv6 TCP sockets), 'unix' (Unix domain sockets), and 'unknown' (sockets of unrecognized type). Only available on Linux systems. Collected by a background task every 15 seconds; scrapes serve whatever the last tick produced, so reported counts can lag reality by up to one refresh interval. Use Prometheus `scrape_interval` of at least 15 s to avoid scraping the same snapshot twice. |\n");
 
     // Pool Metrics
     let _ = writeln!(out, "### Pool Metrics\n");

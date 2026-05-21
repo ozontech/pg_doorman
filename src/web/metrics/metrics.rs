@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 #[cfg(target_os = "linux")]
-use crate::stats::get_socket_states_count;
+use crate::stats::cached_socket_states_count;
 use crate::stats::pool::PoolStats;
 use crate::stats::{
     CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
@@ -188,9 +188,24 @@ static SERVERS_PREPARED_HITS_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
 static SERVERS_PREPARED_MISSES_PREV: Lazy<CounterDeltaTracker<PoolKey>> =
     Lazy::new(CounterDeltaTracker::new);
 
+/// Socket-count gauges read from a shared cache that a background task
+/// refreshes on its own cadence (see `spawn_socket_states_refresh`). The
+/// `/metrics` request path never walks `/proc/<pid>/fd` and the kernel
+/// socket tables directly: with thousands of client connections that
+/// walk is the dominant kernel-CPU cost of every scrape, and it
+/// reproduced as a client-facing p99 spike of 6-7× under high scrape
+/// rates even though the daemon's own user-space CPU stayed nearly idle.
+///
+/// The decoupling matters even at "normal" Prometheus scrape intervals
+/// of 15-30 s: a TTL that the request thread checks still triggers the
+/// expensive walk once per scrape, so every well-behaved scraper would
+/// pay for it. The background refresher pays once per refresh interval
+/// regardless of how many scrapers are pointed at the pooler.
 #[cfg(target_os = "linux")]
 fn update_socket_metrics() {
-    match get_socket_states_count(std::process::id()) {
+    // Prometheus exporter is OK with the cached value — the background
+    // refresher keeps it within `SOCKETS_REFRESH_INTERVAL` of reality.
+    match cached_socket_states_count(false) {
         Ok(states) => {
             let socket_states = [
                 ("tcp", states.get_tcp()),
