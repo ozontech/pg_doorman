@@ -11,6 +11,9 @@ pub enum Error {
     /// `connect()` failed: backend unreachable. Distinct from `SocketError`,
     /// which fires on read/write of an already established connection.
     ConnectError(String),
+    /// `connect()` failed because pg_doorman itself cannot allocate another fd.
+    /// This is local resource exhaustion, not evidence that PostgreSQL is down.
+    ConnectResourceExhausted(String),
     ClientBadStartup,
     ProtocolSyncError(String),
     BadQuery(String),
@@ -140,6 +143,9 @@ impl std::fmt::Display for Error {
         match &self {
             Error::SocketError(msg) => write!(f, "Socket connection error: {msg}"),
             Error::ConnectError(msg) => write!(f, "Backend connect error: {msg}"),
+            Error::ConnectResourceExhausted(msg) => {
+                write!(f, "Backend connect local resource exhausted: {msg}")
+            }
             Error::ClientBadStartup => write!(f, "Client sent an invalid startup message"),
             Error::ProtocolSyncError(msg) => write!(f, "Protocol synchronization error: {msg}"),
             Error::BadQuery(msg) => write!(f, "Invalid query: {msg}"),

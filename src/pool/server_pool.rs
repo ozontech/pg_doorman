@@ -463,6 +463,7 @@ impl ServerPool {
             Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
                 Error::ConnectError(_)
+                    | Error::ConnectResourceExhausted(_)
                     | Error::ServerUnavailableError(_, _)
                     | Error::ServerStartupParameterRejection { .. }
             ),
@@ -868,9 +869,11 @@ impl ServerPool {
     /// there's nothing to race against.
     ///
     /// On exhaustion: returns `ConnectError("all fallback candidates
-    /// rejected (...)")` with a deterministic per-reason summary. Each
-    /// failed candidate is also marked unhealthy (with exponential
-    /// backoff) and logged at WARN (rate-limited) or DEBUG.
+    /// rejected (...)")` with a deterministic per-reason summary, unless a
+    /// host-independent typed error (startup-parameter rejection or local fd
+    /// exhaustion) should be preserved for the caller. Each host-related failed
+    /// candidate is also marked unhealthy (with exponential backoff) and logged
+    /// at WARN (rate-limited) or DEBUG.
     async fn run_fallback_round(
         &self,
         fallback: &super::fallback::FallbackState,
@@ -1030,7 +1033,15 @@ impl ServerPool {
         // so wrapping it in 53300 would just rewrite the actionable
         // error.
         if summary.has_startup_parameter_rejection() {
-            if let Some(err) = summary.into_startup_rejection() {
+            if let Some(err) = summary.startup_rejection() {
+                return (Err(err), source);
+            }
+        }
+        // Local fd exhaustion is a pg_doorman resource problem, not a failed
+        // Patroni target. Preserve the typed error so the caller does not
+        // mistake it for "all backends unreachable".
+        if summary.has_resource_exhaustion() {
+            if let Some(err) = summary.resource_exhaustion() {
                 return (Err(err), source);
             }
         }
@@ -1174,6 +1185,7 @@ impl ServerPool {
             Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
                 Error::ConnectError(_)
+                    | Error::ConnectResourceExhausted(_)
                     | Error::ServerUnavailableError(_, _)
                     | Error::ServerStartupParameterRejection { .. }
             ),
@@ -1400,6 +1412,11 @@ struct FailureSummary {
     /// transport failures on the rest must still surface the PG
     /// error so the operator sees the actionable cause.
     typed_startup_rejection: Option<Error>,
+    /// First local fd exhaustion seen during a fallback round. This is not a
+    /// host failure and must not be wrapped back into `ConnectError`, otherwise
+    /// callers can mistake pg_doorman resource pressure for backend
+    /// reachability.
+    typed_resource_exhaustion: Option<Error>,
     counts: std::collections::HashMap<super::fallback::FailureReason, u32>,
 }
 
@@ -1427,6 +1444,11 @@ impl FailureSummary {
                 });
             }
         }
+        if matches!(reason, super::fallback::FailureReason::ResourceExhausted)
+            && self.typed_resource_exhaustion.is_none()
+        {
+            self.typed_resource_exhaustion = Some(err.clone());
+        }
         self.last_err = Some(err);
     }
 
@@ -1438,8 +1460,26 @@ impl FailureSummary {
         self.typed_startup_rejection.is_some()
     }
 
+    fn startup_rejection(&self) -> Option<Error> {
+        self.typed_startup_rejection.clone()
+    }
+
+    #[cfg(test)]
     fn into_startup_rejection(self) -> Option<Error> {
         self.typed_startup_rejection
+    }
+
+    fn has_resource_exhaustion(&self) -> bool {
+        self.typed_resource_exhaustion.is_some()
+    }
+
+    fn resource_exhaustion(&self) -> Option<Error> {
+        self.typed_resource_exhaustion.clone()
+    }
+
+    #[cfg(test)]
+    fn into_resource_exhaustion(self) -> Option<Error> {
+        self.typed_resource_exhaustion
     }
 
     /// Kept for the legacy "every failure was rejection" tests. The
@@ -1585,6 +1625,27 @@ mod tests {
         Error::ConnectError("server startup timed out after 5s".to_string())
     }
 
+    fn resource_exhausted_err() -> Error {
+        Error::ConnectResourceExhausted("too many open files".to_string())
+    }
+
+    #[test]
+    fn backend_unreachable_excludes_local_resource_exhaustion() {
+        let id = crate::errors::ServerIdentifier::new("alice".to_string(), "db", "pool_a");
+
+        assert!(is_backend_unreachable(&Error::ConnectError(
+            "connection refused".into()
+        )));
+        assert!(is_backend_unreachable(&Error::ServerUnavailableError(
+            "the database system is starting up".into(),
+            id,
+        )));
+        assert!(
+            !is_backend_unreachable(&resource_exhausted_err()),
+            "EMFILE/ENFILE is pg_doorman resource exhaustion, not backend unreachability"
+        );
+    }
+
     #[test]
     fn all_startup_parameter_rejection_false_when_empty() {
         let s = FailureSummary::default();
@@ -1648,6 +1709,27 @@ mod tests {
                 assert_eq!(sqlstate, "22023")
             }
             other => panic!("expected the retained rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failure_summary_retains_resource_exhaustion() {
+        let mut s = FailureSummary::default();
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        s.record(
+            resource_exhausted_err(),
+            super::super::fallback::FailureReason::ResourceExhausted,
+        );
+
+        assert!(s.has_resource_exhaustion());
+        match s.into_resource_exhaustion() {
+            Some(Error::ConnectResourceExhausted(msg)) => {
+                assert!(msg.contains("too many open files"), "unexpected msg: {msg}");
+            }
+            other => panic!("expected resource exhaustion, got {other:?}"),
         }
     }
 

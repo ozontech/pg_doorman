@@ -1,3 +1,4 @@
+use std::io;
 use std::time::Instant;
 
 use crate::config::tls::ServerTlsConfig;
@@ -147,9 +148,10 @@ pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<St
         Ok(s) => s,
         Err(err) => {
             log::error!("Failed to connect to Unix socket {host}:{port}: {err}");
-            return Err(Error::ConnectError(format!(
-                "Failed to connect to Unix socket {host}:{port}: {err}"
-            )));
+            return Err(connect_error_from_io(
+                &format!("Unix socket {host}:{port}"),
+                err,
+            ));
         }
     };
 
@@ -174,9 +176,7 @@ pub(crate) async fn create_tcp_stream_inner(
         Ok(stream) => stream,
         Err(err) => {
             log::error!("Failed to connect to TCP {host}:{port}: {err}");
-            return Err(Error::ConnectError(format!(
-                "Could not connect to {host}:{port}: {err}"
-            )));
+            return Err(connect_error_from_io(&format!("{host}:{port}"), err));
         }
     };
 
@@ -294,5 +294,55 @@ pub(crate) async fn create_tcp_stream_inner(
             "unexpected tls negotiation response={} (0x{:02x}) host={host} port={port}",
             other, other as u8
         ))),
+    }
+}
+
+fn connect_error_from_io(target: &str, err: io::Error) -> Error {
+    let msg = format!("Could not connect to {target}: {err}");
+    if is_fd_exhaustion_io(&err) {
+        Error::ConnectResourceExhausted(msg)
+    } else {
+        Error::ConnectError(msg)
+    }
+}
+
+#[cfg(unix)]
+fn is_fd_exhaustion_io(err: &io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE))
+}
+
+#[cfg(not(unix))]
+fn is_fd_exhaustion_io(_err: &io::Error) -> bool {
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_error_from_io_keeps_fd_exhaustion_typed() {
+        let err = io::Error::from_raw_os_error(libc::EMFILE);
+
+        match connect_error_from_io("127.0.0.1:5432", err) {
+            Error::ConnectResourceExhausted(msg) => {
+                assert!(msg.contains("127.0.0.1:5432"), "unexpected msg: {msg}");
+            }
+            other => panic!("expected ConnectResourceExhausted, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_error_from_io_keeps_regular_connect_errors_unreachable() {
+        let err = io::Error::from_raw_os_error(libc::ECONNREFUSED);
+
+        match connect_error_from_io("127.0.0.1:5432", err) {
+            Error::ConnectError(msg) => {
+                assert!(msg.contains("127.0.0.1:5432"), "unexpected msg: {msg}");
+            }
+            other => panic!("expected ConnectError, got {other:?}"),
+        }
     }
 }

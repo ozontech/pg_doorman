@@ -45,6 +45,9 @@ pub enum FailureReason {
     /// Couldn't reach the candidate at the transport layer (TCP refuse,
     /// network unreachable, DNS).
     ConnectError,
+    /// pg_doorman itself could not allocate another fd while trying to connect.
+    /// This is local resource exhaustion, not candidate host health.
+    ResourceExhausted,
     /// Server was reached but responded with FATAL during startup
     /// (auth, pg_hba, missing database).
     StartupError,
@@ -67,6 +70,7 @@ impl FailureReason {
     pub fn as_str(self) -> &'static str {
         match self {
             FailureReason::ConnectError => "connect_error",
+            FailureReason::ResourceExhausted => "resource_exhausted",
             FailureReason::StartupError => "startup_error",
             FailureReason::ServerUnavailable => "server_unavailable",
             FailureReason::Timeout => "timeout",
@@ -76,9 +80,13 @@ impl FailureReason {
     }
 
     /// Whether `mark_unhealthy` should record a cooldown entry. Operator
-    /// config errors must not blacklist a healthy candidate.
+    /// config errors and local fd exhaustion must not blacklist a healthy
+    /// candidate.
     pub fn warrants_host_cooldown(self) -> bool {
-        !matches!(self, FailureReason::StartupParameterRejection)
+        !matches!(
+            self,
+            FailureReason::StartupParameterRejection | FailureReason::ResourceExhausted
+        )
     }
 }
 
@@ -92,6 +100,7 @@ impl From<&Error> for FailureReason {
                 FailureReason::Timeout
             }
             Error::ConnectError(_) => FailureReason::ConnectError,
+            Error::ConnectResourceExhausted(_) => FailureReason::ResourceExhausted,
             Error::ServerUnavailableError(_, _) => FailureReason::ServerUnavailable,
             Error::ServerStartupError(_, _) => FailureReason::StartupError,
             Error::ServerStartupParameterRejection { .. } => {
@@ -312,9 +321,10 @@ impl FallbackState {
             .with_label_values(&[self.pool_name.as_str(), reason.as_str()])
             .inc();
 
-        // Operator config errors (e.g. invalid startup_parameter) must not
-        // blacklist a healthy candidate — the same misconfiguration will
-        // fail against every host until the operator fixes the config.
+        // Operator config errors (e.g. invalid startup_parameter) and local
+        // resource exhaustion must not blacklist a healthy candidate. The
+        // former fails against every host until the operator fixes the config;
+        // the latter is pg_doorman's fd table, not the candidate.
         // Count it in the failure metric (above), then return.
         if !reason.warrants_host_cooldown() {
             return;
@@ -895,6 +905,12 @@ mod tests {
             FailureReason::ConnectError
         );
         assert_eq!(
+            FailureReason::from(&Error::ConnectResourceExhausted(
+                "too many open files".into()
+            )),
+            FailureReason::ResourceExhausted
+        );
+        assert_eq!(
             FailureReason::from(&Error::ConnectError(
                 "server startup timed out to 1.2.3.4:5432 after 3000ms".into()
             )),
@@ -922,15 +938,17 @@ mod tests {
     }
 
     #[test]
-    fn warrants_host_cooldown_skips_only_startup_parameter_rejection() {
+    fn warrants_host_cooldown_skips_non_host_failures() {
         // The whole point of the new helper: every host-related failure
-        // still cools the host down, only operator-config errors do not.
+        // still cools the host down. Operator-config errors and local
+        // pg_doorman resource exhaustion are not host health signals.
         assert!(FailureReason::ConnectError.warrants_host_cooldown());
         assert!(FailureReason::StartupError.warrants_host_cooldown());
         assert!(FailureReason::ServerUnavailable.warrants_host_cooldown());
         assert!(FailureReason::Timeout.warrants_host_cooldown());
         assert!(FailureReason::Other.warrants_host_cooldown());
         assert!(!FailureReason::StartupParameterRejection.warrants_host_cooldown());
+        assert!(!FailureReason::ResourceExhausted.warrants_host_cooldown());
     }
 
     #[test]

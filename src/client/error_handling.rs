@@ -42,6 +42,12 @@ where
                 let message = format!("Network connection error: {msg}. Please check your network connection.");
                 self.send_error_response(&message, "08006", err).await
             }
+            Error::ConnectResourceExhausted(ref msg) => {
+                let message = format!(
+                    "Connection pooler local resource exhausted: {msg}. Please try again later."
+                );
+                self.send_error_response(&message, "53000", err).await
+            }
             Error::ServerUnavailableError(ref msg, _) => {
                 let message = format!("Server unavailable: {msg}. Please try again later.");
                 self.send_error_response(&message, "08006", err).await
