@@ -203,7 +203,7 @@
 </div>
 <h3 id="socket-metrics-linux-only"><a class="header" href="#socket-metrics-linux-only">Socket Metrics (Linux only)</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>pg_doorman_sockets</code></td><td>Counter of sockets used by pg_doorman by socket type. Types include: 'tcp' (IPv4 TCP sockets), 'tcp6' (IPv6 TCP sockets), 'unix' (Unix domain sockets), and 'unknown' (sockets of unrecognized type). Only available on Linux systems.</td></tr>
+<tr><td><code>pg_doorman_sockets</code></td><td>Counter of sockets used by pg_doorman by socket type. Types include: 'tcp' (IPv4 TCP sockets), 'tcp6' (IPv6 TCP sockets), 'unix' (Unix domain sockets), and 'unknown' (sockets of unrecognized type). Only available on Linux systems. Collected by a background task every 15 seconds; scrapes serve whatever the last tick produced, so reported counts can lag reality by up to one refresh interval. Use Prometheus <code>scrape_interval</code> of at least 15 s to avoid scraping the same snapshot twice.</td></tr>
 </tbody></table>
 </div>
 <h3 id="pool-metrics"><a class="header" href="#pool-metrics">Pool Metrics</a></h3>
