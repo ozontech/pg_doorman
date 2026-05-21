@@ -750,7 +750,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                          (process fd table exhausted; backing off)"
                                     );
                                 }
-                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                tokio::time::sleep(Duration::from_millis(10)).await;
                             } else {
                                 error!("Failed to accept new connection: {err}");
                             }
@@ -834,7 +834,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                          (process fd table exhausted; backing off)"
                                     );
                                 }
-                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                tokio::time::sleep(Duration::from_millis(10)).await;
                             } else {
                                 error!("Failed to accept Unix connection: {err}");
                             }
