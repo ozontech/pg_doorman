@@ -108,6 +108,11 @@ pub struct DoormanWorld {
     pub vars: HashMap<String, String>,
     /// Extra environment variables to pass to pg_doorman process
     pub doorman_env: Vec<(String, String)>,
+    /// Soft RLIMIT_NOFILE applied to the pg_doorman child via pre_exec at
+    /// spawn time. None leaves the limit inherited from the test runner.
+    /// Used by `pg_doorman started with NOFILE limit N and config:` to put
+    /// the daemon under a tight fd budget for migration-buffer tests.
+    pub doorman_nofile_limit: Option<u64>,
     pub pg_ssl_ca_cert_file: Option<NamedTempFile>,
     pub pg_ssl_ca_key_file: Option<NamedTempFile>,
     pub pg_ssl_cert_file: Option<NamedTempFile>,

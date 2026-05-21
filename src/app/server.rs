@@ -39,6 +39,11 @@ use crate::client::migration::{migration_receiver_task, migration_sender_task};
 /// Global counter for clients currently connected to the pg_doorman
 pub static CURRENT_CLIENT_COUNT: AtomicI64 = AtomicI64::new(0);
 
+/// Unix-epoch second of the last EMFILE/ENFILE error logged from the
+/// listener accept loop. Used to rate-limit the message so an exhausted
+/// fd table does not produce hundreds of identical lines per second.
+static ACCEPT_RESOURCE_LOG_LAST: AtomicI64 = AtomicI64::new(0);
+
 /// Global flag indicating graceful shutdown is in progress
 pub static SHUTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
@@ -72,9 +77,126 @@ pub static STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(||
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
     std::sync::OnceLock::new();
 
-/// Max buffered migration payloads before sender blocks.
-/// Sized to handle all clients migrating simultaneously without contention.
-const MIGRATION_CHANNEL_CAPACITY: usize = 4096;
+/// Upper bound on the migration channel capacity. Past this we stop
+/// growing the buffer regardless of how generous the nofile limit is —
+/// the parent does not need more than a few thousand pending dup'd fds
+/// in flight; beyond that the sender is the bottleneck, not the buffer.
+const MIGRATION_CHANNEL_CAPACITY_MAX: usize = 4096;
+
+/// Fds the migration step needs beyond whatever the parent already has
+/// open at the moment `safe_migration_capacity` runs: the parent half
+/// of the migration socketpair stays open until the sender task drains
+/// it, the readiness pipe consumes one parent-side fd until the new
+/// process signals back, and `migration_sender_task` itself opens a
+/// short-lived dirfd on `/proc/PID/net/tcp` per migrated client. The
+/// reserve keeps a margin between the channel queue and the soft limit
+/// so those concurrent fds do not push the parent over the edge during
+/// migration.
+const MIGRATION_SPAWN_RESERVE_FDS: u64 = 16;
+
+/// Count file descriptors currently open by this process by walking
+/// `/proc/self/fd`. SIGUSR2 binary upgrade is a rare event, so the O(N)
+/// readdir cost is acceptable; in exchange we get a true live measurement
+/// instead of a guess from `RLIMIT_NOFILE` alone. Returns `None` on
+/// platforms without `/proc` so callers can fall back.
+#[cfg(target_os = "linux")]
+fn count_open_fds() -> Option<u64> {
+    std::fs::read_dir("/proc/self/fd")
+        .ok()
+        .map(|entries| entries.count() as u64)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn count_open_fds() -> Option<u64> {
+    None
+}
+
+/// Compute a migration channel capacity that fits inside whatever fd
+/// budget the parent has *right now*. Each pending entry on the channel
+/// is a `dup`'d fd held in the parent until `migration_sender_task`
+/// drains it — without an upper bound the queue can grow past
+/// `RLIMIT_NOFILE` and turn the parent into a self-induced EMFILE
+/// generator.
+///
+/// `live_count + queued_dups + spawn_reserve` ≤ soft_limit must hold at
+/// every moment of migration. `live_count` is already on the books when
+/// we count `/proc/self/fd`, so the available headroom after reserving
+/// the spawn fds is exactly the budget we can hand to the queue without
+/// any further `/N` math.
+///
+/// Returns `None` when the headroom is zero — the caller treats that as
+/// "skip migration, run a normal graceful shutdown". Better to drop
+/// in-flight session continuity than to drive the parent over the limit.
+#[cfg(unix)]
+fn safe_migration_capacity() -> Option<usize> {
+    // SAFETY: `getrlimit` is async-signal-safe and writes only into the
+    // local `rl` buffer we pass in. No global state involved.
+    let soft_limit = unsafe {
+        let mut rl: libc::rlimit = std::mem::zeroed();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
+            rl.rlim_cur as u64
+        } else {
+            // getrlimit cannot really fail for RLIMIT_NOFILE on Linux, but
+            // if it does (foreign kernel, sandbox), fall back to the hard
+            // ceiling so we behave like the previous hard-coded version.
+            MIGRATION_CHANNEL_CAPACITY_MAX as u64
+        }
+    };
+    // No /proc/self/fd: pessimistic guess so we don't oversubscribe.
+    // Halfway between zero and the soft limit is the worst that a
+    // running pooler could realistically be at.
+    let open_fds = count_open_fds().unwrap_or(soft_limit / 2);
+    let headroom = soft_limit
+        .saturating_sub(open_fds)
+        .saturating_sub(MIGRATION_SPAWN_RESERVE_FDS);
+    if headroom == 0 {
+        return None;
+    }
+    Some((headroom as usize).clamp(1, MIGRATION_CHANNEL_CAPACITY_MAX))
+}
+
+#[cfg(not(unix))]
+fn safe_migration_capacity() -> Option<usize> {
+    Some(MIGRATION_CHANNEL_CAPACITY_MAX)
+}
+
+/// Minimum gap between two consecutive accept-loop EMFILE/ENFILE log lines.
+const ACCEPT_RESOURCE_LOG_INTERVAL_SECS: i64 = 5;
+
+/// Returns `true` when an `io::Error` from the accept syscall reflects a
+/// fully booked fd table (EMFILE or ENFILE). Both the TCP and Unix
+/// accept arms, and the pre-flight validator launch in
+/// `binary_upgrade_and_shutdown`, branch on the same condition and the
+/// shared check keeps that classification in one place.
+#[cfg(unix)]
+fn is_fd_exhaustion_io(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE),)
+}
+
+/// Single-flight throttle for the listener's "fd table exhausted" log
+/// line. Returns `true` only when the previous successful emission is
+/// at least `ACCEPT_RESOURCE_LOG_INTERVAL_SECS` in the past.
+///
+/// Uses `compare_exchange` rather than `swap` so a suppressed attempt
+/// does *not* slide the throttle window forward. With `swap` the very
+/// first EMFILE updates the last-seen timestamp; every subsequent error
+/// in the same second computes `now - last ≈ 0` and stays silent — even
+/// after five minutes of unbroken storm — because the timestamp keeps
+/// being refreshed by attempts that themselves never logged. CAS keeps
+/// `last` frozen at the timestamp of the most recent *emitted* line, so
+/// the next line is guaranteed to appear once that line is older than
+/// the interval.
+fn should_log_accept_resource_now() -> bool {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let last = ACCEPT_RESOURCE_LOG_LAST.load(Ordering::Relaxed);
+    now_secs.saturating_sub(last) >= ACCEPT_RESOURCE_LOG_INTERVAL_SECS
+        && ACCEPT_RESOURCE_LOG_LAST
+            .compare_exchange(last, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+}
 
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
     if args.daemon && std::env::var("NOTIFY_SOCKET").is_ok() {
@@ -656,7 +778,28 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {
-                            error!("Failed to accept new connection: {err}");
+                            // EMFILE/ENFILE on accept means the process fd
+                            // table is full. Without a backoff the loop
+                            // re-arms immediately on every queued SYN —
+                            // CPU spins, the log gets thousands of
+                            // identical lines per millisecond, and nothing
+                            // is freed by the loop itself. Sleep so the
+                            // kernel can drain its SYN-ack retry budget
+                            // (clients eventually give up) and so other
+                            // tasks have a chance to release fds. The log
+                            // is throttled to one line per 5 s; the
+                            // backoff prevents tight-loop CPU burn.
+                            if is_fd_exhaustion_io(&err) {
+                                if should_log_accept_resource_now() {
+                                    error!(
+                                        "Failed to accept new connection: {err} \
+                                         (process fd table exhausted; backing off)"
+                                    );
+                                }
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            } else {
+                                error!("Failed to accept new connection: {err}");
+                            }
                             continue;
                         }
                     };
@@ -718,7 +861,20 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (socket, _unix_addr) = match new_unix {
                         Ok(pair) => pair,
                         Err(err) => {
-                            error!("Failed to accept Unix connection: {err}");
+                            // Same EMFILE/ENFILE backoff as the TCP accept
+                            // loop above. Without it an exhausted fd table
+                            // turns this branch into a tight loop.
+                            if is_fd_exhaustion_io(&err) {
+                                if should_log_accept_resource_now() {
+                                    error!(
+                                        "Failed to accept Unix connection: {err} \
+                                         (process fd table exhausted; backing off)"
+                                    );
+                                }
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            } else {
+                                error!("Failed to accept Unix connection: {err}");
+                            }
                             continue;
                         }
                     };
@@ -909,19 +1065,50 @@ async fn binary_upgrade_and_shutdown(
                 info!("Configuration validation successful");
             }
             Err(e) => {
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                error!("!!!                    CRITICAL ERROR                               !!!");
-                error!("!!!         FAILED TO VALIDATE CONFIGURATION                       !!!");
-                error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                error!("");
-                error!("Could not execute configuration test: {}", e);
-                error!("Binary path: {}", exe_path);
-                error!("");
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
-                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                return None;
+                // EMFILE/ENFILE here means the local fd table is full, so
+                // `Command::output()` can't even spawn the validator. That
+                // is a local resource state, not a config problem; aborting
+                // the upgrade keeps the parent stuck in the same exhausted
+                // state. Skip the pre-flight check, log a WARN, and let the
+                // upgrade proceed so the child can take over and the
+                // parent's fds drain through client migration.
+                if is_fd_exhaustion_io(&e) {
+                    warn!(
+                        "Skipping pre-flight configuration validation: local fd \
+                         table exhausted ({e}). Proceeding with binary upgrade so \
+                         the child can drain the parent's fds via migration."
+                    );
+                } else {
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!(
+                        "!!!                    CRITICAL ERROR                               !!!"
+                    );
+                    error!(
+                        "!!!         FAILED TO VALIDATE CONFIGURATION                       !!!"
+                    );
+                    error!(
+                        "!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!"
+                    );
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!("");
+                    error!("Could not execute configuration test: {}", e);
+                    error!("Binary path: {}", exe_path);
+                    error!("");
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!(
+                        "!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!"
+                    );
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    return None;
+                }
             }
         }
     }
@@ -1089,21 +1276,50 @@ async fn binary_upgrade_and_shutdown(
                         *listener = None;
 
                         // Start client migration if socketpair was created
+                        // *and* the live nofile budget has room for the queue.
+                        // safe_migration_capacity returns None when current fd
+                        // usage plus the spawn reserve already meet the soft
+                        // limit; pushing dup'd fds onto a channel in that
+                        // condition would drive the parent over the limit and
+                        // is precisely the failure mode this PR was opened to
+                        // prevent. Better to drop session continuity than to
+                        // induce EMFILE on the way to a graceful shutdown.
                         if migration_ok {
-                            let (tx, rx) = mpsc::channel(MIGRATION_CHANNEL_CAPACITY);
-                            let _ = MIGRATION_TX.set(tx);
-                            // MIGRATION_IN_PROGRESS already set above (before SHUTDOWN)
-                            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-                            let sender_handle = tokio::spawn(migration_sender_task(
-                                migration_parent_fd,
-                                rx,
-                                shutdown_rx,
-                            ));
-                            migration_handles = Some(MigrationHandles {
-                                shutdown_tx,
-                                sender_handle,
-                            });
-                            info!("Client migration enabled");
+                            match safe_migration_capacity() {
+                                Some(capacity) => {
+                                    info!(
+                                        "Migration channel capacity: {capacity} \
+                                         (capped at {MIGRATION_CHANNEL_CAPACITY_MAX} \
+                                         by the live RLIMIT_NOFILE headroom)"
+                                    );
+                                    let (tx, rx) = mpsc::channel(capacity);
+                                    let _ = MIGRATION_TX.set(tx);
+                                    let (shutdown_tx, shutdown_rx) =
+                                        tokio::sync::oneshot::channel();
+                                    let sender_handle = tokio::spawn(migration_sender_task(
+                                        migration_parent_fd,
+                                        rx,
+                                        shutdown_rx,
+                                    ));
+                                    migration_handles = Some(MigrationHandles {
+                                        shutdown_tx,
+                                        sender_handle,
+                                    });
+                                    info!("Client migration enabled");
+                                }
+                                None => {
+                                    warn!(
+                                        "Migration channel disabled: no fd headroom \
+                                         left under the current RLIMIT_NOFILE; clients \
+                                         will reconnect to the new process instead of \
+                                         migrating sessions"
+                                    );
+                                    // Close the unused migration socketpair half
+                                    // we still hold so it doesn't sit in the fd
+                                    // table during the graceful shutdown.
+                                    unsafe { libc::close(migration_parent_fd) };
+                                }
+                            }
                         }
 
                         info!("Foreground binary upgrade complete, listener released");

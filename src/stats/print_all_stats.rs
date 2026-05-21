@@ -55,11 +55,13 @@ pub fn print_all_stats() {
     {
         if clients_flag {
             // Background refresher keeps the cache fresh; the periodic
-            // stats logger does not need a real-time walk.
+            // stats logger does not need a real-time walk. The EMFILE
+            // downgrade from this PR's earlier draft is no longer needed
+            // here because no `/proc` walk happens on this code path —
+            // it can only return an error if the bootstrap walk in the
+            // background refresher itself failed, and that path already
+            // logs its own warn.
             match cached_socket_states_count(false) {
-                // The `Display` impl now emits the full `[sockets] ...` line
-                // so that grep/awk pipelines can parse it the same way as the
-                // pool-stats lines above.
                 Ok(info) => info!("{}", *info),
                 Err(err) => error!("[sockets] error: {err}"),
             };

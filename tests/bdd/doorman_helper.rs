@@ -294,8 +294,8 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         None => stderr_cfg,
     };
 
-    let child = Command::new(doorman_binary)
-        .arg(&config_path)
+    let mut cmd = Command::new(doorman_binary);
+    cmd.arg(&config_path)
         .arg("-l")
         .arg(log_level)
         .envs(
@@ -305,9 +305,27 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
                 .map(|(k, v)| (k.as_str(), v.as_str())),
         )
         .stdout(stdout_cfg)
-        .stderr(stderr_cfg)
-        .spawn()
-        .expect("Failed to start pg_doorman");
+        .stderr(stderr_cfg);
+
+    if let Some(nofile_limit) = world.doorman_nofile_limit {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: pre_exec runs between fork and exec in the child. setrlimit
+        // is async-signal-safe per POSIX. The closure captures only a primitive.
+        unsafe {
+            cmd.pre_exec(move || {
+                let rl = libc::rlimit {
+                    rlim_cur: nofile_limit as libc::rlim_t,
+                    rlim_max: nofile_limit as libc::rlim_t,
+                };
+                if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    let child = cmd.spawn().expect("Failed to start pg_doorman");
 
     world.doorman_process = Some(child);
 
@@ -319,6 +337,19 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         log_path.as_deref(),
     )
     .await;
+}
+
+/// Like `start_doorman_with_config`, but spawns pg_doorman with a tight
+/// `RLIMIT_NOFILE` soft limit applied via `pre_exec`. Used by migration-fd-budget
+/// scenarios that need to reproduce EMFILE pressure during binary upgrade.
+#[given(expr = "pg_doorman started with NOFILE limit {int} and config:")]
+pub async fn start_doorman_with_nofile_limit_and_config(
+    world: &mut DoormanWorld,
+    nofile_limit: u64,
+    step: &Step,
+) {
+    world.doorman_nofile_limit = Some(nofile_limit);
+    start_doorman_with_config(world, step).await;
 }
 
 #[given("pg_doorman shutdown-only mode")]

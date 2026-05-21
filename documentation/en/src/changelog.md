@@ -1,5 +1,48 @@
 # Changelog
 
+### 3.10.5
+
+#### Binary upgrade survives a tight `RLIMIT_NOFILE`
+
+SIGUSR2 binary upgrade now handles `EMFILE`/`ENFILE` from the old
+process without spinning in the accept loop or overfilling the migration
+queue.
+
+* The TCP and Unix accept loops treat `EMFILE`/`ENFILE` as local resource
+  pressure: they sleep for 10 ms and log at most once every 5 seconds.
+  Other accept errors still log normally.
+
+* The migration channel is no longer fixed at 4096 entries. At upgrade
+  time pg_doorman reads the current `RLIMIT_NOFILE`, counts open fds via
+  `/proc/self/fd`, reserves headroom for the handoff pipe/socketpair and
+  per-client fd work, and caps the queue by the remaining budget. If no
+  safe headroom remains, pg_doorman starts the new process without client
+  migration and logs the budget decision.
+
+* Client migration reserves a channel slot before calling `dup()` on the
+  client fd. A full channel now applies backpressure before creating an
+  extra fd.
+
+If the pre-flight `pg_doorman -t` spawn fails with local `EMFILE`/`ENFILE`,
+pg_doorman skips that validation step and continues with the binary
+upgrade. Other validation failures still abort the upgrade before shutdown.
+
+#### `/metrics` scrape uses cached socket-state counts
+
+`/metrics` no longer walks `/proc/PID/net/tcp` and `/proc/PID/net/unix`
+on the request path. On hosts with thousands of sockets, that synchronous
+walk could hold worker threads long enough for regular Prometheus scrapes
+to increase client p99.
+
+Socket-state counts now live in a cached `ArcSwap` snapshot refreshed by a
+background `spawn_blocking` task. The `/metrics` handler, periodic
+`print_all_stats` output, and admin `SHOW SOCKETS` command read the cached
+snapshot. The Web UI sockets endpoint still refreshes socket details on
+demand for operator use.
+
+The cache keeps scrape cost independent of the number of live sockets in
+the common Prometheus path.
+
 ### 3.10.1
 
 #### Configurable kernel TCP socket buffer size
@@ -839,7 +882,7 @@ The direct-handoff queue is FIFO. On a 500-client / 40-connection AWS Fargate be
 
 - **`server_lifetime` default changed from 5 minutes to 20 minutes**: The previous default of 5 minutes was shorter than `idle_timeout` (10 minutes), which meant `idle_timeout` could never trigger — connections were always killed by `server_lifetime` first. Changed to 20 minutes so that `idle_timeout` (10 min) handles idle cleanup while `server_lifetime` (20 min) rotates long-lived connections. Note: `idle_timeout` only applies to connections that have been used at least once — prewarmed/replenished connections that were never checked out by a client are not subject to `idle_timeout` and will only be closed when `server_lifetime` expires.
 
-- **`idle_timeout = 0` did not disable idle timeout**: Setting `idle_timeout` to `0` was supposed to disable idle connection cleanup (consistent with PgBouncer's `server_idle_timeout = 0` semantics and our own `server_lifetime = 0` behavior). Instead, it closed connections after ~1ms of being idle. Fixed by adding an `idle_timeout_ms > 0` guard before the elapsed time check.
+- **`idle_timeout = 0` did not disable idle timeout**: `idle_timeout = 0` should disable idle connection cleanup, matching PgBouncer's `server_idle_timeout = 0` and pg_doorman's `server_lifetime = 0`. Instead, pg_doorman closed connections after ~1 ms of idle time. Fixed by adding an `idle_timeout_ms > 0` guard before the elapsed-time check.
 
 - **`idle_timeout` had no jitter — synchronized mass closures**: Unlike `server_lifetime` which applies ±20% per-connection jitter to prevent thundering herd, `idle_timeout` used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now `idle_timeout` applies the same ±20% per-connection jitter as `server_lifetime`.
 
@@ -1063,7 +1106,7 @@ The direct-handoff queue is FIFO. On a 500-client / 40-connection AWS Fargate be
 
 **Testing:**
 
-- **Integration fuzz testing framework**: Added comprehensive BDD-based fuzz tests (`@fuzz` tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages.
+- **Integration fuzz tests**: Added BDD fuzz tests (`@fuzz` tag) for malformed PostgreSQL protocol messages.
 - All fuzz tests connect and authenticate first, then send malformed data to test post-authentication resilience.
 
 **CI/CD:**
@@ -1090,8 +1133,8 @@ The direct-handoff queue is FIFO. On a 500-client / 40-connection AWS Fargate be
 
 **Testing:**
 
-- Added comprehensive .NET client tests for Describe flow with cached prepared statements (`describe_flow_cached.cs`).
-- Added aggressive mixed tests combining batch operations, prepared statements, and extended protocol (`aggressive_mixed.cs`).
+- Added .NET client tests for Describe flow with cached prepared statements (`describe_flow_cached.cs`).
+- Added mixed tests combining batch operations, prepared statements, and extended protocol (`aggressive_mixed.cs`).
 
 ### 3.0.2 <small>Jan 14, 2026</small>
 
@@ -1111,13 +1154,14 @@ The direct-handoff queue is FIFO. On a 500-client / 40-connection AWS Fargate be
 
 ### 3.0.0 <small>Jan 12, 2026</small>
 
-**Major Release — Complete Architecture Refactoring**
+**Architecture refactor**
 
-This release represents a significant milestone with a complete codebase refactoring that dramatically improves async protocol support, making PgDoorman the most efficient connection pooler for asynchronous PostgreSQL workloads.
+PgDoorman 3.0.0 reorganizes the client, config, admin, auth, and
+prometheus modules, and adds the `patroni_proxy` binary.
 
 **New Features:**
 
-- **patroni_proxy** — A new high-performance TCP proxy for Patroni-managed PostgreSQL clusters:
+- **patroni_proxy** — a TCP proxy for Patroni-managed PostgreSQL clusters:
     - Zero-downtime connection management — existing connections are preserved during cluster topology changes
     - Hot upstream updates — automatic discovery of cluster members via Patroni REST API without connection drops
     - Role-based routing — route connections to leader, sync replicas, or async replicas based on configuration
@@ -1126,15 +1170,14 @@ This release represents a significant milestone with a complete codebase refacto
 
 **Improvements:**
 
-- **Complete codebase refactoring** — modular architecture with better separation of concerns:
+- **Module split**:
     - Client handling split into dedicated modules (core, entrypoint, protocol, startup, transaction)
     - Configuration system reorganized into focused modules (general, pool, user, tls, prometheus, talos)
     - Admin, auth, and prometheus subsystems extracted into separate modules
-    - Improved code maintainability and testability
-- **Enhanced async protocol support** — significantly improved handling of asynchronous PostgreSQL protocol, providing better performance than other connection poolers for async workloads
-- **Extended protocol improvements** — better client buffering and message handling for extended query protocol
+- **Async protocol support** — improved handling of asynchronous PostgreSQL protocol messages.
+- **Extended protocol** — improved client buffering and message handling.
 - **xxhash3 for prepared statement hashing** — faster hash computation for prepared statement cache
-- **Comprehensive BDD testing framework** — multi-language integration tests (Go, Rust, Python, Node.js, .NET) with Docker-based reproducible environment
+- **BDD test framework** — multi-language integration tests (Go, Rust, Python, Node.js, .NET) in a Docker-based environment.
 
 ### 2.5.0 <small>Nov 18, 2025</small>
 
