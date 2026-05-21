@@ -50,7 +50,9 @@ pub use connections::{
 };
 pub use server::ServerStats;
 #[cfg(target_os = "linux")]
-pub use socket::{cached_socket_states_count, get_socket_states_count};
+pub use socket::{
+    cached_socket_states_count, get_socket_states_count, spawn_socket_states_refresh,
+};
 
 // Type definitions and global state
 // -----------------------------------------------------------------------------

@@ -6,6 +6,7 @@ use flate2::Compression;
 use log::{debug, error, warn};
 use prometheus::{Encoder, TextEncoder};
 use std::io::Write;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
@@ -18,6 +19,17 @@ use super::REGISTRY;
 /// DEBUG so a profiler-driven investigation can collect the trace without
 /// noise.
 const SLOW_RESPONSE_THRESHOLD: Duration = Duration::from_millis(100);
+
+/// Minimum gap between consecutive slow-response WARN lines. Without it a
+/// misconfigured scraper (e.g. accidental `scrape_interval: 1s`) under a
+/// genuine slow path turns into 1 warn/s, drowning out real signal in the
+/// log pipeline. Operators learn nothing from the 2nd, 10th, 100th copy of
+/// the same line, so we throttle to one per N seconds.
+const SLOW_RESPONSE_LOG_INTERVAL_SECS: i64 = 30;
+
+/// Unix-epoch second of the last slow-response WARN emitted from this path.
+/// Shared across all in-flight `/metrics` requests so the gate is global.
+static SLOW_RESPONSE_LAST_WARN: AtomicI64 = AtomicI64::new(0);
 
 /// Builds the Prometheus metrics body and writes a complete HTTP/1.1 response
 /// onto the supplied writer. The mux must have already parsed the request
@@ -80,19 +92,32 @@ pub(crate) async fn write_metrics_response(
     // regression checks: a sudden jump in this number on previously-quiet
     // deployments points straight back at this code path.
     let elapsed = started.elapsed();
+    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
     if elapsed >= SLOW_RESPONSE_THRESHOLD {
-        warn!(
-            "/metrics request handled in {:.1} ms (bytes={}, gzip={})",
-            elapsed.as_secs_f64() * 1000.0,
-            body_len,
-            accepts_gzip
-        );
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let last = SLOW_RESPONSE_LAST_WARN.load(Ordering::Relaxed);
+        if now_secs - last >= SLOW_RESPONSE_LOG_INTERVAL_SECS
+            && SLOW_RESPONSE_LAST_WARN
+                .compare_exchange(last, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            warn!(
+                "/metrics request handled in {elapsed_ms:.1} ms \
+                 (bytes={body_len}, gzip={accepts_gzip}, rate-limited 1/{SLOW_RESPONSE_LOG_INTERVAL_SECS}s)"
+            );
+        } else {
+            debug!(
+                "/metrics request handled in {elapsed_ms:.1} ms \
+                 (bytes={body_len}, gzip={accepts_gzip}, slow but warn-rate-limited)"
+            );
+        }
     } else {
         debug!(
-            "/metrics request handled in {:.1} ms (bytes={}, gzip={})",
-            elapsed.as_secs_f64() * 1000.0,
-            body_len,
-            accepts_gzip
+            "/metrics request handled in {elapsed_ms:.1} ms \
+             (bytes={body_len}, gzip={accepts_gzip})"
         );
     }
 }

@@ -13,9 +13,9 @@ use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
 use crate::pool::{get_all_pools, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
-use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
 #[cfg(target_os = "linux")]
-use crate::stats::get_socket_states_count;
+use crate::stats::cached_socket_states_count;
+use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
 use crate::stats::pool::PoolStats;
 use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE};
 use crate::stats::{
@@ -718,7 +718,10 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-    let sockets_info = match get_socket_states_count(std::process::id()) {
+    // SHOW SOCKETS is operational tooling: DBA scripts may poll it on tight
+    // schedules. Cached read keeps that pattern from devolving into a
+    // per-call `/proc` walk; the background refresher bounds staleness.
+    let sockets_info = match cached_socket_states_count(false) {
         Ok(info) => info,
         Err(_) => return Err(Error::ServerError),
     };

@@ -1,8 +1,8 @@
+use arc_swap::ArcSwapOption;
 use libc::{c_int, mode_t, stat};
 #[cfg(debug_assertions)]
 use log::debug;
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
+use log::warn;
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::fmt::{Debug, Display, Formatter};
@@ -13,7 +13,7 @@ use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{fs, mem, ptr, slice};
 
 #[derive(Debug)]
@@ -368,78 +368,94 @@ pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoE
     Ok(result)
 }
 
-/// Shared cache for the most recent `get_socket_states_count` result. Both
-/// the Prometheus exporter and the periodic stats logger consume the count;
-/// without a shared cache each path walks `/proc/<pid>/fd` and the kernel
-/// socket tables independently, which on a pooler with thousands of
-/// client connections is a measurable syscall storm (the kernel-side
-/// `established_get_first` + `vsnprintf` work dominates user-space CPU
-/// even when the pooler itself is nearly idle).
-struct CachedSocketStates {
-    states: Arc<SocketStateCount>,
-    refreshed_at: Instant,
+/// Shared snapshot of the most recent `get_socket_states_count` result.
+/// Refreshed by `spawn_socket_states_refresh` on its own cadence so
+/// consumers that don't need real-time freshness (Prometheus exporter,
+/// periodic stats logger, admin `SHOW SOCKETS`) read it lock-free.
+///
+/// The Web UI's `/api/sockets` is the only consumer that needs real-time
+/// freshness — it passes `fresh=true` and pays for a direct walk.
+static SOCKET_STATES_CACHE: ArcSwapOption<SocketStateCount> = ArcSwapOption::const_empty();
+
+/// Returns the process's socket-state breakdown. One entrypoint for both
+/// real-time (Web UI) and cached (Prometheus, admin, logger) consumers so
+/// the walk implementation is never duplicated.
+///
+/// - `fresh = true`: synchronously walks `/proc/<pid>/fd` plus the kernel
+///   socket tables. Side effect: the freshly-walked snapshot is stored
+///   into the shared cache so any cached reader that arrives moments
+///   later sees the up-to-date value.
+/// - `fresh = false`: returns whatever the background refresher last
+///   produced, or an empty snapshot when the daemon has just started and
+///   the refresher hasn't ticked yet. Never blocks, never walks `/proc`.
+///
+/// The reason cached readers never trigger a walk on cold-start: doing
+/// so reintroduces the per-scrape syscall storm this module exists to
+/// remove. One empty scrape immediately after restart is a better trade.
+pub fn cached_socket_states_count(fresh: bool) -> Result<Arc<SocketStateCount>, SocketInfoErr> {
+    if fresh {
+        let pid = std::process::id();
+        let states = Arc::new(get_socket_states_count(pid)?);
+        SOCKET_STATES_CACHE.store(Some(states.clone()));
+        return Ok(states);
+    }
+    Ok(SOCKET_STATES_CACHE
+        .load_full()
+        .unwrap_or_else(|| Arc::new(SocketStateCount::default())))
 }
 
-static CACHE: Lazy<Mutex<Option<CachedSocketStates>>> = Lazy::new(|| Mutex::new(None));
-/// Single-flight gate: only one caller walks `/proc/<pid>/...` at a time.
-/// Latecomers wait, then observe the freshly-stored cache and return without
-/// repeating the work.
-static REFRESH_LOCK: Mutex<()> = Mutex::new(());
-
-/// Returns a snapshot of the process's socket states, reusing a cached value
-/// if it is younger than `ttl`. All callers within the TTL share the same
-/// `Arc<SocketStateCount>`.
-///
-/// Callers pick `ttl` to match their accuracy budget. The metrics exporter
-/// and the periodic stats logger both pass 10 s today, which keeps the
-/// gauges fresh within the typical Prometheus scrape interval while
-/// collapsing concurrent consumers onto a single per-cycle collection.
-pub fn cached_socket_states_count(
-    pid: u32,
-    ttl: Duration,
-) -> Result<Arc<SocketStateCount>, SocketInfoErr> {
-    // Fast path: cache hit.
-    if let Some(snap) = CACHE.lock().as_ref() {
-        if snap.refreshed_at.elapsed() < ttl {
-            return Ok(snap.states.clone());
+/// Spawn the background refresher. Must be called once, after a tokio
+/// runtime is available. Each tick runs the synchronous walk on
+/// `spawn_blocking` so the daemon's network worker threads never carry
+/// the syscall cost. Skipped ticks (when a previous walk overruns the
+/// interval) are dropped rather than coalesced into a burst, matching
+/// the convention used by other periodic tasks in this codebase.
+pub fn spawn_socket_states_refresh(refresh_interval: Duration) {
+    let pid = std::process::id();
+    tokio::task::spawn(async move {
+        let mut interval = tokio::time::interval(refresh_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            // `tokio::time::interval` returns immediately on the first
+            // tick, so the cache is populated as soon as the runtime
+            // schedules this task — readers only see the empty fallback
+            // for the few hundred microseconds until then.
+            interval.tick().await;
+            // Move the walk off the runtime worker — kernel-side `/proc/net/tcp`
+            // and per-fd readlink syscalls are blocking, and the whole point of
+            // this module is to keep them away from threads that serve clients.
+            let result = tokio::task::spawn_blocking(move || get_socket_states_count(pid)).await;
+            match result {
+                Ok(Ok(states)) => {
+                    SOCKET_STATES_CACHE.store(Some(Arc::new(states)));
+                }
+                Ok(Err(e)) => {
+                    warn!("socket-states refresh failed: {e}");
+                }
+                Err(join_err) => {
+                    warn!("socket-states refresh task panicked: {join_err}");
+                }
+            }
         }
-    }
-
-    // Slow path. Serialize refreshes so a burst of consumers (Prometheus
-    // scrape + stats tick happening to align) does the work once.
-    let _refresh = REFRESH_LOCK.lock();
-
-    // Recheck after taking the lock — a peer may have just refreshed.
-    if let Some(snap) = CACHE.lock().as_ref() {
-        if snap.refreshed_at.elapsed() < ttl {
-            return Ok(snap.states.clone());
-        }
-    }
-
-    let states = Arc::new(get_socket_states_count(pid)?);
-    *CACHE.lock() = Some(CachedSocketStates {
-        states: states.clone(),
-        refreshed_at: Instant::now(),
     });
-    Ok(states)
 }
 
 const TCP_ROW_COLUMNS: usize = 17;
 const UNIX_ROW_MIN_COLUMNS: usize = 7;
 
-fn fill_tcp(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut TcpStateCount) {
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+fn fill_tcp<R: BufRead>(mut reader: R, h_map: &mut HashSet<u64>, counts: &mut TcpStateCount) {
+    // Reuse one row buffer across iterations; the parser strictly borrows
+    // against it for the lifetime of the iteration body.
+    let mut line = String::with_capacity(256);
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
         // 39: A495FB0A:C566 2730FB0A:1920 01 00000000:00000000 02:00000418 00000000  5432        0 58864734 2 ff151d0987405780 20 4 30 94 -1
         //                                 ^^connection state                                        ^^inode
-        // Collect once into a fixed-capacity Vec borrowed against `line`.
-        // Reusing a Vec across iterations is impossible here because each
-        // line is freshly allocated by `BufReader::lines` and dropped at
-        // end-of-iteration; the per-row allocation cost is one Vec of
-        // pointers, dwarfed by the kernel-side cost of producing the row.
         let tokens: Vec<&str> = line.split_ascii_whitespace().collect();
         if tokens.len() != TCP_ROW_COLUMNS {
             continue;
@@ -448,11 +464,17 @@ fn fill_tcp(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut TcpS
             Ok(i) => i,
             Err(_) => continue,
         };
-        if !h_map.remove(&inode) {
+        if !h_map.contains(&inode) {
             continue;
         }
+        // Match the master ordering: only remove from h_map once we have a
+        // valid connection state. A row with a parseable inode but a
+        // malformed state column keeps the inode in h_map so the eventual
+        // tally lands in `result.unknown` — that bucket is intentional
+        // signal for operators, not a quirk to optimise away.
         if let Ok(conn_state) = u8::from_str_radix(tokens[3], 16) {
             counts.increase_count(conn_state);
+            h_map.remove(&inode);
         }
         #[cfg(debug_assertions)]
         {
@@ -463,12 +485,15 @@ fn fill_tcp(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut TcpS
     }
 }
 
-fn fill_unix(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut SocketStateCount) {
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+fn fill_unix<R: BufRead>(mut reader: R, h_map: &mut HashSet<u64>, counts: &mut SocketStateCount) {
+    let mut line = String::with_capacity(256);
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
         // ffff9b5456bcb400: 00000003 00000000 00000000 0001 03 281629229 /optional/path
         //                                              ^type ^state ^inode
         let tokens: Vec<&str> = line.split_ascii_whitespace().collect();
@@ -479,22 +504,31 @@ fn fill_unix(reader: BufReader<File>, h_map: &mut HashSet<u64>, counts: &mut Soc
             Ok(i) => i,
             Err(_) => continue,
         };
-        if !h_map.remove(&inode) {
+        if !h_map.contains(&inode) {
             continue;
         }
         let sock_type = match u8::from_str_radix(tokens[4], 16) {
             Ok(s) => s,
             Err(_) => continue,
         };
+        // Same ordering rule as `fill_tcp`: a row reaches `unknown` if any
+        // field after the inode fails to parse.
         match sock_type {
             // SOCK_STREAM=0001, SOCK_DGRAM=0002, SOCK_SEQPACKET=0005.
             1 => {
                 if let Ok(conn_state) = u8::from_str_radix(tokens[5], 16) {
                     counts.unix_stream.increase_count(conn_state);
+                    h_map.remove(&inode);
                 }
             }
-            2 => counts.unix_dgram += 1,
-            5 => counts.unix_seq_packet += 1,
+            2 => {
+                counts.unix_dgram += 1;
+                h_map.remove(&inode);
+            }
+            5 => {
+                counts.unix_seq_packet += 1;
+                h_map.remove(&inode);
+            }
             _ => {}
         }
     }
@@ -783,5 +817,130 @@ mod tests {
                 "sockets line collided with pool-stats key {collision:?}"
             );
         }
+    }
+
+    // ----------------------------------------------------------------------
+    // Pure parsing helpers — must keep working when /proc/net/tcp rows are
+    // truncated, padded, or have a malformed state column. The `unknown`
+    // bucket exists for the malformed case and is intentional signal for
+    // operators; tests pin that behaviour.
+    // ----------------------------------------------------------------------
+
+    #[test]
+    fn get_inode_u64_parses_socket_link() {
+        assert_eq!(get_inode_u64("socket:[1956357]"), Some(1956357));
+    }
+
+    #[test]
+    fn get_inode_u64_rejects_non_socket_link() {
+        assert_eq!(get_inode_u64("/dev/null"), None);
+    }
+
+    #[test]
+    fn get_inode_u64_rejects_malformed_inode() {
+        assert_eq!(get_inode_u64("socket:[]"), None);
+        assert_eq!(get_inode_u64("socket:[abc]"), None);
+    }
+
+    fn tcp_row(state_hex: &str, inode: u64) -> String {
+        // 17 whitespace-separated columns; only the state at idx 3 and
+        // inode at idx 9 are inspected. Spacing matches the actual layout.
+        format!(
+            "  0: 0100007F:1920 00000000:0000 {state_hex} \
+             00000000:00000000 00:00000000 00000000  5432        0 \
+             {inode} 1 0000000000000000 100 0 0 10 0"
+        )
+    }
+
+    #[test]
+    fn fill_tcp_counts_known_state() {
+        let mut h_map: HashSet<u64> = [1001u64].into_iter().collect();
+        let mut counts = TcpStateCount::default();
+        // 01 == TCP_ESTABLISHED.
+        let body = tcp_row("01", 1001);
+        fill_tcp(body.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.established, 1);
+        // Inode consumed: the caller's leftover set will not double-count.
+        assert!(!h_map.contains(&1001));
+    }
+
+    #[test]
+    fn fill_tcp_leaves_inode_for_unknown_bucket_on_bad_state() {
+        // Malformed hex in the state column: the inode must NOT be removed
+        // from h_map, because the caller tallies what is left over into
+        // `result.unknown`. DBAs rely on that bucket to spot rows that
+        // surprise the parser; if we silently dropped them, the line
+        // would lie about how many sockets the process actually has.
+        let mut h_map: HashSet<u64> = [2002u64].into_iter().collect();
+        let mut counts = TcpStateCount::default();
+        let body = tcp_row("zz", 2002);
+        fill_tcp(body.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.total_count, 0);
+        assert!(h_map.contains(&2002));
+    }
+
+    #[test]
+    fn fill_tcp_ignores_rows_for_other_pids() {
+        // h_map carries this process's inodes; rows that name an inode we
+        // do not own must be skipped without touching the counters or the
+        // set.
+        let mut h_map: HashSet<u64> = [3003u64].into_iter().collect();
+        let mut counts = TcpStateCount::default();
+        let body = tcp_row("01", 9999);
+        fill_tcp(body.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.established, 0);
+        assert!(h_map.contains(&3003));
+    }
+
+    fn unix_row(type_hex: &str, state_hex: &str, inode: u64) -> String {
+        // 7 columns minimum; the path at idx 7 is allowed to be absent.
+        format!("ffff0000: 00000003 00000000 00000000 {type_hex} {state_hex} {inode}")
+    }
+
+    #[test]
+    fn fill_unix_counts_stream_socket() {
+        let mut h_map: HashSet<u64> = [4004u64].into_iter().collect();
+        let mut counts = SocketStateCount::default();
+        // 0001 = SOCK_STREAM, state 03 = connected.
+        let body = unix_row("0001", "03", 4004);
+        fill_unix(body.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.unix_stream.connected, 1);
+        assert!(!h_map.contains(&4004));
+    }
+
+    #[test]
+    fn fill_unix_counts_dgram_and_seqpacket() {
+        let mut h_map: HashSet<u64> = [5005u64, 6006u64].into_iter().collect();
+        let mut counts = SocketStateCount::default();
+        let dgram = unix_row("0002", "00", 5005);
+        let seq = unix_row("0005", "00", 6006);
+        fill_unix(dgram.as_bytes(), &mut h_map, &mut counts);
+        fill_unix(seq.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.unix_dgram, 1);
+        assert_eq!(counts.unix_seq_packet, 1);
+    }
+
+    #[test]
+    fn fill_unix_leaves_inode_for_unknown_bucket_on_bad_type() {
+        let mut h_map: HashSet<u64> = [7007u64].into_iter().collect();
+        let mut counts = SocketStateCount::default();
+        // Type 0099 is not in {1, 2, 5} — leave inode for `unknown`.
+        let body = unix_row("0099", "00", 7007);
+        fill_unix(body.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.unix_dgram, 0);
+        assert_eq!(counts.unix_seq_packet, 0);
+        assert_eq!(counts.unix_stream.total_count, 0);
+        assert!(h_map.contains(&7007));
+    }
+
+    #[test]
+    fn fill_unix_leaves_inode_for_unknown_bucket_on_bad_state() {
+        let mut h_map: HashSet<u64> = [8008u64].into_iter().collect();
+        let mut counts = SocketStateCount::default();
+        // SOCK_STREAM with garbage state: state parse fails, inode stays.
+        let body = unix_row("0001", "zz", 8008);
+        fill_unix(body.as_bytes(), &mut h_map, &mut counts);
+        assert_eq!(counts.unix_stream.total_count, 0);
+        assert!(h_map.contains(&8008));
     }
 }
