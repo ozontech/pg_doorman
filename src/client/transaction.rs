@@ -703,35 +703,54 @@ where
                                 self.username, self.pool_name, self.connection_id
                             );
                         }
-                        Some(tx) => match self.prepare_migration() {
-                            Err(e) => {
-                                warn!(
-                                    "[{}@{} #c{}] prepare_migration failed: {e}",
-                                    self.username, self.pool_name, self.connection_id
-                                );
-                            }
-                            Ok(payload) => match tx.try_send(payload) {
+                        Some(tx) => {
+                            // Reserve a channel slot *before* duplicating the
+                            // client fd. `prepare_migration` dups the socket
+                            // (and the protocol state buffers) on every call;
+                            // sending the resulting payload into a full channel
+                            // is a no-op that immediately drops the dup, which
+                            // closes the extra fd but still spent its kernel
+                            // allocation along the way. On a tight nofile
+                            // budget that can be the EMFILE that takes the
+                            // process down. `try_reserve` tells us up front
+                            // whether the migrator has room; if not, we let
+                            // the client keep talking to the old process and
+                            // the regular shutdown path will close the
+                            // session.
+                            match tx.try_reserve() {
                                 Err(e) => {
                                     warn!(
-                                        "[{}@{} #c{}] migration channel send failed: {e}",
+                                        "[{}@{} #c{}] migration channel reserve failed: {e}",
                                         self.username, self.pool_name, self.connection_id
                                     );
                                 }
-                                Ok(()) => {
-                                    info!(
-                                        "[{}@{} #c{}] client {} migrated to new process",
-                                        self.username,
-                                        self.pool_name,
-                                        self.connection_id,
-                                        self.addr
-                                    );
-                                    // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
-                                    // The caller (server.rs accept loop) decrements it
-                                    // unconditionally after client_entrypoint() returns.
-                                    return Ok(());
-                                }
-                            },
-                        },
+                                Ok(permit) => match self.prepare_migration() {
+                                    Err(e) => {
+                                        warn!(
+                                            "[{}@{} #c{}] prepare_migration failed: {e}",
+                                            self.username, self.pool_name, self.connection_id
+                                        );
+                                        // Permit dropped here: the reserved
+                                        // slot is released back to the channel
+                                        // so a later client can use it.
+                                    }
+                                    Ok(payload) => {
+                                        permit.send(payload);
+                                        info!(
+                                            "[{}@{} #c{}] client {} migrated to new process",
+                                            self.username,
+                                            self.pool_name,
+                                            self.connection_id,
+                                            self.addr
+                                        );
+                                        // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
+                                        // The caller (server.rs accept loop) decrements it
+                                        // unconditionally after client_entrypoint() returns.
+                                        return Ok(());
+                                    }
+                                },
+                            }
+                        }
                     }
                 }
             }

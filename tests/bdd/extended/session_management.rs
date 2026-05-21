@@ -3,15 +3,35 @@ use crate::world::DoormanWorld;
 use cucumber::{then, when};
 use log::info;
 use std::time::Duration;
+use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-/// Best-effort batch session creation. Used by migration-fd-budget scenarios
-/// where the daemon's nofile limit is intentionally tight, so a subset of
-/// connect attempts is expected to be rejected. Each step is wrapped in a
-/// short timeout so a refusing daemon (or a kernel still retransmitting SYN
-/// on an unacked TCP open) does not stall the scenario for minutes.
-/// Successful sessions are stored under names `idle-0`, `idle-1`, ... so
-/// later steps can address them individually if needed.
+/// Key under which `attempt_create_idle_sessions` records the number of
+/// sessions it actually opened. Read back by
+/// `at least N sessions with prefix "idle-" should be open` so the
+/// scenario can assert that the parent pooler did not silently drop
+/// everyone to zero (which would make the post-upgrade SELECT vacuous).
+const ACCEPTED_VAR_KEY: &str = "last_idle_attempt_accepted";
+
+/// Concurrent best-effort batch session creation. Used by
+/// migration-fd-budget scenarios where the daemon's nofile limit is
+/// intentionally tight, so a subset of connect attempts is expected to
+/// be rejected.
+///
+/// Why parallel rather than sequential: a sequential loop replays the
+/// failure mode poorly. The original loop awaited each spawn before
+/// starting the next, so the accept loop processed one SYN at a time
+/// with the previous client already closed before the next arrived —
+/// the kernel's fd table never saw the simultaneous pressure that the
+/// production incident produced (~3K clients reconnecting after
+/// SIGUSR2). `JoinSet::spawn` releases every attempt onto the runtime
+/// before any joining starts; the daemon sees a true thundering herd.
+///
+/// Each spawn is wrapped in a short timeout so a refusing daemon (or
+/// the kernel still retransmitting SYN on an unacked TCP open) does
+/// not stall the scenario for minutes. Successful sessions are stored
+/// under names `idle-0`, `idle-1`, ... so later steps can address them
+/// individually if needed.
 #[when(
     regex = r#"^we attempt to create (\d+) idle sessions to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
 )]
@@ -25,21 +45,20 @@ pub async fn attempt_create_idle_sessions(
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
     let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
-    let step_timeout = Duration::from_millis(500);
+    let step_timeout = Duration::from_millis(2000);
 
-    let mut accepted = 0usize;
-    let mut timed_out = 0usize;
+    // PgConnection::authenticate panics on protocol-level FATAL (e.g.
+    // SQLSTATE 53300 "too many clients already") which is exactly what
+    // the server returns under overload — and the whole point of this
+    // step is to tolerate that. JoinSet captures the panic as JoinError
+    // instead of letting it abort the scenario.
+    let mut set: JoinSet<Result<(usize, PgConnection), &'static str>> = JoinSet::new();
     for idx in 0..count {
-        // PgConnection::authenticate panics on protocol-level FATAL (e.g.
-        // SQLSTATE 53300 "too many clients already") which is exactly what
-        // the server returns under overload — and the whole point of this
-        // step is to tolerate that. Spawn each attempt so JoinError catches
-        // the panic without taking the scenario down.
         let user = user.clone();
         let password = password.clone();
         let database = database.clone();
         let doorman_addr = doorman_addr.clone();
-        let attempt = tokio::spawn(async move {
+        set.spawn(async move {
             let mut conn = match timeout(step_timeout, PgConnection::connect(&doorman_addr)).await {
                 Ok(Ok(c)) => c,
                 Ok(Err(_)) => return Err("connect_err"),
@@ -53,22 +72,179 @@ pub async fn attempt_create_idle_sessions(
                 Ok(Ok(())) => {}
                 _ => return Err("authenticate_failed"),
             }
-            Ok(conn)
-        })
-        .await;
-        match attempt {
-            Ok(Ok(conn)) => {
+            Ok((idx, conn))
+        });
+    }
+
+    let mut accepted = 0usize;
+    let mut timed_out = 0usize;
+    let mut connect_err = 0usize;
+    let mut startup_failed = 0usize;
+    let mut authenticate_failed = 0usize;
+    let mut panicked = 0usize;
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok((idx, conn))) => {
                 world.named_sessions.insert(format!("idle-{idx}"), conn);
                 accepted += 1;
             }
             Ok(Err("connect_timeout")) => timed_out += 1,
-            _ => {}
+            Ok(Err("connect_err")) => connect_err += 1,
+            Ok(Err("startup_failed")) => startup_failed += 1,
+            Ok(Err("authenticate_failed")) => authenticate_failed += 1,
+            Ok(Err(_)) => {}
+            Err(_) => panicked += 1,
         }
     }
+
+    world
+        .vars
+        .insert(ACCEPTED_VAR_KEY.to_string(), accepted.to_string());
     info!(
-        "attempt_create_idle_sessions: requested {count}, accepted {accepted} (rejected {}, timed_out {timed_out})",
-        count - accepted
+        "attempt_create_idle_sessions: requested {count}, accepted {accepted}, \
+         connect_err {connect_err}, connect_timeout {timed_out}, \
+         startup_failed {startup_failed}, authenticate_failed {authenticate_failed}, \
+         panicked {panicked}"
     );
+}
+
+/// Assert that the previous `attempt_create_idle_sessions` step left at
+/// least `min` sessions open. A scenario that asserts "the daemon
+/// stayed inside its fd budget" without also pinning down a minimum
+/// number of open sessions can pass with zero accepted clients — the
+/// post-upgrade `SELECT` would then have nothing to run against and
+/// the scenario silently degrades into a smoke test. Tying the count
+/// to `pool_size` makes the assertion meaningful: under
+/// `pool_size = 10` we always expect at least 10 sessions to make it
+/// through, otherwise the pool was the bottleneck rather than the
+/// listener.
+#[then(regex = r#"^at least (\d+) idle sessions should be open from the last batch attempt$"#)]
+pub async fn at_least_n_idle_sessions_open(world: &mut DoormanWorld, min: usize) {
+    let accepted: usize = world
+        .vars
+        .get(ACCEPTED_VAR_KEY)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    assert!(
+        accepted >= min,
+        "expected at least {min} accepted sessions from the last batch attempt, got {accepted}"
+    );
+}
+
+/// Verify the new pg_doorman process is actually servicing PostgreSQL
+/// protocol traffic, not just accepting TCP. A bare `TcpStream::connect`
+/// succeeds against either the old or the new process during the
+/// hand-off — both inherit the listening socket via SCM_RIGHTS and both
+/// may briefly answer SYNs in parallel — so we need a higher-level
+/// signal. A full `Startup → Authenticate → CloseSession` sequence
+/// fails if the new process is still booting (port routed but no
+/// async listener), if config validation aborted the spawn, or if the
+/// hand-off socketpair never closed cleanly. The connection is
+/// dropped immediately after a successful auth; this step asserts
+/// reachability, not durability.
+///
+/// Retries inside a fixed overall budget because the new process is
+/// in a brief stutter window right after
+/// `wait_for_foreground_binary_upgrade` returns: it has the listening
+/// fd but is still draining migration RX from the parent and
+/// bootstrapping its pool workers, so the first post-upgrade auth
+/// attempt can time out even though TCP `connect` already succeeded.
+/// Retrying keeps the assertion strict (we still demand a healthy
+/// session, not just an open socket) while avoiding a flake on the
+/// boundary case.
+#[then(
+    regex = r#"^a fresh PostgreSQL session to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)" succeeds$"#
+)]
+pub async fn fresh_pg_session_succeeds(
+    world: &mut DoormanWorld,
+    user: String,
+    password: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+    let attempt_timeout = Duration::from_secs(3);
+    let overall_budget = Duration::from_secs(20);
+    let retry_delay = Duration::from_millis(250);
+    let deadline = std::time::Instant::now() + overall_budget;
+
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let outcome = async {
+            let mut conn = timeout(attempt_timeout, PgConnection::connect(&doorman_addr))
+                .await
+                .map_err(|_| "connect timed out".to_string())?
+                .map_err(|e| format!("connect failed: {e}"))?;
+            timeout(attempt_timeout, conn.send_startup(&user, &database))
+                .await
+                .map_err(|_| "send_startup timed out".to_string())?
+                .map_err(|e| format!("send_startup failed: {e}"))?;
+            timeout(attempt_timeout, conn.authenticate(&user, &password))
+                .await
+                .map_err(|_| "authenticate timed out".to_string())?
+                .map_err(|e| format!("authenticate failed: {e}"))?;
+            Ok::<(), String>(())
+        }
+        .await;
+
+        match outcome {
+            Ok(()) => return,
+            Err(reason) if std::time::Instant::now() >= deadline => {
+                panic!(
+                    "fresh session: gave up after {attempt} attempts ({}ms budget): {reason}",
+                    overall_budget.as_millis()
+                );
+            }
+            Err(_) => {
+                tokio::time::sleep(retry_delay).await;
+            }
+        }
+    }
+}
+
+/// Run a real SimpleQuery on the first surviving session from a batch
+/// created with prefix `idle-`. Used after `we wait for foreground
+/// binary upgrade to complete` to prove the session is still alive,
+/// migrated, and able to round-trip a query through whichever process
+/// is now servicing the port — not just answer a TCP `connect`.
+/// Stores the response under the chosen session's name so the standard
+/// `session "..." should receive DataRow with "..."` assertion picks
+/// it up unchanged.
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to the first open idle session and store response as "([^"]+)"$"#
+)]
+pub async fn send_query_to_first_idle_session(
+    world: &mut DoormanWorld,
+    query: String,
+    out_session_name: String,
+) {
+    // The batch step inserts under "idle-{idx}" with idx ∈ [0, count).
+    // We don't know which one survived, so scan in idx order and use
+    // the first key that exists. This is deterministic across runs
+    // because indices are monotonic, but tolerant to indices missing
+    // (rejected attempts left a hole at that idx).
+    let name = world
+        .named_sessions
+        .keys()
+        .filter(|k| k.starts_with("idle-"))
+        .min_by_key(|k| {
+            k.strip_prefix("idle-")
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(usize::MAX)
+        })
+        .cloned()
+        .expect("no `idle-N` session available — batch step rejected all attempts");
+
+    let conn = super::helpers::get_session(&mut world.named_sessions, &name);
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send SimpleQuery to first idle session");
+    let messages = conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read SimpleQuery response from first idle session");
+    world.session_messages.insert(out_session_name, messages);
 }
 
 #[when(
