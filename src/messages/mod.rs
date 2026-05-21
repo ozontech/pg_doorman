@@ -17,7 +17,7 @@ pub mod socket;
 pub mod types;
 
 // Re-export public items
-pub use config_socket::{configure_tcp_socket, configure_unix_socket};
+pub use config_socket::{configure_tcp_socket, configure_unix_socket, configure_web_tcp_socket};
 pub use error::PgErrorMsg;
 pub use extended::{close_complete, Bind, Close, Describe, ExtendedProtocolData, Parse};
 pub use protocol::{

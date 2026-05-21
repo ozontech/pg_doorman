@@ -11,6 +11,8 @@ use std::time::Duration;
 use log::{error, info};
 use tokio::net::{TcpListener, TcpSocket};
 
+use crate::messages::configure_web_tcp_socket;
+
 use super::http::handle_connection;
 use super::state::{current_options, install_options, WebServerOptions};
 
@@ -76,6 +78,7 @@ pub async fn serve_on(listener: TcpListener, opts: WebServerOptions) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
+                configure_web_tcp_socket(&stream);
                 let opts = current_options();
                 tokio::spawn(async move {
                     handle_connection(stream, opts).await;
