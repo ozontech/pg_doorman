@@ -307,18 +307,43 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         .stdout(stdout_cfg)
         .stderr(stderr_cfg);
 
-    if let Some(nofile_limit) = world.doorman_nofile_limit {
+    if world.doorman_nofile_limit.is_some() || world.doorman_extra_inheritable_pipes.is_some() {
         use std::os::unix::process::CommandExt;
-        // SAFETY: pre_exec runs between fork and exec in the child. setrlimit
-        // is async-signal-safe per POSIX. The closure captures only a primitive.
+        let nofile_limit = world.doorman_nofile_limit;
+        let extra_pipes = world.doorman_extra_inheritable_pipes.unwrap_or(0);
+        // SAFETY: pre_exec runs between fork and exec in the child.
+        // - setrlimit is async-signal-safe per POSIX.
+        // - pipe2(2) is async-signal-safe; we explicitly do NOT pass
+        //   O_CLOEXEC, then strip FD_CLOEXEC via fcntl (which is also
+        //   async-signal-safe). The resulting fds survive exec, which
+        //   is exactly the "polluted parent" condition we need to
+        //   simulate so the child of a later SIGUSR2 has something
+        //   to clean up via the c891054 close-by-range pass.
         unsafe {
             cmd.pre_exec(move || {
-                let rl = libc::rlimit {
-                    rlim_cur: nofile_limit as libc::rlim_t,
-                    rlim_max: nofile_limit as libc::rlim_t,
-                };
-                if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) != 0 {
-                    return Err(std::io::Error::last_os_error());
+                if let Some(limit) = nofile_limit {
+                    let rl = libc::rlimit {
+                        rlim_cur: limit as libc::rlim_t,
+                        rlim_max: limit as libc::rlim_t,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                for _ in 0..extra_pipes {
+                    let mut fds: [libc::c_int; 2] = [-1, -1];
+                    if libc::pipe(fds.as_mut_ptr()) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    for fd in fds {
+                        let flags = libc::fcntl(fd, libc::F_GETFD);
+                        if flags < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        if libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
                 }
                 Ok(())
             });
@@ -349,6 +374,49 @@ pub async fn start_doorman_with_nofile_limit_and_config(
     step: &Step,
 ) {
     world.doorman_nofile_limit = Some(nofile_limit);
+    start_doorman_with_config(world, step).await;
+}
+
+/// Spawns pg_doorman with `N` extra inheritable pipe pairs seeded via
+/// `pre_exec`. Each pair contributes two fds that DO NOT carry
+/// `FD_CLOEXEC`, so they survive the `exec` and become real "polluted
+/// parent" leftovers in the running pg_doorman.
+///
+/// The point of this setup is to drive the `c891054` close-by-range
+/// cleanup on the SIGUSR2 child: when the child sees its
+/// `--inherit-fd` argument it inventories every fd outside the
+/// allowlist (stdio, listener, readiness pipe, migration socketpair)
+/// and closes it. Without this seed the child has nothing to close,
+/// and the regression check would be vacuous.
+#[given(expr = "pg_doorman started with {int} extra inheritable pipes and config:")]
+pub async fn start_doorman_with_extra_inheritable_pipes(
+    world: &mut DoormanWorld,
+    pipes: usize,
+    step: &Step,
+) {
+    world.doorman_extra_inheritable_pipes = Some(pipes);
+    start_doorman_with_config(world, step).await;
+}
+
+/// Combined form of `with NOFILE limit N` and `with M extra
+/// inheritable pipes`. The NOFILE cap matters here because the
+/// SIGUSR2 child's inherited-fd cleanup walks every slot up to
+/// `RLIMIT_NOFILE`; on the default container limit (~1M) that walk
+/// can run for seconds and starves the pre-flight validator that
+/// the parent is waiting on. NOFILE=200 keeps the cleanup loop
+/// short enough for the validator to return before the BDD
+/// assertion window expires.
+#[given(
+    expr = "pg_doorman started with NOFILE limit {int} and {int} extra inheritable pipes and config:"
+)]
+pub async fn start_doorman_with_nofile_limit_and_extra_inheritable_pipes(
+    world: &mut DoormanWorld,
+    nofile_limit: u64,
+    pipes: usize,
+    step: &Step,
+) {
+    world.doorman_nofile_limit = Some(nofile_limit);
+    world.doorman_extra_inheritable_pipes = Some(pipes);
     start_doorman_with_config(world, step).await;
 }
 

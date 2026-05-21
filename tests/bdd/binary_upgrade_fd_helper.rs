@@ -38,8 +38,7 @@ pub async fn discover_pid_externally(world: &mut DoormanWorld, name: String) {
     let pid = find_pid_owning_listener(port)
         .unwrap_or_else(|e| panic!("discover pid for port {port}: {e}"));
     info!(
-        "[binary-upgrade-fd] discovered pid={} for listener on port {} (storing as '{}')",
-        pid, port, name
+        "[binary-upgrade-fd] discovered pid={pid} for listener on port {port} (storing as '{name}')"
     );
     world.named_backend_pids.insert(pid_slot(&name), pid as i32);
 }
@@ -126,6 +125,58 @@ pub async fn socket_count_at_most(world: &mut DoormanWorld, pid_name: String, ma
         "pid={pid} has {n} socket fd(s); allowed at most {max}\n  {}",
         summary(&inv)
     );
+}
+
+/// Counts fds whose `readlink` target starts with `pipe:[`. Used by
+/// the polluted-parent scenario: the test seeds the parent with N
+/// pairs of pipe fds before exec, then asserts the count went down
+/// across the binary-upgrade boundary because the child's cleanup
+/// pass should have closed them.
+fn pipe_fd_count(inv: &crate::proc_inspect::FdInventory) -> usize {
+    inv.fds.iter().filter(|f| f.kind() == "pipe").count()
+}
+
+#[then(regex = r#"^the pipe fd count for stored PID "([^"]+)" should be at least (\d+)$"#)]
+pub async fn pipe_count_at_least(world: &mut DoormanWorld, pid_name: String, min: usize) {
+    let pid = captured_pid(world, &pid_name);
+    let port = world.doorman_port.expect("doorman_port not set");
+    let inv = inventory(pid, port).unwrap_or_else(|e| panic!("inventory pid={pid}: {e}"));
+    let n = pipe_fd_count(&inv);
+    assert!(
+        n >= min,
+        "pid={pid} has {n} pipe fd(s); expected at least {min}\n  {}",
+        summary(&inv)
+    );
+}
+
+#[then(regex = r#"^the pipe fd count for stored PID "([^"]+)" should be at most (\d+)$"#)]
+pub async fn pipe_count_at_most(world: &mut DoormanWorld, pid_name: String, max: usize) {
+    let pid = captured_pid(world, &pid_name);
+    let port = world.doorman_port.expect("doorman_port not set");
+    let inv = inventory(pid, port).unwrap_or_else(|e| panic!("inventory pid={pid}: {e}"));
+    let n = pipe_fd_count(&inv);
+    if n > max {
+        let log_excerpt = world
+            .doorman_log_path
+            .as_ref()
+            .map(|p| {
+                std::fs::read_to_string(p)
+                    .map(|s| {
+                        let lines: Vec<&str> = s.lines().collect();
+                        let tail: Vec<&str> = lines.iter().rev().take(60).rev().copied().collect();
+                        tail.join("\n")
+                    })
+                    .unwrap_or_else(|e| format!("(failed to read log: {e})"))
+            })
+            .unwrap_or_else(|| "(no log capture path)".to_string());
+        let cmdline = std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+            .map(|s| s.replace('\0', " ").trim().to_string())
+            .unwrap_or_else(|e| format!("(no cmdline: {e})"));
+        panic!(
+            "pid={pid} has {n} pipe fd(s); allowed at most {max}\n  {}\n  cmdline: {cmdline}\n  -- doorman log tail (60 lines) --\n{log_excerpt}\n  -- end log --",
+            summary(&inv)
+        );
+    }
 }
 
 #[then(regex = r#"^every non-listener socket fd of stored PID "([^"]+)" has FD_CLOEXEC set$"#)]

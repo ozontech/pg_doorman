@@ -137,6 +137,58 @@ Feature: pg_doorman stays within its fd budget
     And every non-listener socket fd of stored PID "gen2" has FD_CLOEXEC set
     And a fresh PostgreSQL session to pg_doorman as "example_user_1" with password "" and database "example_db" succeeds
 
+  @client-migration @migration-fd-budget @binary-upgrade-fd-cloexec
+  Scenario: SIGUSR2 child cleans up inheritable fds leaked by a polluted parent
+    # Models the production recovery case for `c891054`: a buggy old
+    # parent has been running long enough to accumulate non-CLOEXEC
+    # inheritable fds (16 here, simulated via `pipe(2)` pairs in
+    # `pre_exec`). On the next SIGUSR2 the new child sees those fds
+    # via `--inherit-fd`-triggered allowlist cleanup, walks the
+    # numeric range up to `RLIMIT_NOFILE`, and closes everything not
+    # in the allowlist. Without that cleanup the inherited pipes
+    # ride along forever in every subsequent child generation.
+    Given pg_doorman log capture enabled
+    And pg_doorman started with NOFILE limit 200 and 16 extra inheritable pipes and config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      pool_mode = "transaction"
+      shutdown_timeout = 5000
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 10
+      """
+    When we sleep 1000ms
+    And we discover the current pg_doorman PID externally and store as "polluted_parent"
+    # 16 pairs × 2 ends = 32 inheritable pipe fds, plus whatever
+    # tokio/jemalloc opened natively. The 30 lower bound leaves room
+    # for the seeded fds to have been seen even if the runtime
+    # consolidated a few of its own internal pipes.
+    Then the pipe fd count for stored PID "polluted_parent" should be at least 30
+
+    When we send SIGUSR2 to foreground pg_doorman
+    And we wait for foreground binary upgrade to complete
+    And we discover the current pg_doorman PID externally and store as "clean_child"
+    # The cleanup announces itself on stderr; pin that before the
+    # numeric pipe-count assertion so a regression that silently
+    # disables the cleanup pass is reported as "the log line never
+    # showed up" rather than "we still see N pipes".
+    Then pg_doorman log contains "unexpected inherited file descriptor"
+    # The cleanup runs in `main()` before config load, so by the time
+    # the new process is reachable on the listener the seeded pipes
+    # are gone. Anything tokio/jemalloc opens for its own use stays;
+    # the bound of 12 is comfortably above the native pipe count seen
+    # in practice and well below the 30+ a leak would produce.
+    And the pipe fd count for stored PID "clean_child" should be at most 12
+
   @client-migration @migration-fd-budget @fd-overload
   Scenario: 1000 clients on a 50-client cap reject cleanly, accepted clients keep working
     Given pg_doorman log capture enabled

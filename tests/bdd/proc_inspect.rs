@@ -260,16 +260,21 @@ mod linux {
     /// Returns the PID of the process that owns the LISTEN socket on
     /// `port`. Strategy:
     /// 1. Walk every numeric directory under `/proc`.
-    /// 2. For each PID we can read, ask the kernel via `/proc/<pid>/net/tcp`
-    ///    whether the port appears in the LISTEN state in that netns.
-    /// 3. If yes, walk `/proc/<pid>/fd` looking for a `socket:[inode]`
-    ///    matching one of the listener inodes from step 2.
-    /// 4. First match wins. Tie-breaks aren't expected — only one
-    ///    process can hold a TCP listening fd at a time (SO_REUSEPORT
-    ///    aside, but our scenarios don't enable it on the main listener).
+    /// 2. Collect every candidate that has the port in `LISTEN` in its
+    ///    `/proc/<pid>/net/tcp{,6}` and an `fd` matching the listener
+    ///    socket inode.
+    /// 3. Prefer the candidate whose `/proc/<pid>/cmdline` contains
+    ///    `--inherit-fd`. That's the child of a SIGUSR2 binary
+    ///    upgrade; without this preference the old parent (still
+    ///    holding the same listener inode during its
+    ///    `shutdown_timeout` window) wins the race.
+    /// 4. Otherwise fall back to the highest PID — newest process
+    ///    spawned, which is the right pick when no upgrade is in
+    ///    flight.
     pub(super) fn find_pid_owning_listener(port: u16) -> Result<u32, String> {
         let proc_dir = fs::read_dir("/proc").map_err(|e| format!("read /proc: {e}"))?;
         let mut last_err: Option<String> = None;
+        let mut candidates: Vec<u32> = Vec::new();
         for entry in proc_dir.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
@@ -287,10 +292,6 @@ mod linux {
             };
             let owner_uid = meta.uid();
             if owner_uid != current_uid() {
-                // Cannot read fd table; skip this PID — but keep
-                // looking, the actual doorman may belong to the same
-                // user even if some random privileged process matched
-                // the port by accident.
                 last_err = Some(format!(
                     "pid {pid} owns LISTEN port {port} but uid {owner_uid} != ours"
                 ));
@@ -304,15 +305,52 @@ mod linux {
                     continue;
                 }
             };
+            let mut matched = false;
             for record in &fds {
                 let Some(ino) = record.inode else { continue };
                 if inodes.contains(&ino) {
-                    return Ok(pid);
+                    matched = true;
+                    break;
                 }
             }
+            if matched {
+                candidates.push(pid);
+            }
         }
-        Err(last_err
-            .unwrap_or_else(|| format!("no process owns a LISTEN socket on port {port} in /proc")))
+
+        if candidates.is_empty() {
+            return Err(last_err.unwrap_or_else(|| {
+                format!("no process owns a LISTEN socket on port {port} in /proc")
+            }));
+        }
+
+        let upgrade_child = candidates
+            .iter()
+            .copied()
+            .find(|pid| cmdline_contains(*pid, "--inherit-fd"));
+        if let Some(pid) = upgrade_child {
+            return Ok(pid);
+        }
+
+        candidates.sort_unstable();
+        Ok(*candidates.last().expect("non-empty after early return"))
+    }
+
+    /// Best-effort `/proc/<pid>/cmdline` substring match. The cmdline
+    /// uses NUL bytes between argv entries; we replace each with a
+    /// space before searching so `--inherit-fd 9` joins into one
+    /// searchable string. Read failures (race against exit, EPERM,
+    /// missing dir) collapse to "no match" — the caller's fallback
+    /// is the right behaviour in either case.
+    pub(super) fn cmdline_contains(pid: u32, needle: &str) -> bool {
+        let Ok(bytes) = fs::read(format!("/proc/{pid}/cmdline")) else {
+            return false;
+        };
+        let joined: String = bytes
+            .iter()
+            .map(|&b| if b == 0 { ' ' } else { b as char })
+            .collect();
+        joined.contains(needle)
     }
 
     pub(super) fn current_uid() -> u32 {
