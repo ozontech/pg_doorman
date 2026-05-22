@@ -39,6 +39,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = app::parse_args()?;
+    app::cleanup_inherited_upgrade_fds(&args);
     let config = app::init_config(&args)?;
 
     if args.test_config {

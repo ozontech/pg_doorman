@@ -879,6 +879,33 @@ where
                             // buffered state on 'S', error_response, log,
                             // return), only the SQLSTATE and message differ.
                             if let crate::pool::PoolError::Backend(
+                                Error::ConnectResourceExhausted(msg),
+                            ) = &err
+                            {
+                                current_pool.address.stats.error_with_sqlstate("53000");
+                                self.stats.checkout_error();
+
+                                if message[0] as char == 'S' {
+                                    self.reset_buffered_state();
+                                }
+
+                                error_response(
+                                    &mut self.write,
+                                    &format!(
+                                        "Connection pooler local resource exhausted: {msg}. Please try again later."
+                                    ),
+                                    "53000",
+                                )
+                                .await?;
+
+                                error!(
+                                    "[{}@{} #c{}] local resource exhausted while getting server connection: {err}",
+                                    self.username, self.pool_name, self.connection_id,
+                                );
+                                return Err(Error::AllServersDown);
+                            }
+
+                            if let crate::pool::PoolError::Backend(
                                 Error::ServerStartupParameterRejection {
                                     sqlstate,
                                     message: pg_message,

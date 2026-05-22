@@ -307,18 +307,39 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         .stdout(stdout_cfg)
         .stderr(stderr_cfg);
 
-    if let Some(nofile_limit) = world.doorman_nofile_limit {
+    if world.doorman_nofile_limit.is_some() || world.doorman_extra_inheritable_pipes.is_some() {
         use std::os::unix::process::CommandExt;
-        // SAFETY: pre_exec runs between fork and exec in the child. setrlimit
-        // is async-signal-safe per POSIX. The closure captures only a primitive.
+        let nofile_limit = world.doorman_nofile_limit;
+        let extra_pipes = world.doorman_extra_inheritable_pipes.unwrap_or(0);
+        // SAFETY: pre_exec runs after fork and before exec. Keep this
+        // closure to async-signal-safe libc calls only.
+        // pipe(2) fds are inheritable by default; fcntl clears CLOEXEC
+        // defensively to preserve the polluted-parent fixture.
         unsafe {
             cmd.pre_exec(move || {
-                let rl = libc::rlimit {
-                    rlim_cur: nofile_limit as libc::rlim_t,
-                    rlim_max: nofile_limit as libc::rlim_t,
-                };
-                if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) != 0 {
-                    return Err(std::io::Error::last_os_error());
+                if let Some(limit) = nofile_limit {
+                    let rl = libc::rlimit {
+                        rlim_cur: limit as libc::rlim_t,
+                        rlim_max: limit as libc::rlim_t,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                for _ in 0..extra_pipes {
+                    let mut fds: [libc::c_int; 2] = [-1, -1];
+                    if libc::pipe(fds.as_mut_ptr()) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    for fd in fds {
+                        let flags = libc::fcntl(fd, libc::F_GETFD);
+                        if flags < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        if libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
                 }
                 Ok(())
             });
@@ -349,6 +370,34 @@ pub async fn start_doorman_with_nofile_limit_and_config(
     step: &Step,
 ) {
     world.doorman_nofile_limit = Some(nofile_limit);
+    start_doorman_with_config(world, step).await;
+}
+
+/// Seed pg_doorman with inheritable pipe pairs so the SIGUSR2 child
+/// has unexpected fds to close.
+#[given(expr = "pg_doorman started with {int} extra inheritable pipes and config:")]
+pub async fn start_doorman_with_extra_inheritable_pipes(
+    world: &mut DoormanWorld,
+    pipes: usize,
+    step: &Step,
+) {
+    world.doorman_extra_inheritable_pipes = Some(pipes);
+    start_doorman_with_config(world, step).await;
+}
+
+/// Combined NOFILE + pipe pollution start. The low NOFILE keeps the
+/// inherited-fd cleanup range small enough for BDD.
+#[given(
+    expr = "pg_doorman started with NOFILE limit {int} and {int} extra inheritable pipes and config:"
+)]
+pub async fn start_doorman_with_nofile_limit_and_extra_inheritable_pipes(
+    world: &mut DoormanWorld,
+    nofile_limit: u64,
+    pipes: usize,
+    step: &Step,
+) {
+    world.doorman_nofile_limit = Some(nofile_limit);
+    world.doorman_extra_inheritable_pipes = Some(pipes);
     start_doorman_with_config(world, step).await;
 }
 

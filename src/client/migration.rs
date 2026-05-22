@@ -22,12 +22,7 @@ use crate::stats::ClientStats;
 
 use super::core::PreparedStatementState;
 
-/// Restore backend auth state (e.g. SCRAM ClientKey) from a migrated client
-/// so the new process can authenticate to PostgreSQL via passthrough without
-/// waiting for a fresh client SCRAM handshake.
-///
-/// Only overwrites if the current state is `ScramPending` — avoids clobbering
-/// a valid auth state already established by an earlier migrated client.
+/// Restore migrated SCRAM state when backend auth is still pending.
 fn restore_backend_auth_if_pending(
     pool: Option<&ConnectionPool>,
     migrated_auth: Option<&BackendAuthMethod>,
@@ -56,6 +51,39 @@ const MAX_PREPARED_ENTRIES: usize = 100_000;
 const MAX_QUERY_LEN: usize = 10 * 1024 * 1024; // 10 MB
 const MAX_RECV_BUF: usize = 64 * 1024;
 
+#[cfg(target_os = "linux")]
+fn recvmsg_cloexec_flags() -> libc::c_int {
+    libc::MSG_CMSG_CLOEXEC
+}
+
+#[cfg(not(target_os = "linux"))]
+fn recvmsg_cloexec_flags() -> libc::c_int {
+    0
+}
+
+fn set_close_on_exec(fd: RawFd) -> Result<(), Error> {
+    // SAFETY: fcntl reads and writes descriptor flags for this fd.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags < 0 {
+            return Err(Error::SocketError(format!(
+                "fcntl(F_GETFD): {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        if flags & libc::FD_CLOEXEC != 0 {
+            return Ok(());
+        }
+        if libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) < 0 {
+            return Err(Error::SocketError(format!(
+                "fcntl(F_SETFD FD_CLOEXEC): {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+    }
+    Ok(())
+}
+
 // FFI for our patched OpenSSL migration functions.
 // Only available with the tls-migration feature (vendored patched OpenSSL).
 #[cfg(feature = "tls-migration")]
@@ -80,8 +108,7 @@ fn export_tls_state_from_ptr(ssl_ptr: *mut c_void) -> Result<Vec<u8>, Error> {
     unsafe {
         let mut out: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
-        // SAFETY: ssl_ptr is a valid SSL* from the TlsStream, which is still alive
-        // at the idle point when migration runs.
+        // SAFETY: ssl_ptr belongs to the live TlsStream at the migration idle point.
         let ret = SSL_export_migration_state(ssl_ptr, &mut out, &mut out_len);
         if ret != 1 || out.is_null() {
             return Err(Error::ClientError(
@@ -107,8 +134,7 @@ pub struct MigrationPayload {
 impl Drop for MigrationPayload {
     fn drop(&mut self) {
         if self.fd >= 0 {
-            // SAFETY: fd was obtained via libc::dup() in prepare_migration and is
-            // owned exclusively by this struct. Closing a valid owned fd is safe.
+            // SAFETY: this struct owns the dup'd fd from prepare_migration.
             unsafe { libc::close(self.fd) };
         }
     }
@@ -152,10 +178,7 @@ where
     S: tokio::io::AsyncRead + std::marker::Unpin,
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    /// Serialize client state and dup the fd for migration.
-    /// Called at the idle point in handle() — no server checked out,
-    /// no pending begin, no buffered reads.
-    /// If ssl_ptr is set, exports TLS cipher state via SSL_export_migration_state.
+    /// Serialize idle client state and dup its socket fd for migration.
     pub fn prepare_migration(&self) -> Result<MigrationPayload, Error> {
         let raw_fd = self
             .raw_fd
@@ -775,7 +798,7 @@ pub fn recv_migration_fd(socket_fd: RawFd) -> Result<(RawFd, BytesMut, Option<Ve
     msghdr.msg_controllen = cmsg_space as _;
 
     // SAFETY: msghdr points to valid iov and cmsg buffers. recvmsg fills them.
-    let n = unsafe { libc::recvmsg(socket_fd, &mut msghdr, 0) };
+    let n = unsafe { libc::recvmsg(socket_fd, &mut msghdr, recvmsg_cloexec_flags()) };
     if n <= 0 {
         return Err(Error::SocketError(if n == 0 {
             "migration socket closed".to_string()
@@ -805,6 +828,11 @@ pub fn recv_migration_fd(socket_fd: RawFd) -> Result<(RawFd, BytesMut, Option<Ve
 
     if received_fd < 0 {
         return Err(Error::SocketError("migration: no fd in cmsg".to_string()));
+    }
+    if let Err(err) = set_close_on_exec(received_fd) {
+        // SAFETY: received_fd is a valid fd from cmsg, close it to avoid leak.
+        unsafe { libc::close(received_fd) };
+        return Err(err);
     }
 
     if n < 4 {
@@ -1088,6 +1116,7 @@ pub async fn migration_receiver_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     #[test]
     fn put_str_get_str_roundtrip() {
@@ -1255,6 +1284,58 @@ mod tests {
         assert_eq!(state.prepared_entries[0].hash, 0xABCD);
         assert_eq!(state.prepared_entries[0].query, "SELECT 1");
         assert_eq!(state.prepared_entries[0].param_types, vec![23]);
+    }
+
+    #[test]
+    fn recv_migration_fd_marks_received_fd_close_on_exec() {
+        let mut sockets: [libc::c_int; 2] = [-1, -1];
+        // SAFETY: socketpair writes two valid fds into sockets on success.
+        let rc =
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sockets.as_mut_ptr()) };
+        assert_eq!(
+            rc,
+            0,
+            "socketpair failed: {}",
+            std::io::Error::last_os_error()
+        );
+
+        let file = File::open("/dev/null").unwrap();
+        // SAFETY: file.as_raw_fd() is valid for the lifetime of file.
+        let send_fd = unsafe { libc::dup(file.as_raw_fd()) };
+        assert!(
+            send_fd >= 0,
+            "dup failed: {}",
+            std::io::Error::last_os_error()
+        );
+        // Force sender-side inheritance; the receiver must set CLOEXEC itself.
+        unsafe {
+            let flags = libc::fcntl(send_fd, libc::F_GETFD);
+            assert!(flags >= 0, "F_GETFD failed");
+            assert_eq!(
+                libc::fcntl(send_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC),
+                0
+            );
+        }
+
+        let mut payload = MigrationPayload {
+            state: BytesMut::from(&b"state"[..]),
+            fd: send_fd,
+            tls_state: None,
+        };
+        send_migration_fd(sockets[0], &mut payload).unwrap();
+
+        let (received_fd, state, tls_state) = recv_migration_fd(sockets[1]).unwrap();
+        assert_eq!(&state[..], b"state");
+        assert!(tls_state.is_none());
+
+        unsafe {
+            let flags = libc::fcntl(received_fd, libc::F_GETFD);
+            assert!(flags >= 0, "F_GETFD on received fd failed");
+            assert_ne!(flags & libc::FD_CLOEXEC, 0);
+            libc::close(received_fd);
+            libc::close(sockets[0]);
+            libc::close(sockets[1]);
+        }
     }
 
     #[test]

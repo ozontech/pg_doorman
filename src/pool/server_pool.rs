@@ -463,6 +463,7 @@ impl ServerPool {
             Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
                 Error::ConnectError(_)
+                    | Error::ConnectResourceExhausted(_)
                     | Error::ServerUnavailableError(_, _)
                     | Error::ServerStartupParameterRejection { .. }
             ),
@@ -602,20 +603,12 @@ impl ServerPool {
             &pool_params,
             auth_query_params.as_ref(),
         );
-        // Use the pure classifier so this admin/API path does not
-        // increment STARTUP_PARAMETERS_DROPPED_TOTAL or emit warn logs
-        // — both are side effects of the spawn path
-        // (resolved_startup_parameters). SHOW polling and /api/pools
-        // page refreshes are safe to call repeatedly.
+        // Use the pure classifier so admin/API polling has no metric or log
+        // side effects.
         let (wire_cow, decision) = self.classify_startup_parameters();
         let wire = wire_cow.as_ref();
-        // If an auth_query overlay would push the cascade over budget,
-        // every overlay key is dropped due to budget, even when the
-        // baseline carries the same key with another value. Both
-        // over-budget decisions reject backend startup, so the admin/API
-        // view must show that no configured key reaches PostgreSQL.
-        // Reporting those keys as `Applied` or `Stale` would point the
-        // operator at RELOAD/refetch, which cannot fix a budget failure.
+        // If the cascade was rejected for budget, report every configured
+        // key as dropped.
         let cascade_rejected = matches!(
             decision,
             BudgetDecision::OverlayDroppedBaselineKept { .. }
@@ -643,13 +636,8 @@ impl ServerPool {
                 (k, (v, src, state))
             })
             .collect();
-        // Surface wire-only keys: a key that the live config no longer
-        // mentions but that the pool's frozen baseline / overlay still
-        // ships is invisible without this loop. The operator needs to
-        // see that "I deleted plan_cache_mode from pool.startup_parameters
-        // but my backends are still getting force_custom_plan" — that is
-        // exactly the stale snapshot RELOAD has not yet recycled (or that
-        // the auth_query cache has not yet refetched).
+        // Surface wire-only stale keys from the frozen baseline or auth_query
+        // overlay.
         let wire_state = if cascade_rejected {
             ApplicationState::DroppedDueToBudget
         } else {
@@ -668,13 +656,7 @@ impl ServerPool {
         out
     }
 
-    /// Pure classifier shared between the spawn path and the read-only
-    /// admin/API views. Returns the wire-ready map and the budget
-    /// decision the runtime would make for this spawn, **without**
-    /// touching `STARTUP_PARAMETERS_DROPPED_TOTAL`. Both fields are
-    /// precomputed at pool construction (`build_resolved_startup`), so
-    /// every call hands back a borrow of the cached `Arc` instead of
-    /// cloning and re-validating the merge.
+    /// Read-only startup-parameter classifier shared by spawn and admin/API.
     fn classify_startup_parameters(
         &self,
     ) -> (
@@ -687,18 +669,10 @@ impl ServerPool {
         )
     }
 
-    /// will hand to `Server::startup` for one backend spawn.
+    /// Startup parameters for one backend spawn.
     ///
-    /// Without a per-user auth_query overlay, this borrows the cached base
-    /// map. With an overlay, it clones the base map and applies the user
-    /// values.
-    ///
-    /// The merged map is checked against the operator budget and the full
-    /// PostgreSQL startup-packet limit. Any overflow, whether caused by
-    /// the auth_query overlay, the general/pool baseline, or the full
-    /// StartupMessage, becomes a PG-style
-    /// `ServerStartupParameterRejection`. That gives the client a clear
-    /// error instead of silently dropping configured startup parameters.
+    /// Overflow becomes `ServerStartupParameterRejection` instead of
+    /// silently dropping configured parameters.
     fn resolved_startup_parameters(
         &self,
     ) -> Result<std::borrow::Cow<'_, BTreeMap<String, String>>, Error> {
@@ -767,17 +741,9 @@ impl ServerPool {
         }
     }
 
-    /// Establish a fallback connection by iterating through Patroni-discovered
-    /// candidates. Per-candidate failures (auth error, "database is starting up",
-    /// startup timeout, etc.) mark the candidate unhealthy and proceed to the
-    /// next one. Hard-bounded by `query_wait_timeout`: there is no point
-    /// spending more time here than the client itself is willing to wait.
+    /// Establish a fallback connection within `query_wait_timeout`.
     async fn create_fallback_connection(&self) -> Result<Server, Error> {
-        // `query_wait_timeout` is a soft outer deadline: it bounds how long
-        // the client waits, but per-candidate `startup_with_timeout` already
-        // guarantees we cannot block on a single hung node. If the outer
-        // deadline fires we still return a clean `ConnectError` so the
-        // client gets a sanitized FATAL rather than a hang.
+        // Outer deadline bounds total fallback time for this checkout.
         let deadline = self.query_wait_timeout;
         info!(
             "[{}@{}] fallback: local backend unavailable, entering fallback path (deadline={}ms)",
@@ -802,8 +768,7 @@ impl ServerPool {
         }
     }
 
-    /// Inner body so the outer wrapper can apply the `query_wait_timeout`
-    /// guard. Holds the retry-after-stale-whitelist policy.
+    /// Fallback body plus one stale-whitelist retry.
     async fn create_fallback_connection_inner(&self) -> Result<Server, Error> {
         let fallback = match self.fallback_state.as_ref() {
             Some(fb) => fb,
@@ -817,18 +782,11 @@ impl ServerPool {
         let (result, source) = self.run_fallback_round(fallback).await;
         match result {
             Ok(conn) => Ok(conn),
-            // The startup_parameters preflight is host-independent. If it
-            // rejected the cascade, every candidate would fail with the
-            // same SQLSTATE until the operator fixes the config. Return
-            // the rejection unchanged so the client sees the PG-style
-            // error, and skip the whitelist clear so a healthy whitelist
-            // is not wiped because of a configuration bug.
-            Err(err @ Error::ServerStartupParameterRejection { .. }) => Err(err),
+            // Failures that no candidate switch can fix keep their typed error.
+            Err(err) if is_host_independent_error(&err) => Err(err),
             Err(err) => match source {
                 super::fallback::TargetSource::WhitelistCache => {
-                    // Cached host was stale; wipe it and try with full
-                    // discovery exactly once more. If discovery fails
-                    // too, return that failure without a third attempt.
+                    // Cached host may be stale; retry once with discovery.
                     info!(
                         "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
                         self.address.username, self.address.pool_name,
@@ -836,9 +794,13 @@ impl ServerPool {
                     fallback.clear_whitelist();
                     let (retry_result, _) = self.run_fallback_round(fallback).await;
                     retry_result.map_err(|e2| {
-                        Error::ConnectError(format!(
-                            "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
-                        ))
+                        if is_host_independent_error(&e2) {
+                            e2
+                        } else {
+                            Error::ConnectError(format!(
+                                "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
+                            ))
+                        }
                     })
                 }
                 super::fallback::TargetSource::Discovery => Err(err),
@@ -846,31 +808,11 @@ impl ServerPool {
         }
     }
 
-    /// Run a single fallback round and produce a connection.
+    /// Run one fallback round.
     ///
-    /// **Two-wave priority race.** Discovery returns every alive member
-    /// from `/cluster`; we partition by role and run two waves serially:
-    /// 1. **Wave 1 — sync_standby.** Race `Server::startup` against every
-    ///    sync_standby in parallel under per-candidate
-    ///    `fallback_connect_timeout`. The first Ok wins immediately. The
-    ///    user-facing requirement is "sync wins if it's alive at all";
-    ///    we do not consider replica/leader while any sync candidate is
-    ///    still in-flight, even if a replica would have answered faster.
-    /// 2. **Wave 2 — replica + leader.** Only entered if every sync_standby
-    ///    failed (or none existed). Race the rest in parallel; first Ok
-    ///    wins. Among non-sync candidates we do not preserve replica >
-    ///    leader sub-priority — under fallback the system is already in
-    ///    a degraded state, fastest live answer is more useful than
-    ///    role-based ordering.
-    ///
-    /// Whitelist-cache hits (`source = WhitelistCache`) skip the wave
-    /// machinery and run a single startup against the cached host, since
-    /// there's nothing to race against.
-    ///
-    /// On exhaustion: returns `ConnectError("all fallback candidates
-    /// rejected (...)")` with a deterministic per-reason summary. Each
-    /// failed candidate is also marked unhealthy (with exponential
-    /// backoff) and logged at WARN (rate-limited) or DEBUG.
+    /// Discovery races sync_standby first, then every other candidate.
+    /// Whitelist-cache hits run a single target. Host-independent typed errors
+    /// are preserved.
     async fn run_fallback_round(
         &self,
         fallback: &super::fallback::FallbackState,
@@ -889,23 +831,13 @@ impl ServerPool {
                     Err(Error::ConnectError(format!(
                         "fallback discovery failed: {e}"
                     ))),
-                    // Discovery itself failed: no source to speak of, but the
-                    // caller treats Discovery as "no retry" — which is what
-                    // we want here, the next attempt will be a fresh client
-                    // request, not an automatic retry.
+                    // No automatic retry after discovery failure.
                     super::fallback::TargetSource::Discovery,
                 );
             }
         };
 
-        // Resolve the startup_parameters cascade once for the whole
-        // fallback round. Without this, a wave of N candidates would
-        // do N×{auth_query peek, BTreeMap clone, validation walk}
-        // for one client checkout — and the merge result is host-
-        // independent, so the per-candidate work was pure waste.
-        // `try_fallback_target` borrows this map for both the plain
-        // attempt and the optional sslmode=allow TLS retry. An
-        // over-budget cascade fails the whole fallback round here.
+        // Startup parameters are host-independent; resolve once per round.
         let startup_parameters_round = match self.resolved_startup_parameters() {
             Ok(map) => map,
             Err(err) => return (Err(err), source),
@@ -1021,16 +953,15 @@ impl ServerPool {
             "[{}@{}] fallback: all fallback candidates rejected ({summary_str})",
             self.address.username, self.address.pool_name,
         );
-        // If at least one fallback candidate reached PG's StartupMessage
-        // stage and got rejected for an operator-supplied startup
-        // parameter, surface PG's actual sqlstate/message. The
-        // misconfiguration is host-independent — every other reachable
-        // candidate would fail the same way once we got past transport
-        // issues — and healthy hosts are not blacklisted on this reason,
-        // so wrapping it in 53300 would just rewrite the actionable
-        // error.
+        // Surface typed startup-parameter rejection; another host cannot fix it.
         if summary.has_startup_parameter_rejection() {
-            if let Some(err) = summary.into_startup_rejection() {
+            if let Some(err) = summary.startup_rejection() {
+                return (Err(err), source);
+            }
+        }
+        // Preserve local fd exhaustion as a pooler resource error.
+        if summary.has_resource_exhaustion() {
+            if let Some(err) = summary.resource_exhaustion() {
                 return (Err(err), source);
             }
         }
@@ -1042,11 +973,7 @@ impl ServerPool {
         )
     }
 
-    /// Race `Server::startup` against `targets` in parallel. On first Ok
-    /// return `Some(server)` (winner is whitelisted as a side effect). On
-    /// full exhaustion mark every loser unhealthy, record reasons into
-    /// `summary`, and return `None`; the caller advances to the next wave or
-    /// returns the aggregate error.
+    /// Race a fallback wave; whitelist winner, record loser failures.
     async fn race_wave(
         &self,
         fallback: &super::fallback::FallbackState,
@@ -1055,10 +982,7 @@ impl ServerPool {
         source: super::fallback::TargetSource,
         startup_parameters: &BTreeMap<String, String>,
     ) -> Option<Server> {
-        // We only count "we attempted to use fallback" once per wave, on
-        // entry — not per candidate. The metric measures fallback usage
-        // pressure, not per-host attempt counts (those live in
-        // `_candidate_failures_total`).
+        // Count one fallback use per wave, not per candidate.
         crate::web::metrics::FALLBACK_CONNECTIONS_TOTAL
             .with_label_values(&[&self.address.pool_name])
             .inc();
@@ -1114,16 +1038,13 @@ impl ServerPool {
         }
     }
 
-    /// Attempt a single fallback target with optional sslmode=allow TLS retry.
-    /// Returns Ok with a ready Server, or Err mapped from `Server::startup`
-    /// (including `ConnectError` on `startup_with_timeout` deadline).
+    /// Try one fallback target with optional sslmode=allow TLS retry.
     async fn try_fallback_target(
         &self,
         target: &super::fallback::FallbackTarget,
         startup_parameters: &BTreeMap<String, String>,
     ) -> Result<Server, Error> {
-        // Use the fallback_connect_timeout for fallback startup deadlines —
-        // the same scale as the TCP-probe and per-candidate cooldown window.
+        // Use the fallback per-candidate startup timeout.
         let fallback_timeout = self
             .fallback_state
             .as_ref()
@@ -1140,12 +1061,8 @@ impl ServerPool {
         ));
         stats.register(stats.clone());
 
-        // `startup_parameters` is resolved once per fallback round by
-        // the caller (`run_fallback_round` / `race_wave`), so a wave
-        // of N candidates does N×0 cascade resolves and merges instead
-        // of N×1. The fallback target's pool name matches `self`, so
-        // the per-pool cascade still applies even though we are talking
-        // to a different physical host than `self.address.host`.
+        // Startup parameters are resolved once per fallback round; each
+        // candidate reuses the same per-pool cascade.
 
         let result = startup_with_timeout(
             fallback_timeout,
@@ -1174,6 +1091,7 @@ impl ServerPool {
             Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
                 Error::ConnectError(_)
+                    | Error::ConnectResourceExhausted(_)
                     | Error::ServerUnavailableError(_, _)
                     | Error::ServerStartupParameterRejection { .. }
             ),
@@ -1299,16 +1217,10 @@ impl ServerPool {
         }
     }
 
-    /// Checks if the connection can be recycled.
-    /// Performs lifetime check and alive check for idle connections.
+    /// Checks whether a server connection can be reused.
     ///
-    /// `skip_lifetime` lets the caller suppress the `server_lifetime`
-    /// expiration check when the pool is under client pressure (no spare
-    /// permits, queue forming). Lifetime is housekeeping, not safety: closing
-    /// an aged-but-working connection mid-storm forces a `connect()` round-trip
-    /// onto the wait path of every queued client. Bad-connection, RECONNECT
-    /// epoch and idle-alive checks always run regardless of the flag — those
-    /// are correctness, not housekeeping.
+    /// `skip_lifetime` suppresses only `server_lifetime` under client
+    /// pressure. Bad-connection, reconnect-epoch, and alive checks still run.
     pub async fn recycle(
         &self,
         conn: &mut Server,
@@ -1328,9 +1240,7 @@ impl ServerPool {
             ));
         }
 
-        // Check server_lifetime - applies to all connections, not just idle
-        // Uses per-connection lifetime with jitter to prevent mass closures.
-        // Skipped when the pool is under pressure: see doc-comment above.
+        // Lifetime cleanup is skipped while the pool is under pressure.
         if let Some(age_ms) = lifetime_exceeded(metrics, skip_lifetime) {
             conn.close_reason = Some(format!(
                 "lifetime exceeded (age={}, limit={})",
@@ -1340,7 +1250,7 @@ impl ServerPool {
             return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
         }
 
-        // Check if connection was idle too long and needs alive check
+        // Probe long-idle connections before reuse.
         if self.idle_check_timeout_ms > 0 {
             if let Some(recycled) = metrics.recycled {
                 let idle_time_ms = recycled.elapsed().as_millis() as u64;
@@ -1365,9 +1275,7 @@ impl ServerPool {
     }
 }
 
-/// Compact "host:port(role)" list for log lines that summarise a wave's
-/// candidate set. Keeps the message readable when the wave has 5+
-/// candidates without splitting into multiple lines.
+/// Compact "host:port(role)" list for fallback wave logs.
 fn format_target_list(targets: &[super::fallback::FallbackTarget]) -> String {
     targets
         .iter()
@@ -1383,23 +1291,14 @@ fn is_backend_unreachable(err: &Error) -> bool {
     )
 }
 
-/// Aggregator for per-candidate failure reasons inside one fallback round.
-/// Lets `run_fallback_round` build a categorical summary like "3
-/// startup_error, 1 timeout" instead of leaking only the last error to the
-/// client — operators can tell apart "kernel-level connectivity broken" from
-/// "everyone refused on auth" at a glance.
+/// Per-candidate failure counters and typed host-independent errors.
 #[derive(Default)]
 struct FailureSummary {
     last_err: Option<Error>,
-    /// The first `ServerStartupParameterRejection` observed in the
-    /// round. PG rejection of an operator startup_parameter is a
-    /// host-independent config error: even one PG candidate that
-    /// reached the StartupMessage stage and rejected the cascade
-    /// means the same SQLSTATE/message will repeat on every other
-    /// reachable PG. Mixed-failure rounds with one PG rejection plus
-    /// transport failures on the rest must still surface the PG
-    /// error so the operator sees the actionable cause.
+    /// First startup-parameter rejection seen in this fallback round.
     typed_startup_rejection: Option<Error>,
+    /// First local fd exhaustion seen in this fallback round.
+    typed_resource_exhaustion: Option<Error>,
     counts: std::collections::HashMap<super::fallback::FailureReason, u32>,
 }
 
@@ -1411,9 +1310,7 @@ impl FailureSummary {
             super::fallback::FailureReason::StartupParameterRejection
         ) && self.typed_startup_rejection.is_none()
         {
-            // Clone the rejection — the original moves into `last_err`
-            // so the aggregate `format()` and surrounding code keep
-            // working unchanged.
+            // Keep a typed copy; the original moves into `last_err`.
             if let Error::ServerStartupParameterRejection {
                 sqlstate,
                 message,
@@ -1427,24 +1324,42 @@ impl FailureSummary {
                 });
             }
         }
+        if matches!(reason, super::fallback::FailureReason::ResourceExhausted)
+            && self.typed_resource_exhaustion.is_none()
+        {
+            self.typed_resource_exhaustion = Some(err.clone());
+        }
         self.last_err = Some(err);
     }
 
-    /// Was at least one fallback candidate rejected by PG specifically
-    /// for an operator-supplied startup_parameter? Mixed-failure rounds
-    /// use this to keep the typed PG error from being wrapped in the
-    /// generic transport-aggregate message.
+    /// Whether the round saw a typed startup-parameter rejection.
     fn has_startup_parameter_rejection(&self) -> bool {
         self.typed_startup_rejection.is_some()
     }
 
+    fn startup_rejection(&self) -> Option<Error> {
+        self.typed_startup_rejection.clone()
+    }
+
+    #[cfg(test)]
     fn into_startup_rejection(self) -> Option<Error> {
         self.typed_startup_rejection
     }
 
-    /// Kept for the legacy "every failure was rejection" tests. The
-    /// production path uses `has_startup_parameter_rejection` and only
-    /// needs the typed copy retained separately.
+    fn has_resource_exhaustion(&self) -> bool {
+        self.typed_resource_exhaustion.is_some()
+    }
+
+    fn resource_exhaustion(&self) -> Option<Error> {
+        self.typed_resource_exhaustion.clone()
+    }
+
+    #[cfg(test)]
+    fn into_resource_exhaustion(self) -> Option<Error> {
+        self.typed_resource_exhaustion
+    }
+
+    /// Legacy helper for tests that require every failure to be a rejection.
     #[cfg(test)]
     fn all_startup_parameter_rejection(&self) -> bool {
         !self.counts.is_empty()
@@ -1475,16 +1390,8 @@ impl FailureSummary {
     }
 }
 
-/// Race `futures` and return the first `Ok`, together with its index in the
-/// input slice. If every future yields `Err`, return all errors with their
-/// original indices; the caller decides how to use them for per-host cooldown
-/// and log aggregation. Pending futures are dropped on first
-/// success, which cancels the in-flight `Server::startup` for the losing
-/// candidates: their TCP sockets go away under us; the kernel finishes the
-/// half-open handshake asynchronously. The user-facing requirement is
-/// "first successful sync wins", and chasing
-/// graceful disconnect on every loser would gate the winner on the slowest
-/// loser.
+/// Return the first success with its original index.
+/// If every future fails, return all indexed errors.
 async fn race_first_success<'a, T: 'a, E: 'a>(
     futures: Vec<futures::future::BoxFuture<'a, Result<T, E>>>,
 ) -> Result<(T, usize), Vec<(usize, E)>> {
@@ -1492,9 +1399,7 @@ async fn race_first_success<'a, T: 'a, E: 'a>(
         return Err(Vec::new());
     }
 
-    // Bake the original index into each future's output so `select_all`'s
-    // own ephemeral index — which renumbers as `rest` shrinks — is not
-    // load-bearing.
+    // Keep original indices; select_all renumbers as `rest` shrinks.
     let mut indexed: Vec<futures::future::BoxFuture<'a, (usize, Result<T, E>)>> = futures
         .into_iter()
         .enumerate()
@@ -1514,12 +1419,8 @@ async fn race_first_success<'a, T: 'a, E: 'a>(
     Err(errors)
 }
 
-/// Wraps a `Server::startup` call in a hard deadline. On timeout returns
-/// `Error::ConnectError`, which is treated as transport-level failure: on the
-/// main path it triggers fallback, on the fallback path it lets the caller
-/// mark the candidate unhealthy and try the next one. Without this, a postgres
-/// that opened a TCP socket but never replies to StartupMessage would keep
-/// pg_doorman blocked on `read_u8` forever.
+/// Wrap server startup in the fallback connect timeout.
+/// Timeouts become `ConnectError` so fallback can try another candidate.
 async fn startup_with_timeout<F>(
     timeout_duration: Duration,
     host: &str,
@@ -1540,13 +1441,7 @@ where
     }
 }
 
-/// Returns `Some(age_ms)` when a connection should be closed because it
-/// crossed its per-connection `lifetime_ms` budget. Returns `None` when the
-/// caller asked to skip the check (`skip_lifetime`), the lifetime budget is
-/// disabled (`lifetime_ms == 0`), or the connection is still within budget.
-///
-/// Pulled out of `recycle()` so the lifetime decision can be exercised
-/// without constructing a real `Server` connection in tests.
+/// Return age when per-connection lifetime is exceeded and not skipped.
 fn lifetime_exceeded(metrics: &Metrics, skip_lifetime: bool) -> Option<u64> {
     if skip_lifetime || metrics.lifetime_ms == 0 {
         return None;
@@ -1557,6 +1452,19 @@ fn lifetime_exceeded(metrics: &Metrics, skip_lifetime: bool) -> Option<u64> {
     } else {
         None
     }
+}
+
+/// Error classes that a different Patroni member cannot fix.
+///
+/// Keep this predicate aligned with `is_backend_unreachable` and
+/// `FailureReason::warrants_host_cooldown`: local fd exhaustion and
+/// operator startup-parameter errors must not clear the whitelist or
+/// enter host cooldown bookkeeping.
+fn is_host_independent_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::ServerStartupParameterRejection { .. } | Error::ConnectResourceExhausted(_)
+    )
 }
 
 #[cfg(test)]
@@ -1583,6 +1491,53 @@ mod tests {
 
     fn timeout_err() -> Error {
         Error::ConnectError("server startup timed out after 5s".to_string())
+    }
+
+    fn resource_exhausted_err() -> Error {
+        Error::ConnectResourceExhausted("too many open files".to_string())
+    }
+
+    #[test]
+    fn is_host_independent_error_covers_resource_exhaustion_and_startup_rejection() {
+        assert!(is_host_independent_error(&resource_exhausted_err()));
+        assert!(is_host_independent_error(&rejection_err()));
+    }
+
+    #[test]
+    fn is_host_independent_error_excludes_transport_failures() {
+        let id = crate::errors::ServerIdentifier::new("alice".to_string(), "db", "pool_a");
+        assert!(
+            !is_host_independent_error(&Error::ConnectError("connection refused".into())),
+            "transport failures are candidate-specific"
+        );
+        assert!(
+            !is_host_independent_error(&timeout_err()),
+            "startup timeout is candidate-specific"
+        );
+        assert!(
+            !is_host_independent_error(&Error::ServerUnavailableError(
+                "the database system is starting up".into(),
+                id,
+            )),
+            "server unavailable is candidate-specific"
+        );
+    }
+
+    #[test]
+    fn backend_unreachable_excludes_local_resource_exhaustion() {
+        let id = crate::errors::ServerIdentifier::new("alice".to_string(), "db", "pool_a");
+
+        assert!(is_backend_unreachable(&Error::ConnectError(
+            "connection refused".into()
+        )));
+        assert!(is_backend_unreachable(&Error::ServerUnavailableError(
+            "the database system is starting up".into(),
+            id,
+        )));
+        assert!(
+            !is_backend_unreachable(&resource_exhausted_err()),
+            "EMFILE/ENFILE is pg_doorman resource exhaustion, not backend unreachability"
+        );
     }
 
     #[test]
@@ -1648,6 +1603,27 @@ mod tests {
                 assert_eq!(sqlstate, "22023")
             }
             other => panic!("expected the retained rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failure_summary_retains_resource_exhaustion() {
+        let mut s = FailureSummary::default();
+        s.record(
+            timeout_err(),
+            super::super::fallback::FailureReason::Timeout,
+        );
+        s.record(
+            resource_exhausted_err(),
+            super::super::fallback::FailureReason::ResourceExhausted,
+        );
+
+        assert!(s.has_resource_exhaustion());
+        match s.into_resource_exhaustion() {
+            Some(Error::ConnectResourceExhausted(msg)) => {
+                assert!(msg.contains("too many open files"), "unexpected msg: {msg}");
+            }
+            other => panic!("expected resource exhaustion, got {other:?}"),
         }
     }
 

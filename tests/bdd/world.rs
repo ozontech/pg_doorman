@@ -113,6 +113,13 @@ pub struct DoormanWorld {
     /// Used by `pg_doorman started with NOFILE limit N and config:` to put
     /// the daemon under a tight fd budget for migration-buffer tests.
     pub doorman_nofile_limit: Option<u64>,
+    /// Number of extra inheritable pipe fds to open in `pre_exec` before
+    /// `exec`. Used by the polluted-parent scenario to verify that the
+    /// child of a SIGUSR2 upgrade closes inherited fds outside its
+    /// allowlist (see `c891054`). Each unit opens one pipe(2) pair = 2
+    /// fds, and `FD_CLOEXEC` is cleared on both ends so they survive
+    /// `exec`. None means no extra fds are seeded.
+    pub doorman_extra_inheritable_pipes: Option<usize>,
     pub pg_ssl_ca_cert_file: Option<NamedTempFile>,
     pub pg_ssl_ca_key_file: Option<NamedTempFile>,
     pub pg_ssl_cert_file: Option<NamedTempFile>,

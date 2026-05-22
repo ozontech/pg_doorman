@@ -11,6 +11,7 @@ pub mod tls;
 pub use config::init_config;
 pub use logger::init_logging;
 pub use panic::install_panic_hook;
+pub use server::cleanup_inherited_upgrade_fds;
 pub use server::run_server;
 
 pub use args::{parse, Args, Commands, GenerateConfig, LogFormat, OutputFormat};

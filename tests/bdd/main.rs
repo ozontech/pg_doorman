@@ -1,4 +1,5 @@
 mod auth_query_helper;
+mod binary_upgrade_fd_helper;
 mod doorman_helper;
 mod extended;
 mod fallback_helper;
@@ -12,6 +13,7 @@ mod pgbench_helper;
 mod pgbouncer_helper;
 mod pool_bench_helper;
 mod postgres_helper;
+mod proc_inspect;
 mod service_helper;
 mod shell_helper;
 mod utils;

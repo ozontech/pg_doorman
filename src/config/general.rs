@@ -53,11 +53,12 @@ pub struct General {
     #[serde(default = "General::default_unix_socket_buffer_size")]
     pub unix_socket_buffer_size: ByteSize,
 
-    /// Kernel SO_RCVBUF/SO_SNDBUF limits for accepted client TCP sockets
-    /// and outbound backend TCP sockets. `0` (default) keeps Linux TCP
-    /// autotuning active. A non-zero value sets fixed send/receive buffer
-    /// limits for the socket and disables autotuning. Linux internally
-    /// doubles the requested values and may clamp them by
+    /// Kernel SO_RCVBUF/SO_SNDBUF limits for accepted client TCP sockets,
+    /// accepted web TCP sockets, and outbound backend TCP sockets. `0`
+    /// (default) keeps Linux TCP autotuning active. A non-zero value sets
+    /// fixed send/receive buffer limits for the socket and disables
+    /// autotuning. Linux internally doubles the requested values and may
+    /// clamp them by
     /// `net.core.rmem_max` / `net.core.wmem_max`. Use 64 KiB-256 KiB as
     /// a starting range for OLTP in one datacenter; measure before using
     /// smaller values, larger values, or WAN links.
