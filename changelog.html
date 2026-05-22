@@ -161,6 +161,30 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3106"><a class="header" href="#3106">3.10.6</a></h3>
+<h4 id="binary-upgrade-no-longer-carries-migrated-client-fds-into-the-next-generation"><a class="header" href="#binary-upgrade-no-longer-carries-migrated-client-fds-into-the-next-generation">Binary upgrade no longer carries migrated client fds into the next generation</a></h4>
+<p>Client fds received over the SIGUSR2 migration socket are now marked
+close-on-exec in the new process. A chained binary upgrade used to inherit
+stale copies of already-migrated client sockets, so every generation could
+start with extra fds and eventually fail with <code>Too many open files</code> under
+load.</p>
+<p>The foreground upgrade path also marks inherited service fds close-on-exec
+after startup and cleans up unexpected inherited descriptors before config
+load when the process starts as a binary-upgrade child. This lets an upgraded
+binary recover from a parent that was already polluted by older non-CLOEXEC
+fds instead of preserving that fd garbage forever.</p>
+<h4 id="local-fd-exhaustion-no-longer-enters-patroni-assisted-fallback"><a class="header" href="#local-fd-exhaustion-no-longer-enters-patroni-assisted-fallback">Local fd exhaustion no longer enters Patroni-assisted fallback</a></h4>
+<p>Backend connection failures caused by pg_doorman's own <code>EMFILE</code>/<code>ENFILE</code>
+state are now classified as local resource exhaustion, not as PostgreSQL
+unreachability. Those errors no longer blacklist the local backend or enter
+the Patroni-assisted fallback discovery path, so fd pressure does not amplify
+itself with fallback connection attempts and noisy discovery failures.</p>
+<h4 id="web-admin-sockets-use-the-safe-tcp-policy"><a class="header" href="#web-admin-sockets-use-the-safe-tcp-policy">Web admin sockets use the safe TCP policy</a></h4>
+<p>Accepted Web UI and <code>/metrics</code> TCP sockets now receive the same low-risk TCP
+keepalive, buffer-size and user-timeout configuration as other TCP sockets,
+but do not inherit the pooler client <code>SO_LINGER</code> policy. This avoids abortive
+HTTP closes when <code>general.tcp_so_linger = 0</code> while still bounding web socket
+resource usage.</p>
 <h3 id="3105"><a class="header" href="#3105">3.10.5</a></h3>
 <h4 id="binary-upgrade-survives-a-tight-rlimit_nofile"><a class="header" href="#binary-upgrade-survives-a-tight-rlimit_nofile">Binary upgrade survives a tight <code>RLIMIT_NOFILE</code></a></h4>
 <p>SIGUSR2 binary upgrade now handles <code>EMFILE</code>/<code>ENFILE</code> from the old

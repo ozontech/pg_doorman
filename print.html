@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.10.5</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.10.6</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-built-in-diagnostic-console" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-diagnostic-console-title">
 <div class="admonition-title">
@@ -6290,12 +6290,12 @@ keepalive cannot help (e.g., during active data transmission).</p>
 <p>Set to <code>0</code> to disable (use OS default).</p>
 <p>Default: <code>60</code>.</p>
 <h3 id="tcp_socket_buffer_size"><a class="header" href="#tcp_socket_buffer_size">tcp_socket_buffer_size</a></h3>
-<p>Kernel <code>SO_RCVBUF</code>/<code>SO_SNDBUF</code> limits for accepted client TCP sockets and outbound backend TCP sockets.</p>
+<p>Kernel <code>SO_RCVBUF</code>/<code>SO_SNDBUF</code> limits for accepted client TCP sockets, accepted web TCP sockets, and outbound backend TCP sockets.</p>
 <p>With the default <code>0</code>, pg_doorman does not call <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code> and Linux TCP autotuning stays in charge. Per-connection receive buffers can grow on demand up to <code>net.ipv4.tcp_rmem[2]</code> (commonly 6 MiB on Ubuntu/RHEL). That memory is not process RSS; depending on kernel and cgroup mode it may appear separately as socket memory, for example as <code>sock</code> in cgroup v2 <code>memory.stat</code>, or mostly as host-level kernel memory. If <code>MemFree</code> jumps after a pg_doorman restart, confirm the source with <code>ss -m</code>, <code>/proc/net/sockstat</code>, cgroup v2 <code>memory.current</code>, and <code>memory.stat</code> key <code>sock</code>.</p>
 <p>Setting a non-zero value calls <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code> once per configured TCP socket. This disables autotuning for that socket and sets fixed send/receive buffer limits. Linux internally doubles the requested values — see <code>man 7 socket</code> — and may clamp them by <code>net.core.rmem_max</code> / <code>net.core.wmem_max</code>. Check <code>/proc/sys/net/core/rmem_max</code> and <code>/proc/sys/net/core/wmem_max</code> before choosing values above the OS default. <code>getsockopt</code>, <code>ss -m</code>, and pg_doorman <code>DEBUG</code> logs show the kernel-applied values.</p>
-<p>The rough Linux limit is <code>4 * tcp_socket_buffer_size * tcp_socket_count</code>: send and receive buffers are both configured, and Linux doubles each requested value internally. For example, <code>tcp_socket_buffer_size = 65536</code> sets about 256 KiB of send+receive limits per TCP socket, so 60 TCP sockets have about 15 MiB of configured kernel buffer limits before <code>sk_buff</code> overhead. Count both client TCP sockets and backend TCP sockets. Actual resident memory still depends on queued data.</p>
+<p>The rough Linux limit is <code>4 * tcp_socket_buffer_size * tcp_socket_count</code>: send and receive buffers are both configured, and Linux doubles each requested value internally. For example, <code>tcp_socket_buffer_size = 65536</code> sets about 256 KiB of send+receive limits per TCP socket, so 60 TCP sockets have about 15 MiB of configured kernel buffer limits before <code>sk_buff</code> overhead. Count client TCP sockets, web TCP sockets, and backend TCP sockets. Actual resident memory still depends on queued data.</p>
 <p>This setting is primarily a memory cap. Suggested starting range for OLTP traffic inside one datacenter: <strong>64 KiB – 256 KiB</strong>. Do not set less than 64 KiB unless measurements show it is safe. WAN links, cross-zone traffic, large result sets, and bulk transfers may need a larger value or the default autotuning behaviour.</p>
-<p>The value is applied when pg_doorman configures a TCP socket: on accepted client sockets, outbound backend sockets, and migrated client sockets reconstructed during binary upgrade. <code>SIGHUP</code> reload does not revisit already-open sockets. To apply a new value to existing sessions, use binary upgrade for migrated clients, reconnect/drain pools for backend sockets, or restart when reconnects are acceptable.</p>
+<p>The value is applied when pg_doorman configures a TCP socket: on accepted client sockets, accepted web sockets, outbound backend sockets, and migrated client sockets reconstructed during binary upgrade. <code>SIGHUP</code> reload does not revisit already-open sockets. To apply a new value to existing sessions, use binary upgrade for migrated clients, reconnect/drain pools for backend sockets, or restart when reconnects are acceptable.</p>
 <p>Equivalent of PgBouncer's <code>tcp_socket_buffer</code> parameter. Odyssey and PgCat have no analogue and inherit the kernel autotuner's behaviour.</p>
 <p>Default: <code>0</code>.</p>
 <h3 id="unix_socket_buffer_size"><a class="header" href="#unix_socket_buffer_size">unix_socket_buffer_size</a></h3>
@@ -7126,6 +7126,30 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3106"><a class="header" href="#3106">3.10.6</a></h3>
+<h4 id="binary-upgrade-no-longer-carries-migrated-client-fds-into-the-next-generation"><a class="header" href="#binary-upgrade-no-longer-carries-migrated-client-fds-into-the-next-generation">Binary upgrade no longer carries migrated client fds into the next generation</a></h4>
+<p>Client fds received over the SIGUSR2 migration socket are now marked
+close-on-exec in the new process. A chained binary upgrade used to inherit
+stale copies of already-migrated client sockets, so every generation could
+start with extra fds and eventually fail with <code>Too many open files</code> under
+load.</p>
+<p>The foreground upgrade path also marks inherited service fds close-on-exec
+after startup and cleans up unexpected inherited descriptors before config
+load when the process starts as a binary-upgrade child. This lets an upgraded
+binary recover from a parent that was already polluted by older non-CLOEXEC
+fds instead of preserving that fd garbage forever.</p>
+<h4 id="local-fd-exhaustion-no-longer-enters-patroni-assisted-fallback"><a class="header" href="#local-fd-exhaustion-no-longer-enters-patroni-assisted-fallback">Local fd exhaustion no longer enters Patroni-assisted fallback</a></h4>
+<p>Backend connection failures caused by pg_doorman's own <code>EMFILE</code>/<code>ENFILE</code>
+state are now classified as local resource exhaustion, not as PostgreSQL
+unreachability. Those errors no longer blacklist the local backend or enter
+the Patroni-assisted fallback discovery path, so fd pressure does not amplify
+itself with fallback connection attempts and noisy discovery failures.</p>
+<h4 id="web-admin-sockets-use-the-safe-tcp-policy"><a class="header" href="#web-admin-sockets-use-the-safe-tcp-policy">Web admin sockets use the safe TCP policy</a></h4>
+<p>Accepted Web UI and <code>/metrics</code> TCP sockets now receive the same low-risk TCP
+keepalive, buffer-size and user-timeout configuration as other TCP sockets,
+but do not inherit the pooler client <code>SO_LINGER</code> policy. This avoids abortive
+HTTP closes when <code>general.tcp_so_linger = 0</code> while still bounding web socket
+resource usage.</p>
 <h3 id="3105"><a class="header" href="#3105">3.10.5</a></h3>
 <h4 id="binary-upgrade-survives-a-tight-rlimit_nofile"><a class="header" href="#binary-upgrade-survives-a-tight-rlimit_nofile">Binary upgrade survives a tight <code>RLIMIT_NOFILE</code></a></h4>
 <p>SIGUSR2 binary upgrade now handles <code>EMFILE</code>/<code>ENFILE</code> from the old
