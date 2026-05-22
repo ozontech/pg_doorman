@@ -818,15 +818,9 @@ impl ServerPool {
         let (result, source) = self.run_fallback_round(fallback).await;
         match result {
             Ok(conn) => Ok(conn),
-            // Host-independent failures short-circuit before the
-            // stale-whitelist retry, and survive the inner-retry
-            // rewrap untouched. Stringifying them into
-            // `ConnectError` would route a local fd exhaustion or a
-            // config rejection through the Patroni cooldown
-            // machinery — exactly the cascade
-            // `fix/binary-upgrade-fd-leak` exists to prevent. See
-            // `is_host_independent_error` for the predicate and the
-            // unit tests that pin it.
+            // Skip the whitelist retry for failures no candidate
+            // switch can fix; the typed variant must survive instead
+            // of being stringified into `ConnectError`.
             Err(err) if is_host_independent_error(&err) => Err(err),
             Err(err) => match source {
                 super::fallback::TargetSource::WhitelistCache => {
