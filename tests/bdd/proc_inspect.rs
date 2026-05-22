@@ -290,10 +290,14 @@ mod linux {
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            let owner_uid = meta.uid();
-            if owner_uid != current_uid() {
+            if meta.uid() != current_uid() {
+                // Cannot inspect /proc/<pid>/fd across uid boundary
+                // without ptrace privileges. Skip and keep looking,
+                // but flag so the caller's failure message points at
+                // the right diagnosis when no candidate is found at
+                // all.
                 last_err = Some(format!(
-                    "pid {pid} owns LISTEN port {port} but uid {owner_uid} != ours"
+                    "pid {pid} owns LISTEN port {port} but its /proc/<pid> belongs to a different user"
                 ));
                 continue;
             }
