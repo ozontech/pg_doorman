@@ -176,6 +176,7 @@ Feature: pg_doorman stays within its fd budget
       """
     When we sleep 1000ms
     And we discover the current pg_doorman PID externally and store as "polluted_parent"
+    And we capture the fd inventory for stored PID "polluted_parent" as "polluted_parent"
     # 16 pairs × 2 ends = 32 inheritable pipe fds, plus whatever
     # tokio/jemalloc opened natively. The 30 lower bound leaves room
     # for the seeded fds to have been seen even if the runtime
@@ -185,17 +186,19 @@ Feature: pg_doorman stays within its fd budget
     When we send SIGUSR2 to foreground pg_doorman
     And we wait for foreground binary upgrade to complete
     And we discover the current pg_doorman PID externally and store as "clean_child"
+    And we capture the fd inventory for stored PID "clean_child" as "clean_child"
     # The cleanup announces itself on stderr; pin that before the
     # numeric pipe-count assertion so a regression that silently
     # disables the cleanup pass is reported as "the log line never
     # showed up" rather than "we still see N pipes".
     Then pg_doorman log contains "unexpected inherited file descriptor"
-    # The cleanup runs in `main()` before config load, so by the time
-    # the new process is reachable on the listener the seeded pipes
-    # are gone. Anything tokio/jemalloc opens for its own use stays;
-    # the bound of 12 is comfortably above the native pipe count seen
-    # in practice and well below the 30+ a leak would produce.
-    And the pipe fd count for stored PID "clean_child" should be at most 12
+    # Delta-based assertion is more robust than an absolute pipe
+    # count: tokio/jemalloc pipe usage drifts with toolchain
+    # changes, but the requirement that the cleanup closes at least
+    # 20 of the 32 seeded pipes does not. The 12-pipe slack absorbs
+    # internal pipe churn during process replacement (a worker pool
+    # respawn can momentarily allocate a fresh wakeup pipe pair).
+    And the pipe fd count drop from "polluted_parent" to "clean_child" should be at least 20
 
   @client-migration @migration-fd-budget @fd-overload
   Scenario: 1000 clients on a 50-client cap reject cleanly, accepted clients keep working

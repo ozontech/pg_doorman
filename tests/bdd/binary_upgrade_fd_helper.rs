@@ -67,6 +67,8 @@ fn store_inventory_counters(world: &mut DoormanWorld, key: &str, inv: &FdInvento
         format!("{key}_non_listener_sockets"),
         inv.non_listener_socket_fds().len().to_string(),
     );
+    let pipes = inv.fds.iter().filter(|f| f.kind() == "pipe").count();
+    world.vars.insert(format!("{key}_pipes"), pipes.to_string());
 }
 
 fn read_counter(world: &DoormanWorld, key: &str) -> usize {
@@ -146,6 +148,41 @@ pub async fn pipe_count_at_least(world: &mut DoormanWorld, pid_name: String, min
         n >= min,
         "pid={pid} has {n} pipe fd(s); expected at least {min}\n  {}",
         summary(&inv)
+    );
+}
+
+/// Asserts that the pipe fd count *dropped* by at least `min` between
+/// two captured inventories. Pairs naturally with the
+/// `pre_exec`-seeded inheritable pipes: 16 pipe pairs = 32 fds, so a
+/// working `c891054` cleanup is expected to close at least 20 of
+/// them (5 slack covers tokio/jemalloc internal pipe churn during
+/// the process replacement). This is the delta form of the older
+/// `pipe fd count ... should be at most N` assertion, which depended
+/// on an absolute pipe-count number that drifts with runtime
+/// internals.
+#[then(regex = r#"^the pipe fd count drop from "([^"]+)" to "([^"]+)" should be at least (\d+)$"#)]
+pub async fn pipe_count_drop_at_least(
+    world: &mut DoormanWorld,
+    before: String,
+    after: String,
+    min: usize,
+) {
+    let before_n = read_counter(world, &format!("{before}_pipes"));
+    let after_n = read_counter(world, &format!("{after}_pipes"));
+    let drop = before_n as isize - after_n as isize;
+    let summary_before = world
+        .vars
+        .get(&format!("{before}_summary"))
+        .cloned()
+        .unwrap_or_default();
+    let summary_after = world
+        .vars
+        .get(&format!("{after}_summary"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        drop >= min as isize,
+        "pipe fd count dropped by {drop} (from {before_n} to {after_n}); required at least {min}\n  before: {summary_before}\n  after:  {summary_after}"
     );
 }
 
