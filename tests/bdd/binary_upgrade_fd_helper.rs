@@ -183,8 +183,21 @@ pub async fn pipe_count_at_most(world: &mut DoormanWorld, pid_name: String, max:
 pub async fn every_non_listener_socket_is_cloexec(world: &mut DoormanWorld, pid_name: String) {
     let pid = captured_pid(world, &pid_name);
     let port = world.doorman_port.expect("doorman_port not set");
-    let inv = inventory(pid, port).unwrap_or_else(|e| panic!("inventory pid={pid}: {e}"));
-    let offenders = inv.non_listener_sockets_without_cloexec();
+
+    // Re-inventory once on a first miss to tolerate transient races
+    // where `/proc/<pid>/fdinfo/<fd>` is unreadable for a moment
+    // (e.g. the fd closed between readlink and the flags read). If a
+    // fd reappears as a non-listener socket but its CLOEXEC state is
+    // still unknown on the second sample, fail — we'd rather flag an
+    // unknowable fd than silently call it safe.
+    let mut inv = inventory(pid, port).unwrap_or_else(|e| panic!("inventory pid={pid}: {e}"));
+    let mut offenders = inv.non_listener_sockets_without_cloexec();
+    if !offenders.is_empty() {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        inv = inventory(pid, port).unwrap_or_else(|e| panic!("re-inventory pid={pid}: {e}"));
+        offenders = inv.non_listener_sockets_without_cloexec();
+    }
+
     assert!(
         offenders.is_empty(),
         "pid={pid}: {} non-listener socket fd(s) missing FD_CLOEXEC out of {} checked\n  {}\n{}",

@@ -313,12 +313,13 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         let extra_pipes = world.doorman_extra_inheritable_pipes.unwrap_or(0);
         // SAFETY: pre_exec runs between fork and exec in the child.
         // - setrlimit is async-signal-safe per POSIX.
-        // - pipe2(2) is async-signal-safe; we explicitly do NOT pass
-        //   O_CLOEXEC, then strip FD_CLOEXEC via fcntl (which is also
-        //   async-signal-safe). The resulting fds survive exec, which
-        //   is exactly the "polluted parent" condition we need to
-        //   simulate so the child of a later SIGUSR2 has something
-        //   to clean up via the c891054 close-by-range pass.
+        // - pipe(2) and fcntl(2) are both listed as async-signal-safe
+        //   in `signal-safety(7)`. The default `pipe(2)` opens fds
+        //   without `O_CLOEXEC`, so they survive `exec` without
+        //   needing a follow-up fcntl. We still defensively
+        //   re-confirm with `fcntl(F_GETFD/F_SETFD)` because a future
+        //   libc switch to `pipe2(2)` with `O_CLOEXEC` default would
+        //   silently break the polluted-parent invariant otherwise.
         unsafe {
             cmd.pre_exec(move || {
                 if let Some(limit) = nofile_limit {

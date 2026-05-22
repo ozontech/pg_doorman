@@ -100,14 +100,20 @@ impl FdInventory {
             .collect()
     }
 
-    /// Returns `(non_listener_socket_fd_count, offenders)` where each
-    /// offender is a socket fd that does NOT have `FD_CLOEXEC` set.
-    /// The offender list is the diagnostic payload assertions print on
-    /// failure.
+    /// Returns offenders: socket fds that either have `FD_CLOEXEC` not
+    /// set (`Some(false)`) or where `fdinfo` could not be read
+    /// (`None`). The original implementation accepted `None` silently,
+    /// which gives the assertion a soft loophole: if `/proc/<pid>/fdinfo/<fd>`
+    /// disappears between the `readlink` and the `flags:` read, the test
+    /// would call the fd "fine" without ever inspecting it. Treating
+    /// `None` as an offender matches what the step name promises —
+    /// "every non-listener socket fd has FD_CLOEXEC set" — and turns
+    /// a transient read error into a re-inventory candidate rather
+    /// than a pass.
     pub fn non_listener_sockets_without_cloexec(&self) -> Vec<&FdRecord> {
         self.non_listener_socket_fds()
             .into_iter()
-            .filter(|f| matches!(f.cloexec, Some(false)))
+            .filter(|f| !matches!(f.cloexec, Some(true)))
             .collect()
     }
 

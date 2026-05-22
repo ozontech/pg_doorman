@@ -211,6 +211,136 @@ pub async fn fresh_pg_session_succeeds(
 /// Stores the response under the chosen session's name so the standard
 /// `session "..." should receive DataRow with "..."` assertion picks
 /// it up unchanged.
+/// Round-trips a SimpleQuery on every `idle-N` session that the batch
+/// step left in the world, asserts a minimum number of those responses
+/// contain a DataRow with the expected value, and drops any session
+/// whose connection has been closed (so subsequent steps see a clean
+/// world). Used by the chained-SIGUSR2 scenario to prove that the
+/// previous-generation migrated clients survived the second upgrade —
+/// without this assertion the fd-delta check passes vacuously if the
+/// second upgrade simply drops everyone.
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to every open idle session and count successes as "([^"]+)"$"#
+)]
+pub async fn send_query_to_every_idle_session(
+    world: &mut DoormanWorld,
+    query: String,
+    out_count_key: String,
+) {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let names: Vec<String> = world
+        .named_sessions
+        .keys()
+        .filter(|k| k.starts_with("idle-"))
+        .cloned()
+        .collect();
+    let mut sorted = names;
+    sorted.sort_by_key(|k| {
+        k.strip_prefix("idle-")
+            .and_then(|n| n.parse::<usize>().ok())
+            .unwrap_or(usize::MAX)
+    });
+
+    let step_timeout = Duration::from_secs(3);
+    let mut successes: usize = 0;
+    let mut failures: Vec<(String, String)> = Vec::new();
+    for name in sorted {
+        // Get session by name; if it isn't there any more (e.g. the
+        // batch step already dropped it on a prior failed iteration)
+        // count as a failure rather than a panic.
+        let Some(conn) = world.named_sessions.get_mut(&name) else {
+            failures.push((name.clone(), "session missing".into()));
+            continue;
+        };
+        let send = timeout(step_timeout, conn.send_simple_query(&query)).await;
+        match send {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                failures.push((name.clone(), format!("send_simple_query: {e}")));
+                world.named_sessions.remove(&name);
+                continue;
+            }
+            Err(_) => {
+                failures.push((name.clone(), "send_simple_query timed out".into()));
+                world.named_sessions.remove(&name);
+                continue;
+            }
+        }
+        let read = timeout(step_timeout, conn.read_all_messages_until_ready()).await;
+        let messages = match read {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => {
+                failures.push((name.clone(), format!("read response: {e}")));
+                world.named_sessions.remove(&name);
+                continue;
+            }
+            Err(_) => {
+                failures.push((name.clone(), "read response timed out".into()));
+                world.named_sessions.remove(&name);
+                continue;
+            }
+        };
+        let mut found_row = false;
+        for (msg_type, data) in &messages {
+            if *msg_type == 'D' {
+                let fields = super::helpers::parse_datarow_fields(data);
+                if fields.into_iter().next().is_some() {
+                    found_row = true;
+                    break;
+                }
+            } else if *msg_type == 'E' {
+                failures.push((
+                    name.clone(),
+                    format!("ErrorResponse: {}", String::from_utf8_lossy(data)),
+                ));
+                break;
+            }
+        }
+        if found_row {
+            successes += 1;
+        } else {
+            failures.push((name.clone(), "no DataRow in response".into()));
+            world.named_sessions.remove(&name);
+        }
+    }
+    log::info!(
+        "[binary-upgrade-fd] round-tripped {} session(s), {} succeeded, {} failed",
+        successes + failures.len(),
+        successes,
+        failures.len()
+    );
+    if !failures.is_empty() {
+        let preview: Vec<String> = failures
+            .iter()
+            .take(10)
+            .map(|(s, e)| format!("{s}: {e}"))
+            .collect();
+        log::info!(
+            "[binary-upgrade-fd] failure preview: {}",
+            preview.join("; ")
+        );
+    }
+    world.vars.insert(out_count_key, successes.to_string());
+}
+
+#[then(regex = r#"^the stored count "([^"]+)" should be at least (\d+)$"#)]
+pub async fn stored_count_at_least(world: &mut DoormanWorld, key: String, min: usize) {
+    let raw = world.vars.get(&key).unwrap_or_else(|| {
+        panic!(
+            "no count stored under key '{key}' — capture it via a prior `count successes as` step"
+        )
+    });
+    let actual: usize = raw
+        .parse()
+        .unwrap_or_else(|e| panic!("count '{key}' = {raw:?} is not numeric: {e}"));
+    assert!(
+        actual >= min,
+        "expected at least {min} successes under '{key}', got {actual}"
+    );
+}
+
 #[when(
     regex = r#"^we send SimpleQuery "([^"]+)" to the first open idle session and store response as "([^"]+)"$"#
 )]

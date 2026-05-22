@@ -60,7 +60,7 @@ Feature: pg_doorman stays within its fd budget
     # lives in the NOFILE=200 scenario below where the budget is wide
     # enough for the new process to settle.
 
-  @client-migration @migration-fd-budget @binary-upgrade-fd-cloexec
+  @client-migration @migration-fd-budget @binary-upgrade-fd-cloexec @linux-only
   Scenario: Chained binary upgrade with 50 idle clients keeps fd table stable (FD_CLOEXEC + cleanup)
     # Catches the production failure mode that the migration channel
     # reproduces: each migrated client fd was inherited by the next
@@ -135,9 +135,17 @@ Feature: pg_doorman stays within its fd budget
     # the count by ~50, ten times this bound.
     And the non-listener socket fd count delta from "gen1" to "gen2" should be at most 5
     And every non-listener socket fd of stored PID "gen2" has FD_CLOEXEC set
+    # The fd delta on its own can pass vacuously: a regression that
+    # drops migrated clients during the second upgrade also shrinks
+    # the socket count. Round-trip the original sessions to make
+    # sure session continuity actually survived, then assert a
+    # high-watermark of successes. Without this assertion the test
+    # would call "delete every migrated client" a successful fix.
+    When we send SimpleQuery "SELECT 1" to every open idle session and count successes as "survived_after_gen2"
+    Then the stored count "survived_after_gen2" should be at least 45
     And a fresh PostgreSQL session to pg_doorman as "example_user_1" with password "" and database "example_db" succeeds
 
-  @client-migration @migration-fd-budget @binary-upgrade-fd-cloexec
+  @client-migration @migration-fd-budget @binary-upgrade-fd-cloexec @linux-only
   Scenario: SIGUSR2 child cleans up inheritable fds leaked by a polluted parent
     # Models the production recovery case for `c891054`: a buggy old
     # parent has been running long enough to accumulate non-CLOEXEC
