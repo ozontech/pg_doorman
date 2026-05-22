@@ -818,13 +818,16 @@ impl ServerPool {
         let (result, source) = self.run_fallback_round(fallback).await;
         match result {
             Ok(conn) => Ok(conn),
-            // The startup_parameters preflight is host-independent. If it
-            // rejected the cascade, every candidate would fail with the
-            // same SQLSTATE until the operator fixes the config. Return
-            // the rejection unchanged so the client sees the PG-style
-            // error, and skip the whitelist clear so a healthy whitelist
-            // is not wiped because of a configuration bug.
-            Err(err @ Error::ServerStartupParameterRejection { .. }) => Err(err),
+            // Host-independent failures short-circuit before the
+            // stale-whitelist retry, and survive the inner-retry
+            // rewrap untouched. Stringifying them into
+            // `ConnectError` would route a local fd exhaustion or a
+            // config rejection through the Patroni cooldown
+            // machinery — exactly the cascade
+            // `fix/binary-upgrade-fd-leak` exists to prevent. See
+            // `is_host_independent_error` for the predicate and the
+            // unit tests that pin it.
+            Err(err) if is_host_independent_error(&err) => Err(err),
             Err(err) => match source {
                 super::fallback::TargetSource::WhitelistCache => {
                     // Cached host was stale; wipe it and try with full
@@ -837,9 +840,13 @@ impl ServerPool {
                     fallback.clear_whitelist();
                     let (retry_result, _) = self.run_fallback_round(fallback).await;
                     retry_result.map_err(|e2| {
-                        Error::ConnectError(format!(
-                            "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
-                        ))
+                        if is_host_independent_error(&e2) {
+                            e2
+                        } else {
+                            Error::ConnectError(format!(
+                                "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
+                            ))
+                        }
                     })
                 }
                 super::fallback::TargetSource::Discovery => Err(err),
@@ -1586,6 +1593,32 @@ where
 /// disabled (`lifetime_ms == 0`), or the connection is still within budget.
 ///
 /// Pulled out of `recycle()` so the lifetime decision can be exercised
+/// Whether the failure is host-independent — i.e. switching
+/// candidates within the Patroni cluster cannot fix it. Used by the
+/// fallback wrapper to skip the stale-whitelist retry and to preserve
+/// the typed variant when the inner retry path would otherwise
+/// stringify the error into `ConnectError`.
+///
+/// Two classes today:
+///
+/// - `ServerStartupParameterRejection`: every member would reject the
+///   same way until the operator fixes the config.
+/// - `ConnectResourceExhausted`: pg_doorman ran out of fds locally;
+///   no Patroni member is broken, so there is no point clearing the
+///   whitelist or accusing a candidate.
+///
+/// Anything classified as host-independent here must also be excluded
+/// from `is_backend_unreachable` and from `warrants_host_cooldown` in
+/// `super::fallback`; the three predicates work together. Adding a
+/// new variant here without updating those locations would leak the
+/// typed error back into Patroni cooldown bookkeeping.
+fn is_host_independent_error(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::ServerStartupParameterRejection { .. } | Error::ConnectResourceExhausted(_)
+    )
+}
+
 /// without constructing a real `Server` connection in tests.
 fn lifetime_exceeded(metrics: &Metrics, skip_lifetime: bool) -> Option<u64> {
     if skip_lifetime || metrics.lifetime_ms == 0 {
@@ -1627,6 +1660,38 @@ mod tests {
 
     fn resource_exhausted_err() -> Error {
         Error::ConnectResourceExhausted("too many open files".to_string())
+    }
+
+    #[test]
+    fn is_host_independent_error_covers_resource_exhaustion_and_startup_rejection() {
+        assert!(
+            is_host_independent_error(&resource_exhausted_err()),
+            "local fd exhaustion is host-independent: clearing the whitelist and rediscovering will not free fds in this process"
+        );
+        assert!(
+            is_host_independent_error(&rejection_err()),
+            "PostgreSQL startup_parameter rejection is host-independent: every member would reject the same way until the operator fixes the config"
+        );
+    }
+
+    #[test]
+    fn is_host_independent_error_excludes_transport_failures() {
+        let id = crate::errors::ServerIdentifier::new("alice".to_string(), "db", "pool_a");
+        assert!(
+            !is_host_independent_error(&Error::ConnectError("connection refused".into())),
+            "`ConnectError` is the candidate-fault signal that drives Patroni cooldown"
+        );
+        assert!(
+            !is_host_independent_error(&timeout_err()),
+            "a startup timeout against one candidate may succeed against another"
+        );
+        assert!(
+            !is_host_independent_error(&Error::ServerUnavailableError(
+                "the database system is starting up".into(),
+                id,
+            )),
+            "an unavailable candidate is still candidate-specific; switching members can recover"
+        );
     }
 
     #[test]

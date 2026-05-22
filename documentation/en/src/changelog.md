@@ -1,5 +1,37 @@
 # Changelog
 
+### 3.10.6
+
+#### Binary upgrade no longer carries migrated client fds into the next generation
+
+Client fds received over the SIGUSR2 migration socket are now marked
+close-on-exec in the new process. A chained binary upgrade used to inherit
+stale copies of already-migrated client sockets, so every generation could
+start with extra fds and eventually fail with `Too many open files` under
+load.
+
+The foreground upgrade path also marks inherited service fds close-on-exec
+after startup and cleans up unexpected inherited descriptors before config
+load when the process starts as a binary-upgrade child. This lets an upgraded
+binary recover from a parent that was already polluted by older non-CLOEXEC
+fds instead of preserving that fd garbage forever.
+
+#### Local fd exhaustion no longer enters Patroni-assisted fallback
+
+Backend connection failures caused by pg_doorman's own `EMFILE`/`ENFILE`
+state are now classified as local resource exhaustion, not as PostgreSQL
+unreachability. Those errors no longer blacklist the local backend or enter
+the Patroni-assisted fallback discovery path, so fd pressure does not amplify
+itself with fallback connection attempts and noisy discovery failures.
+
+#### Web admin sockets use the safe TCP policy
+
+Accepted Web UI and `/metrics` TCP sockets now receive the same low-risk TCP
+keepalive, buffer-size and user-timeout configuration as other TCP sockets,
+but do not inherit the pooler client `SO_LINGER` policy. This avoids abortive
+HTTP closes when `general.tcp_so_linger = 0` while still bounding web socket
+resource usage.
+
 ### 3.10.5
 
 #### Binary upgrade survives a tight `RLIMIT_NOFILE`
