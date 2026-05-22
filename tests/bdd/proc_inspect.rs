@@ -1,21 +1,6 @@
-//! External `/proc` inspection helpers for the BDD harness.
-//!
-//! Two operations the binary-upgrade-fd-leak tests need:
-//!
-//! 1. Find the PID of the process currently owning the listening TCP
-//!    socket on a known port. Used after `SIGUSR2` upgrades, when the
-//!    new child process is not the one this harness spawned and the
-//!    original `tokio::process::Child` handle no longer tracks it.
-//!
-//! 2. Inventory every open fd of that process: socket inode, fdinfo
-//!    flags, `FD_CLOEXEC` bit. Used to assert "no fd grew across the
-//!    chained upgrades" and "every non-listener socket has CLOEXEC set".
-//!
-//! Both run **from the test process**. The pooler must never read its
-//! own `/proc/self/fd` from a code path that runs under fd pressure —
-//! that's the failure mode we are testing.
-//!
-//! Linux-only. Stubs on other targets so `tests/bdd` still compiles.
+//! External `/proc` inspection for BDD fd-leak checks.
+//! The pooler must not read `/proc/self/fd` while the test is creating
+//! fd pressure.
 
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
@@ -59,18 +44,12 @@ impl FdRecord {
     }
 }
 
-/// Full external snapshot of a process's fd table plus its kernel-side
-/// listener inode set. Used both for assertions and for diagnostic dumps
-/// on failure.
+/// External fd snapshot plus listener inode set.
 #[derive(Debug, Clone)]
 pub struct FdInventory {
     pub pid: u32,
     pub fds: Vec<FdRecord>,
-    /// Socket inodes from `/proc/<pid>/net/tcp{,6}` that were in the
-    /// `LISTEN` state at snapshot time. We exclude listener fds from
-    /// the universal CLOEXEC assertion by inode rather than by fd
-    /// number, so the check survives fd-number shuffling across
-    /// generations.
+    /// Listener socket inodes for the inspected port.
     pub listener_inodes: std::collections::BTreeSet<u64>,
 }
 
@@ -83,8 +62,7 @@ impl FdInventory {
         self.fds.iter().filter(|f| f.is_socket()).count()
     }
 
-    /// Non-listener socket fds: socket fds whose inode does not appear
-    /// in the kernel's LISTEN set for this process.
+    /// Socket fds whose inode is not in the listener set.
     pub fn non_listener_socket_fds(&self) -> Vec<&FdRecord> {
         self.fds
             .iter()
@@ -100,16 +78,8 @@ impl FdInventory {
             .collect()
     }
 
-    /// Returns offenders: socket fds that either have `FD_CLOEXEC` not
-    /// set (`Some(false)`) or where `fdinfo` could not be read
-    /// (`None`). The original implementation accepted `None` silently,
-    /// which gives the assertion a soft loophole: if `/proc/<pid>/fdinfo/<fd>`
-    /// disappears between the `readlink` and the `flags:` read, the test
-    /// would call the fd "fine" without ever inspecting it. Treating
-    /// `None` as an offender matches what the step name promises —
-    /// "every non-listener socket fd has FD_CLOEXEC set" — and turns
-    /// a transient read error into a re-inventory candidate rather
-    /// than a pass.
+    /// Non-listener socket fds without proven FD_CLOEXEC.
+    /// `None` is an offender; the BDD step retries before failing.
     pub fn non_listener_sockets_without_cloexec(&self) -> Vec<&FdRecord> {
         self.non_listener_socket_fds()
             .into_iter()
@@ -117,9 +87,7 @@ impl FdInventory {
             .collect()
     }
 
-    /// Pretty-printed offender table for failure messages. One line per
-    /// fd, with type / inode / fdinfo state / target. Truncated at 40
-    /// rows to keep panic messages bounded.
+    /// Bounded offender table for panic messages.
     pub fn format_offender_lines(&self, offenders: &[&FdRecord]) -> String {
         let mut out = String::new();
         out.push_str("  fd      kind        inode      cloexec  target\n");
@@ -153,10 +121,7 @@ mod linux {
     use std::fs;
     use std::os::unix::fs::MetadataExt;
 
-    /// Parses the inode out of strings like `socket:[12345]`,
-    /// `pipe:[6789]`, `anon_inode:[eventpoll]`. Returns `None` when the
-    /// bracketed value is not numeric (e.g. `anon_inode:[eventpoll]`
-    /// itself).
+    /// Parse bracketed inode from `socket:[12345]`-style targets.
     pub(super) fn parse_inode_in_brackets(s: &str) -> Option<u64> {
         let lb = s.find('[')?;
         let rb = s.find(']')?;
@@ -166,8 +131,7 @@ mod linux {
         s[lb + 1..rb].parse::<u64>().ok()
     }
 
-    /// Reads `O_CLOEXEC` from `/proc/<pid>/fdinfo/<fd>`. The `flags:`
-    /// line is an octal mask; `O_CLOEXEC` is bit `0o2000000`.
+    /// Read `O_CLOEXEC` from `/proc/<pid>/fdinfo/<fd>` flags.
     pub(super) fn read_cloexec(pid: u32, fd: i32) -> Option<bool> {
         let body = fs::read_to_string(format!("/proc/{pid}/fdinfo/{fd}")).ok()?;
         for line in body.lines() {
@@ -180,9 +144,7 @@ mod linux {
         None
     }
 
-    /// Hex column `XXXXXXXX:HHHH` from `/proc/net/tcp` is little-endian
-    /// for IPv4 in the address half and big-endian-as-hex for the port.
-    /// We only need the port for the listener filter; helper kept small.
+    /// Parse `/proc/net/tcp` local address and return only the port.
     pub(super) fn parse_local_port_hex(local: &str) -> Option<u16> {
         let mut parts = local.split(':');
         let _ip = parts.next()?;
@@ -190,10 +152,7 @@ mod linux {
         u16::from_str_radix(port_hex, 16).ok()
     }
 
-    /// Returns the inode set of LISTEN sockets on `port` for this
-    /// process. The `pid` argument scopes the read to the right netns
-    /// (via `/proc/<pid>/net/tcp` rather than the global view), so we
-    /// observe the same TCP listing the inspected process does.
+    /// LISTEN socket inode set for `port` in the target process netns.
     pub(super) fn listening_inodes_for_port(pid: u32, port: u16) -> BTreeSet<u64> {
         let mut out = BTreeSet::new();
         for file in [
@@ -230,10 +189,7 @@ mod linux {
         out
     }
 
-    /// Walks `/proc/<pid>/fd` and returns one FdRecord per slot.
-    /// Skipped entries on EBADF (race against close) are silently
-    /// dropped — the goal is an honest snapshot of what is open right
-    /// now from outside, not a transactional view.
+    /// Snapshot `/proc/<pid>/fd`; skip entries that close mid-walk.
     pub(super) fn inventory_fds(pid: u32) -> Result<Vec<FdRecord>, String> {
         let dir = format!("/proc/{pid}/fd");
         let entries = fs::read_dir(&dir).map_err(|e| format!("read_dir {dir}: {e}"))?;
@@ -263,20 +219,8 @@ mod linux {
         Ok(out)
     }
 
-    /// Returns the PID of the process that owns the LISTEN socket on
-    /// `port`. Strategy:
-    /// 1. Walk every numeric directory under `/proc`.
-    /// 2. Collect every candidate that has the port in `LISTEN` in its
-    ///    `/proc/<pid>/net/tcp{,6}` and an `fd` matching the listener
-    ///    socket inode.
-    /// 3. Prefer the candidate whose `/proc/<pid>/cmdline` contains
-    ///    `--inherit-fd`. That's the child of a SIGUSR2 binary
-    ///    upgrade; without this preference the old parent (still
-    ///    holding the same listener inode during its
-    ///    `shutdown_timeout` window) wins the race.
-    /// 4. Otherwise fall back to the highest PID — newest process
-    ///    spawned, which is the right pick when no upgrade is in
-    ///    flight.
+    /// Find the process that owns the listener on `port`.
+    /// During upgrade overlap, prefer a process started with `--inherit-fd`.
     pub(super) fn find_pid_owning_listener(port: u16) -> Result<u32, String> {
         let proc_dir = fs::read_dir("/proc").map_err(|e| format!("read /proc: {e}"))?;
         let mut last_err: Option<String> = None;
@@ -297,11 +241,8 @@ mod linux {
                 continue;
             };
             if meta.uid() != current_uid() {
-                // Cannot inspect /proc/<pid>/fd across uid boundary
-                // without ptrace privileges. Skip and keep looking,
-                // but flag so the caller's failure message points at
-                // the right diagnosis when no candidate is found at
-                // all.
+                // Same-netns tcp rows are visible across users, but fd
+                // links are not. Keep the diagnostic if no candidate matches.
                 last_err = Some(format!(
                     "pid {pid} owns LISTEN port {port} but its /proc/<pid> belongs to a different user"
                 ));
@@ -346,12 +287,7 @@ mod linux {
         Ok(*candidates.last().expect("non-empty after early return"))
     }
 
-    /// Best-effort `/proc/<pid>/cmdline` substring match. The cmdline
-    /// uses NUL bytes between argv entries; we replace each with a
-    /// space before searching so `--inherit-fd 9` joins into one
-    /// searchable string. Read failures (race against exit, EPERM,
-    /// missing dir) collapse to "no match" — the caller's fallback
-    /// is the right behaviour in either case.
+    /// Best-effort cmdline substring match; read failures mean "no match".
     pub(super) fn cmdline_contains(pid: u32, needle: &str) -> bool {
         let Ok(bytes) = fs::read(format!("/proc/{pid}/cmdline")) else {
             return false;
@@ -396,8 +332,7 @@ pub fn inventory(_pid: u32, _listener_port: u16) -> Result<FdInventory, String> 
     Err("proc_inspect requires Linux".to_string())
 }
 
-/// Diagnostic helper for failure messages. Summarises an inventory in
-/// one short line plus a per-kind breakdown.
+/// One-line inventory summary plus per-kind counts.
 pub fn summary(inv: &FdInventory) -> String {
     let mut by_kind: BTreeMap<&'static str, usize> = BTreeMap::new();
     for f in &inv.fds {
@@ -417,7 +352,5 @@ pub fn summary(inv: &FdInventory) -> String {
     )
 }
 
-// Note: BDD harness uses harness = false so #[test] items here would not
-// be discovered. Parser correctness for /proc/net/tcp and /proc/PID/fdinfo
-// is exercised end-to-end by the binary-upgrade-fd-cloexec BDD scenario;
-// adding a separate runner would duplicate that signal.
+// The BDD binary uses `harness = false`; parser unit tests need a separate
+// test target if this helper grows more parsing logic.

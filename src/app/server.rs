@@ -39,9 +39,7 @@ use crate::client::migration::{migration_receiver_task, migration_sender_task};
 /// Global counter for clients currently connected to the pg_doorman
 pub static CURRENT_CLIENT_COUNT: AtomicI64 = AtomicI64::new(0);
 
-/// Unix-epoch second of the last EMFILE/ENFILE error logged from the
-/// listener accept loop. Used to rate-limit the message so an exhausted
-/// fd table does not produce hundreds of identical lines per second.
+/// Unix-epoch second of the last accept-loop EMFILE/ENFILE log.
 static ACCEPT_RESOURCE_LOG_LAST: AtomicI64 = AtomicI64::new(0);
 
 /// Global flag indicating graceful shutdown is in progress
@@ -53,19 +51,11 @@ pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
 /// Global flag: migration to new process is active. Clients should self-migrate at idle points.
 pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
-/// Process start time. Captured the first time `STARTED_AT` is read (i.e.
-/// during the first poll into `OverviewDto.uptime_seconds`); for the
-/// foreground listener path that happens within a few hundred milliseconds
-/// of `main()` so the value approximates the binary's real boot time
-/// closely enough for an operator console.
+/// Process start time for API uptime reporting.
 pub static STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
     std::sync::LazyLock::new(std::time::SystemTime::now);
 
-/// `STARTED_AT` rendered as milliseconds since the Unix epoch. Mirrors
-/// the wall-clock format the Web UI consumes via `OverviewDto.started_at_ms`
-/// and `ProcessDto.started_at_ms`; computing it once and sharing the
-/// `LazyLock` keeps the two endpoints in lockstep without repeating the
-/// `duration_since(UNIX_EPOCH)` call on every poll.
+/// `STARTED_AT` rendered as Unix epoch milliseconds.
 pub static STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
     STARTED_AT
         .duration_since(std::time::UNIX_EPOCH)
@@ -77,28 +67,14 @@ pub static STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(||
 pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
     std::sync::OnceLock::new();
 
-/// Upper bound on the migration channel capacity. Past this we stop
-/// growing the buffer regardless of how generous the nofile limit is —
-/// the parent does not need more than a few thousand pending dup'd fds
-/// in flight; beyond that the sender is the bottleneck, not the buffer.
+/// Hard cap for queued migration fd duplicates.
 const MIGRATION_CHANNEL_CAPACITY_MAX: usize = 4096;
 
-/// Fds the migration step needs beyond whatever the parent already has
-/// open at the moment `safe_migration_capacity` runs: the parent half
-/// of the migration socketpair stays open until the sender task drains
-/// it, the readiness pipe consumes one parent-side fd until the new
-/// process signals back, and `migration_sender_task` itself opens a
-/// short-lived dirfd on `/proc/PID/net/tcp` per migrated client. The
-/// reserve keeps a margin between the channel queue and the soft limit
-/// so those concurrent fds do not push the parent over the edge during
-/// migration.
+/// Parent-side fd reserve for spawn, readiness, and migration drain work.
 const MIGRATION_SPAWN_RESERVE_FDS: u64 = 16;
 
-/// Count file descriptors currently open by this process by walking
-/// `/proc/self/fd`. SIGUSR2 binary upgrade is a rare event, so the O(N)
-/// readdir cost is acceptable; in exchange we get a true live measurement
-/// instead of a guess from `RLIMIT_NOFILE` alone. Returns `None` on
-/// platforms without `/proc` so callers can fall back.
+/// Live fd count for sizing the SIGUSR2 migration queue.
+/// Returns `None` outside Linux so callers can fall back conservatively.
 #[cfg(target_os = "linux")]
 fn count_open_fds() -> Option<u64> {
     std::fs::read_dir("/proc/self/fd")
@@ -111,40 +87,20 @@ fn count_open_fds() -> Option<u64> {
     None
 }
 
-/// Compute a migration channel capacity that fits inside whatever fd
-/// budget the parent has *right now*. Each pending entry on the channel
-/// is a `dup`'d fd held in the parent until `migration_sender_task`
-/// drains it — without an upper bound the queue can grow past
-/// `RLIMIT_NOFILE` and turn the parent into a self-induced EMFILE
-/// generator.
-///
-/// `live_count + queued_dups + spawn_reserve` ≤ soft_limit must hold at
-/// every moment of migration. `live_count` is already on the books when
-/// we count `/proc/self/fd`, so the available headroom after reserving
-/// the spawn fds is exactly the budget we can hand to the queue without
-/// any further `/N` math.
-///
-/// Returns `None` when the headroom is zero — the caller treats that as
-/// "skip migration, run a normal graceful shutdown". Better to drop
-/// in-flight session continuity than to drive the parent over the limit.
+/// Capacity for dup'd client fds waiting on the migration socket.
+/// Returns `None` when there is no safe headroom under `RLIMIT_NOFILE`.
 #[cfg(unix)]
 fn safe_migration_capacity() -> Option<usize> {
-    // SAFETY: `getrlimit` is async-signal-safe and writes only into the
-    // local `rl` buffer we pass in. No global state involved.
+    // SAFETY: getrlimit writes only to the stack-local rlimit struct.
     let soft_limit = unsafe {
         let mut rl: libc::rlimit = std::mem::zeroed();
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
             rl.rlim_cur as u64
         } else {
-            // getrlimit cannot really fail for RLIMIT_NOFILE on Linux, but
-            // if it does (foreign kernel, sandbox), fall back to the hard
-            // ceiling so we behave like the previous hard-coded version.
             MIGRATION_CHANNEL_CAPACITY_MAX as u64
         }
     };
-    // No /proc/self/fd: pessimistic guess so we don't oversubscribe.
-    // Halfway between zero and the soft limit is the worst that a
-    // running pooler could realistically be at.
+    // No /proc/self/fd: assume half the limit is already in use.
     let open_fds = count_open_fds().unwrap_or(soft_limit / 2);
     let headroom = soft_limit
         .saturating_sub(open_fds)
@@ -163,11 +119,7 @@ fn safe_migration_capacity() -> Option<usize> {
 /// Minimum gap between two consecutive accept-loop EMFILE/ENFILE log lines.
 const ACCEPT_RESOURCE_LOG_INTERVAL_SECS: i64 = 5;
 
-/// Returns `true` when an `io::Error` from the accept syscall reflects a
-/// fully booked fd table (EMFILE or ENFILE). Both the TCP and Unix
-/// accept arms, and the pre-flight validator launch in
-/// `binary_upgrade_and_shutdown`, branch on the same condition and the
-/// shared check keeps that classification in one place.
+/// Accept/spawn failed because the process or host fd table is exhausted.
 #[cfg(unix)]
 fn is_fd_exhaustion_io(e: &std::io::Error) -> bool {
     matches!(e.raw_os_error(), Some(libc::EMFILE) | Some(libc::ENFILE),)
@@ -267,9 +219,8 @@ where
         if keep.binary_search(&fd).is_ok() {
             continue;
         }
-        // SAFETY: closing an fd affects only this child process. EBADF just
-        // means the slot was already empty; other errors are non-actionable
-        // during best-effort inherited-fd cleanup.
+        // SAFETY: runs during process startup before Tokio is initialized.
+        // EBADF means the slot was empty; cleanup ignores it.
         if unsafe { libc::close(fd) } == 0 {
             closed += 1;
         }
@@ -290,19 +241,8 @@ fn fd_cleanup_upper_bound() -> libc::c_int {
     65_536
 }
 
-/// Single-flight throttle for the listener's "fd table exhausted" log
-/// line. Returns `true` only when the previous successful emission is
-/// at least `ACCEPT_RESOURCE_LOG_INTERVAL_SECS` in the past.
-///
-/// Uses `compare_exchange` rather than `swap` so a suppressed attempt
-/// does *not* slide the throttle window forward. With `swap` the very
-/// first EMFILE updates the last-seen timestamp; every subsequent error
-/// in the same second computes `now - last ≈ 0` and stays silent — even
-/// after five minutes of unbroken storm — because the timestamp keeps
-/// being refreshed by attempts that themselves never logged. CAS keeps
-/// `last` frozen at the timestamp of the most recent *emitted* line, so
-/// the next line is guaranteed to appear once that line is older than
-/// the interval.
+/// Rate-limit accept-loop fd-exhaustion logs without moving the window
+/// on suppressed attempts.
 fn should_log_accept_resource_now() -> bool {
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1185,13 +1125,8 @@ async fn binary_upgrade_and_shutdown(
                 info!("Configuration validation successful");
             }
             Err(e) => {
-                // EMFILE/ENFILE here means the local fd table is full, so
-                // `Command::output()` can't even spawn the validator. That
-                // is a local resource state, not a config problem; aborting
-                // the upgrade keeps the parent stuck in the same exhausted
-                // state. Skip the pre-flight check, log a WARN, and let the
-                // upgrade proceed so the child can take over and the
-                // parent's fds drain through client migration.
+                // Local fd exhaustion means the validator cannot spawn.
+                // It is not a config failure; let the child drain clients.
                 if is_fd_exhaustion_io(&e) {
                     warn!(
                         "Skipping pre-flight configuration validation: local fd \
@@ -1233,10 +1168,7 @@ async fn binary_upgrade_and_shutdown(
         }
     }
 
-    // Set MIGRATION_IN_PROGRESS before SHUTDOWN_IN_PROGRESS so that
-    // idle clients in the handle() loop see migration=true and wait
-    // to migrate instead of disconnecting with "pooler is shut down".
-    // If the upgrade fails later (spawn error), we clear the flag.
+    // Mark migration before shutdown so idle clients choose the migration path.
     if !admin_only {
         MIGRATION_IN_PROGRESS.store(true, Ordering::Relaxed);
     }
@@ -1244,11 +1176,7 @@ async fn binary_upgrade_and_shutdown(
 
     let mut migration_handles: Option<MigrationHandles> = None;
 
-    // Drain idle server connections — but only when there is no client
-    // migration. During migration, in-transaction clients still need
-    // their server connections to finish the current query and COMMIT.
-    // Draining here would mark those servers bad, causing "pooler is
-    // shut down" errors before clients get a chance to migrate.
+    // During migration, in-transaction clients still need checked-out servers.
     if admin_only {
         retain::drain_all_pools();
     }
@@ -1376,9 +1304,7 @@ async fn binary_upgrade_and_shutdown(
                             }
                             info!("New process signaled readiness");
 
-                            // Tell systemd the new process is now the main PID.
-                            // systemd stops tracking the old process and won't
-                            // restart the service when we exit.
+                            // Hand systemd tracking over to the ready child.
                             if let Err(e) = sd_notify::notify(
                                 false,
                                 &[sd_notify::NotifyState::MainPid(child_pid)],
@@ -1386,14 +1312,8 @@ async fn binary_upgrade_and_shutdown(
                                 warn!("sd_notify MAINPID failed: {e}. systemd may restart the service after old process exits.");
                             }
                         } else {
-                            // No POLLIN within the deadline. Either the
-                            // 10s timer elapsed, or the child closed the
-                            // pipe before writing the readiness byte
-                            // (poll reports POLLHUP without POLLIN, and
-                            // `wait_for_pipe_readiness` filters those
-                            // out). Either way the new process did not
-                            // confirm it is serving, so keep the
-                            // listener and skip the MainPID handoff.
+                            // Timeout or EOF without a readiness byte: keep
+                            // the current parent as listener owner.
                             warn!("New process did not signal readiness within 10s (timeout or early exit)");
                             unsafe {
                                 libc::close(pipe_read_fd);
@@ -1430,15 +1350,8 @@ async fn binary_upgrade_and_shutdown(
                         }
                         *listener = None;
 
-                        // Start client migration if socketpair was created
-                        // *and* the live nofile budget has room for the queue.
-                        // safe_migration_capacity returns None when current fd
-                        // usage plus the spawn reserve already meet the soft
-                        // limit; pushing dup'd fds onto a channel in that
-                        // condition would drive the parent over the limit and
-                        // is precisely the failure mode this PR was opened to
-                        // prevent. Better to drop session continuity than to
-                        // induce EMFILE on the way to a graceful shutdown.
+                        // Queue migration only while live fd headroom can
+                        // absorb the dup'd client sockets.
                         if migration_ok {
                             match safe_migration_capacity() {
                                 Some(capacity) => {
@@ -1469,9 +1382,8 @@ async fn binary_upgrade_and_shutdown(
                                          will reconnect to the new process instead of \
                                          migrating sessions"
                                     );
-                                    // Close the unused migration socketpair half
-                                    // we still hold so it doesn't sit in the fd
-                                    // table during the graceful shutdown.
+                                    // Close the unused parent half while
+                                    // graceful shutdown continues.
                                     unsafe { libc::close(migration_parent_fd) };
                                 }
                             }
@@ -1506,25 +1418,10 @@ async fn binary_upgrade_and_shutdown(
     migration_handles
 }
 
-/// Wait up to `timeout_ms` for `pipe_read_fd` to become readable.
+/// Wait for the child readiness byte using `poll(2)`.
 ///
-/// Uses `poll(2)`, not `select(2)`. select's `fd_set` is a 1024-bit
-/// bitmap; `libc::FD_SET` indexes a fixed-size array (16 longs on
-/// x86_64) and any fd >= 1024 panics with `index out of bounds`,
-/// taking the parent process down before it can drain clients or
-/// hand `MainPID` off to systemd. With `LimitNOFILE` well above
-/// 1024 in production, the readiness pipe created during a binary
-/// upgrade routinely lands above that cap. poll takes a `pollfd`
-/// array and accepts any fd.
-///
-/// The predicate is strict on `POLLIN`: if the child closes the
-/// write end without writing the readiness byte, poll reports
-/// `POLLHUP` alone and the function returns `false`. This is a
-/// deliberate change from the previous `select(2)` implementation,
-/// which treated "ready to read EOF" as "ready" and forwarded
-/// `sd_notify(MAINPID=child)` to systemd for an already-dead child.
-/// Returning `false` keeps systemd tracking the still-living parent
-/// until the next upgrade attempt.
+/// `poll` handles fds above `FD_SETSIZE`; requiring `POLLIN` rejects
+/// EOF-only readiness from a child that exited before writing.
 #[cfg(not(windows))]
 fn wait_for_pipe_readiness(pipe_read_fd: libc::c_int, timeout_ms: libc::c_int) -> bool {
     let mut pfd = libc::pollfd {
@@ -2136,8 +2033,7 @@ mod inherited_fd_cleanup_tests {
 mod wait_for_pipe_readiness_tests {
     use super::wait_for_pipe_readiness;
 
-    /// Build a pipe and reserve any fd we are handed so the test
-    /// always closes both ends, even when `dup2` to a high fd fails.
+    /// Pipe wrapper that closes both ends, including high-fd dup tests.
     struct Pipe {
         read: libc::c_int,
         write: libc::c_int,
@@ -2169,7 +2065,7 @@ mod wait_for_pipe_readiness_tests {
     #[test]
     fn returns_false_on_timeout() {
         let pipe = Pipe::new();
-        // 50 ms timeout, nothing was written — poll must return 0.
+        // 50 ms timeout, nothing was written.
         assert!(!wait_for_pipe_readiness(pipe.read, 50));
     }
 
@@ -2183,13 +2079,7 @@ mod wait_for_pipe_readiness_tests {
         assert!(wait_for_pipe_readiness(pipe.read, 1_000));
     }
 
-    /// POLLHUP without POLLIN: the child closes the pipe before
-    /// writing the readiness byte. The previous `select(2)` code
-    /// considered the fd "ready", read 0 bytes, and forwarded
-    /// `sd_notify(MAINPID=child)` for an already-dead child;
-    /// the poll-based predicate requires `POLLIN` and returns false.
-    /// Guards against a future "simplification" that drops the
-    /// `POLLIN` mask in the predicate.
+    /// EOF-only readiness must not count as child readiness.
     #[test]
     fn returns_false_when_writer_closes_without_writing() {
         let mut pipe = Pipe::new();
@@ -2198,22 +2088,15 @@ mod wait_for_pipe_readiness_tests {
         assert!(!wait_for_pipe_readiness(pipe.read, 1_000));
     }
 
-    /// Regression: select(2) on `fd >= 1024` panics inside
-    /// `libc::FD_SET` (`index out of bounds: the len is 16 but the
-    /// index is 16`) and kills the parent of the binary-upgrade
-    /// handshake. poll(2) accepts any fd, so the same scenario must
-    /// resolve as "ready" without panicking.
+    /// Readiness polling must work for fds above `FD_SETSIZE`.
     #[test]
     fn handles_fd_above_fd_setsize() {
         let pipe = Pipe::new();
-        // Pick a target fd well above the 1023 cap select(2)
-        // tolerates. dup2 closes the destination if it was open.
+        // Pick a descriptor above select(2)'s usual 1023 ceiling.
         let target_fd: libc::c_int = 1500;
         let dup_result = unsafe { libc::dup2(pipe.read, target_fd) };
         if dup_result == -1 {
-            // CI sandbox without enough RLIMIT_NOFILE headroom: skip.
-            // The default soft limit on GitHub-hosted runners is well
-            // above 1500, so this should rarely trigger.
+            // Not enough RLIMIT_NOFILE headroom in this runner.
             eprintln!(
                 "skipping handles_fd_above_fd_setsize: dup2 to {target_fd} failed ({})",
                 std::io::Error::last_os_error()

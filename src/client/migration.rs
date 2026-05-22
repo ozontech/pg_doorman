@@ -22,12 +22,7 @@ use crate::stats::ClientStats;
 
 use super::core::PreparedStatementState;
 
-/// Restore backend auth state (e.g. SCRAM ClientKey) from a migrated client
-/// so the new process can authenticate to PostgreSQL via passthrough without
-/// waiting for a fresh client SCRAM handshake.
-///
-/// Only overwrites if the current state is `ScramPending` — avoids clobbering
-/// a valid auth state already established by an earlier migrated client.
+/// Restore migrated SCRAM state when backend auth is still pending.
 fn restore_backend_auth_if_pending(
     pool: Option<&ConnectionPool>,
     migrated_auth: Option<&BackendAuthMethod>,
@@ -67,8 +62,7 @@ fn recvmsg_cloexec_flags() -> libc::c_int {
 }
 
 fn set_close_on_exec(fd: RawFd) -> Result<(), Error> {
-    // SAFETY: fcntl operates on the received fd only. F_GETFD reads descriptor
-    // flags, F_SETFD writes the same flags with FD_CLOEXEC added.
+    // SAFETY: fcntl reads and writes descriptor flags for this fd.
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFD);
         if flags < 0 {
@@ -114,8 +108,7 @@ fn export_tls_state_from_ptr(ssl_ptr: *mut c_void) -> Result<Vec<u8>, Error> {
     unsafe {
         let mut out: *mut u8 = std::ptr::null_mut();
         let mut out_len: usize = 0;
-        // SAFETY: ssl_ptr is a valid SSL* from the TlsStream, which is still alive
-        // at the idle point when migration runs.
+        // SAFETY: ssl_ptr belongs to the live TlsStream at the migration idle point.
         let ret = SSL_export_migration_state(ssl_ptr, &mut out, &mut out_len);
         if ret != 1 || out.is_null() {
             return Err(Error::ClientError(
@@ -141,8 +134,7 @@ pub struct MigrationPayload {
 impl Drop for MigrationPayload {
     fn drop(&mut self) {
         if self.fd >= 0 {
-            // SAFETY: fd was obtained via libc::dup() in prepare_migration and is
-            // owned exclusively by this struct. Closing a valid owned fd is safe.
+            // SAFETY: this struct owns the dup'd fd from prepare_migration.
             unsafe { libc::close(self.fd) };
         }
     }
@@ -186,10 +178,7 @@ where
     S: tokio::io::AsyncRead + std::marker::Unpin,
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    /// Serialize client state and dup the fd for migration.
-    /// Called at the idle point in handle() — no server checked out,
-    /// no pending begin, no buffered reads.
-    /// If ssl_ptr is set, exports TLS cipher state via SSL_export_migration_state.
+    /// Serialize idle client state and dup its socket fd for migration.
     pub fn prepare_migration(&self) -> Result<MigrationPayload, Error> {
         let raw_fd = self
             .raw_fd
@@ -1318,8 +1307,7 @@ mod tests {
             "dup failed: {}",
             std::io::Error::last_os_error()
         );
-        // Force the sender-side descriptor to be inheritable. The receiver must
-        // not depend on the incoming fd already having FD_CLOEXEC set.
+        // Force sender-side inheritance; the receiver must set CLOEXEC itself.
         unsafe {
             let flags = libc::fcntl(send_fd, libc::F_GETFD);
             assert!(flags >= 0, "F_GETFD failed");

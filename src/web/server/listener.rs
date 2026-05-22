@@ -41,11 +41,7 @@ fn should_log_web_accept_resource_now() -> bool {
             .is_ok()
 }
 
-/// Bind the listener synchronously and return it. Used by callers that
-/// want to fail fast when the configured port is taken: the daemon's
-/// readiness signal must wait until the web subsystem is verifiably
-/// listening, otherwise systemd / a binary-upgrade parent treats the
-/// pooler as healthy while `/metrics` and the UI are silently down.
+/// Bind synchronously so startup/readiness fails if the web port cannot bind.
 pub fn bind_web_listener(host: &str) -> std::io::Result<TcpListener> {
     info!("binding web listener on {host}");
     let addr: SocketAddr = host.parse().map_err(|e| {
@@ -69,9 +65,7 @@ pub fn bind_web_listener(host: &str) -> std::io::Result<TcpListener> {
     Ok(listener)
 }
 
-/// Drive the accept loop on a pre-bound listener. Used by both
-/// [`start_web_server`] and the production startup path that binds
-/// synchronously before spawning.
+/// Drive the accept loop on a pre-bound listener.
 pub async fn serve_on(listener: TcpListener, opts: WebServerOptions) {
     install_options(Arc::new(opts));
 

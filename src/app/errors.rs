@@ -11,8 +11,7 @@ pub enum Error {
     /// `connect()` failed: backend unreachable. Distinct from `SocketError`,
     /// which fires on read/write of an already established connection.
     ConnectError(String),
-    /// `connect()` failed because pg_doorman itself cannot allocate another fd.
-    /// This is local resource exhaustion, not evidence that PostgreSQL is down.
+    /// Local fd exhaustion while opening a backend connection.
     ConnectResourceExhausted(String),
     ClientBadStartup,
     ProtocolSyncError(String),

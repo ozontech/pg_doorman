@@ -6,32 +6,11 @@ use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-/// Key under which `attempt_create_idle_sessions` records the number of
-/// sessions it actually opened. Read back by
-/// `at least N sessions with prefix "idle-" should be open` so the
-/// scenario can assert that the parent pooler did not silently drop
-/// everyone to zero (which would make the post-upgrade SELECT vacuous).
+/// Count recorded by `attempt_create_idle_sessions`.
 const ACCEPTED_VAR_KEY: &str = "last_idle_attempt_accepted";
 
-/// Concurrent best-effort batch session creation. Used by
-/// migration-fd-budget scenarios where the daemon's nofile limit is
-/// intentionally tight, so a subset of connect attempts is expected to
-/// be rejected.
-///
-/// Why parallel rather than sequential: a sequential loop replays the
-/// failure mode poorly. The original loop awaited each spawn before
-/// starting the next, so the accept loop processed one SYN at a time
-/// with the previous client already closed before the next arrived —
-/// the kernel's fd table never saw the simultaneous pressure that the
-/// production incident produced (~3K clients reconnecting after
-/// SIGUSR2). `JoinSet::spawn` releases every attempt onto the runtime
-/// before any joining starts; the daemon sees a true thundering herd.
-///
-/// Each spawn is wrapped in a short timeout so a refusing daemon (or
-/// the kernel still retransmitting SYN on an unacked TCP open) does
-/// not stall the scenario for minutes. Successful sessions are stored
-/// under names `idle-0`, `idle-1`, ... so later steps can address them
-/// individually if needed.
+/// Concurrent best-effort session creation for fd-pressure scenarios.
+/// Some attempts may fail; successes are stored as `idle-N`.
 #[when(
     regex = r#"^we attempt to create (\d+) idle sessions to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
 )]
@@ -47,11 +26,8 @@ pub async fn attempt_create_idle_sessions(
 
     let step_timeout = Duration::from_millis(2000);
 
-    // PgConnection::authenticate panics on protocol-level FATAL (e.g.
-    // SQLSTATE 53300 "too many clients already") which is exactly what
-    // the server returns under overload — and the whole point of this
-    // step is to tolerate that. JoinSet captures the panic as JoinError
-    // instead of letting it abort the scenario.
+    // Protocol FATAL can panic inside helper auth; JoinSet counts it
+    // instead of aborting the scenario.
     let mut set: JoinSet<Result<(usize, PgConnection), &'static str>> = JoinSet::new();
     for idx in 0..count {
         let user = user.clone();
@@ -108,16 +84,7 @@ pub async fn attempt_create_idle_sessions(
     );
 }
 
-/// Assert that the previous `attempt_create_idle_sessions` step left at
-/// least `min` sessions open. A scenario that asserts "the daemon
-/// stayed inside its fd budget" without also pinning down a minimum
-/// number of open sessions can pass with zero accepted clients — the
-/// post-upgrade `SELECT` would then have nothing to run against and
-/// the scenario silently degrades into a smoke test. Tying the count
-/// to `pool_size` makes the assertion meaningful: under
-/// `pool_size = 10` we always expect at least 10 sessions to make it
-/// through, otherwise the pool was the bottleneck rather than the
-/// listener.
+/// Require retained idle clients so fd checks cannot pass with zero sessions.
 #[then(regex = r#"^at least (\d+) idle sessions should be open from the last batch attempt$"#)]
 pub async fn at_least_n_idle_sessions_open(world: &mut DoormanWorld, min: usize) {
     let accepted: usize = world
@@ -131,27 +98,8 @@ pub async fn at_least_n_idle_sessions_open(world: &mut DoormanWorld, min: usize)
     );
 }
 
-/// Verify the new pg_doorman process is actually servicing PostgreSQL
-/// protocol traffic, not just accepting TCP. A bare `TcpStream::connect`
-/// succeeds against either the old or the new process during the
-/// hand-off — both inherit the listening socket via SCM_RIGHTS and both
-/// may briefly answer SYNs in parallel — so we need a higher-level
-/// signal. A full `Startup → Authenticate → CloseSession` sequence
-/// fails if the new process is still booting (port routed but no
-/// async listener), if config validation aborted the spawn, or if the
-/// hand-off socketpair never closed cleanly. The connection is
-/// dropped immediately after a successful auth; this step asserts
-/// reachability, not durability.
-///
-/// Retries inside a fixed overall budget because the new process is
-/// in a brief stutter window right after
-/// `wait_for_foreground_binary_upgrade` returns: it has the listening
-/// fd but is still draining migration RX from the parent and
-/// bootstrapping its pool workers, so the first post-upgrade auth
-/// attempt can time out even though TCP `connect` already succeeded.
-/// Retrying keeps the assertion strict (we still demand a healthy
-/// session, not just an open socket) while avoiding a flake on the
-/// boundary case.
+/// Verify the new process can complete PostgreSQL startup/auth after upgrade.
+/// Retry because listener readiness can precede migration drain.
 #[then(
     regex = r#"^a fresh PostgreSQL session to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)" succeeds$"#
 )]
@@ -203,22 +151,8 @@ pub async fn fresh_pg_session_succeeds(
     }
 }
 
-/// Run a real SimpleQuery on the first surviving session from a batch
-/// created with prefix `idle-`. Used after `we wait for foreground
-/// binary upgrade to complete` to prove the session is still alive,
-/// migrated, and able to round-trip a query through whichever process
-/// is now servicing the port — not just answer a TCP `connect`.
-/// Stores the response under the chosen session's name so the standard
-/// `session "..." should receive DataRow with "..."` assertion picks
-/// it up unchanged.
-/// Round-trips a SimpleQuery on every `idle-N` session that the batch
-/// step left in the world, asserts a minimum number of those responses
-/// contain a DataRow with the expected value, and drops any session
-/// whose connection has been closed (so subsequent steps see a clean
-/// world). Used by the chained-SIGUSR2 scenario to prove that the
-/// previous-generation migrated clients survived the second upgrade —
-/// without this assertion the fd-delta check passes vacuously if the
-/// second upgrade simply drops everyone.
+/// Round-trip every retained `idle-N` session and store the success count.
+/// Prevents a socket-count pass after dropping migrated clients.
 #[when(
     regex = r#"^we send SimpleQuery "([^"]+)" to every open idle session and count successes as "([^"]+)"$"#
 )]
@@ -247,9 +181,7 @@ pub async fn send_query_to_every_idle_session(
     let mut successes: usize = 0;
     let mut failures: Vec<(String, String)> = Vec::new();
     for name in sorted {
-        // Get session by name; if it isn't there any more (e.g. the
-        // batch step already dropped it on a prior failed iteration)
-        // count as a failure rather than a panic.
+        // Missing sessions count as continuity failures, not harness panics.
         let Some(conn) = world.named_sessions.get_mut(&name) else {
             failures.push((name.clone(), "session missing".into()));
             continue;
@@ -341,6 +273,7 @@ pub async fn stored_count_at_least(world: &mut DoormanWorld, key: String, min: u
     );
 }
 
+/// Run a SimpleQuery on the first retained `idle-N` session.
 #[when(
     regex = r#"^we send SimpleQuery "([^"]+)" to the first open idle session and store response as "([^"]+)"$"#
 )]

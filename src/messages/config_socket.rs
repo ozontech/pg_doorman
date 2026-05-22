@@ -60,11 +60,8 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
 
 /// Configure accepted web TCP socket parameters.
 ///
-/// Web connections are plain HTTP and may be closed immediately after a
-/// response. Do not apply the pooler client `SO_LINGER` policy here: with
-/// `tcp_so_linger = 0`, close(2) becomes abortive and can make HTTP clients
-/// observe connection resets after a valid response. The low-risk options below
-/// still cap per-connection buffer memory and enable dead-peer detection.
+/// Web HTTP sockets must not inherit the pooler client `SO_LINGER` policy:
+/// `tcp_so_linger = 0` can turn a normal HTTP close into a reset.
 pub fn configure_web_tcp_socket(stream: &TcpStream) {
     let sock_ref = SockRef::from(stream);
     let conf = get_config();
@@ -83,10 +80,7 @@ fn configure_tcp_socket_without_linger(sock_ref: &SockRef<'_>, conf: &Config, la
     // limits. Linux doubles the requested values internally and may
     // clamp them by net.core.rmem_max / net.core.wmem_max.
     //
-    // This runs for fresh client accepts, outbound backend connects, and
-    // client sockets reconstructed during binary upgrade; the web listener
-    // applies the same buffer cap to accepted HTTP sockets. SIGHUP reload alone
-    // does not revisit already-open sockets.
+    // SIGHUP does not resize sockets that are already open.
     let buffer_size = conf.general.tcp_socket_buffer_size.as_usize();
     if buffer_size > 0 {
         match sock_ref.set_send_buffer_size(buffer_size) {
