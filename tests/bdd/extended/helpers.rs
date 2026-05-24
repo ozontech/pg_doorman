@@ -1,7 +1,8 @@
 use crate::pg_connection::PgConnection;
 use std::collections::HashMap;
 
-/// Get a mutable reference to a named session, panicking with a clear message if not found.
+pub(crate) type ProtocolMessages = Vec<(char, Vec<u8>)>;
+
 pub(crate) fn get_session<'a>(
     named_sessions: &'a mut HashMap<String, PgConnection>,
     session_name: &str,
@@ -9,6 +10,184 @@ pub(crate) fn get_session<'a>(
     named_sessions
         .get_mut(session_name)
         .unwrap_or_else(|| panic!("Session '{}' not found", session_name))
+}
+
+pub(crate) fn single_char(value: &str, label: &str) -> char {
+    value
+        .chars()
+        .next()
+        .unwrap_or_else(|| panic!("{label} must not be empty"))
+}
+
+pub(crate) async fn send_parse_to_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+    name: &str,
+    query: &str,
+) {
+    pg_conn
+        .send_parse(name, query)
+        .await
+        .expect("Failed to send Parse to PostgreSQL");
+    doorman_conn
+        .send_parse(name, query)
+        .await
+        .expect("Failed to send Parse to pg_doorman");
+}
+
+pub(crate) async fn send_bind_to_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+    portal: &str,
+    statement: &str,
+    params: Vec<Option<Vec<u8>>>,
+) {
+    pg_conn
+        .send_bind(portal, statement, params.clone())
+        .await
+        .expect("Failed to send Bind to PostgreSQL");
+    doorman_conn
+        .send_bind(portal, statement, params)
+        .await
+        .expect("Failed to send Bind to pg_doorman");
+}
+
+pub(crate) async fn send_describe_to_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+    target_type: char,
+    name: &str,
+) {
+    pg_conn
+        .send_describe(target_type, name)
+        .await
+        .expect("Failed to send Describe to PostgreSQL");
+    doorman_conn
+        .send_describe(target_type, name)
+        .await
+        .expect("Failed to send Describe to pg_doorman");
+}
+
+pub(crate) async fn send_execute_to_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+    portal: &str,
+    max_rows: i32,
+) {
+    pg_conn
+        .send_execute(portal, max_rows)
+        .await
+        .expect("Failed to send Execute to PostgreSQL");
+    doorman_conn
+        .send_execute(portal, max_rows)
+        .await
+        .expect("Failed to send Execute to pg_doorman");
+}
+
+pub(crate) async fn send_close_to_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+    target_type: char,
+    name: &str,
+) {
+    pg_conn
+        .send_close(target_type, name)
+        .await
+        .expect("Failed to send Close to PostgreSQL");
+    doorman_conn
+        .send_close(target_type, name)
+        .await
+        .expect("Failed to send Close to pg_doorman");
+}
+
+pub(crate) async fn send_sync_to_both(pg_conn: &mut PgConnection, doorman_conn: &mut PgConnection) {
+    pg_conn
+        .send_sync()
+        .await
+        .expect("Failed to send Sync to PostgreSQL");
+    doorman_conn
+        .send_sync()
+        .await
+        .expect("Failed to send Sync to pg_doorman");
+}
+
+pub(crate) async fn send_flush_to_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+) {
+    pg_conn
+        .send_flush()
+        .await
+        .expect("Failed to send Flush to PostgreSQL");
+    doorman_conn
+        .send_flush()
+        .await
+        .expect("Failed to send Flush to pg_doorman");
+}
+
+pub(crate) async fn read_both_until_ready(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+) -> (ProtocolMessages, ProtocolMessages) {
+    let pg_messages = pg_conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages from PostgreSQL");
+    let doorman_messages = doorman_conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages from pg_doorman");
+
+    (pg_messages, doorman_messages)
+}
+
+pub(crate) async fn read_partial_from_both(
+    pg_conn: &mut PgConnection,
+    doorman_conn: &mut PgConnection,
+) -> (ProtocolMessages, ProtocolMessages) {
+    let pg_messages = pg_conn
+        .read_partial_messages()
+        .await
+        .expect("Failed to read partial messages from PostgreSQL");
+    let doorman_messages = doorman_conn
+        .read_partial_messages()
+        .await
+        .expect("Failed to read partial messages from pg_doorman");
+
+    (pg_messages, doorman_messages)
+}
+
+pub(crate) async fn send_simple_query_and_read_until_ready(
+    conn: &mut PgConnection,
+    query: &str,
+) -> ProtocolMessages {
+    conn.send_simple_query(query)
+        .await
+        .expect("Failed to send query");
+
+    conn.read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages")
+}
+
+pub(crate) async fn read_first_datarow_int_until_ready(conn: &mut PgConnection) -> Option<i32> {
+    let mut value = None;
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'D' => value = parse_first_datarow_int(&data),
+            'Z' => break,
+            'E' => {
+                eprintln!(
+                    "ErrorResponse while reading query result: {:?}",
+                    String::from_utf8_lossy(&data)
+                );
+            }
+            _ => {}
+        }
+    }
+    value
 }
 
 /// Parse the first field of a DataRow message as an integer.

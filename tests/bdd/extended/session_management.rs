@@ -453,7 +453,6 @@ pub async fn create_named_session_to_postgres(
     let pg_port = world.pg_port.expect("PostgreSQL not started");
     let pg_addr = format!("127.0.0.1:{}", pg_port);
 
-    // Connect to PostgreSQL directly
     let mut conn = PgConnection::connect(&pg_addr)
         .await
         .expect("Failed to connect to PostgreSQL");
@@ -475,15 +474,7 @@ pub async fn send_simple_query_to_session(
 ) {
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
-    conn.send_simple_query(&query)
-        .await
-        .expect("Failed to send query");
-
-    // Read all messages until ReadyForQuery
-    let _messages = conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages");
+    let _messages = super::helpers::send_simple_query_and_read_until_ready(conn, &query).await;
 }
 
 #[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store backend_pid$"#)]
@@ -498,28 +489,7 @@ pub async fn send_simple_query_and_store_backend_pid(
         .await
         .expect("Failed to send query");
 
-    // Read messages and parse backend_pid
-    let mut backend_pid: Option<i32> = None;
-    loop {
-        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
-
-        match msg_type {
-            'T' => {
-                // RowDescription - skip
-            }
-            'D' => {
-                backend_pid = super::helpers::parse_first_datarow_int(&data);
-            }
-            'Z' => break,
-            'E' => {
-                eprintln!(
-                    "Error received (expected for bad sql): {:?}",
-                    String::from_utf8_lossy(&data)
-                );
-            }
-            _ => {}
-        }
-    }
+    let backend_pid = super::helpers::read_first_datarow_int_until_ready(conn).await;
 
     if let Some(pid) = backend_pid {
         world.session_backend_pids.insert(session_name, pid);
@@ -541,28 +511,7 @@ pub async fn send_simple_query_and_store_named_backend_pid(
         .await
         .expect("Failed to send query");
 
-    // Read messages and parse backend_pid
-    let mut backend_pid: Option<i32> = None;
-    loop {
-        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
-
-        match msg_type {
-            'T' => {
-                // RowDescription - skip
-            }
-            'D' => {
-                backend_pid = super::helpers::parse_first_datarow_int(&data);
-            }
-            'Z' => break,
-            'E' => {
-                eprintln!(
-                    "Error received (expected for bad sql): {:?}",
-                    String::from_utf8_lossy(&data)
-                );
-            }
-            _ => {}
-        }
-    }
+    let backend_pid = super::helpers::read_first_datarow_int_until_ready(conn).await;
 
     if let Some(pid) = backend_pid {
         world
@@ -572,13 +521,8 @@ pub async fn send_simple_query_and_store_named_backend_pid(
 }
 
 #[when(regex = r#"^we sleep (\d+)ms$"#)]
-pub async fn sleep_ms(_world: &mut DoormanWorld, ms: String) {
-    let duration = ms.parse::<u64>().expect("Invalid sleep duration");
-    tokio::time::sleep(tokio::time::Duration::from_millis(duration)).await;
-}
-
 #[when(regex = r#"^we sleep for (\d+) milliseconds$"#)]
-pub async fn sleep_for_milliseconds(_world: &mut DoormanWorld, ms: String) {
+pub async fn sleep_ms(_world: &mut DoormanWorld, ms: String) {
     let duration = ms.parse::<u64>().expect("Invalid sleep duration");
     tokio::time::sleep(tokio::time::Duration::from_millis(duration)).await;
 }
@@ -594,7 +538,6 @@ pub async fn send_simple_query_to_session_without_waiting(
     conn.send_simple_query(&query)
         .await
         .expect("Failed to send query");
-    // Don't wait for response - just send the query
 }
 
 #[when(
@@ -667,7 +610,6 @@ pub async fn send_simple_query_to_session_expecting_error(
         .await
         .expect("Failed to send query");
 
-    // Read all messages until ReadyForQuery or error and store them
     let messages = conn
         .read_all_messages_until_ready()
         .await
@@ -692,7 +634,6 @@ pub async fn send_simple_query_to_session_expecting_error_after_ready(
         .await
         .expect("Failed to send query");
 
-    // Read all messages until ReadyForQuery AND any additional messages after (like ErrorResponse)
     let messages = conn
         .read_all_messages_until_ready_and_more()
         .await
@@ -713,19 +654,14 @@ pub async fn send_simple_query_to_session_expecting_connection_close(
 ) {
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
-    // Try to send query - may fail if connection already closed
     if conn.send_simple_query(&query).await.is_err() {
-        // Connection already closed - this is expected
         return;
     }
 
-    // Try to read response - should fail with connection reset or return error
     match conn.read_all_messages_until_ready().await {
         Ok(messages) => {
-            // Check if we got an error response (pooler shutdown message)
             let has_error = messages.iter().any(|(msg_type, _)| *msg_type == 'E');
             if has_error {
-                // Store messages for potential further inspection
                 world
                     .session_messages
                     .insert(session_name.clone(), messages);
@@ -736,9 +672,7 @@ pub async fn send_simple_query_to_session_expecting_connection_close(
                 session_name
             );
         }
-        Err(_) => {
-            // Connection closed - this is expected
-        }
+        Err(_) => {}
     }
 }
 
@@ -808,7 +742,6 @@ pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String
 
     conn.send_sync().await.expect("Failed to send Sync");
 
-    // Read all messages until ReadyForQuery and store them
     let messages = conn
         .read_all_messages_until_ready()
         .await
@@ -845,7 +778,6 @@ pub async fn abort_session_tcp_connection(world: &mut DoormanWorld, session_name
         .remove(&session_name)
         .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
-    // Abruptly close the TCP connection
     conn.abort_connection().await;
 }
 
@@ -865,7 +797,6 @@ pub async fn session_should_receive_datarow(
     session_name: String,
     expected_value: String,
 ) {
-    // Get messages from the stored session messages
     let messages = world
         .session_messages
         .get(&session_name)
@@ -998,11 +929,9 @@ pub async fn session_should_receive_error_containing(
         .get(&session_name)
         .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
-    // Find ErrorResponse in the messages
     let mut found_error: Option<String> = None;
     for (msg_type, data) in messages {
         if *msg_type == 'E' {
-            // ErrorResponse - parse the error message
             let error_str = String::from_utf8_lossy(data).to_string();
             found_error = Some(error_str);
             break;
@@ -1036,17 +965,14 @@ pub async fn session_should_receive_error_containing_with_code(
     expected_text: String,
     expected_code: String,
 ) {
-    // Get messages from the stored session messages
     let messages = world
         .session_messages
         .get(&session_name)
         .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
-    // Find ErrorResponse in the messages
     let mut found_error: Option<(String, String)> = None;
     for (msg_type, data) in messages {
         if *msg_type == 'E' {
-            // ErrorResponse - parse the error message and code
             // Format: S<severity>\0 V<severity>\0 C<code>\0 M<message>\0 ... \0
             let mut code = String::new();
             let mut message = String::new();
@@ -1109,15 +1035,12 @@ pub async fn send_copy_from_stdin_to_session_expecting_error(
 ) {
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
-    // Unescape the data string (handle \t and \n)
     let unescaped_data = data.replace("\\t", "\t").replace("\\n", "\n");
 
-    // Send the COPY command via simple query
     conn.send_simple_query(&query)
         .await
         .expect("Failed to send COPY query");
 
-    // Read initial response (should be CopyInResponse 'G' or ErrorResponse 'E')
     let (msg_type, msg_data) = conn
         .read_message()
         .await
@@ -1125,9 +1048,7 @@ pub async fn send_copy_from_stdin_to_session_expecting_error(
 
     let mut messages: Vec<(char, Vec<u8>)> = Vec::new();
 
-    // If we got CopyInResponse ('G'), send the data and CopyDone
     if msg_type == 'G' {
-        // Send copy data
         if !unescaped_data.is_empty() {
             conn.send_copy_data(unescaped_data.as_bytes())
                 .await
@@ -1137,11 +1058,9 @@ pub async fn send_copy_from_stdin_to_session_expecting_error(
             .await
             .expect("Failed to send CopyDone");
     } else {
-        // Error response - store it
         messages.push((msg_type, msg_data));
     }
 
-    // Read remaining messages until ReadyForQuery
     let remaining = conn
         .read_all_messages_until_ready()
         .await

@@ -23,7 +23,6 @@ use cucumber::World;
 use world::DoormanWorld;
 
 fn main() {
-    // Initialize tracing subscriber for debug logging when DEBUG env var is set
     if std::env::var("DEBUG").is_ok() {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
@@ -33,17 +32,13 @@ fn main() {
             .init();
     }
 
-    // Create tokio runtime manually so we can control cleanup
-    // Use 4 worker threads explicitly for consistent benchmark results
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
         .build()
         .unwrap();
 
-    // Run tests with after hook for cleanup
     rt.block_on(async {
-        // Parse CLI options and add todo-skip filter
         use cucumber::gherkin::tagexpr::TagOperation;
         let mut cli = cucumber::cli::Opts::<
             cucumber::parser::basic::Cli,
@@ -52,7 +47,6 @@ fn main() {
             cucumber::cli::Empty,
         >::parsed();
 
-        // Create "not @todo-skip" filter
         let not_todo_skip = TagOperation::Not(Box::new(TagOperation::Tag("todo-skip".to_string())));
 
         // On non-Linux platforms, also skip @linux-only scenarios
@@ -78,7 +72,6 @@ fn main() {
             .with_cli(cli)
             .before(|feature, _rule, scenario, world| {
                 Box::pin(async move {
-                    // Skip timeout for @bench scenarios - they run long benchmarks
                     let is_bench = feature.tags.iter().any(|t| t == "bench")
                         || scenario.tags.iter().any(|t| t == "bench");
                     if is_bench {
@@ -90,8 +83,6 @@ fn main() {
                         return;
                     }
 
-                    // Spawn a periodic warning task for slow scenarios
-                    // Prints every 60 seconds while test is running, aborted when scenario finishes
                     let scenario_name = scenario.name.clone();
                     let feature_name = feature.name.clone();
                     let slow_warning_task = tokio::spawn(async move {
@@ -111,12 +102,9 @@ fn main() {
                 })
             })
             .after(|_feature, _rule, _scenario, _finished, world| {
-                // This hook is called after EVERY scenario, regardless of success/failure
-                // Cleanup pg_doorman process if it exists
                 // NOTE: We only stop the specific process from this scenario, NOT all pg_doorman processes
                 // because the next scenario's Background steps may have already started a new pg_doorman
                 if let Some(w) = world {
-                    // Cancel the slow warning task since scenario has finished
                     if let Some(abort_handle) = w.slow_warning_abort.take() {
                         abort_handle.abort();
                     }
@@ -126,8 +114,7 @@ fn main() {
                     }
                     w.doorman_process = None;
 
-                    // Stop daemon process if running (for daemon mode tests)
-                    // Read PID from file to handle binary-upgrade where PID changes
+                    // Binary-upgrade daemon tests may replace the original PID.
                     if let Some(ref pid_path) = w.doorman_daemon_pid_file {
                         if let Ok(pid_content) = std::fs::read_to_string(pid_path) {
                             if let Ok(pid) = pid_content.trim().parse::<u32>() {
@@ -152,7 +139,6 @@ fn main() {
             .run("tests/bdd/features")
             .await;
 
-        // Check if execution failed or if there are skipped tests
         use cucumber::writer::Stats;
         let has_failures = writer.execution_has_failed();
         let skipped = writer.skipped_steps();

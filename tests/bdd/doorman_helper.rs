@@ -231,7 +231,6 @@ pub async fn generate_pg_ssl_certificates(world: &mut DoormanWorld) {
     world.pg_ssl_wrong_ca_cert_file = Some(wrong_ca_cert_file);
 }
 
-/// Set pg_doorman hba file with inline content
 #[given("pg_doorman hba file contains:")]
 pub async fn set_doorman_hba_file(world: &mut DoormanWorld, step: &Step) {
     let hba_content = step
@@ -243,10 +242,8 @@ pub async fn set_doorman_hba_file(world: &mut DoormanWorld, step: &Step) {
     world.doorman_hba_file = Some(create_temp_file(&hba_content));
 }
 
-/// Start pg_doorman with config content
 #[given("pg_doorman started with config:")]
 pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
-    // Stop any previously running pg_doorman before starting a new one
     if let Some(ref mut child) = world.doorman_process {
         stop_doorman(child);
     }
@@ -261,14 +258,12 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
     let doorman_port = pick_unused_port().expect("No free ports for pg_doorman");
     world.doorman_port = Some(doorman_port);
 
-    // Use centralized placeholder replacement
     let config_content = world.replace_placeholders(&config_content);
 
     let config_file = create_config_file(&config_content);
     let config_path = config_file.path().to_path_buf();
     world.doorman_config_file = Some(config_file);
 
-    // Use CARGO_BIN_EXE_pg_doorman which is automatically set by cargo test
     let doorman_binary = env!("CARGO_BIN_EXE_pg_doorman");
     // For @bench scenarios, always use "info" level to avoid debug overhead
     let log_level = if world.is_bench {
@@ -350,7 +345,6 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 
     world.doorman_process = Some(child);
 
-    // Wait for pg_doorman to be ready (custom implementation with log capture)
     let log_path = world.doorman_log_path.clone();
     wait_for_doorman_ready(
         doorman_port,
@@ -830,10 +824,8 @@ pub async fn send_sigint_to_foreground(world: &mut DoormanWorld) {
 pub async fn wait_for_foreground_binary_upgrade(world: &mut DoormanWorld) {
     let port = world.doorman_port.expect("doorman_port not set");
 
-    // Wait a bit for the new process to start and signal readiness
     sleep(Duration::from_millis(2000)).await;
 
-    // Verify the port is still accessible (new process is listening)
     for _ in 0..20 {
         if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
             return;
@@ -847,7 +839,7 @@ pub async fn wait_for_foreground_binary_upgrade(world: &mut DoormanWorld) {
     );
 }
 
-/// Verify that foreground pg_doorman PID has changed after binary upgrade
+/// Foreground upgrade keeps the service reachable after SIGUSR2.
 #[then(regex = r#"foreground pg_doorman PID should be different from stored "([^"]+)""#)]
 pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: String) {
     let port = world.doorman_port.expect("doorman_port not set");
@@ -857,27 +849,16 @@ pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: Strin
         .get(&(name.clone(), "foreground_pid".to_string()))
         .expect("Stored foreground PID not found");
 
-    // The old process should have exited or be in graceful shutdown
-    // We need to find the new process listening on the port
-    // Since we can't easily get the new PID, we verify the old process is no longer the main listener
-
-    // Wait a bit and check if old process is still running
+    // Foreground mode does not expose the replacement child PID to the harness.
+    // The contract here is availability across the handoff; the separate
+    // `stored foreground PID ... should not exist` step verifies old PID exit.
     sleep(Duration::from_millis(500)).await;
 
-    // Check if port is still accessible
     assert!(
         std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok(),
         "New pg_doorman should be listening on port {}",
         port
     );
-
-    // The old process should eventually exit after graceful shutdown
-    // For now, we just verify the service is still available
-    // In a real scenario, the old process exits after all clients disconnect
-
-    // Note: We can't easily verify PID change in foreground mode without additional tracking
-    // because the child process is not tracked by our test harness
-    // The key verification is that the service remains available after SIGINT
 
     println!(
         "Binary upgrade completed: old PID was {}, service still available on port {}",

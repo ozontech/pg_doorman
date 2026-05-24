@@ -4,6 +4,25 @@ use cucumber::{then, when};
 
 use super::helpers;
 
+fn get_dual_connections(world: &mut DoormanWorld) -> (&mut PgConnection, &mut PgConnection) {
+    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
+    let doorman_conn = world
+        .doorman_conn
+        .as_mut()
+        .expect("Not connected to pg_doorman");
+
+    (pg_conn, doorman_conn)
+}
+
+fn append_dual_messages(
+    world: &mut DoormanWorld,
+    pg_messages: helpers::ProtocolMessages,
+    doorman_messages: helpers::ProtocolMessages,
+) {
+    world.pg_accumulated_messages.extend(pg_messages);
+    world.doorman_accumulated_messages.extend(doorman_messages);
+}
+
 #[when(
     regex = r#"^we login to postgres and pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
 )]
@@ -19,7 +38,6 @@ pub async fn login_to_both(
     let pg_addr = format!("127.0.0.1:{}", pg_port);
     let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
-    // Connect to PostgreSQL
     let mut pg_conn = PgConnection::connect(&pg_addr)
         .await
         .expect("Failed to connect to PostgreSQL");
@@ -32,7 +50,6 @@ pub async fn login_to_both(
         .await
         .expect("Failed to authenticate to PostgreSQL");
 
-    // Connect to pg_doorman
     let mut doorman_conn = PgConnection::connect(&doorman_addr)
         .await
         .expect("Failed to connect to pg_doorman");
@@ -48,7 +65,6 @@ pub async fn login_to_both(
     world.pg_conn = Some(pg_conn);
     world.doorman_conn = Some(doorman_conn);
 
-    // Save credentials for reconnection
     world.last_user = Some(user);
     world.last_password = Some(password);
     world.last_database = Some(database);
@@ -56,12 +72,9 @@ pub async fn login_to_both(
 
 #[when(regex = r#"^we disconnect from both$"#)]
 pub async fn disconnect_from_both(world: &mut DoormanWorld) {
-    // Drop connections by setting them to None
-    // This will close the TCP connections gracefully
     world.pg_conn = None;
     world.doorman_conn = None;
 
-    // Clear accumulated messages for fresh start after reconnect
     world.pg_accumulated_messages.clear();
     world.doorman_accumulated_messages.clear();
 }
@@ -87,7 +100,6 @@ pub async fn reconnect_to_both(world: &mut DoormanWorld) {
     let pg_addr = format!("127.0.0.1:{}", pg_port);
     let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
-    // Connect to PostgreSQL
     let mut pg_conn = PgConnection::connect(&pg_addr)
         .await
         .expect("Failed to reconnect to PostgreSQL");
@@ -100,7 +112,6 @@ pub async fn reconnect_to_both(world: &mut DoormanWorld) {
         .await
         .expect("Failed to authenticate to PostgreSQL");
 
-    // Connect to pg_doorman
     let mut doorman_conn = PgConnection::connect(&doorman_addr)
         .await
         .expect("Failed to reconnect to pg_doorman");
@@ -116,40 +127,26 @@ pub async fn reconnect_to_both(world: &mut DoormanWorld) {
     world.pg_conn = Some(pg_conn);
     world.doorman_conn = Some(doorman_conn);
 
-    // Clear accumulated messages for fresh start
     world.pg_accumulated_messages.clear();
     world.doorman_accumulated_messages.clear();
 }
 
 #[when(regex = r#"^we send SimpleQuery "([^"]+)" to both$"#)]
 pub async fn send_simple_query_to_both(world: &mut DoormanWorld, query: String) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
+    let (pg_messages, doorman_messages) = {
+        let (pg_conn, doorman_conn) = get_dual_connections(world);
+        pg_conn
+            .send_simple_query(&query)
+            .await
+            .expect("Failed to send query to PostgreSQL");
+        doorman_conn
+            .send_simple_query(&query)
+            .await
+            .expect("Failed to send query to pg_doorman");
+        helpers::read_both_until_ready(pg_conn, doorman_conn).await
+    };
 
-    pg_conn
-        .send_simple_query(&query)
-        .await
-        .expect("Failed to send query to PostgreSQL");
-    doorman_conn
-        .send_simple_query(&query)
-        .await
-        .expect("Failed to send query to pg_doorman");
-
-    // Read messages from both
-    let pg_messages = pg_conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages from PostgreSQL");
-    let doorman_messages = doorman_conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages from pg_doorman");
-
-    world.pg_accumulated_messages.extend(pg_messages);
-    world.doorman_accumulated_messages.extend(doorman_messages);
+    append_dual_messages(world, pg_messages, doorman_messages);
 }
 
 #[when(regex = r#"^we send CopyFromStdin "([^"]+)" with data "([^"]*)" to both$"#)]
@@ -160,36 +157,29 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
         .as_mut()
         .expect("Not connected to pg_doorman");
 
-    // Unescape the data string (handle \t and \n)
     let unescaped_data = data.replace("\\t", "\t").replace("\\n", "\n");
 
-    // Send the COPY command via simple query to PostgreSQL
     pg_conn
         .send_simple_query(&query)
         .await
         .expect("Failed to send COPY query to PostgreSQL");
 
-    // Send the COPY command via simple query to pg_doorman
     doorman_conn
         .send_simple_query(&query)
         .await
         .expect("Failed to send COPY query to pg_doorman");
 
-    // Read initial response from PostgreSQL (should be CopyInResponse 'G' or ErrorResponse 'E')
     let (pg_msg_type, pg_msg_data) = pg_conn
         .read_message()
         .await
         .expect("Failed to read COPY response from PostgreSQL");
 
-    // Read initial response from pg_doorman
     let (doorman_msg_type, doorman_msg_data) = doorman_conn
         .read_message()
         .await
         .expect("Failed to read COPY response from pg_doorman");
 
-    // If we got CopyInResponse ('G'), send the data and CopyDone
     if pg_msg_type == 'G' {
-        // Send copy data to PostgreSQL
         if !unescaped_data.is_empty() {
             pg_conn
                 .send_copy_data(unescaped_data.as_bytes())
@@ -201,14 +191,12 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
             .await
             .expect("Failed to send CopyDone to PostgreSQL");
     } else {
-        // Error response - store it
         world
             .pg_accumulated_messages
             .push((pg_msg_type, pg_msg_data.clone()));
     }
 
     if doorman_msg_type == 'G' {
-        // Send copy data to pg_doorman
         if !unescaped_data.is_empty() {
             doorman_conn
                 .send_copy_data(unescaped_data.as_bytes())
@@ -220,13 +208,11 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
             .await
             .expect("Failed to send CopyDone to pg_doorman");
     } else {
-        // Error response - store it
         world
             .doorman_accumulated_messages
             .push((doorman_msg_type, doorman_msg_data.clone()));
     }
 
-    // Read remaining messages until ReadyForQuery from both
     let pg_messages = pg_conn
         .read_all_messages_until_ready()
         .await
@@ -242,20 +228,8 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
 
 #[when(regex = r#"^we send Parse "([^"]*)" with query "([^"]+)" to both$"#)]
 pub async fn send_parse_to_both(world: &mut DoormanWorld, name: String, query: String) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
-    pg_conn
-        .send_parse(&name, &query)
-        .await
-        .expect("Failed to send Parse to PostgreSQL");
-    doorman_conn
-        .send_parse(&name, &query)
-        .await
-        .expect("Failed to send Parse to pg_doorman");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_parse_to_both(pg_conn, doorman_conn, &name, &query).await;
 }
 
 #[when(regex = r#"^we send Bind "([^"]*)" to "([^"]*)" with params "([^"]*)" to both$"#)]
@@ -265,64 +239,24 @@ pub async fn send_bind_to_both(
     statement: String,
     params_str: String,
 ) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
     let params = super::helpers::parse_bind_params(&params_str);
-
-    pg_conn
-        .send_bind(&portal, &statement, params.clone())
-        .await
-        .expect("Failed to send Bind to PostgreSQL");
-    doorman_conn
-        .send_bind(&portal, &statement, params)
-        .await
-        .expect("Failed to send Bind to pg_doorman");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_bind_to_both(pg_conn, doorman_conn, &portal, &statement, params).await;
 }
 
 #[when(regex = r#"^we send Describe "([^"])" "([^"]*)" to both$"#)]
 pub async fn send_describe_to_both(world: &mut DoormanWorld, target_type: String, name: String) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
-    let target_char = target_type.chars().next().expect("Empty target type");
-
-    pg_conn
-        .send_describe(target_char, &name)
-        .await
-        .expect("Failed to send Describe to PostgreSQL");
-    doorman_conn
-        .send_describe(target_char, &name)
-        .await
-        .expect("Failed to send Describe to pg_doorman");
+    let target_char = helpers::single_char(&target_type, "target type");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_describe_to_both(pg_conn, doorman_conn, target_char, &name).await;
 }
 
 #[when(regex = r#"^we send Execute "([^"]*)" to both$"#)]
 pub async fn send_execute_to_both(world: &mut DoormanWorld, portal: String) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
-    pg_conn
-        .send_execute(&portal, 0)
-        .await
-        .expect("Failed to send Execute to PostgreSQL");
-    doorman_conn
-        .send_execute(&portal, 0)
-        .await
-        .expect("Failed to send Execute to pg_doorman");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_execute_to_both(pg_conn, doorman_conn, &portal, 0).await;
 }
 
-/// Helper step to repeat a sequence of Parse, Bind, Describe, Execute messages multiple times
-/// Format: we repeat <N> times: Parse "<name>" with query "<query>", Bind "<portal>" to "<statement>" with params "<params>", Describe "<type>" "<name>", Execute "<portal>" to both
 #[allow(clippy::too_many_arguments)]
 #[when(
     regex = r#"^we repeat (\d+) times: Parse "([^"]*)" with query "([^"]+)", Bind "([^"]*)" to "([^"]*)" with params "([^"]+)", Describe "([^"])" "([^"]*)", Execute "([^"]*)" to both$"#
@@ -347,122 +281,43 @@ pub async fn repeat_extended_protocol_to_both(
 
     let params = super::helpers::parse_bind_params(&params_str);
 
-    let describe_char = describe_type.chars().next().expect("Empty describe type");
+    let describe_char = helpers::single_char(&describe_type, "describe type");
 
-    // Send all messages N times
     for _ in 0..times {
-        // Parse
-        pg_conn
-            .send_parse(&parse_name, &query)
-            .await
-            .expect("Failed to send Parse to PostgreSQL");
-        doorman_conn
-            .send_parse(&parse_name, &query)
-            .await
-            .expect("Failed to send Parse to pg_doorman");
-
-        // Bind
-        pg_conn
-            .send_bind(&bind_portal, &bind_statement, params.clone())
-            .await
-            .expect("Failed to send Bind to PostgreSQL");
-        doorman_conn
-            .send_bind(&bind_portal, &bind_statement, params.clone())
-            .await
-            .expect("Failed to send Bind to pg_doorman");
-
-        // Describe
-        pg_conn
-            .send_describe(describe_char, &describe_name)
-            .await
-            .expect("Failed to send Describe to PostgreSQL");
-        doorman_conn
-            .send_describe(describe_char, &describe_name)
-            .await
-            .expect("Failed to send Describe to pg_doorman");
-
-        // Execute
-        pg_conn
-            .send_execute(&execute_portal, 0)
-            .await
-            .expect("Failed to send Execute to PostgreSQL");
-        doorman_conn
-            .send_execute(&execute_portal, 0)
-            .await
-            .expect("Failed to send Execute to pg_doorman");
+        helpers::send_parse_to_both(pg_conn, doorman_conn, &parse_name, &query).await;
+        helpers::send_bind_to_both(
+            pg_conn,
+            doorman_conn,
+            &bind_portal,
+            &bind_statement,
+            params.clone(),
+        )
+        .await;
+        helpers::send_describe_to_both(pg_conn, doorman_conn, describe_char, &describe_name).await;
+        helpers::send_execute_to_both(pg_conn, doorman_conn, &execute_portal, 0).await;
     }
 
-    // Send Sync to both
-    pg_conn
-        .send_sync()
-        .await
-        .expect("Failed to send Sync to PostgreSQL");
-    doorman_conn
-        .send_sync()
-        .await
-        .expect("Failed to send Sync to pg_doorman");
-
-    // Read messages from both
-    let pg_messages = pg_conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages from PostgreSQL");
-    let doorman_messages = doorman_conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages from pg_doorman");
-
-    world.pg_accumulated_messages.extend(pg_messages);
-    world.doorman_accumulated_messages.extend(doorman_messages);
+    helpers::send_sync_to_both(pg_conn, doorman_conn).await;
+    let (pg_messages, doorman_messages) =
+        helpers::read_both_until_ready(pg_conn, doorman_conn).await;
+    append_dual_messages(world, pg_messages, doorman_messages);
 }
 
 #[when(regex = r#"^we send Sync to both$"#)]
 pub async fn send_sync_to_both(world: &mut DoormanWorld) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
+    let (pg_messages, doorman_messages) = {
+        let (pg_conn, doorman_conn) = get_dual_connections(world);
+        helpers::send_sync_to_both(pg_conn, doorman_conn).await;
+        helpers::read_both_until_ready(pg_conn, doorman_conn).await
+    };
 
-    pg_conn
-        .send_sync()
-        .await
-        .expect("Failed to send Sync to PostgreSQL");
-    doorman_conn
-        .send_sync()
-        .await
-        .expect("Failed to send Sync to pg_doorman");
-
-    // Read messages from both
-    let pg_messages = pg_conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages from PostgreSQL");
-    let doorman_messages = doorman_conn
-        .read_all_messages_until_ready()
-        .await
-        .expect("Failed to read messages from pg_doorman");
-
-    world.pg_accumulated_messages.extend(pg_messages);
-    world.doorman_accumulated_messages.extend(doorman_messages);
+    append_dual_messages(world, pg_messages, doorman_messages);
 }
 
 #[when(regex = r#"^we send Flush to both$"#)]
 pub async fn send_flush_to_both(world: &mut DoormanWorld) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
-    pg_conn
-        .send_flush()
-        .await
-        .expect("Failed to send Flush to PostgreSQL");
-    doorman_conn
-        .send_flush()
-        .await
-        .expect("Failed to send Flush to pg_doorman");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_flush_to_both(pg_conn, doorman_conn).await;
 }
 
 #[when(regex = r#"^we send Execute "([^"]*)" with max_rows "(\d+)" to both$"#)]
@@ -471,67 +326,28 @@ pub async fn send_execute_with_max_rows_to_both(
     portal: String,
     max_rows: String,
 ) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
     let max_rows_int: i32 = max_rows.parse().expect("Invalid max_rows value");
-
-    pg_conn
-        .send_execute(&portal, max_rows_int)
-        .await
-        .expect("Failed to send Execute to PostgreSQL");
-    doorman_conn
-        .send_execute(&portal, max_rows_int)
-        .await
-        .expect("Failed to send Execute to pg_doorman");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_execute_to_both(pg_conn, doorman_conn, &portal, max_rows_int).await;
 }
 
 #[when(regex = r#"^we send Close "([^"])" "([^"]*)" to both$"#)]
 pub async fn send_close_to_both(world: &mut DoormanWorld, target_type: String, name: String) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
-
-    let target_char = target_type.chars().next().expect("Empty target type");
-
-    pg_conn
-        .send_close(target_char, &name)
-        .await
-        .expect("Failed to send Close to PostgreSQL");
-    doorman_conn
-        .send_close(target_char, &name)
-        .await
-        .expect("Failed to send Close to pg_doorman");
+    let target_char = helpers::single_char(&target_type, "target type");
+    let (pg_conn, doorman_conn) = get_dual_connections(world);
+    helpers::send_close_to_both(pg_conn, doorman_conn, target_char, &name).await;
 }
 
 #[when(regex = r#"^we verify partial response received from both$"#)]
 pub async fn verify_partial_response(world: &mut DoormanWorld) {
-    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
-    let doorman_conn = world
-        .doorman_conn
-        .as_mut()
-        .expect("Not connected to pg_doorman");
+    let (pg_messages, doorman_messages) = {
+        let (pg_conn, doorman_conn) = get_dual_connections(world);
+        helpers::read_partial_from_both(pg_conn, doorman_conn).await
+    };
 
-    // Read partial messages (without waiting for ReadyForQuery)
-    let pg_messages = pg_conn
-        .read_partial_messages()
-        .await
-        .expect("Failed to read partial messages from PostgreSQL");
-    let doorman_messages = doorman_conn
-        .read_partial_messages()
-        .await
-        .expect("Failed to read partial messages from pg_doorman");
-
-    world.pg_accumulated_messages.extend(pg_messages);
-    world.doorman_accumulated_messages.extend(doorman_messages);
+    append_dual_messages(world, pg_messages, doorman_messages);
 }
 
-/// Helper step to repeat a simple sequence of Parse, Bind, Execute messages multiple times
 #[when(
     regex = r#"^we repeat (\d+) times: Parse "([^"]*)" with query "([^"]+)", Bind "([^"]*)" to "([^"]*)" with params "([^"]+)", Execute "([^"]*)" to both$"#
 )]
@@ -554,41 +370,20 @@ pub async fn repeat_simple_extended_protocol(
 
     let params = super::helpers::parse_bind_params(&params_str);
 
-    // Send all messages N times
     for _ in 0..times {
-        // Parse
-        pg_conn
-            .send_parse(&parse_name, &query)
-            .await
-            .expect("Failed to send Parse to PostgreSQL");
-        doorman_conn
-            .send_parse(&parse_name, &query)
-            .await
-            .expect("Failed to send Parse to pg_doorman");
-
-        // Bind
-        pg_conn
-            .send_bind(&bind_portal, &bind_statement, params.clone())
-            .await
-            .expect("Failed to send Bind to PostgreSQL");
-        doorman_conn
-            .send_bind(&bind_portal, &bind_statement, params.clone())
-            .await
-            .expect("Failed to send Bind to pg_doorman");
-
-        // Execute
-        pg_conn
-            .send_execute(&execute_portal, 0)
-            .await
-            .expect("Failed to send Execute to PostgreSQL");
-        doorman_conn
-            .send_execute(&execute_portal, 0)
-            .await
-            .expect("Failed to send Execute to pg_doorman");
+        helpers::send_parse_to_both(pg_conn, doorman_conn, &parse_name, &query).await;
+        helpers::send_bind_to_both(
+            pg_conn,
+            doorman_conn,
+            &bind_portal,
+            &bind_statement,
+            params.clone(),
+        )
+        .await;
+        helpers::send_execute_to_both(pg_conn, doorman_conn, &execute_portal, 0).await;
     }
 }
 
-/// Helper step to repeat a sequence with Close command
 #[allow(clippy::too_many_arguments)]
 #[when(
     regex = r#"^we repeat (\d+) times: Parse "([^"]*)" with query "([^"]+)", Bind "([^"]*)" to "([^"]*)" with params "([^"]+)", Describe "([^"])" "([^"]*)", Execute "([^"]*)", Close "([^"])" "([^"]*)" to both$"#
@@ -615,60 +410,22 @@ pub async fn repeat_extended_protocol_with_close(
 
     let params = super::helpers::parse_bind_params(&params_str);
 
-    let describe_char = describe_type.chars().next().expect("Empty describe type");
-    let close_char = close_type.chars().next().expect("Empty close type");
+    let describe_char = helpers::single_char(&describe_type, "describe type");
+    let close_char = helpers::single_char(&close_type, "close type");
 
-    // Send all messages N times
     for _ in 0..times {
-        // Parse
-        pg_conn
-            .send_parse(&parse_name, &query)
-            .await
-            .expect("Failed to send Parse to PostgreSQL");
-        doorman_conn
-            .send_parse(&parse_name, &query)
-            .await
-            .expect("Failed to send Parse to pg_doorman");
-
-        // Bind
-        pg_conn
-            .send_bind(&bind_portal, &bind_statement, params.clone())
-            .await
-            .expect("Failed to send Bind to PostgreSQL");
-        doorman_conn
-            .send_bind(&bind_portal, &bind_statement, params.clone())
-            .await
-            .expect("Failed to send Bind to pg_doorman");
-
-        // Describe
-        pg_conn
-            .send_describe(describe_char, &describe_name)
-            .await
-            .expect("Failed to send Describe to PostgreSQL");
-        doorman_conn
-            .send_describe(describe_char, &describe_name)
-            .await
-            .expect("Failed to send Describe to pg_doorman");
-
-        // Execute
-        pg_conn
-            .send_execute(&execute_portal, 0)
-            .await
-            .expect("Failed to send Execute to PostgreSQL");
-        doorman_conn
-            .send_execute(&execute_portal, 0)
-            .await
-            .expect("Failed to send Execute to pg_doorman");
-
-        // Close
-        pg_conn
-            .send_close(close_char, &close_name)
-            .await
-            .expect("Failed to send Close to PostgreSQL");
-        doorman_conn
-            .send_close(close_char, &close_name)
-            .await
-            .expect("Failed to send Close to pg_doorman");
+        helpers::send_parse_to_both(pg_conn, doorman_conn, &parse_name, &query).await;
+        helpers::send_bind_to_both(
+            pg_conn,
+            doorman_conn,
+            &bind_portal,
+            &bind_statement,
+            params.clone(),
+        )
+        .await;
+        helpers::send_describe_to_both(pg_conn, doorman_conn, describe_char, &describe_name).await;
+        helpers::send_execute_to_both(pg_conn, doorman_conn, &execute_portal, 0).await;
+        helpers::send_close_to_both(pg_conn, doorman_conn, close_char, &close_name).await;
     }
 }
 
@@ -677,7 +434,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
     let pg_messages = &world.pg_accumulated_messages;
     let doorman_messages = &world.doorman_accumulated_messages;
 
-    // Check message count and provide detailed error if mismatch
     if pg_messages.len() != doorman_messages.len() {
         let mut error_msg = format!(
             "\n=== MESSAGE COUNT MISMATCH ===\nPostgreSQL: {} messages\npg_doorman: {} messages\n",
@@ -715,7 +471,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         let (pg_type, pg_data) = pg_msg;
         let (doorman_type, doorman_data) = doorman_msg;
 
-        // Check message type
         if pg_type != doorman_type {
             eprintln!("\n=== MESSAGE TYPE MISMATCH at position {} ===", i);
             eprintln!(
@@ -732,7 +487,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
             );
         }
 
-        // Check message length
         if pg_data.len() != doorman_data.len() {
             eprintln!("\n=== MESSAGE LENGTH MISMATCH at position {} ===", i);
             eprintln!(
@@ -744,7 +498,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
                 helpers::format_message_details(*doorman_type, doorman_data)
             );
 
-            // Show hex diff for first 64 bytes
             let max_len = pg_data.len().max(doorman_data.len()).min(64);
             eprintln!("\n--- Hex comparison (first {} bytes) ---", max_len);
             eprintln!(
@@ -774,7 +527,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
             );
         }
 
-        // Check message data
         // For RowDescription ('T'), normalize table OIDs before comparison
         // because temp tables have different OIDs on different connections
         let (pg_data_normalized, doorman_data_normalized) = if *pg_type == 'T' {
@@ -797,7 +549,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
                 helpers::format_message_details(*doorman_type, doorman_data)
             );
 
-            // Find first difference
             for (pos, (pg_byte, doorman_byte)) in pg_data_normalized
                 .iter()
                 .zip(doorman_data_normalized.iter())
@@ -809,7 +560,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
                         pos, pg_byte, doorman_byte
                     );
 
-                    // Show context around the difference
                     let start = pos.saturating_sub(8);
                     let end = (pos + 8).min(pg_data.len());
                     eprintln!("Context (bytes {}-{}):", start, end);
@@ -843,7 +593,6 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         );
     }
 
-    // Clear accumulated messages for next scenario
     world.pg_accumulated_messages.clear();
     world.doorman_accumulated_messages.clear();
 }

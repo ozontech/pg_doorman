@@ -1979,8 +1979,25 @@ mod umask_guard_tests {
 mod inherited_fd_cleanup_tests {
     use super::close_unexpected_fds;
 
-    fn fd_is_open(fd: libc::c_int) -> bool {
-        unsafe { libc::fcntl(fd, libc::F_GETFD) >= 0 }
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct FdIdentity {
+        dev: libc::dev_t,
+        ino: libc::ino_t,
+    }
+
+    fn fd_identity(fd: libc::c_int) -> Option<FdIdentity> {
+        // SAFETY: fstat reads metadata for the supplied descriptor only.
+        unsafe {
+            let mut stat = std::mem::zeroed::<libc::stat>();
+            if libc::fstat(fd, &mut stat) == 0 {
+                Some(FdIdentity {
+                    dev: stat.st_dev,
+                    ino: stat.st_ino,
+                })
+            } else {
+                None
+            }
+        }
     }
 
     struct Pipe {
@@ -1998,14 +2015,19 @@ mod inherited_fd_cleanup_tests {
                 write: fds[1],
             }
         }
+
+        fn mark_closed(&mut self) {
+            self.read = -1;
+            self.write = -1;
+        }
     }
 
     impl Drop for Pipe {
         fn drop(&mut self) {
-            if fd_is_open(self.read) {
+            if self.read >= 0 {
                 unsafe { libc::close(self.read) };
             }
-            if fd_is_open(self.write) {
+            if self.write >= 0 {
                 unsafe { libc::close(self.write) };
             }
         }
@@ -2014,18 +2036,29 @@ mod inherited_fd_cleanup_tests {
     #[test]
     fn close_unexpected_fds_preserves_allowlist() {
         let keep = Pipe::new();
-        let leaked = Pipe::new();
+        let mut leaked = Pipe::new();
+        let keep_read_identity = fd_identity(keep.read).expect("keep read fd must be open");
+        let keep_write_identity = fd_identity(keep.write).expect("keep write fd must be open");
+        let leaked_read = leaked.read;
+        let leaked_write = leaked.write;
 
         let mut allow = vec![0, 1, 2, keep.read, keep.write];
         allow.sort_unstable();
         let closed =
-            close_unexpected_fds([keep.read, keep.write, leaked.read, leaked.write], &allow);
+            close_unexpected_fds([keep.read, keep.write, leaked_read, leaked_write], &allow);
+        leaked.mark_closed();
 
-        assert!(closed >= 2, "expected to close the leaked pipe fds");
-        assert!(fd_is_open(keep.read), "allowlisted read fd must survive");
-        assert!(fd_is_open(keep.write), "allowlisted write fd must survive");
-        assert!(!fd_is_open(leaked.read), "unexpected read fd must close");
-        assert!(!fd_is_open(leaked.write), "unexpected write fd must close");
+        assert_eq!(closed, 2, "expected to close exactly the leaked pipe fds");
+        assert_eq!(
+            fd_identity(keep.read),
+            Some(keep_read_identity),
+            "allowlisted read fd must survive"
+        );
+        assert_eq!(
+            fd_identity(keep.write),
+            Some(keep_write_identity),
+            "allowlisted write fd must survive"
+        );
     }
 }
 
