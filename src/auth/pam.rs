@@ -1,13 +1,9 @@
-// Standard library imports
-
-// External crate imports
 use log::error;
 #[cfg(all(target_os = "linux", feature = "pam"))]
 use pam_client::conv_mock::Conversation;
 #[cfg(all(target_os = "linux", feature = "pam"))]
 use pam_client::{Context, Flag};
 
-// Internal crate imports
 use crate::errors::Error;
 
 /// Helper function to log an error message and return an AuthError

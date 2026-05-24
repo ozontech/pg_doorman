@@ -139,17 +139,14 @@ fn test_generate_config_with_default_parameters() {
         Ok(databases),
     );
 
-    // Verify the result
     assert!(result.is_ok());
 
     let config_result = result.unwrap();
 
-    // Verify the configuration has the expected values
     assert_eq!(config_result.general.host, "localhost");
     assert_eq!(config_result.general.port, 6432);
     assert_eq!(config_result.general.server_tls_mode, "allow");
 
-    // Verify the pools
     assert_eq!(config_result.pools.len(), 2);
     assert!(config_result.pools.contains_key("postgres"));
     assert!(config_result.pools.contains_key("testdb"));
@@ -207,17 +204,14 @@ fn test_generate_config_with_custom_parameters() {
         Ok(databases),
     );
 
-    // Verify the result
     assert!(result.is_ok());
 
     let config_result = result.unwrap();
 
-    // Verify the configuration has the expected values
     assert_eq!(config_result.general.host, "testhost");
     assert_eq!(config_result.general.port, 6432);
     assert_eq!(config_result.general.server_tls_mode, "allow");
 
-    // Verify the pools
     assert_eq!(config_result.pools.len(), 2);
 
     // Verify the pool mode is Session as specified
@@ -271,12 +265,10 @@ fn test_generate_config_with_ssl_enabled() {
         Ok(databases),
     );
 
-    // Verify the result
     assert!(result.is_ok());
 
     let config_result = result.unwrap();
 
-    // Verify SSL is enabled
     assert_eq!(config_result.general.server_tls_mode, "require");
 }
 
@@ -324,6 +316,5 @@ fn test_generate_config_with_database_error() {
         Ok(databases),
     );
 
-    // Verify the result is an error
     assert!(result.is_err());
 }

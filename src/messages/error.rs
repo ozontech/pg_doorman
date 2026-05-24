@@ -1,8 +1,6 @@
-// Standard library imports
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-// Internal crate imports
 use crate::errors::Error;
 
 /// PostgreSQL error message structure.

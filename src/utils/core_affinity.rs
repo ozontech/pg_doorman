@@ -11,15 +11,12 @@ extern crate libc;
 #[cfg_attr(all(not(test), not(target_os = "macos")), allow(unused_extern_crates))]
 extern crate num_cpus;
 
-/// This function tries to retrieve information
-/// on all the "cores" on which the current thread
-/// is allowed to run.
+/// Returns the CPU cores available to the current thread.
 pub fn get_core_ids() -> Option<Vec<CoreId>> {
     get_core_ids_helper()
 }
 
-/// This function tries to pin the current
-/// thread to the specified core.
+/// Pins the current thread to `core_id`.
 ///
 /// # Arguments
 ///

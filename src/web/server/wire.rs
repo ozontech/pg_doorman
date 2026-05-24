@@ -96,8 +96,7 @@ impl<'a> ParsedRequest<'a> {
             }
             // Headers are case-insensitive per RFC 7230. Match by case-
             // insensitive prefix without allocating a lowercase copy of
-            // the header value — `to_lowercase()` per request line was
-            // codex perf P3#9.
+            // the header value.
             if let Some(value) = strip_header_prefix(line, "Authorization") {
                 authorization = Some(value);
             } else if let Some(value) = strip_header_prefix(line, "Cookie") {
@@ -242,8 +241,7 @@ impl Response {
 
     /// Override the status line on a Response built via [`Response::ok_json`].
     /// Useful when the body shape is the same JSON envelope but the
-    /// outcome should travel back as 4xx/5xx — codex Arch P2#4 admin
-    /// route refactor.
+    /// outcome should travel back as 4xx/5xx.
     pub(crate) fn with_status(mut self, status: u16, reason: &'static str) -> Self {
         self.status = status;
         self.reason = reason;
@@ -326,8 +324,7 @@ fn strip_header_prefix<'a>(line: &'a str, header: &str) -> Option<&'a str> {
     Some(&line[need..])
 }
 
-/// Case-insensitive `contains` over ASCII bytes. Avoids the
-/// `value.to_lowercase()` allocation that codex P3#9 flagged.
+/// Case-insensitive `contains` over ASCII bytes without allocation.
 fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
     let h = haystack.as_bytes();
     let n = needle.as_bytes();

@@ -1,13 +1,10 @@
 // Helper functions to send one-off protocol messages and handle TcpStream (TCP socket).
 
-// Standard library imports
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 
-// External crate imports
 use once_cell::sync::Lazy;
 
-// Declare submodules
 pub mod config_socket;
 pub mod constants;
 pub mod error;
@@ -16,7 +13,6 @@ pub mod protocol;
 pub mod socket;
 pub mod types;
 
-// Re-export public items
 pub use config_socket::{configure_tcp_socket, configure_unix_socket, configure_web_tcp_socket};
 pub use error::PgErrorMsg;
 pub use extended::{close_complete, Bind, Close, Describe, ExtendedProtocolData, Parse};
@@ -38,16 +34,12 @@ pub use socket::{
 };
 pub use types::{vec_to_string, BytesMutReader, DataType};
 
-// Re-export protocol constants
 pub use constants::*;
 
-// Constants
 pub const MAX_MESSAGE_SIZE: i32 = 256 * 1024 * 1024;
 
-// Global state
 pub static CURRENT_MEMORY: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI64::new(0)));
 
-// Tests
 #[cfg(test)]
 mod protocol_tests;
 #[cfg(test)]

@@ -253,8 +253,7 @@ fn pool_checkout_without_coordinator(c: &mut Criterion) {
 /// Isolated cost of `PoolCoordinator::notify_idle_returned` — a single
 /// `tokio::sync::Notify::notify_one()` call behind an `Arc` deref. This is
 /// the full overhead added to `Pool::return_object` when the pool has a
-/// coordinator and the fix for Phase C reactivity to peer idle returns is
-/// active. Bench target: ~10-20 ns, small enough to be invisible on the
+/// coordinator. Bench target: ~10-20 ns, small enough to be invisible on the
 /// return_object hot path.
 fn notify_idle_returned_standalone(c: &mut Criterion) {
     let rt = runtime();
@@ -273,11 +272,11 @@ fn notify_idle_returned_standalone(c: &mut Criterion) {
     group.finish();
 }
 
-/// Simulates `Pool::return_object` with and without the coordinator notify
-/// the fix introduces. Both variants do the same VecDeque push and semaphore
-/// add_permits; the "with_coordinator_notify" variant additionally calls
-/// `coordinator.notify_idle_returned()` the way `return_object` does now.
-/// The delta between them is the added hot-path cost of the fix.
+/// Simulates `Pool::return_object` with and without the coordinator notify.
+/// Both variants do the same VecDeque push and semaphore add_permits; the
+/// "with_coordinator_notify" variant additionally calls
+/// `coordinator.notify_idle_returned()`. The delta between them is the
+/// added hot-path cost.
 fn return_object_with_coordinator_notify(c: &mut Criterion) {
     use std::collections::VecDeque;
 
@@ -300,8 +299,8 @@ fn return_object_with_coordinator_notify(c: &mut Criterion) {
         });
     });
 
-    // With the fix: after push + add_permits, notify the coordinator so
-    // Phase C waiters can opportunistically retry eviction.
+    // With coordinator notify: after push + add_permits, notify Phase C
+    // waiters so they can opportunistically retry eviction.
     group.bench_function("with_coordinator_notify", |b| {
         let sem = Arc::new(Semaphore::new(10));
         let slots = Arc::new(parking_lot::Mutex::new(VecDeque::from([1u64, 2, 3, 4, 5])));

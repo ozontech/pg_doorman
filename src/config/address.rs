@@ -99,7 +99,7 @@ impl std::fmt::Display for Address {
     }
 }
 
-// We need to implement PartialEq by ourselves so we skip stats in the comparison
+// Address identity excludes runtime stats.
 impl PartialEq for Address {
     fn eq(&self, other: &Self) -> bool {
         self.host == other.host
@@ -111,7 +111,7 @@ impl PartialEq for Address {
 }
 impl Eq for Address {}
 
-// We need to implement Hash by ourselves so we skip stats in the comparison
+// Keep hashing aligned with PartialEq.
 impl Hash for Address {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.host.hash(state);

@@ -242,22 +242,13 @@ impl ServerStats {
     // Server state management
     // ------------------------------------------------------------------------------------------
 
-    /// Sets the server state to LOGIN and application name to "Undefined".
-    ///
-    /// This indicates the server is attempting to establish a connection to PostgreSQL.
+    /// Server is attempting to establish a connection to PostgreSQL.
     pub fn login(&self) {
         self.set_state(SERVER_STATE_LOGIN);
         self.set_undefined_application();
     }
 
-    /// Sets the server state to ACTIVE and updates the application name.
-    ///
-    /// This indicates the server has been assigned to a client and is actively
-    /// processing queries or transactions.
-    ///
-    /// # Arguments
-    ///
-    /// * `application_name` - Name of the application using this server connection
+    /// Server is assigned to a client and actively processing work.
     pub fn active(&self, application_name: String) {
         // Refresh the activation timestamp before flipping state to ACTIVE.
         // The two atomics use Relaxed and provide no happens-before, so a
@@ -297,14 +288,7 @@ impl ServerStats {
             .as_nanos() as u64
     }
 
-    /// Sets the server state to IDLE and records transaction time.
-    ///
-    /// This indicates the server is no longer assigned to a client and is
-    /// available for the next client to pick it up.
-    ///
-    /// # Arguments
-    ///
-    /// * `microseconds` - Transaction time in microseconds to record
+    /// Server is idle and available for the next client.
     #[inline(always)]
     pub fn idle(&self, microseconds: u64) {
         self.address.stats.xact_time_add(microseconds);
@@ -317,13 +301,6 @@ impl ServerStats {
     }
 
     /// Records transaction time and sets the server state to IDLE.
-    ///
-    /// This is a variant of the idle() method that emphasizes recording
-    /// transaction time.
-    ///
-    /// # Arguments
-    ///
-    /// * `microseconds` - Transaction time in microseconds to record
     #[inline(always)]
     pub fn add_xact_time_and_idle(&self, microseconds: u64) {
         self.set_state(SERVER_STATE_IDLE);
@@ -339,25 +316,19 @@ impl ServerStats {
     // Wait state management
     // ------------------------------------------------------------------------------------------
 
-    /// Sets the server wait status to READ.
-    ///
-    /// This indicates the server is waiting for data to be read from the connection.
+    /// Server is waiting for a read.
     #[inline]
     pub fn wait_reading(&self) {
         self.set_wait(SERVER_WAIT_READ);
     }
 
-    /// Sets the server wait status to WRITE.
-    ///
-    /// This indicates the server is waiting for data to be written to the connection.
+    /// Server is waiting for a write.
     #[inline]
     pub fn wait_writing(&self) {
         self.set_wait(SERVER_WAIT_WRITE);
     }
 
-    /// Sets the server wait status to IDLE.
-    ///
-    /// This indicates the server is not waiting for any I/O operation.
+    /// Server is not waiting for I/O.
     #[inline]
     pub fn wait_idle(&self) {
         self.set_wait(SERVER_WAIT_IDLE);

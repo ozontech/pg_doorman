@@ -1,12 +1,9 @@
-// Standard library imports
 use std::sync::atomic::Ordering;
 
-// External crate imports
 use bytes::{BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
-// Internal crate imports
 use crate::errors::Error;
 use crate::errors::Error::ProxyTimeout;
 use crate::messages::{CURRENT_MEMORY, MAX_MESSAGE_SIZE};

@@ -1,11 +1,10 @@
-// Standard library imports
 use std::collections::HashMap;
-// External crate imports
+
 use crate::messages::constants::SCRAM_SHA_256;
 use bytes::{Buf, BufMut, BytesMut};
 use md5::{Digest, Md5};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-// Internal crate imports
+
 use crate::config::startup_parameters::full_packet_bytes;
 use crate::errors::Error;
 use crate::messages::socket::{write_all, write_all_flush};

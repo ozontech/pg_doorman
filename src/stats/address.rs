@@ -145,10 +145,7 @@ impl Default for AddressStats {
     }
 }
 
-/// Implementation of IntoIterator for AddressStats to convert statistics into name-value pairs.
-///
-/// This allows the statistics to be easily formatted for reporting or display purposes.
-/// The values are converted to f64 for consistent representation.
+/// Converts address statistics into name-value pairs for reporting.
 impl IntoIterator for &AddressStats {
     type Item = (String, f64);
     type IntoIter = std::vec::IntoIter<Self::Item>;
@@ -490,18 +487,15 @@ impl AddressStats {
         self.update_wait_and_error_averages(stat_period_per_second);
     }
 
-    /// Helper method to update transaction-related averages
     fn update_transaction_averages(&self, stat_period_per_second: u64) {
         let current_xact_count = self.current.xact_count.load(Ordering::Relaxed);
         let current_xact_time = self.current.xact_time_microseconds.load(Ordering::Relaxed);
 
-        // Calculate transactions per second
         self.averages.xact_count.store(
             current_xact_count / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate average time per transaction (or 0 if no transactions)
         if current_xact_count == 0 {
             self.averages
                 .xact_time_microseconds
@@ -513,18 +507,15 @@ impl AddressStats {
         }
     }
 
-    /// Helper method to update query-related averages
     fn update_query_averages(&self, stat_period_per_second: u64) {
         let current_query_count = self.current.query_count.load(Ordering::Relaxed);
         let current_query_time = self.current.query_time_microseconds.load(Ordering::Relaxed);
 
-        // Calculate queries per second
         self.averages.query_count.store(
             current_query_count / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate average time per query (or 0 if no queries)
         if current_query_count == 0 {
             self.averages
                 .query_time_microseconds
@@ -536,16 +527,13 @@ impl AddressStats {
         }
     }
 
-    /// Helper method to update throughput averages
     fn update_throughput_averages(&self, stat_period_per_second: u64) {
-        // Calculate bytes received per second
         let current_bytes_received = self.current.bytes_received.load(Ordering::Relaxed);
         self.averages.bytes_received.store(
             current_bytes_received / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate bytes sent per second
         let current_bytes_sent = self.current.bytes_sent.load(Ordering::Relaxed);
         self.averages.bytes_sent.store(
             current_bytes_sent / stat_period_per_second,
@@ -553,16 +541,13 @@ impl AddressStats {
         );
     }
 
-    /// Helper method to update wait time and error averages
     fn update_wait_and_error_averages(&self, stat_period_per_second: u64) {
-        // Calculate average wait time per second
         let current_wait_time = self.current.wait_time.load(Ordering::Relaxed);
         self.averages.wait_time.store(
             current_wait_time / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate errors per second
         let current_errors = self.current.errors.load(Ordering::Relaxed);
         self.averages
             .errors
@@ -602,7 +587,6 @@ impl AddressStats {
     ///
     /// * `row` - A mutable reference to a vector of strings that will be populated with statistics
     pub fn populate_row(&self, row: &mut Vec<String>) {
-        // Convert all statistics to strings and add them to the row
         for (_key, value) in self {
             row.push(value.to_string());
         }
@@ -619,7 +603,6 @@ mod tests {
 
     #[test]
     fn test_address_stat_fields_default() {
-        // Test that AddressStatFields initializes with all zeros
         let fields = AddressStatFields::default();
 
         assert_eq!(fields.xact_count.load(Ordering::Relaxed), 0);
@@ -634,24 +617,18 @@ mod tests {
 
     #[test]
     fn test_address_stats_default() {
-        // Test that AddressStats initializes with all zeros
         let stats = AddressStats::default();
 
-        // Check total fields
         assert_eq!(stats.total.xact_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total.query_count.load(Ordering::Relaxed), 0);
 
-        // Check current fields
         assert_eq!(stats.current.xact_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.current.query_count.load(Ordering::Relaxed), 0);
 
-        // Check averages fields
         assert_eq!(stats.averages.xact_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.averages.query_count.load(Ordering::Relaxed), 0);
 
-        // Check other fields
         assert!(!stats.averages_updated.load(Ordering::Relaxed));
-        // Check histograms are empty (len() == 0)
         assert_eq!(stats.xact_histogram.lock().len(), 0);
         assert_eq!(stats.query_histogram.lock().len(), 0);
     }
@@ -660,32 +637,26 @@ mod tests {
     fn test_counter_methods() {
         let stats = AddressStats::default();
 
-        // Test xact_count_add
         stats.xact_count_add();
         assert_eq!(stats.total.xact_count.load(Ordering::Relaxed), 1);
         assert_eq!(stats.current.xact_count.load(Ordering::Relaxed), 1);
 
-        // Test query_count_add
         stats.query_count_add();
         assert_eq!(stats.total.query_count.load(Ordering::Relaxed), 1);
         assert_eq!(stats.current.query_count.load(Ordering::Relaxed), 1);
 
-        // Test bytes_received_add
         stats.bytes_received_add(100);
         assert_eq!(stats.total.bytes_received.load(Ordering::Relaxed), 100);
         assert_eq!(stats.current.bytes_received.load(Ordering::Relaxed), 100);
 
-        // Test bytes_sent_add
         stats.bytes_sent_add(200);
         assert_eq!(stats.total.bytes_sent.load(Ordering::Relaxed), 200);
         assert_eq!(stats.current.bytes_sent.load(Ordering::Relaxed), 200);
 
-        // Test wait_time_add
         stats.wait_time_add(300);
         assert_eq!(stats.total.wait_time.load(Ordering::Relaxed), 300);
         assert_eq!(stats.current.wait_time.load(Ordering::Relaxed), 300);
 
-        // Test error
         stats.error();
         assert_eq!(stats.total.errors.load(Ordering::Relaxed), 1);
         assert_eq!(stats.current.errors.load(Ordering::Relaxed), 1);
@@ -760,7 +731,6 @@ mod tests {
     fn test_time_recording_methods() {
         let stats = AddressStats::default();
 
-        // Test xact_time_add with non-zero value
         stats.xact_time_add(150);
         assert_eq!(
             stats.total.xact_time_microseconds.load(Ordering::Relaxed),
@@ -771,13 +741,11 @@ mod tests {
             150
         );
 
-        // Verify the time was recorded in the histogram
         {
             let histogram = stats.xact_histogram.lock();
             assert_eq!(histogram.len(), 1);
         }
 
-        // Test xact_time_add with zero value (should be ignored)
         stats.xact_time_add(0);
         assert_eq!(
             stats.total.xact_time_microseconds.load(Ordering::Relaxed),
@@ -788,7 +756,6 @@ mod tests {
             150
         ); // Unchanged
 
-        // Test query_time_add_microseconds
         stats.query_time_add_microseconds(250);
         assert_eq!(
             stats.total.query_time_microseconds.load(Ordering::Relaxed),
@@ -802,7 +769,6 @@ mod tests {
             250
         );
 
-        // Verify the time was recorded in the histogram
         {
             let histogram = stats.query_histogram.lock();
             assert_eq!(histogram.len(), 1);
@@ -813,16 +779,12 @@ mod tests {
     fn test_histogram_percentiles() {
         let stats = AddressStats::default();
 
-        // Add values to create a known distribution
-        // Add 100 values: 1, 2, 3, ..., 100 microseconds
         for i in 1..=100 {
             stats.xact_time_add(i as u64);
             stats.query_time_add_microseconds(i as u64);
         }
 
-        // Verify percentiles for transactions
         let (p50, p90, p95, p99) = stats.get_xact_percentiles();
-        // p50 should be around 50, p90 around 90, p95 around 95, p99 around 99
         assert!(
             (45..=55).contains(&p50),
             "p50 xact should be ~50, got {}",
@@ -844,7 +806,6 @@ mod tests {
             p99
         );
 
-        // Verify percentiles for queries
         let (p50, p90, p95, p99) = stats.get_query_percentiles();
         assert!(
             (45..=55).contains(&p50),
@@ -872,29 +833,21 @@ mod tests {
     fn test_histogram_reset() {
         let stats = AddressStats::default();
 
-        // Add some values
         for i in 1..=10 {
             stats.xact_time_add(i as u64);
         }
 
-        // Verify histogram has data
         assert_eq!(stats.xact_histogram.lock().len(), 10);
 
-        // Reset histograms
         stats.reset_histograms();
 
-        // Verify histogram is empty
         assert_eq!(stats.xact_histogram.lock().len(), 0);
     }
 
     #[test]
     fn test_update_averages_and_reset() {
-        // We need to mock the STAT_PERIOD for testing
-        // Since we can't modify the constant directly, we'll test with known values
-
         let stats = AddressStats::default();
 
-        // Add some data
         stats.xact_count_add();
         stats.xact_count_add();
         stats.xact_time_add(1000); // 1000 microseconds for first transaction
@@ -913,12 +866,9 @@ mod tests {
         stats.error();
         stats.error();
 
-        // Update averages (assuming STAT_PERIOD is 15000 milliseconds = 15 seconds)
         stats.update_averages();
 
-        // Check averages (transactions per second = 2/15 = 0)
         assert_eq!(stats.averages.xact_count.load(Ordering::Relaxed), 0);
-        // Average transaction time = (1000 + 2000) / 2 = 1500 microseconds
         assert_eq!(
             stats
                 .averages
@@ -927,9 +877,7 @@ mod tests {
             1500
         );
 
-        // Check averages (queries per second = 3/15 = 0)
         assert_eq!(stats.averages.query_count.load(Ordering::Relaxed), 0);
-        // Average query time = (300 + 400 + 500) / 3 = 400 microseconds
         assert_eq!(
             stats
                 .averages
@@ -938,7 +886,6 @@ mod tests {
             400
         );
 
-        // Check throughput averages (bytes per second)
         assert_eq!(
             stats.averages.bytes_received.load(Ordering::Relaxed),
             15000 / 15
@@ -948,14 +895,11 @@ mod tests {
             25000 / 15
         );
 
-        // Check wait time and error averages
         assert_eq!(stats.averages.wait_time.load(Ordering::Relaxed), 500 / 15);
         assert_eq!(stats.averages.errors.load(Ordering::Relaxed), 2 / 15);
 
-        // Now reset current counts
         stats.reset_current_counts();
 
-        // Verify current counts are reset to zero
         assert_eq!(stats.current.xact_count.load(Ordering::Relaxed), 0);
         assert_eq!(
             stats.current.xact_time_microseconds.load(Ordering::Relaxed),
@@ -974,7 +918,6 @@ mod tests {
         assert_eq!(stats.current.wait_time.load(Ordering::Relaxed), 0);
         assert_eq!(stats.current.errors.load(Ordering::Relaxed), 0);
 
-        // But total counts should remain unchanged
         assert_eq!(stats.total.xact_count.load(Ordering::Relaxed), 2);
         assert_eq!(
             stats.total.xact_time_microseconds.load(Ordering::Relaxed),
@@ -991,7 +934,6 @@ mod tests {
     fn test_into_iterator() {
         let stats = AddressStats::default();
 
-        // Add some data
         stats.total.xact_count.store(10, Ordering::Relaxed);
         stats.total.query_count.store(20, Ordering::Relaxed);
         stats.total.bytes_received.store(1000, Ordering::Relaxed);
@@ -1022,10 +964,8 @@ mod tests {
         stats.averages.wait_time.store(30, Ordering::Relaxed);
         stats.averages.errors.store(1, Ordering::Relaxed);
 
-        // Convert to iterator and collect into a HashMap for easy lookup
         let stats_map: HashMap<String, f64> = (&stats).into_iter().collect();
 
-        // Check total values
         assert_eq!(stats_map.get("total_xact_count"), Some(&10.0));
         assert_eq!(stats_map.get("total_query_count"), Some(&20.0));
         assert_eq!(stats_map.get("total_received"), Some(&1000.0));
@@ -1035,7 +975,6 @@ mod tests {
         assert_eq!(stats_map.get("total_wait_time"), Some(&300.0));
         assert_eq!(stats_map.get("total_errors"), Some(&5.0));
 
-        // Check average values
         assert_eq!(stats_map.get("avg_xact_count"), Some(&2.0));
         assert_eq!(stats_map.get("avg_query_count"), Some(&4.0));
         assert_eq!(stats_map.get("avg_recv"), Some(&200.0));
@@ -1050,23 +989,17 @@ mod tests {
     fn test_populate_row() {
         let stats = AddressStats::default();
 
-        // Add some data
         stats.total.xact_count.store(10, Ordering::Relaxed);
         stats.total.query_count.store(20, Ordering::Relaxed);
 
-        // Create a row vector
         let mut row = Vec::new();
 
-        // Populate the row
         stats.populate_row(&mut row);
 
-        // Check that the row has the expected number of elements
         assert_eq!(row.len(), 16); // 8 total stats + 8 average stats
 
-        // Check that the first element is "10" (total_xact_count)
         assert_eq!(row[0], "10");
 
-        // Check that the second element is "20" (total_query_count)
         assert_eq!(row[1], "20");
     }
 
@@ -1075,7 +1008,6 @@ mod tests {
         let stats = Arc::new(AddressStats::default());
         let mut handles = vec![];
 
-        // Spawn 10 threads, each incrementing counters
         for _ in 0..10 {
             let stats_clone = Arc::clone(&stats);
             let handle = thread::spawn(move || {
@@ -1096,12 +1028,10 @@ mod tests {
             handles.push(handle);
         }
 
-        // Wait for all threads to complete
         for handle in handles {
             handle.join().unwrap();
         }
 
-        // Check that all operations were counted correctly
         assert_eq!(stats.total.xact_count.load(Ordering::Relaxed), 1000); // 10 threads * 100 increments
         assert_eq!(stats.total.query_count.load(Ordering::Relaxed), 1000);
         assert_eq!(stats.total.bytes_received.load(Ordering::Relaxed), 10000); // 10 threads * 100 * 10 bytes
@@ -1117,7 +1047,6 @@ mod tests {
         assert_eq!(stats.total.wait_time.load(Ordering::Relaxed), 2000); // 10 threads * 100 * 2 microseconds
         assert_eq!(stats.total.errors.load(Ordering::Relaxed), 1000); // 10 threads * 100 errors
 
-        // Same checks for current counters
         assert_eq!(stats.current.xact_count.load(Ordering::Relaxed), 1000);
         assert_eq!(stats.current.query_count.load(Ordering::Relaxed), 1000);
         assert_eq!(stats.current.bytes_received.load(Ordering::Relaxed), 10000);

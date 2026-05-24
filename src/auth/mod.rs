@@ -8,16 +8,14 @@ pub mod scram;
 pub mod scram_client;
 pub mod talos;
 
-// Standard library imports
 use std::marker::Unpin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-// External crate imports
 use crate::auth::hba::CheckResult;
 use log::{error, info, warn};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-// Internal crate imports
+
 use crate::auth::jwt::get_user_name_from_jwt;
 use crate::auth::pam::pam_auth;
 use crate::auth::scram::{

@@ -1,10 +1,7 @@
-// Standard library imports
 use std::io::{BufRead, Cursor};
 
-// External crate imports
 use bytes::BytesMut;
 
-// Internal crate imports
 use crate::errors::Error;
 
 /// Postgres data type mappings

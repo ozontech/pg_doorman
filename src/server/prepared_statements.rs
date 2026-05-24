@@ -70,7 +70,6 @@ mod tests {
         Arc::new(ServerStats::default())
     }
 
-    /// After fix: has() now uses get() which DOES promote entries.
     /// Checking a statement moves it to MRU, protecting it from eviction.
     #[test]
     fn test_has_promotes_in_lru() {
@@ -81,7 +80,7 @@ mod tests {
         assert!(add_to_cache(&mut cache, &stats, "DOORMAN_1").is_none());
         assert!(add_to_cache(&mut cache, &stats, "DOORMAN_2").is_none());
 
-        // has(A) now promotes A → LRU order: [B, A]
+        // has(A) promotes A → LRU order: [B, A]
         assert!(has(&mut cache, &stats, "DOORMAN_1"));
 
         // Add C → evicts B (LRU), NOT A
@@ -113,7 +112,7 @@ mod tests {
         );
     }
 
-    /// After fix: the batch scenario works because has() promotes A.
+    /// Batch lookup keeps A hot until C evicts the older B entry.
     /// Parse(A) → has(A) promotes → Bind(A) → has(A) promotes →
     /// Parse(C) → add_to_cache(C) → evicts B (not A).
     #[test]

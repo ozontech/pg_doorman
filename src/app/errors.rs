@@ -1,7 +1,5 @@
 //! Errors.
 
-// Standard library imports
-
 use crate::auth::hba::CheckResult;
 
 /// Various errors.

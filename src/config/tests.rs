@@ -90,9 +90,6 @@ async fn test_serialize_configs() {
     print!("{}", toml::to_string(&get_config()).unwrap());
 }
 
-// Tests for the validate function
-
-// Test valid configuration
 #[tokio::test]
 async fn test_validate_valid_config() {
     let mut config = Config::default();
@@ -115,12 +112,10 @@ async fn test_validate_valid_config() {
     config.general.prepared_statements = true;
     config.general.prepared_statements_cache_size = 1024;
 
-    // Validate should pass
     let result = config.validate().await;
     assert!(result.is_ok());
 }
 
-// Test TLS rate limit less than 100 (but not 0)
 #[tokio::test]
 async fn test_validate_tls_rate_limit_less_than_100() {
     let mut config = Config::default();
@@ -1407,7 +1402,6 @@ fn test_scaling_config_changes_pool_hash() {
     assert_ne!(pool_a.hash_value(), pool_b.hash_value());
 }
 
-/// Test 9: TOML backward compatibility
 #[tokio::test]
 #[serial]
 async fn test_scaling_config_toml_parsing() {

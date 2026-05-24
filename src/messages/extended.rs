@@ -1,4 +1,3 @@
-// Standard library imports
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
 use std::hash::Hasher;
@@ -6,11 +5,10 @@ use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-// External crate imports
 use bytes::{Buf, BufMut, BytesMut};
 use xxhash_rust::xxh3::Xxh3;
 use zerocopy::IntoBytes;
-// Internal crate imports
+
 use crate::client::PREPARED_STATEMENT_COUNTER;
 use crate::errors::Error;
 use crate::messages::types::BytesMutReader;
