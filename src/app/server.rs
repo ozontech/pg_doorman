@@ -1652,9 +1652,8 @@ fn create_unix_listener(
 /// Prepare a Unix socket path for bind() by clearing any stale file without
 /// clobbering a live peer.
 ///
-/// The previous implementation called `remove_file` unconditionally, which
-/// meant pointing pg_doorman at a shared directory like `/var/run/postgresql`
-/// could silently delete another process's live socket. This helper instead:
+/// Shared directories like `/var/run/postgresql` may contain another process's
+/// live socket. This helper:
 ///
 /// 1. Returns Ok if nothing exists at the path.
 /// 2. Attempts a connect — if it succeeds, a live peer owns the socket and

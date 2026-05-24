@@ -1,12 +1,9 @@
-// Standard library imports
 use std::time::Duration;
 
-// External crate imports
 use log::{debug, error, log_enabled, Level};
 use socket2::{SockRef, TcpKeepalive};
 use tokio::net::{TcpStream, UnixStream};
 
-// Internal crate imports
 use crate::config::{get_config, Config};
 
 /// Configure Unix socket parameters.

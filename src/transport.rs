@@ -1,10 +1,7 @@
 //! Transport descriptor used by the client authentication pipeline.
 //!
-//! Replaces the `(SocketAddr, ssl: bool, is_unix: bool)` triplet that used
-//! to be threaded through the HBA matcher and `Client::startup`. Having a
-//! single enum removes the "two booleans in a row" footgun and gives us a
-//! natural place to hang transport-specific helpers like a display string
-//! for logs.
+//! A single enum carries transport-specific data through HBA matching,
+//! client startup, and log formatting.
 
 use std::net::SocketAddr;
 

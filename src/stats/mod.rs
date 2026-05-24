@@ -106,21 +106,7 @@ static STAT_PERIOD: u64 = 15000;
 pub struct Reporter {}
 
 impl Reporter {
-    /// Registers a client with the statistics system.
-    ///
-    /// This method adds a client's statistics object to the global registry, making it
-    /// available for tracking and reporting. The client_id is used as a unique identifier
-    /// to track and aggregate statistics from all sources related to that client.
-    ///
-    /// # Arguments
-    ///
-    /// * `client_id` - Unique identifier for the client
-    /// * `stats` - Arc-wrapped ClientStats instance to register
-    ///
-    /// # Note
-    ///
-    /// If a client with the same ID is already registered, a warning is logged and
-    /// the registration is ignored to prevent overwriting existing statistics.
+    /// Registers client stats; duplicate ids are logged and ignored.
     fn client_register(&self, client_id: u64, stats: Arc<ClientStats>) {
         use std::collections::hash_map::Entry;
         match CLIENT_STATS.write().entry(client_id) {
@@ -133,40 +119,14 @@ impl Reporter {
         }
     }
 
-    /// Unregisters a client from the statistics system.
-    ///
-    /// This method removes a client's statistics object from the global registry
-    /// when the client disconnects from the pooler.
-    ///
-    /// # Arguments
-    ///
-    /// * `client_id` - Unique identifier for the client to unregister
     fn client_disconnecting(&self, client_id: u64) {
         CLIENT_STATS.write().remove(&client_id);
     }
 
-    /// Registers a server connection with the statistics system.
-    ///
-    /// This method adds a server's statistics object to the global registry, making it
-    /// available for tracking and reporting. The server_id is used as a unique identifier
-    /// to track and aggregate statistics from all sources related to that server.
-    ///
-    /// # Arguments
-    ///
-    /// * `server_id` - Unique identifier for the server
-    /// * `stats` - Arc-wrapped ServerStats instance to register
     fn server_register(&self, server_id: i32, stats: Arc<ServerStats>) {
         SERVER_STATS.write().insert(server_id, stats);
     }
 
-    /// Unregisters a server connection from the statistics system.
-    ///
-    /// This method removes a server's statistics object from the global registry
-    /// when the server disconnects from the pooler.
-    ///
-    /// # Arguments
-    ///
-    /// * `server_id` - Unique identifier for the server to unregister
     fn server_disconnecting(&self, server_id: i32) {
         SERVER_STATS.write().remove(&server_id);
     }

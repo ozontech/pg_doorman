@@ -316,59 +316,43 @@ impl ClientStats {
     // Client state management
     // ------------------------------------------------------------------------------------------
 
-    /// Sets the client state to IDLE and wait status to READ.
-    ///
-    /// This indicates the client is done querying the server, is no longer assigned
-    /// a server connection, and we're reading from the client.
+    /// Client is done querying, has no assigned server, and is reading from the client socket.
     #[inline(always)]
     pub fn idle_read(&self) {
         self.set_state_wait(CLIENT_STATE_IDLE, CLIENT_WAIT_READ);
     }
 
-    /// Sets the client state to IDLE and wait status to WRITE.
-    ///
-    /// This indicates the client is done querying the server, is no longer assigned
-    /// a server connection, and we're writing to the client.
+    /// Client is done querying, has no assigned server, and is writing to the client socket.
     #[inline(always)]
     pub fn idle_write(&self) {
         self.set_state_wait(CLIENT_STATE_IDLE, CLIENT_WAIT_WRITE);
     }
 
-    /// Sets the client state to WAITING and wait status to IDLE.
-    ///
-    /// This indicates the client is waiting for a server connection from the pool.
+    /// Client is waiting for a server connection from the pool.
     #[inline(always)]
     pub fn waiting(&self) {
         self.set_state_wait(CLIENT_STATE_WAITING, CLIENT_WAIT_IDLE);
     }
 
-    /// Sets the client state to ACTIVE and wait status to READ.
-    ///
-    /// This indicates the client has obtained a server connection and we're reading from it.
+    /// Client has a server connection and is reading from it.
     #[inline(always)]
     pub fn active_read(&self) {
         self.set_state_wait(CLIENT_STATE_ACTIVE, CLIENT_WAIT_READ);
     }
 
-    /// Sets the client state to ACTIVE and wait status to WRITE.
-    ///
-    /// This indicates the client has obtained a server connection and we're writing to it.
+    /// Client has a server connection and is writing to it.
     #[inline(always)]
     pub fn active_write(&self) {
         self.set_state_wait(CLIENT_STATE_ACTIVE, CLIENT_WAIT_WRITE);
     }
 
-    /// Sets the client state to ACTIVE and wait status to IDLE.
-    ///
-    /// This indicates the client has obtained a server connection and is waiting for a response.
+    /// Client has a server connection and is waiting for a response.
     #[inline(always)]
     pub fn active_idle(&self) {
         self.set_state_wait(CLIENT_STATE_ACTIVE, CLIENT_WAIT_IDLE);
     }
 
-    /// Sets the client state to IDLE and wait status to IDLE.
-    ///
-    /// This indicates the client has failed to obtain a connection from the pool.
+    /// Client failed to obtain a connection from the pool.
     #[inline(always)]
     pub fn checkout_error(&self) {
         self.set_state_wait(CLIENT_STATE_IDLE, CLIENT_WAIT_IDLE);

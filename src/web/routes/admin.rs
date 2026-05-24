@@ -93,10 +93,8 @@ fn parse_scope(
 /// Same outcome envelope shape across the two transports: 404 with a
 /// typed JSON error when the scope filter excluded every pool, 200 with
 /// the list of touched pool ids otherwise. Uses serde_json::json! so
-/// every value goes through the SerDe escaper — codex Arch P2#4
-/// flagged the previous hand-formatted JSON because `db.replace('"', '\\"')`
-/// missed control characters that PostgreSQL identifier rules technically
-/// allow.
+/// every value goes through the SerDe escaper, including PostgreSQL
+/// identifiers with control characters.
 fn render_effect(action: &str, effect: AdminEffect) -> Response {
     match effect {
         AdminEffect::NoMatchingDb { db } => Response::ok_json(&json!({
@@ -120,8 +118,7 @@ fn render_effect(action: &str, effect: AdminEffect) -> Response {
 
 fn json_ok(action: &str, affected: &[crate::pool::PoolIdentifier]) -> Response {
     // `affected_pools` keeps the bare count for backward compat; the
-    // typed `affected` array is what codex DBA P2#3 wanted so a DBA
-    // can see exactly which user@db rows the action ran against.
+    // typed `affected` array lists each user@db row the action touched.
     let ids: Vec<String> = affected
         .iter()
         .map(|id| format!("{}@{}", id.user, id.db))
@@ -134,10 +131,9 @@ fn json_ok(action: &str, affected: &[crate::pool::PoolIdentifier]) -> Response {
     }))
 }
 
-/// `reload` is global, so `affected_pools` is meaningless (codex DBA
-/// P2#5: the route used to hardcode `affected_pools: 1`). Surface
-/// `changed: true|false` instead — DBAs need that signal to tell a
-/// "config actually rotated" reload from a no-op SIGHUP.
+/// `reload` is global, so `affected_pools` is meaningless. Surface
+/// `changed: true|false` so operators can distinguish a config rotation
+/// from a no-op SIGHUP.
 fn json_reload(changed: bool) -> Response {
     Response::ok_json(&json!({
         "ts": now_unix_ms(),

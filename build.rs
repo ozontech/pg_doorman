@@ -2,8 +2,8 @@
 // changes. Without this hint, cargo only watches the regular source
 // tree; a frontend rebuild that produces a new `frontend/dist/...js`
 // would be silently ignored and the resulting binary would still embed
-// the previous bundle. Hits docker pipelines hard — they share `target/`
-// across builds and the COPY layer is too late to invalidate cargo.
+// the previous bundle. Docker builds share `target/`, so the COPY layer
+// alone is too late to invalidate cargo.
 
 use std::fs;
 use std::path::Path;

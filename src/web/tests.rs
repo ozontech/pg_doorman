@@ -73,11 +73,9 @@ fn mint_jwt(name: &str, exp_offset: i64) -> String {
 }
 
 /// Bind on `127.0.0.1:0`, ask the kernel for an actual port, hand the
-/// pre-bound listener to the accept loop. Replaces the previous
-/// `portpicker::pick_unused_port + sleep(150ms)` pattern that codex
-/// flagged: pick_unused_port races between picking and binding (the
-/// port can be claimed in that window), and the fixed sleep was a
-/// readiness fudge instead of a synchronisation point.
+/// pre-bound listener to the accept loop. Picking a port before binding
+/// races with other processes; the bound listener is the synchronisation
+/// point.
 async fn spawn_server(opts: WebServerOptions) -> u16 {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -576,9 +574,7 @@ async fn api_events_returns_envelope() {
 async fn http_keep_alive_serves_two_requests_on_one_connection() {
     // Two sequential GETs without `Connection: close` should both come
     // back over the same TCP connection. The server then closes when
-    // we drop our half (no more requests). Until codex perf P1#2 the
-    // listener closed after one request, forcing the SPA to reconnect
-    // multiple times per poll interval.
+    // we drop our half.
     let port = spawn_server(opts(true, true)).await;
     let mut stream = tokio::time::timeout(
         Duration::from_secs(2),
@@ -698,12 +694,9 @@ async fn anonymous_personal_data_path_returns_401() {
 #[tokio::test]
 #[serial]
 async fn anonymous_public_passes_with_poison_basic_header() {
-    // Regression: the SPA's `api.ts` sends `Authorization: Basic ` on
-    // every fetch when there are no credentials, to override the
-    // browser's basic-auth cache. The backend used to demote that to
-    // Anonymous; the three-role refactor briefly let it fall through
-    // as Rejected and 401'd every public endpoint. This test pins the
-    // fix.
+    // The SPA sends `Authorization: Basic ` with no credentials to override
+    // the browser's basic-auth cache. Public endpoints must treat it as
+    // Anonymous, not Rejected.
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
         port,

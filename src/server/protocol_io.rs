@@ -70,12 +70,7 @@ const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
 
-// ============================================================================
-// Public API functions
-// ============================================================================
-
-/// Sends messages to the server and flushes the write buffer with a timeout.
-/// Returns an error if the operation doesn't complete within the specified duration.
+/// Flushes messages within `duration`; timeout marks the server bad.
 pub(crate) async fn send_and_flush_timeout(
     server: &mut Server,
     messages: &BytesMut,
@@ -96,9 +91,7 @@ pub(crate) async fn send_and_flush_timeout(
     }
 }
 
-/// Sends messages to the server and flushes the write buffer immediately.
-/// Updates statistics and last activity timestamp on success.
-/// Marks the connection as bad and logs an error on failure.
+/// Flushes messages and records write stats/activity.
 pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> Result<(), Error> {
     server.stats.data_sent(messages.len());
     server.stats.wait_writing();

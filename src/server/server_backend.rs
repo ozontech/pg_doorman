@@ -1,19 +1,16 @@
 // Implementation of the PostgreSQL server (database) protocol.
 
-// Standard library imports
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-// External crate imports
 use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
 use lru::LruCache;
 use tokio::io::{AsyncReadExt, BufStream};
 
-// Internal crate imports
 use crate::auth::scram_client::ScramSha256;
 use crate::config::{get_config, tls, Address, BackendAuthMethod, User};
 use crate::errors::{Error, ServerIdentifier};
@@ -365,8 +362,6 @@ impl Server {
         self.async_mode
     }
 
-    /// Sends messages to the server and flushes the write buffer with a timeout.
-    /// Returns an error if the operation doesn't complete within the specified duration.
     pub async fn send_and_flush_timeout(
         &mut self,
         messages: &BytesMut,
@@ -375,8 +370,6 @@ impl Server {
         protocol_io::send_and_flush_timeout(self, messages, duration).await
     }
 
-    /// Sends messages to the server and flushes the write buffer immediately.
-    /// This ensures all data is transmitted to the server without delay.
     pub async fn send_and_flush(&mut self, messages: &BytesMut) -> Result<(), Error> {
         protocol_io::send_and_flush(self, messages).await
     }

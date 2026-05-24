@@ -157,12 +157,9 @@ pub async fn handle_config_changes(
                 }
             }
             ClusterDiff::HostsChanged(name, _old, new) => {
-                // Update hosts for existing cluster
                 let managers = cluster_managers.read().await;
                 if managers.contains_key(name) {
-                    // Update hosts in the manager
-                    // Note: We need to update the hosts field, but it's not mutable
-                    // For now, we just log a warning that restart is needed
+                    // Host changes require rebuilding the cluster manager.
                     warn!(
                         "Cluster '{}' hosts changed to {:?}. Full restart required for this change to take effect.",
                         name, new

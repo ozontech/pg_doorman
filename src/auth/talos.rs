@@ -158,14 +158,8 @@ struct KidFromJSON {
     #[serde(rename = "kid")]
     kid: String,
 }
-/// Extracts the key identifier (kid) from the JWT token header
-///
-/// A JWT token consists of three parts separated by dots: header.payload.signature
-/// This function parses the header to get the kid (key ID), which is used
-/// to select the correct public key for token verification
+/// Extracts the key identifier from the JWT header.
 fn get_key_from_token(access_token: &str) -> Result<String, Error> {
-    // JWT token has the format: header.payload.signature
-    // We only need the header (first part before the dot)
     let header_part = access_token.split('.').next().ok_or_else(|| {
         Error::JWTValidate("JWT token must contain at least one dot separator".to_string())
     })?;
@@ -502,10 +496,6 @@ mod tests {
         let result =
             extract_talos_token("invalid_token".to_string(), vec!["db1".to_string()]).await;
         assert!(result.is_err(), "Expected error with invalid token");
-
-        // For a more complete test, we would need to mock the extract_talos_token_with_key function
-        // since we can't easily create a valid token with the correct structure in a test
-        // This would require refactoring the code to make it more testable
     }
 
     #[tokio::test]

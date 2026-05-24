@@ -145,10 +145,7 @@ impl Default for AddressStats {
     }
 }
 
-/// Implementation of IntoIterator for AddressStats to convert statistics into name-value pairs.
-///
-/// This allows the statistics to be easily formatted for reporting or display purposes.
-/// The values are converted to f64 for consistent representation.
+/// Converts address statistics into name-value pairs for reporting.
 impl IntoIterator for &AddressStats {
     type Item = (String, f64);
     type IntoIter = std::vec::IntoIter<Self::Item>;
@@ -490,18 +487,15 @@ impl AddressStats {
         self.update_wait_and_error_averages(stat_period_per_second);
     }
 
-    /// Helper method to update transaction-related averages
     fn update_transaction_averages(&self, stat_period_per_second: u64) {
         let current_xact_count = self.current.xact_count.load(Ordering::Relaxed);
         let current_xact_time = self.current.xact_time_microseconds.load(Ordering::Relaxed);
 
-        // Calculate transactions per second
         self.averages.xact_count.store(
             current_xact_count / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate average time per transaction (or 0 if no transactions)
         if current_xact_count == 0 {
             self.averages
                 .xact_time_microseconds
@@ -513,18 +507,15 @@ impl AddressStats {
         }
     }
 
-    /// Helper method to update query-related averages
     fn update_query_averages(&self, stat_period_per_second: u64) {
         let current_query_count = self.current.query_count.load(Ordering::Relaxed);
         let current_query_time = self.current.query_time_microseconds.load(Ordering::Relaxed);
 
-        // Calculate queries per second
         self.averages.query_count.store(
             current_query_count / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate average time per query (or 0 if no queries)
         if current_query_count == 0 {
             self.averages
                 .query_time_microseconds
@@ -536,16 +527,13 @@ impl AddressStats {
         }
     }
 
-    /// Helper method to update throughput averages
     fn update_throughput_averages(&self, stat_period_per_second: u64) {
-        // Calculate bytes received per second
         let current_bytes_received = self.current.bytes_received.load(Ordering::Relaxed);
         self.averages.bytes_received.store(
             current_bytes_received / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate bytes sent per second
         let current_bytes_sent = self.current.bytes_sent.load(Ordering::Relaxed);
         self.averages.bytes_sent.store(
             current_bytes_sent / stat_period_per_second,
@@ -553,16 +541,13 @@ impl AddressStats {
         );
     }
 
-    /// Helper method to update wait time and error averages
     fn update_wait_and_error_averages(&self, stat_period_per_second: u64) {
-        // Calculate average wait time per second
         let current_wait_time = self.current.wait_time.load(Ordering::Relaxed);
         self.averages.wait_time.store(
             current_wait_time / stat_period_per_second,
             Ordering::Relaxed,
         );
 
-        // Calculate errors per second
         let current_errors = self.current.errors.load(Ordering::Relaxed);
         self.averages
             .errors

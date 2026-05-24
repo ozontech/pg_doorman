@@ -1,17 +1,11 @@
-// Tests for the messages module
-// This file contains tests for the various message handling functions
-
-// Standard library imports
 use std::io::{Error as IoError, ErrorKind};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake};
 
-// External crate imports
 use bytes::{BufMut, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-// Internal crate imports
 use crate::errors::Error;
 use crate::messages::protocol::row_description;
 use crate::messages::{
@@ -19,7 +13,6 @@ use crate::messages::{
     PgErrorMsg,
 };
 
-// Mock implementation for AsyncReadExt
 #[allow(dead_code)]
 struct MockReader {
     data: Vec<Vec<u8>>,
@@ -45,7 +38,6 @@ impl AsyncRead for MockReader {
     }
 }
 
-// Mock implementation for AsyncWriteExt
 #[allow(dead_code)]
 struct MockWriter {
     written: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -70,34 +62,26 @@ impl AsyncWrite for MockWriter {
     }
 }
 
-// Helper function to run async tests
 #[allow(dead_code)]
 struct MockWaker;
 impl Wake for MockWaker {
     fn wake(self: Arc<Self>) {}
 }
 
-// Tests for parse_startup function
 #[test]
 fn test_parse_startup_success() {
-    // Create a test BytesMut with parameters including "user"
     let mut bytes = BytesMut::new();
 
-    // Add required "user" parameter
     bytes.put_slice(b"user\0testuser\0");
-    // Add optional parameters
     bytes.put_slice(b"database\0testdb\0");
     bytes.put_slice(b"application_name\0testapp\0");
     bytes.put_u8(0); // Final null terminator
 
-    // Call the function being tested
     let result = parse_startup(bytes);
 
-    // Verify the result
     assert!(result.is_ok());
     let params = result.as_ref().unwrap();
 
-    // Verify parameters
     assert_eq!(params.len(), 3);
     assert_eq!(params.get("user"), Some(&"testuser".to_string()));
     assert_eq!(params.get("database"), Some(&"testdb".to_string()));
@@ -106,38 +90,29 @@ fn test_parse_startup_success() {
 
 #[test]
 fn test_parse_startup_missing_user() {
-    // Create a test BytesMut without the required "user" parameter
     let mut bytes = BytesMut::new();
 
-    // Add some parameters but not "user"
     bytes.put_slice(b"database\0testdb\0");
     bytes.put_slice(b"application_name\0testapp\0");
     bytes.put_u8(0); // Final null terminator
 
-    // Call the function being tested
     let result = parse_startup(bytes);
 
-    // Verify the result is an error
     assert!(result.is_err());
     match result {
-        Err(Error::ClientBadStartup) => {} // Expected error
+        Err(Error::ClientBadStartup) => {}
         _ => panic!("Expected ClientBadStartup error"),
     }
 }
 
-// Tests for error_message function
 #[test]
 fn test_error_message_detailed() {
-    // Call the function being tested
     let result = error_message("Test error message", "28000");
 
-    // Verify the result
     assert!(!result.is_empty());
 
-    // Check message type is 'E' (Error)
     assert_eq!(result[0], b'E');
 
-    // Check message contains our error message and code
     let message_bytes = &result[5..];
     let message_str = String::from_utf8_lossy(message_bytes);
 
@@ -146,74 +121,54 @@ fn test_error_message_detailed() {
     assert!(message_str.contains("FATAL"));
 }
 
-// Tests for row_description function with columns
 #[test]
 fn test_row_description_with_columns() {
-    // Create test columns
     let columns = vec![
         ("id", DataType::Int4),
         ("name", DataType::Text),
         ("active", DataType::Bool),
     ];
 
-    // Call the function being tested
     let result = row_description(&columns);
 
-    // Verify the result
     assert!(!result.is_empty());
 
-    // Check message type is 'T' (Row Description)
     assert_eq!(result[0], b'T');
 
-    // Check the number of columns (should be 3)
     let column_count_bytes = &result[5..7];
     let column_count = i16::from_be_bytes([column_count_bytes[0], column_count_bytes[1]]);
     assert_eq!(column_count, 3);
 }
 
-// Tests for data_row function
 #[test]
 fn test_data_row_with_values() {
-    // Create test row data
     let row = vec!["1".to_string(), "Test Name".to_string(), "true".to_string()];
 
-    // Call the function being tested
     let result = data_row(&row);
 
-    // Verify the result
     assert!(!result.is_empty());
 
-    // Check message type is 'D' (Data Row)
     assert_eq!(result[0], b'D');
 
-    // Check the number of columns (should be 3)
     let column_count_bytes = &result[5..7];
     let column_count = i16::from_be_bytes([column_count_bytes[0], column_count_bytes[1]]);
     assert_eq!(column_count, 3);
 }
 
-// Tests for data_row_nullable function
 #[test]
 fn test_data_row_nullable_with_nulls() {
-    // Create test row data with some null values
     let row = vec![Some("1".to_string()), None, Some("true".to_string())];
 
-    // Call the function being tested
     let result = data_row_nullable(&row);
 
-    // Verify the result
     assert!(!result.is_empty());
 
-    // Check message type is 'D' (Data Row)
     assert_eq!(result[0], b'D');
 
-    // Check the number of columns (should be 3)
     let column_count_bytes = &result[5..7];
     let column_count = i16::from_be_bytes([column_count_bytes[0], column_count_bytes[1]]);
     assert_eq!(column_count, 3);
 
-    // The second value should be null (-1 length)
-    // First find the position after the first value
     let mut pos = 7; // Start after column count
     let first_len_bytes = &result[pos..pos + 4];
     let first_len = i32::from_be_bytes([
@@ -224,7 +179,6 @@ fn test_data_row_nullable_with_nulls() {
     ]);
     pos += 4 + first_len as usize;
 
-    // Now check the second value's length (should be -1 for NULL)
     let second_len_bytes = &result[pos..pos + 4];
     let second_len = i32::from_be_bytes([
         second_len_bytes[0],
@@ -235,40 +189,29 @@ fn test_data_row_nullable_with_nulls() {
     assert_eq!(second_len, -1);
 }
 
-// Tests for ready_for_query function
 #[test]
 fn test_ready_for_query_states() {
-    // Test with in_transaction = false
     let result_idle = ready_for_query(false);
 
-    // Verify the result
     assert_eq!(result_idle.len(), 6);
 
-    // Check message type is 'Z' (Ready For Query)
     assert_eq!(result_idle[0], b'Z');
 
-    // Check transaction status is 'I' (Idle)
     assert_eq!(result_idle[5], b'I');
 
-    // Test with in_transaction = true
     let result_transaction = ready_for_query(true);
 
-    // Verify the result
     assert_eq!(result_transaction.len(), 6);
 
-    // Check message type is 'Z' (Ready For Query)
     assert_eq!(result_transaction[0], b'Z');
 
-    // Check transaction status is 'T' (In Transaction)
     assert_eq!(result_transaction[5], b'T');
 }
 
-// Helper function for PgErrorMsg tests
 fn field(kind: char, content: &str) -> Vec<u8> {
     format!("{kind}{content}\0").as_bytes().to_vec()
 }
 
-// Tests for PgErrorMsg parsing
 #[test]
 fn test_pg_error_msg_parsing() {
     let mut complete_msg = vec![];

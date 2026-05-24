@@ -1,10 +1,8 @@
-// Standard library imports
 use std::collections::HashMap;
 use std::fs;
 use std::ops::Add;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// External crate imports
 use jwt::{Header, PKeyWithDigest, RegisteredClaims, SignWithKey, Token, VerifyWithKey};
 use once_cell::sync::Lazy;
 use openssl::hash::MessageDigest;
@@ -13,7 +11,6 @@ use openssl::rsa::Rsa;
 use serde_derive::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-// Internal crate imports
 use crate::errors::Error;
 
 #[allow(dead_code)]

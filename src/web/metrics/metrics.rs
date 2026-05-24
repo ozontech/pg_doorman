@@ -228,12 +228,10 @@ fn update_socket_metrics() {
 }
 
 fn update_pool_metrics() {
-    // Reuse the shared 250 ms snapshot — codex Arch P2#6 / Perf P2#6.
-    // /metrics scrapes typically arrive every 15-30 s, but during an
-    // incident the SPA can be polling /api/* on the same listener at
-    // 1.5 s. Without the cache both paths each cloned CLIENT_STATS and
-    // SERVER_STATS under their own read lock; with the cache they
-    // share one snapshot whenever they fall inside the TTL.
+    // /metrics scrapes usually arrive every 15-30 s, but during an
+    // incident the SPA can poll /api/* on the same listener every 1.5 s.
+    // The shared 250 ms snapshot keeps both paths from cloning CLIENT_STATS
+    // and SERVER_STATS under separate read locks inside the TTL.
     let snap = crate::web::routes::collect::snapshot();
     reset_pool_metrics();
 
@@ -1249,12 +1247,11 @@ mod tests {
 
     #[test]
     fn counter_delta_tracker_emits_post_reset_delta_only_once() {
-        // Reproduces the codex review scenario for the same generation:
-        // a pool whose `AddressStats` was replaced by `Pool::from_config`
-        // reports a smaller cumulative value than what the Prometheus
-        // counter holds. The tracker must increment by `current` once
-        // and a follow-up scrape with the same `current` must not
-        // fabricate another delta.
+        // A pool whose `AddressStats` was replaced by `Pool::from_config`
+        // reports a smaller cumulative value than the Prometheus counter
+        // holds. The tracker must increment by `current` once and a
+        // follow-up scrape with the same `current` must not fabricate
+        // another delta.
         let tracker: super::CounterDeltaTracker<&'static str> = super::CounterDeltaTracker::new();
         let counter =
             prometheus::IntCounter::new("pg_doorman_test_reset_counter", "test counter").unwrap();
@@ -1287,10 +1284,9 @@ mod tests {
             "subsequent growth advances by the actual delta",
         );
 
-        // codex review BLOCKER 1: new generation already grew past the
-        // previous cumulative between two scrapes. `current >= last`
-        // is misleading — the source identity changed, this is a
-        // recreate, not a continuation.
+        // A new generation may already exceed the previous cumulative value
+        // between two scrapes. `current >= last` is misleading here; the
+        // source identity changed, so this is a recreate, not a continuation.
         tracker.observe(&counter, "key", gen_b, 1_500);
         assert_eq!(
             counter.get(),

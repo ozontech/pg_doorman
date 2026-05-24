@@ -1040,7 +1040,6 @@ impl ConnectionPool {
         parse: &Parse,
         client_given_name: Option<&str>,
     ) -> Option<Arc<Parse>> {
-        // We should only be calling this function if the cache is enabled
         self.prepared_statement_cache
             .as_ref()
             .map(|cache| cache.get_or_insert(parse, hash, client_given_name))
@@ -1049,7 +1048,6 @@ impl ConnectionPool {
     /// Promote a prepared statement hash in the LRU
     #[inline(always)]
     pub fn promote_prepared_statement_hash(&self, hash: &u64) {
-        // We should only be calling this function if the cache is enabled
         if let Some(ref prepared_statement_cache) = self.prepared_statement_cache {
             prepared_statement_cache.promote(hash);
         }

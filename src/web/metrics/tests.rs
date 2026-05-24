@@ -11,9 +11,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-// Test for the HTTP server functionality
-// This test is focused on the public interface of the prometheus module
-//
 // `#[serial]` because `start_web_server` writes the process-wide
 // `WebServerOptions` slot used by every other web::tests test.
 #[tokio::test]
@@ -223,8 +220,6 @@ fn test_pool_state_gauges_register_and_export() {
     SHOW_POOLS_MAXWAIT_MICROSECONDS.reset();
 }
 
-// Integration test for the full server
-// This is more complex and would start the actual server
 #[tokio::test]
 #[ignore] // Ignore by default as it requires network access and might conflict with other tests
 async fn test_prometheus_server_integration() {

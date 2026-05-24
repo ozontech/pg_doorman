@@ -266,11 +266,8 @@ mod tests {
         assert!(!super::is_immutable_key("port"));
     }
 
-    /// Coverage check: the previous implementation only exposed
-    /// host/port/connect_timeout/idle_timeout/shutdown_timeout plus
-    /// pool users/mode. The flattened serde view now surfaces every
-    /// field in `Config` — verify a representative sample so a future
-    /// refactor that quietly trims keys gets caught.
+    /// Coverage check for the flattened serde view: representative
+    /// operational fields must stay visible after refactors.
     #[test]
     fn collect_config_exposes_operationally_relevant_fields() {
         let dto = super::collect_config(true);

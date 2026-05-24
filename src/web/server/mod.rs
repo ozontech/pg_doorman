@@ -5,13 +5,11 @@
 //! - `GET /api/version`  → version info, public.
 //! - `GET /api/overview` → cluster overview, public.
 //! - `GET /api/pools`    → pool list, public.
-//! - `GET /api/*`        → other endpoints return 501 until wired in later phases.
-//! - `GET /` | `GET /assets/*` → SPA placeholder, returns 404 (filled in phase 7).
+//! - `GET /api/*`        → route table in [`router`].
+//! - `GET /` | `GET /assets/*` → SPA static assets.
 //! - everything else → 404.
 //!
-//! Submodule layout (codex Arch P2#5 split — the original single-file
-//! `server.rs` mixed listener lifecycle, HTTP parsing, auth policy, routing,
-//! and response serialization in ~1300 lines):
+//! Submodule layout:
 //! - [`state`]    — reload-aware [`WebServerOptions`] backed by `ArcSwap`.
 //! - [`wire`]     — request parser, response builder, gzip cache, header helpers.
 //! - [`http`]     — keep-alive driven HTTP/1.1 connection handler.

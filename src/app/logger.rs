@@ -220,9 +220,8 @@ mod tests {
 
     #[test]
     fn color_off_when_stderr_is_not_a_tty() {
-        // The fix this guard exists for: under systemd the journal
-        // pipe is not a terminal, so default colour-on used to leak
-        // ANSI escapes into journalctl as `[NNN blob data]`.
+        // systemd journal pipes are not terminals; default colour output
+        // would appear in journalctl as `[NNN blob data]`.
         assert!(!resolve_color(false, false, false));
     }
 }
