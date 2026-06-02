@@ -757,6 +757,12 @@ where
                 }
             }
 
+            // FunctionCallResponse
+            // Response to FunctionCall (F). The message body is opaque binary
+            // function output and transaction state is reported by the later
+            // ReadyForQuery message.
+            'V' => {}
+
             // RowDescription
             // Response to Describe for a portal (or statement if it returns rows)
             'T' => {

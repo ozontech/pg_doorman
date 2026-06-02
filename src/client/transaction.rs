@@ -36,17 +36,18 @@ use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_C
 //
 // ## Protocol Message Types (Client → Server)
 //
-// | Code | Message   | Description                                      |
-// |------|-----------|--------------------------------------------------|
-// | 'P'  | Parse     | Prepare a statement (with optional name)         |
-// | 'B'  | Bind      | Bind parameters to a prepared statement          |
-// | 'E'  | Execute   | Execute a bound portal                           |
-// | 'D'  | Describe  | Request description of statement or portal       |
-// | 'C'  | Close     | Close a prepared statement or portal             |
-// | 'S'  | Sync      | Synchronization point, requests results          |
-// | 'H'  | Flush     | Request server to flush output (async mode)      |
-// | 'Q'  | Query     | Simple query (not extended protocol)             |
-// | 'X'  | Terminate | Close connection                                 |
+// | Code | Message      | Description                                      |
+// |------|--------------|--------------------------------------------------|
+// | 'P'  | Parse        | Prepare a statement (with optional name)         |
+// | 'B'  | Bind         | Bind parameters to a prepared statement          |
+// | 'E'  | Execute      | Execute a bound portal                           |
+// | 'D'  | Describe     | Request description of statement or portal       |
+// | 'C'  | Close        | Close a prepared statement or portal             |
+// | 'S'  | Sync         | Synchronization point, requests results          |
+// | 'H'  | Flush        | Request server to flush output (async mode)      |
+// | 'Q'  | Query        | Simple query (not extended protocol)             |
+// | 'F'  | FunctionCall | Fastpath function call                           |
+// | 'X'  | Terminate    | Close connection                                 |
 //
 // ## Protocol Message Types (Server → Client)
 //
@@ -61,6 +62,7 @@ use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_C
 // | 'n'  | NoData               | Statement returns no data                |
 // | '3'  | CloseComplete        | Statement/portal was closed              |
 // | 'Z'  | ReadyForQuery        | Server ready for next query              |
+// | 'V'  | FunctionCallResponse | Fastpath function result                 |
 // | 'E'  | ErrorResponse        | An error occurred                        |
 //
 // ## Basic Extended Query Flow
@@ -474,6 +476,35 @@ where
         // A simple query is opaque to the interner; whatever last_bound_for_top
         // held was from a prior extended batch and would otherwise leak its
         // hash into the next Sync.
+        self.prepared.last_bound_for_top = None;
+
+        self.execute_server_roundtrip(Some(message), server).await?;
+        self.stats.query();
+        server.stats.query(
+            query_start_at.elapsed().as_micros() as u64,
+            self.server_parameters.get_application_name(),
+        );
+
+        if self.complete_transaction_if_needed(server, false) {
+            self.stats.idle_read();
+            return Ok(TransactionAction::Break);
+        }
+
+        Ok(TransactionAction::Continue)
+    }
+
+    /// FunctionCall is a standalone fastpath round trip, outside an extended batch.
+    /// ReadyForQuery decides whether transaction pooling may release the server.
+    #[inline]
+    async fn handle_function_call(
+        &mut self,
+        message: &BytesMut,
+        server: &mut Server,
+        query_start_at: quanta::Instant,
+    ) -> Result<TransactionAction, Error> {
+        server.set_async_mode(false);
+        server.set_expected_responses(0);
+
         self.prepared.last_bound_for_top = None;
 
         self.execute_server_roundtrip(Some(message), server).await?;
@@ -1142,6 +1173,12 @@ where
                         // Query
                         'Q' => {
                             self.handle_simple_query(&message, server, query_start_at)
+                                .await?
+                        }
+
+                        // FunctionCall
+                        'F' => {
+                            self.handle_function_call(&message, server, query_start_at)
                                 .await?
                         }
 

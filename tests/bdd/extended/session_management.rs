@@ -713,6 +713,48 @@ pub async fn send_bind_to_session(
         .expect("Failed to send Bind");
 }
 
+#[when(regex = r#"^we send FunctionCall (\d+) with int args "([^"]*)" to session "([^"]+)"$"#)]
+#[then(regex = r#"^we send FunctionCall (\d+) with int args "([^"]*)" to session "([^"]+)"$"#)]
+pub async fn send_function_call_to_session(
+    world: &mut DoormanWorld,
+    function_id: i32,
+    args_str: String,
+    session_name: String,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    let args = args_str
+        .split(',')
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| {
+            arg.parse::<i32>()
+                .unwrap_or_else(|_| panic!("Invalid FunctionCall int arg '{}'", arg))
+        })
+        .collect::<Vec<_>>();
+
+    conn.send_function_call(function_id, &args)
+        .await
+        .expect("Failed to send FunctionCall");
+}
+
+#[then(regex = r#"^we read PostgreSQL response from session "([^"]+)" within (\d+)ms$"#)]
+pub async fn read_postgresql_response_within_timeout(
+    world: &mut DoormanWorld,
+    session_name: String,
+    timeout_ms: u64,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    let duration = std::time::Duration::from_millis(timeout_ms);
+    let messages = tokio::time::timeout(duration, conn.read_all_messages_until_ready())
+        .await
+        .unwrap_or_else(|_| panic!("Response not received within {}ms", timeout_ms))
+        .expect("Failed to read messages");
+
+    world.session_messages.insert(session_name, messages);
+}
+
 #[when(regex = r#"^we send Execute "([^"]*)" to session "([^"]+)"$"#)]
 #[then(regex = r#"^we send Execute "([^"]*)" to session "([^"]+)"$"#)]
 pub async fn send_execute_to_session(
@@ -845,6 +887,59 @@ pub async fn session_should_receive_parse_complete(world: &mut DoormanWorld, ses
 #[then(regex = r#"^session "([^"]+)" should receive BindComplete$"#)]
 pub async fn session_should_receive_bind_complete(world: &mut DoormanWorld, session_name: String) {
     expect_message_tag(world, &session_name, '2', "BindComplete", None);
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive FunctionCallResponse$"#)]
+pub async fn session_should_receive_function_call_response(
+    world: &mut DoormanWorld,
+    session_name: String,
+) {
+    expect_message_tag(world, &session_name, 'V', "FunctionCallResponse", None);
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive FunctionCallResponse with (\d+) byte result$"#)]
+pub async fn session_should_receive_function_call_response_with_result_size(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_size: usize,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    for (msg_type, data) in messages {
+        if *msg_type != 'V' {
+            continue;
+        }
+        assert!(
+            data.len() >= 4,
+            "FunctionCallResponse from session '{}' is too short: {} bytes",
+            session_name,
+            data.len(),
+        );
+
+        let result_len = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        assert!(result_len >= 0, "FunctionCallResponse result is NULL");
+        let result_len = result_len as usize;
+        assert_eq!(
+            result_len, expected_size,
+            "FunctionCallResponse from session '{}' has {} byte result, expected {}",
+            session_name, result_len, expected_size,
+        );
+        assert_eq!(
+            data.len(),
+            4 + expected_size,
+            "FunctionCallResponse from session '{}' has unexpected frame body size",
+            session_name,
+        );
+        return;
+    }
+
+    panic!(
+        "No FunctionCallResponse received from session '{}'",
+        session_name
+    );
 }
 
 #[then(regex = r#"^session "([^"]+)" should receive CommandComplete "([^"]+)"$"#)]
