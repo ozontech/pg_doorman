@@ -1034,10 +1034,9 @@ pub fn record_synthetic_miss() {
     super::QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL.inc();
 }
 
-/// Records one large-message streaming event. Called from
-/// `handle_large_data_row` and `handle_large_copy_data` after the
-/// outcome is known. `kind` is "data_row" or "copy_data"; `result` is
-/// "ok" or "error".
+/// Records one large-message streaming event. Called from the backend
+/// streaming handlers after the outcome is known. `kind` is "data_row",
+/// "copy_data", or "function_call_response"; `result` is "ok" or "error".
 #[inline]
 pub fn observe_streaming_event(user: &str, database: &str, kind: &str, result: &str) {
     super::STREAMING_EVENTS_TOTAL

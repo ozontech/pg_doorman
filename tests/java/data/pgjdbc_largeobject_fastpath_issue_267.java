@@ -29,7 +29,7 @@ public class Main {
 
         try {
             task.get(OPERATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            System.out.println("issue_267_hibernate_lob complete");
+            System.out.println("issue_267_pgjdbc_lob complete");
         } catch (TimeoutException e) {
             System.err.println("LargeObject API call timed out");
             System.exit(2);

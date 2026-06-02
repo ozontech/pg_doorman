@@ -1,6 +1,6 @@
-@java @issue-267 @hibernate-lob
-Feature: Hibernate large object API
-  Java clients using PostgreSQL LargeObject API must complete fastpath calls
+@issue-267 @large-object-fastpath
+Feature: PostgreSQL large object fastpath API
+  Clients using PostgreSQL LargeObject API must complete fastpath calls
   while connected through transaction pooling.
 
   Background:
@@ -31,7 +31,7 @@ Feature: Hibernate large object API
       pool_size = 1
       """
 
-  @issue-267-fastpath-wire
+  @rust-1 @issue-267-fastpath-wire
   Scenario: Fastpath FunctionCall holds the backend until transaction end
     When we create session "client" to pg_doorman as "example_user_1" with password "test" and database "example_db"
     And we send SimpleQuery "BEGIN" to session "client" and store response
@@ -52,7 +52,7 @@ Feature: Hibernate large object API
     Then admin session "admin_tx" column "cl_active" for row with "user" = "example_user_1" should be between 0 and 0
     And admin session "admin_tx" column "sv_active" for row with "user" = "example_user_1" should be between 0 and 0
 
-  @issue-267-fastpath-autocommit
+  @rust-1 @issue-267-fastpath-autocommit
   Scenario: Fastpath FunctionCall releases the backend when ReadyForQuery is idle
     When we create session "autocommit" to pg_doorman as "example_user_1" with password "test" and database "example_db"
     # 957 is pg_catalog.lo_creat(integer) in the standard PostgreSQL catalog.
@@ -70,11 +70,11 @@ Feature: Hibernate large object API
     And session "autocommit" should receive ReadyForQuery "I"
 
   @java @issue-267-java
-  Scenario: Java LargeObject API completes through pg_doorman
+  Scenario: pgjdbc LargeObject API completes through pg_doorman
     When I run shell command:
       """
       export DATABASE_URL="jdbc:postgresql://127.0.0.1:${DOORMAN_PORT}/example_db?user=example_user_1&password=test"
-      timeout 300s tests/java/run_test.sh hibernate_lob_issue_267 hibernate_lob_issue_267.java
+      timeout 300s tests/java/run_test.sh pgjdbc_largeobject_fastpath_issue_267 pgjdbc_largeobject_fastpath_issue_267.java
       """
     Then the command should succeed
-    And the command output should contain "issue_267_hibernate_lob complete"
+    And the command output should contain "issue_267_pgjdbc_lob complete"

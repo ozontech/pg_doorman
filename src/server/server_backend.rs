@@ -144,13 +144,13 @@ pub struct Server {
     /// because the connection remains valid and the client can continue using it.
     pub(crate) session_mode: bool,
 
-    /// Maximum message size (in bytes) before switching to streaming mode for large DataRow messages.
+    /// Maximum message size (in bytes) before switching to streaming mode for large backend messages.
     /// Messages larger than this threshold are streamed directly to avoid excessive memory usage.
     /// A value of 0 disables streaming.
     pub(crate) max_message_size: i32,
 
     /// Large message header saved when recv() needs to return accumulated buffer first.
-    /// The large DataRow/CopyData will be streamed on the next recv() call.
+    /// The large DataRow/CopyData/FunctionCallResponse will be streamed on the next recv() call.
     pub(crate) pending_large_message: Option<(u8, i32)>,
 
     /// Reason for closing this connection, set before dropping.
