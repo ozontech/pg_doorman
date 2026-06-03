@@ -42,6 +42,7 @@
 
 - [Плавное обновление бинаря](tutorials/binary-upgrade.md)
 - [Сигналы и перезагрузка](operations/signals.md)
+- [Fastpath и large objects](operations/fastpath-large-objects.md)
 - [Мониторинг query interner](operations/monitoring-interner.md)
 - [Диагностика](tutorials/troubleshooting.md)
 
