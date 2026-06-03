@@ -161,6 +161,26 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3107"><a class="header" href="#3107">3.10.7</a></h3>
+<h4 id="pgjdbc-largeobject-fastpath-calls-work-in-transaction-pooling"><a class="header" href="#pgjdbc-largeobject-fastpath-calls-work-in-transaction-pooling">pgjdbc LargeObject fastpath calls work in transaction pooling</a></h4>
+<p>pg_doorman now forwards PostgreSQL <code>FunctionCall</code> protocol messages and
+passes <code>FunctionCallResponse</code> through until <code>ReadyForQuery</code> reports the
+transaction state. The pgjdbc LargeObject API uses this fastpath path, and
+transaction-mode clients could previously hang on <code>getLargeObjectAPI()</code>
+because the frontend <code>F</code> message was not forwarded.</p>
+<p>Large <code>FunctionCallResponse</code> messages now use the same large-message streaming
+path as oversized <code>DataRow</code> and <code>CopyData</code> messages. This avoids buffering a
+large fastpath <code>lo_read</code> response in pg_doorman memory before forwarding it to
+the client.</p>
+<p>Regression coverage now includes wire-level fastpath checks in transaction
+and autocommit pooling, plus a pgjdbc LargeObject round trip with a multi-MiB
+payload.</p>
+<p>This is an observable behavior change for applications that previously timed
+out or bypassed pg_doorman for large object work. That traffic now succeeds
+through pg_doorman and can hold transaction-pool backends while large object
+reads or writes are in flight. See <a href="operations/fastpath-large-objects.html">Fastpath and Large
+Objects</a> for pool sizing, timeout, and
+read-size guidance.</p>
 <h3 id="3106"><a class="header" href="#3106">3.10.6</a></h3>
 <h4 id="binary-upgrade-no-longer-carries-migrated-client-fds-into-the-next-generation"><a class="header" href="#binary-upgrade-no-longer-carries-migrated-client-fds-into-the-next-generation">Binary upgrade no longer carries migrated client fds into the next generation</a></h4>
 <p>Client fds received over the SIGUSR2 migration socket are now marked
