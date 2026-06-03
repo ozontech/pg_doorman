@@ -1,86 +1,69 @@
 # Fastpath and Large Objects
 
-PostgreSQL has a Fastpath FunctionCall message in the frontend/backend
-protocol. A client sends `F`, PostgreSQL returns a `FunctionCallResponse`
-message `V`, and the request is complete only after the following
-`ReadyForQuery` message `Z`.
+Use this page when pgjdbc or Hibernate works with PostgreSQL large objects
+through a pg_doorman transaction pool.
 
-The pgjdbc `LargeObjectManager` uses this protocol path for operations such
-as `lo_creat`, `lo_open`, `lo_write`, `lo_read`, and `lo_close`. Applications
-often reach it indirectly through ORM mappings that store large values in OID
-columns, including Hibernate configurations that unwrap pgjdbc's large object
-API.
+pgjdbc `LargeObjectManager` uses PostgreSQL Fastpath `FunctionCall` (`F`) for
+large object functions such as `lo_creat`, `lo_open`, `lo_read`, `lo_write`,
+and `lo_close`. PostgreSQL replies with `FunctionCallResponse` (`V`) and then
+`ReadyForQuery` (`Z`). The `V` message contains the function result; the
+transaction status is in the following `ReadyForQuery`.
 
-Before 3.10.7, pg_doorman did not forward frontend `FunctionCall` messages in
-transaction pooling. pgjdbc clients could wait forever for the missing
-`FunctionCallResponse`. From 3.10.7, pg_doorman forwards the `F` request,
-passes the `V` response through, and uses the trailing `ReadyForQuery`
-transaction status to decide when a transaction-pool backend can be released.
+Before 3.10.7, pg_doorman did not forward `FunctionCall` in transaction
+pooling. A client could send a large object call and then wait forever for a
+response. Since 3.10.7, pg_doorman forwards the call, passes
+`FunctionCallResponse` back to the client, and releases the backend only after
+`ReadyForQuery` says the session is idle.
 
 ## Transaction Pooling
 
-Large object descriptors live inside a PostgreSQL transaction. If a fastpath
-call finishes with `ReadyForQuery` status `T` or `E`, pg_doorman keeps the same
-backend assigned to the client. The backend is released only when PostgreSQL
-later reports idle status `I`, typically after `COMMIT` or `ROLLBACK`.
+Large object descriptors live inside a PostgreSQL transaction. If
+`ReadyForQuery` reports status `T` or `E` after a fastpath call, pg_doorman
+keeps the same backend assigned to the client. The backend is released only
+after PostgreSQL later reports idle status `I`, normally after `COMMIT` or
+`ROLLBACK`.
 
-Autocommit fastpath calls that finish with `I` release the backend immediately.
+Autocommit fastpath calls release the backend as soon as `ReadyForQuery`
+reports idle.
 
-This matches PgBouncer's transaction-pooling behavior for PostgreSQL
-FunctionCall traffic.
+This matches PgBouncer transaction-pooling behavior for `FunctionCall` traffic.
 
 ## Pool Sizing
 
-Each in-flight large object call holds one backend until PostgreSQL returns
-`ReadyForQuery`. For write-heavy or read-heavy large object workloads, size the
-pool for the number of concurrent large object calls, not only for ordinary SQL
-statement rate.
+Each active large object call holds one backend until PostgreSQL sends
+`ReadyForQuery`. Size the pool for concurrent large object reads and writes,
+not only for ordinary SQL statement rate.
 
-Watch these signals during rollout:
+Watch these signals after enabling this traffic:
 
-- `SHOW POOLS`: `cl_active`, `sv_active`, and waiting clients.
-- Query wait timeout errors.
-- Query latency percentiles for pools used by large object traffic.
+- `SHOW POOLS`: active clients, active servers, and waiting clients.
+- `query_wait_timeout` errors.
+- Latency percentiles for pools used by large object traffic.
 
-If bursts of large object calls push clients close to `query_wait_timeout`,
-increase pool capacity for that user/database or reduce application-side large
-object concurrency.
+If large object bursts push clients close to `query_wait_timeout`, increase
+pool capacity for that user/database or reduce application-side large object
+concurrency.
 
-## Read Size And Memory
+## Large Reads
 
-pg_doorman streams large backend `DataRow` and `CopyData` messages when they
-exceed `general.message_size_to_be_stream`. From 3.10.7 this also applies to
-large `FunctionCallResponse` messages, so a large fastpath `lo_read` result is
-forwarded without keeping the whole response in pg_doorman memory.
+pg_doorman streams large `DataRow`, `CopyData`, and `FunctionCallResponse`
+messages when they exceed `general.message_size_to_be_stream`. A large
+fastpath `lo_read` response is forwarded without buffering the full response in
+pg_doorman memory first.
 
-Keep application-side large object reads chunked anyway. Large single-message
-reads still hold a backend for longer, keep socket buffers busy, and are bounded
-by PostgreSQL protocol message limits. pgjdbc's common
-`LargeObject.read(byte[])` usage already reads in small chunks.
+Streaming limits pg_doorman heap use; it does not make large single reads free.
+A large read still holds a backend and socket buffers while PostgreSQL sends
+the response, and PostgreSQL protocol message limits still apply. Keep
+application-side large object reads chunked.
 
-Changing `general.message_size_to_be_stream` controls when pg_doorman switches
-to byte-stream forwarding for `DataRow`, `CopyData`, and
-`FunctionCallResponse` messages.
+## Timeouts
 
-## Timeouts And Lifetime
-
-`server_lifetime` is applied to idle pooled backends. It does not interrupt a
-backend that is actively serving a large object read or write. The backend can
-be closed after the call finishes and returns to the idle pool.
+`server_lifetime` applies to idle pooled backends. It does not interrupt a
+backend that is serving a large object read or write.
 
 Large object descriptors also depend on PostgreSQL transaction state. If an
 application leaves a large object transaction idle between fastpath calls,
-PostgreSQL's `idle_in_transaction_session_timeout` can terminate the backend.
+PostgreSQL `idle_in_transaction_session_timeout` can terminate the backend.
 pg_doorman then returns a connection error to the client. Keep large object
 transactions short, or tune PostgreSQL timeouts for sessions that perform large
 object work.
-
-## Patroni-Assisted Fallback
-
-During a primary outage, Patroni-assisted fallback may temporarily connect to a
-replica or a candidate that is still read-only. Large object writes sent there
-fail with PostgreSQL read-only errors, for example SQLSTATE `25006`. This is a
-loud PostgreSQL error, not silent data loss.
-
-When large object traffic is critical during failover, monitor read-only errors
-and pool wait time alongside the fallback logs.
