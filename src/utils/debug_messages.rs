@@ -30,6 +30,8 @@ struct ProtocolState {
     pending_close: u32,
     /// Whether we're in a simple query (Q) - expecting results then Z
     in_simple_query: bool,
+    /// Number of pending FunctionCall messages (expecting FunctionCallResponse 'V' or ErrorResponse)
+    pending_fastpath: u32,
     /// Whether we're receiving DataRows (after Execute or Query)
     receiving_data: bool,
 }
@@ -48,6 +50,7 @@ impl ProtocolState {
             || self.pending_execute > 0
             || self.pending_sync > 0
             || self.pending_close > 0
+            || self.pending_fastpath > 0
             || self.in_simple_query
     }
 
@@ -66,6 +69,10 @@ impl ProtocolState {
             'H' => {} // Flush - no response expected
             'Q' => {
                 self.in_simple_query = true;
+                self.receiving_data = true;
+            }
+            'F' => {
+                self.pending_fastpath += 1;
                 self.receiving_data = true;
             }
             'X' => self.reset(), // Terminate - reset state
@@ -172,6 +179,7 @@ impl ProtocolState {
                 if self.pending_sync > 0 {
                     self.pending_sync -= 1;
                 }
+                self.pending_fastpath = 0;
                 if self.in_simple_query {
                     self.in_simple_query = false;
                     self.receiving_data = false;
@@ -183,8 +191,23 @@ impl ProtocolState {
             'E' => {
                 // ErrorResponse - can come anytime, resets pending state until Sync
                 // Don't reset completely, wait for Z
+                if self.pending_fastpath > 0 {
+                    self.pending_fastpath -= 1;
+                }
                 self.receiving_data = false;
                 None
+            }
+            'V' => {
+                // FunctionCallResponse - response to FunctionCall (F)
+                if self.pending_fastpath > 0 {
+                    self.pending_fastpath -= 1;
+                    None
+                } else {
+                    Some(
+                        "FunctionCallResponse('V') received but no FunctionCall was pending"
+                            .to_string(),
+                    )
+                }
             }
             'I' => {
                 // EmptyQueryResponse
@@ -198,7 +221,7 @@ impl ProtocolState {
                 }
             }
             // Other messages that don't affect protocol state tracking
-            'S' | 'K' | 'N' | 'A' | 'G' | 'H' | 'W' | 'V' | 'R' | 'c' | 'd' | 'v' => None,
+            'S' | 'K' | 'N' | 'A' | 'G' | 'H' | 'W' | 'R' | 'c' | 'd' | 'v' => None,
             _ => None,
         }
     }
@@ -226,6 +249,9 @@ impl ProtocolState {
         }
         if self.in_simple_query {
             parts.push("SimpleQuery".to_string());
+        }
+        if self.pending_fastpath > 0 {
+            parts.push(format!("{}xFunctionCall", self.pending_fastpath));
         }
         if parts.is_empty() {
             "none".to_string()

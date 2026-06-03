@@ -180,6 +180,58 @@ where
     Ok(server.buffer.clone())
 }
 
+/// Handles large FunctionCallResponse ('V') messages that exceed max_message_size.
+/// Streams the message directly to the client without buffering.
+async fn handle_large_function_call_response<C>(
+    server: &mut Server,
+    client_stream: &mut C,
+    code_u8: u8,
+    message_len: i32,
+) -> Result<BytesMut, Error>
+where
+    C: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    server.buffer.put_u8(code_u8);
+    server.buffer.put_i32(message_len);
+    let prev_bad = server.bad;
+    server.bad = true;
+    write_all_flush(client_stream, &server.buffer).await?;
+
+    const HEADER_BYTES: u64 = 1 + mem::size_of::<i32>() as u64;
+    let mut payload_copied: usize = 0;
+    let res = proxy_copy_data_with_timeout(
+        get_config().general.proxy_copy_data_timeout.as_std(),
+        &mut server.stream,
+        client_stream,
+        message_len as usize - mem::size_of::<i32>(),
+        &mut payload_copied,
+    )
+    .await;
+    record_streaming(
+        server,
+        "function_call_response",
+        res.is_ok(),
+        HEADER_BYTES + payload_copied as u64,
+    );
+    if let Err(err) = res {
+        server.mark_bad(err.to_string().as_str());
+        return Err(err);
+    }
+
+    if !prev_bad {
+        server.bad = false;
+    }
+
+    server
+        .stats
+        .data_received(server.buffer.len() + message_len as usize);
+    server.last_activity = SystemTime::now();
+    server.data_available = true;
+    server.buffer.clear();
+    server.stats.wait_idle();
+    Ok(server.buffer.clone())
+}
+
 /// Handles large CopyData ('d') messages that exceed max_message_size.
 /// Streams the message directly to the client without buffering.
 async fn handle_large_copy_data<C>(
@@ -229,8 +281,8 @@ where
 }
 
 /// Helper that bumps both streaming counters from the streaming handlers.
-/// `kind` is "data_row" or "copy_data"; the boolean carries the proxy
-/// outcome and is mapped to the "ok"/"error" label.
+/// `kind` is "data_row", "copy_data", or "function_call_response"; the
+/// boolean carries the proxy outcome and is mapped to the "ok"/"error" label.
 fn record_streaming(server: &Server, kind: &'static str, ok: bool, total_bytes: u64) {
     let user = server.address.username.as_str();
     let database = server.address.database.as_str();
@@ -520,14 +572,23 @@ where
     C: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     // Handle deferred large message from previous recv() call.
-    // When recv() encounters a large DataRow/CopyData but the buffer already has
-    // accumulated messages, it returns the buffer first (for response reordering)
+    // When recv() encounters a large backend message but the buffer already has
+    // accumulated messages, it returns the buffer first (for response ordering)
     // and saves the large message header here for the next call.
     if let Some((code_u8, message_len)) = server.pending_large_message {
         let result = match code_u8 as char {
             'D' => handle_large_data_row(server, &mut client_stream, code_u8, message_len).await,
             'd' => handle_large_copy_data(server, &mut client_stream, code_u8, message_len).await,
-            _ => unreachable!("pending_large_message should only contain 'D' or 'd'"),
+            'V' => {
+                handle_large_function_call_response(
+                    server,
+                    &mut client_stream,
+                    code_u8,
+                    message_len,
+                )
+                .await
+            }
+            _ => unreachable!("pending_large_message should only contain 'D', 'd', or 'V'"),
         };
         if result.is_ok() {
             // Clear deferred header only after successful handling.
@@ -583,6 +644,29 @@ where
                 return Ok(result);
             }
             return handle_large_copy_data(server, &mut client_stream, code_u8, message_len).await;
+        }
+
+        // Handle large FunctionCallResponse messages that exceed max_message_size
+        if server.max_message_size > 0
+            && message_len > server.max_message_size
+            && code_u8 as char == 'V'
+        {
+            if !server.buffer.is_empty() {
+                server.pending_large_message = Some((code_u8, message_len));
+                server.data_available = true;
+                let result = server.buffer.clone();
+                server.buffer.clear();
+                server.stats.data_received(result.len());
+                server.last_activity = SystemTime::now();
+                return Ok(result);
+            }
+            return handle_large_function_call_response(
+                server,
+                &mut client_stream,
+                code_u8,
+                message_len,
+            )
+            .await;
         }
 
         if message_len > MAX_MESSAGE_SIZE {
@@ -756,6 +840,12 @@ where
                     server.decrement_expected();
                 }
             }
+
+            // FunctionCallResponse
+            // Response to FunctionCall (F). The message body is opaque binary
+            // function output and transaction state is reported by the later
+            // ReadyForQuery message.
+            'V' => {}
 
             // RowDescription
             // Response to Describe for a portal (or statement if it returns rows)

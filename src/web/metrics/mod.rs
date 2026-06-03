@@ -581,19 +581,19 @@ pub(crate) static BACKEND_STARTUP_PARAMETER_ERRORS_TOTAL: Lazy<IntCounterVec> = 
 
 /// Counter for protocol-level large-message streaming events. pg_doorman
 /// drops to byte-stream forwarding when a server message of type DataRow
-/// ('D') or CopyData ('d') exceeds max_message_size — see
-/// src/server/protocol_io.rs handle_large_data_row / handle_large_copy_data.
+/// ('D'), CopyData ('d'), or FunctionCallResponse ('V') exceeds
+/// max_message_size; see src/server/protocol_io.rs streaming handlers.
 /// This is invalid for healthy OLTP traffic; sustained non-zero rate
 /// signals oversized BYTEA/JSONB payloads, COPY rows with pathological
-/// content, or a misbehaving ORM. Result distinguishes a clean forward
-/// (ok) from a partially streamed payload that ended in a connection
-/// reset (error).
+/// content, large fastpath function results, or a misbehaving ORM. Result
+/// distinguishes a clean forward (ok) from a partially streamed payload that
+/// ended in a connection reset (error).
 pub(crate) static STREAMING_EVENTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_streaming_events_total",
             "Cumulative count of large-message streaming events by user, \
-             database, message kind (data_row|copy_data) and result \
+             database, message kind (data_row|copy_data|function_call_response) and result \
              (ok|error). Each event corresponds to one message larger than \
              max_message_size that pg_doorman forwarded byte-for-byte from \
              the backend to the client.",
@@ -607,14 +607,15 @@ pub(crate) static STREAMING_EVENTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 
 /// Counter for bytes pushed through the streaming path described above.
 /// Includes the message header (5 bytes) plus the payload. Updated even
-/// for failed events — the counter records what reached the client wire,
+/// for failed events; the counter records what reached the client wire,
 /// not only fully delivered messages.
 pub(crate) static STREAMING_BYTES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_streaming_bytes_total",
             "Bytes forwarded through the byte-stream path (header + payload), \
-             split by user, database and message kind (data_row|copy_data). \
+             split by user, database and message kind \
+             (data_row|copy_data|function_call_response). \
              Incremented before the event result is known, so bytes that \
              flowed during a failed stream are counted as well.",
         ),

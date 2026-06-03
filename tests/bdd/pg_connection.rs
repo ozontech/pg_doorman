@@ -414,6 +414,35 @@ impl PgConnection {
         hmac.finalize().into_bytes().to_vec()
     }
 
+    /// Sends a Function Call ('F') message: the fastpath protocol path used by
+    /// `pgjdbc`'s Large Object API. `function_id` is the PostgreSQL function OID.
+    /// All args are sent in binary format as int4.
+    pub async fn send_function_call(
+        &mut self,
+        function_id: i32,
+        int_args: &[i32],
+    ) -> tokio::io::Result<()> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&function_id.to_be_bytes());
+        body.extend_from_slice(&1i16.to_be_bytes()); // arg format count
+        body.extend_from_slice(&1i16.to_be_bytes()); // binary format
+        body.extend_from_slice(&(int_args.len() as i16).to_be_bytes());
+        for arg in int_args {
+            body.extend_from_slice(&4i32.to_be_bytes());
+            body.extend_from_slice(&arg.to_be_bytes());
+        }
+        body.extend_from_slice(&1i16.to_be_bytes()); // result format binary
+
+        let len = (body.len() + 4) as i32;
+        let mut full_msg = Vec::with_capacity(1 + 4 + body.len());
+        full_msg.push(b'F');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(body);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
     pub async fn send_simple_query(&mut self, query: &str) -> tokio::io::Result<()> {
         let mut msg = Vec::new();
         msg.extend_from_slice(query.as_bytes());

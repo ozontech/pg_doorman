@@ -1,5 +1,31 @@
 # Changelog
 
+### 3.10.7
+
+#### pgjdbc LargeObject fastpath calls work in transaction pooling
+
+pg_doorman now forwards PostgreSQL `FunctionCall` protocol messages and
+passes `FunctionCallResponse` through until `ReadyForQuery` reports the
+transaction state. The pgjdbc LargeObject API uses this fastpath path, and
+transaction-mode clients could previously hang on `getLargeObjectAPI()`
+because the frontend `F` message was not forwarded.
+
+Large `FunctionCallResponse` messages now use the same large-message streaming
+path as oversized `DataRow` and `CopyData` messages. This avoids buffering a
+large fastpath `lo_read` response in pg_doorman memory before forwarding it to
+the client.
+
+Regression coverage now includes wire-level fastpath checks in transaction
+and autocommit pooling, plus a pgjdbc LargeObject round trip with a multi-MiB
+payload.
+
+This is an observable behavior change for applications that previously timed
+out or bypassed pg_doorman for large object work. That traffic now succeeds
+through pg_doorman and can hold transaction-pool backends while large object
+reads or writes are in flight. See [Fastpath and Large
+Objects](operations/fastpath-large-objects.md) for pool sizing, timeout, and
+read-size guidance.
+
 ### 3.10.6
 
 #### Binary upgrade no longer carries migrated client fds into the next generation
