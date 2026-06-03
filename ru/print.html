@@ -5197,6 +5197,59 @@ LimitNOFILE=65536
 <li><a href="operations/../tutorials/troubleshooting.html">Диагностика</a> — что проверить, когда перезагрузка не подхватывает изменения.</li>
 <li><a href="operations/../guides/tls.html">TLS</a> — семантика перезагрузки серверных сертификатов по <code>SIGHUP</code>.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="fastpath-и-large-objects"><a class="header" href="#fastpath-и-large-objects">Fastpath и large objects</a></h1>
+<p>Используйте эту страницу, если pgjdbc или Hibernate работают с PostgreSQL large
+objects через pg_doorman в режиме transaction pool.</p>
+<p>pgjdbc <code>LargeObjectManager</code> вызывает функции PostgreSQL large object через
+Fastpath <code>FunctionCall</code> (<code>F</code>): <code>lo_creat</code>, <code>lo_open</code>, <code>lo_read</code>, <code>lo_write</code>,
+<code>lo_close</code> и другие. PostgreSQL отвечает <code>FunctionCallResponse</code> (<code>V</code>), а затем
+<code>ReadyForQuery</code> (<code>Z</code>). В <code>V</code> лежит результат функции. Состояние транзакции
+приходит в следующем <code>ReadyForQuery</code>.</p>
+<p>До 3.10.7 pg_doorman не передавал <code>FunctionCall</code> в transaction pooling. Клиент
+мог отправить вызов функции large object и навсегда ждать ответа. Начиная с
+3.10.7 pg_doorman передаёт вызов в PostgreSQL, возвращает клиенту
+<code>FunctionCallResponse</code> и освобождает backend только после <code>ReadyForQuery</code>, если
+PostgreSQL сообщил idle-состояние.</p>
+<h2 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction pooling</a></h2>
+<p>Дескрипторы large object живут внутри PostgreSQL-транзакции. Если после
+fastpath-вызова <code>ReadyForQuery</code> вернул статус <code>T</code> или <code>E</code>, pg_doorman оставляет
+за клиентом тот же backend. Backend освобождается только после idle-статуса
+<code>I</code>, обычно после <code>COMMIT</code> или <code>ROLLBACK</code>.</p>
+<p>Fastpath-вызовы в autocommit освобождают backend сразу после <code>ReadyForQuery</code> со
+статусом idle.</p>
+<p>Это соответствует поведению PgBouncer в transaction pooling для трафика
+<code>FunctionCall</code>.</p>
+<h2 id="Размер-пула"><a class="header" href="#Размер-пула">Размер пула</a></h2>
+<p>Каждый активный вызов функции large object занимает один backend до
+<code>ReadyForQuery</code>. Считайте размер пула по числу одновременных чтений и записей
+large objects, а не только по обычному темпу SQL-запросов.</p>
+<p>После включения такого трафика следите за:</p>
+<ul>
+<li><code>SHOW POOLS</code>: активные клиенты, активные серверы и ожидающие клиенты.</li>
+<li>Ошибками <code>query_wait_timeout</code>.</li>
+<li>Перцентилями задержек для пулов с large object трафиком.</li>
+</ul>
+<p>Если всплески вызовов large object подводят клиентов к <code>query_wait_timeout</code>,
+увеличьте пул для нужной пары user/database или уменьшите параллелизм large
+object операций в приложении.</p>
+<h2 id="Большие-чтения"><a class="header" href="#Большие-чтения">Большие чтения</a></h2>
+<p>pg_doorman передаёт большие <code>DataRow</code>, <code>CopyData</code> и <code>FunctionCallResponse</code>
+потоково, если они превышают <code>general.message_size_to_be_stream</code>. Большой
+fastpath-ответ <code>lo_read</code> уходит клиенту без предварительного буферизования
+всего ответа в памяти pg_doorman.</p>
+<p>Потоковая передача ограничивает расход heap в pg_doorman, но не делает большие
+одиночные чтения бесплатными. Большой <code>lo_read</code> всё равно удерживает backend и
+сокетные буферы, пока PostgreSQL отправляет ответ. Лимиты сообщений протокола
+PostgreSQL тоже остаются. Читайте large objects порциями на стороне приложения.</p>
+<h2 id="Таймауты"><a class="header" href="#Таймауты">Таймауты</a></h2>
+<p><code>server_lifetime</code> применяется к idle backend в пуле. Он не прерывает backend,
+который выполняет чтение или запись large object.</p>
+<p>Дескрипторы large object зависят от состояния PostgreSQL-транзакции. Если
+приложение оставляет large object транзакцию idle между fastpath-вызовами,
+PostgreSQL <code>idle_in_transaction_session_timeout</code> может закрыть backend.
+pg_doorman вернёт клиенту ошибку соединения. Держите large object транзакции
+короткими или настройте PostgreSQL-таймауты для сессий, которые работают с
+large objects.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Мониторинг-query-interner"><a class="header" href="#Мониторинг-query-interner">Мониторинг query interner</a></h1>
 <p>Query interner дедуплицирует тексты Parse в памяти процесса
 pg_doorman. Хранилище разделено на две независимые хеш-таблицы —

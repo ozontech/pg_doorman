@@ -1,9 +1,9 @@
 <!DOCTYPE HTML>
-<html lang="en" class="light sidebar-visible" dir="ltr">
+<html lang="ru" class="light sidebar-visible" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Fastpath and Large Objects - PgDoorman Documentation</title>
+        <title>Fastpath и large objects - Документация PgDoorman</title>
 
 
         <!-- Custom HTML head -->
@@ -122,7 +122,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">PgDoorman Documentation</h1>
+                    <h1 class="menu-title">Документация PgDoorman</h1>
 
                     <div class="right-buttons">
                         <a href="../print.html" title="Print this book" aria-label="Print this book">
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/operations/fastpath-large-objects.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/operations/fastpath-large-objects.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,59 +160,59 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="fastpath-and-large-objects"><a class="header" href="#fastpath-and-large-objects">Fastpath and Large Objects</a></h1>
-<p>Use this page when pgjdbc or Hibernate works with PostgreSQL large objects
-through a pg_doorman transaction pool.</p>
-<p>pgjdbc <code>LargeObjectManager</code> uses PostgreSQL Fastpath <code>FunctionCall</code> (<code>F</code>) for
-large object functions such as <code>lo_creat</code>, <code>lo_open</code>, <code>lo_read</code>, <code>lo_write</code>,
-and <code>lo_close</code>. PostgreSQL replies with <code>FunctionCallResponse</code> (<code>V</code>) and then
-<code>ReadyForQuery</code> (<code>Z</code>). The <code>V</code> message contains the function result; the
-transaction status is in the following <code>ReadyForQuery</code>.</p>
-<p>Before 3.10.7, pg_doorman did not forward <code>FunctionCall</code> in transaction
-pooling. A client could send a large object call and then wait forever for a
-response. Since 3.10.7, pg_doorman forwards the call, passes
-<code>FunctionCallResponse</code> back to the client, and releases the backend only after
-<code>ReadyForQuery</code> says the session is idle.</p>
-<h2 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h2>
-<p>Large object descriptors live inside a PostgreSQL transaction. If
-<code>ReadyForQuery</code> reports status <code>T</code> or <code>E</code> after a fastpath call, pg_doorman
-keeps the same backend assigned to the client. The backend is released only
-after PostgreSQL later reports idle status <code>I</code>, normally after <code>COMMIT</code> or
-<code>ROLLBACK</code>.</p>
-<p>Autocommit fastpath calls release the backend as soon as <code>ReadyForQuery</code>
-reports idle.</p>
-<p>This matches PgBouncer transaction-pooling behavior for <code>FunctionCall</code> traffic.</p>
-<h2 id="pool-sizing"><a class="header" href="#pool-sizing">Pool Sizing</a></h2>
-<p>Each active large object call holds one backend until PostgreSQL sends
-<code>ReadyForQuery</code>. Size the pool for concurrent large object reads and writes,
-not only for ordinary SQL statement rate.</p>
-<p>Watch these signals after enabling this traffic:</p>
+                        <h1 id="fastpath-и-large-objects"><a class="header" href="#fastpath-и-large-objects">Fastpath и large objects</a></h1>
+<p>Используйте эту страницу, если pgjdbc или Hibernate работают с PostgreSQL large
+objects через pg_doorman в режиме transaction pool.</p>
+<p>pgjdbc <code>LargeObjectManager</code> вызывает функции PostgreSQL large object через
+Fastpath <code>FunctionCall</code> (<code>F</code>): <code>lo_creat</code>, <code>lo_open</code>, <code>lo_read</code>, <code>lo_write</code>,
+<code>lo_close</code> и другие. PostgreSQL отвечает <code>FunctionCallResponse</code> (<code>V</code>), а затем
+<code>ReadyForQuery</code> (<code>Z</code>). В <code>V</code> лежит результат функции. Состояние транзакции
+приходит в следующем <code>ReadyForQuery</code>.</p>
+<p>До 3.10.7 pg_doorman не передавал <code>FunctionCall</code> в transaction pooling. Клиент
+мог отправить вызов функции large object и навсегда ждать ответа. Начиная с
+3.10.7 pg_doorman передаёт вызов в PostgreSQL, возвращает клиенту
+<code>FunctionCallResponse</code> и освобождает backend только после <code>ReadyForQuery</code>, если
+PostgreSQL сообщил idle-состояние.</p>
+<h2 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction pooling</a></h2>
+<p>Дескрипторы large object живут внутри PostgreSQL-транзакции. Если после
+fastpath-вызова <code>ReadyForQuery</code> вернул статус <code>T</code> или <code>E</code>, pg_doorman оставляет
+за клиентом тот же backend. Backend освобождается только после idle-статуса
+<code>I</code>, обычно после <code>COMMIT</code> или <code>ROLLBACK</code>.</p>
+<p>Fastpath-вызовы в autocommit освобождают backend сразу после <code>ReadyForQuery</code> со
+статусом idle.</p>
+<p>Это соответствует поведению PgBouncer в transaction pooling для трафика
+<code>FunctionCall</code>.</p>
+<h2 id="Размер-пула"><a class="header" href="#Размер-пула">Размер пула</a></h2>
+<p>Каждый активный вызов функции large object занимает один backend до
+<code>ReadyForQuery</code>. Считайте размер пула по числу одновременных чтений и записей
+large objects, а не только по обычному темпу SQL-запросов.</p>
+<p>После включения такого трафика следите за:</p>
 <ul>
-<li><code>SHOW POOLS</code>: active clients, active servers, and waiting clients.</li>
-<li><code>query_wait_timeout</code> errors.</li>
-<li>Latency percentiles for pools used by large object traffic.</li>
+<li><code>SHOW POOLS</code>: активные клиенты, активные серверы и ожидающие клиенты.</li>
+<li>Ошибками <code>query_wait_timeout</code>.</li>
+<li>Перцентилями задержек для пулов с large object трафиком.</li>
 </ul>
-<p>If large object bursts push clients close to <code>query_wait_timeout</code>, increase
-pool capacity for that user/database or reduce application-side large object
-concurrency.</p>
-<h2 id="large-reads"><a class="header" href="#large-reads">Large Reads</a></h2>
-<p>pg_doorman streams large <code>DataRow</code>, <code>CopyData</code>, and <code>FunctionCallResponse</code>
-messages when they exceed <code>general.message_size_to_be_stream</code>. A large
-fastpath <code>lo_read</code> response is forwarded without buffering the full response in
-pg_doorman memory first.</p>
-<p>Streaming limits pg_doorman heap use; it does not make large single reads free.
-A large read still holds a backend and socket buffers while PostgreSQL sends
-the response, and PostgreSQL protocol message limits still apply. Keep
-application-side large object reads chunked.</p>
-<h2 id="timeouts"><a class="header" href="#timeouts">Timeouts</a></h2>
-<p><code>server_lifetime</code> applies to idle pooled backends. It does not interrupt a
-backend that is serving a large object read or write.</p>
-<p>Large object descriptors also depend on PostgreSQL transaction state. If an
-application leaves a large object transaction idle between fastpath calls,
-PostgreSQL <code>idle_in_transaction_session_timeout</code> can terminate the backend.
-pg_doorman then returns a connection error to the client. Keep large object
-transactions short, or tune PostgreSQL timeouts for sessions that perform large
-object work.</p>
+<p>Если всплески вызовов large object подводят клиентов к <code>query_wait_timeout</code>,
+увеличьте пул для нужной пары user/database или уменьшите параллелизм large
+object операций в приложении.</p>
+<h2 id="Большие-чтения"><a class="header" href="#Большие-чтения">Большие чтения</a></h2>
+<p>pg_doorman передаёт большие <code>DataRow</code>, <code>CopyData</code> и <code>FunctionCallResponse</code>
+потоково, если они превышают <code>general.message_size_to_be_stream</code>. Большой
+fastpath-ответ <code>lo_read</code> уходит клиенту без предварительного буферизования
+всего ответа в памяти pg_doorman.</p>
+<p>Потоковая передача ограничивает расход heap в pg_doorman, но не делает большие
+одиночные чтения бесплатными. Большой <code>lo_read</code> всё равно удерживает backend и
+сокетные буферы, пока PostgreSQL отправляет ответ. Лимиты сообщений протокола
+PostgreSQL тоже остаются. Читайте large objects порциями на стороне приложения.</p>
+<h2 id="Таймауты"><a class="header" href="#Таймауты">Таймауты</a></h2>
+<p><code>server_lifetime</code> применяется к idle backend в пуле. Он не прерывает backend,
+который выполняет чтение или запись large object.</p>
+<p>Дескрипторы large object зависят от состояния PostgreSQL-транзакции. Если
+приложение оставляет large object транзакцию idle между fastpath-вызовами,
+PostgreSQL <code>idle_in_transaction_session_timeout</code> может закрыть backend.
+pg_doorman вернёт клиенту ошибку соединения. Держите large object транзакции
+короткими или настройте PostgreSQL-таймауты для сессий, которые работают с
+large objects.</p>
 
                     </main>
 
