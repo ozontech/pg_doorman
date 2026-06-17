@@ -35,11 +35,11 @@ See [Authentication](authentication/overview.md).
 | Server-side TLS to PostgreSQL (`disable`, `allow`, `require`, `verify-ca`, `verify-full`) | Yes (5 modes) | Yes (`server_tls_*`, 6 modes incl. `prefer`) | No |
 | mTLS to PostgreSQL (client cert sent to backend) | Yes (`server_tls_certificate` + `server_tls_private_key`) | Yes (`server_tls_key_file` + `server_tls_cert_file`) | No |
 | Hot reload of server-side TLS certificates | Yes (`SIGHUP`) | Yes (via `RELOAD` / `SIGHUP`, "new file contents will be used for new connections") | No |
-| Hot reload of client-facing TLS certificates | No (requires restart or binary upgrade) | Yes (via `RELOAD` / `SIGHUP`) | No |
+| Hot reload of client-facing TLS certificates | No (`SIGHUP` unsupported; handoff loads new files for new connections only) | Yes (via `RELOAD` / `SIGHUP`) | No |
 | Minimum TLS version configurable | Yes (defaults to TLS 1.2) | Yes (`tls_protocols`, default `tlsv1.2,tlsv1.3`) | Configurable, defaults differ |
 | Direct TLS handshake (PostgreSQL 17, no `SSLRequest`) | No | Yes (since 1.25) | No |
 | TLS 1.3 cipher control | No | Yes (since 1.25, `client_tls13_ciphers`/`server_tls13_ciphers`) | No |
-| TLS session migration across binary upgrade | Yes (`tls-migration` build, Linux, opt-in) | No (TLS connections are dropped during online restart) | No |
+| TLS session migration across binary upgrade | Yes (Linux `tls-migration` build, same cert/key) | No (TLS connections are dropped during online restart) | No |
 
 See [TLS](guides/tls.md).
 
@@ -125,7 +125,7 @@ See [Prometheus metrics reference](reference/prometheus.md), [Admin commands](ob
 
 | Feature | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
-| Binary upgrade with session migration (TCP socket, cancel keys, prepared cache) | Yes (`SCM_RIGHTS`, plus TLS state with the `tls-migration` build) | No: `-R` deprecated since 1.20; `so_reuseport` rolling restart drains old sessions in place | No: `SIGUSR2` + `bindwith_reuseport` drains old sessions in place |
+| Binary upgrade with session migration (TCP socket, cancel keys, prepared cache) | Yes (`SCM_RIGHTS`, plus TLS state with Linux `tls-migration` and same cert/key) | No: `-R` deprecated since 1.20; `so_reuseport` rolling restart drains old sessions in place | No: `SIGUSR2` + `bindwith_reuseport` drains old sessions in place |
 | Configuration format | YAML or TOML | INI | Own format (lex/yacc) |
 | Human-readable durations and sizes (`30s`, `1h`, `256MB`) | Yes | No (integer microseconds / bytes) | No |
 | Config test mode (`pg_doorman -t`) | Yes | No | No |

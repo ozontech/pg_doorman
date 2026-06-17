@@ -34,7 +34,7 @@ The certificate may be self-signed for development; production deployments typic
 
 Client-side certificates are loaded at startup. Changing them requires a process restart. There is no `SIGHUP` reload for client-side TLS.
 
-For zero-downtime certificate rotation, see [Binary Upgrade](../tutorials/binary-upgrade.md).
+Hot process handoff can load a new certificate and key for new inbound TLS connections, but it is not seamless rotation for sessions that are already open. To migrate TLS sessions, both processes must use the same `tls_certificate` and `tls_private_key`, and PgDoorman must run as a Linux build with `tls-migration`; if those files change, TLS clients drain and reconnect.
 
 ### Cipher policy
 
@@ -108,5 +108,5 @@ See [Prometheus reference](../reference/prometheus.md).
 ## Where to next
 
 - New cluster setup? See [Installation](../tutorials/installation.md).
-- Rotating certificates? See [Binary Upgrade](../tutorials/binary-upgrade.md) and [Signals](../operations/signals.md).
+- Rotating certificates? See [Binary Upgrade](../tutorials/binary-upgrade.md) and [Signals](../operations/signals.md). Client-facing TLS certificate rotation is not seamless for already-open TLS sessions.
 - Hardening an existing deployment? Combine with [pg_hba.conf](../authentication/hba.md): force `hostssl` for non-local connections.
