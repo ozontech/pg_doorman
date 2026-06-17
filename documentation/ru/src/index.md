@@ -39,7 +39,7 @@
 
 В новый процесс уходят `connection_id`, ключ отмены запроса, параметры PostgreSQL-сессии, состояние аутентификации к PostgreSQL и клиентский кеш prepared statements. Новый процесс восстанавливает клиента в том же пуле. Для приложения соединение не рвётся: без переподключения, повторного `auth`/SCRAM и потери prepared statements. Если на новом серверном соединении statement ещё не подготовлен, PgDoorman отправит нужный `Parse` при первом `Bind`.
 
-В foreground-режиме TCP-сессии без TLS передаются через `SCM_RIGHTS`. TLS-сессии мигрируют только в Linux-сборке с фичей `tls-migration`; в обычных пакетах и Docker-образе она выключена, поэтому TLS-клиенты дренируются. Клиенты внутри транзакции остаются на старом процессе и переезжают после `COMMIT` или `ROLLBACK`. У PgBouncer (`-R`, устарел с 1.20, или rolling restart через `so_reuseport`) и Odyssey (`SIGUSR2` + `bindwith_reuseport`) старые сессии остаются в старом процессе до отключения клиентов.
+В foreground-режиме TCP-сессии без TLS передаются через `SCM_RIGHTS`. TLS-сессии мигрируют только в Linux-сборке с фичей `tls-migration` и теми же `tls_certificate`/`tls_private_key`; в обычных пакетах и Docker-образе она выключена, поэтому TLS-клиенты дренируются. Клиенты внутри транзакции остаются на старом процессе и переезжают после `COMMIT` или `ROLLBACK`. У PgBouncer (`-R`, устарел с 1.20, или rolling restart через `so_reuseport`) и Odyssey (`SIGUSR2` + `bindwith_reuseport`) старые сессии остаются в старом процессе до отключения клиентов.
 
 [Подробнее →](tutorials/binary-upgrade.md)
 ```
