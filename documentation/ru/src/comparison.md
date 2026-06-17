@@ -35,11 +35,11 @@ PgCat намеренно опущен: у него центр тяжести —
 | Server-side TLS к PostgreSQL (`disable`, `allow`, `require`, `verify-ca`, `verify-full`) | Да (5 режимов) | Да (`server_tls_*`, 6 режимов вкл. `prefer`) | Нет |
 | mTLS к PostgreSQL (отправка клиентского сертификата на backend) | Да (`server_tls_certificate` + `server_tls_private_key`) | Да (`server_tls_key_file` + `server_tls_cert_file`) | Нет |
 | Hot reload server-side TLS-сертификатов | Да (`SIGHUP`) | Да (через `RELOAD` / `SIGHUP`, "new file contents will be used for new connections") | Нет |
-| Hot reload client-facing TLS-сертификатов | Нет (требуется restart или binary upgrade) | Да (через `RELOAD` / `SIGHUP`) | Нет |
+| Hot reload client-facing TLS-сертификатов | Нет (требуется restart или горячая замена процесса) | Да (через `RELOAD` / `SIGHUP`) | Нет |
 | Минимальная версия TLS настраивается | Да (по умолчанию TLS 1.2) | Да (`tls_protocols`, default `tlsv1.2,tlsv1.3`) | Настраивается, дефолты другие |
 | Direct TLS handshake (PostgreSQL 17, без `SSLRequest`) | Нет | Да (с 1.25) | Нет |
 | Контроль TLS 1.3 cipher suites | Нет | Да (с 1.25, `client_tls13_ciphers`/`server_tls13_ciphers`) | Нет |
-| Миграция TLS-сессии при binary upgrade | Да (сборка `tls-migration`, Linux, по запросу) | Нет (TLS-соединения отбрасываются при online restart) | Нет |
+| Миграция TLS-сессии при горячей замене процесса | Да (сборка `tls-migration`, Linux, по запросу) | Нет (TLS-соединения отбрасываются при online restart) | Нет |
 
 См. [TLS](guides/tls.md).
 
@@ -125,7 +125,7 @@ PgCat намеренно опущен: у него центр тяжести —
 
 | Возможность | PgDoorman | PgBouncer | Odyssey |
 | --- | :-: | :-: | :-: |
-| Обновление бинаря с миграцией сессий (TCP-сокет, cancel keys, prepared cache) | Да (`SCM_RIGHTS`, плюс TLS state со сборкой `tls-migration`) | Нет: `-R` deprecated с 1.20; rolling restart через `so_reuseport` оставляет старые сессии на старом процессе | Нет: `SIGUSR2` + `bindwith_reuseport` оставляет старые сессии на старом процессе |
+| Горячая замена процесса с миграцией сессий (TCP-сокет, cancel keys, prepared cache) | Да (`SCM_RIGHTS`, плюс TLS state со сборкой `tls-migration`) | Нет: `-R` deprecated с 1.20; rolling restart через `so_reuseport` оставляет старые сессии на старом процессе | Нет: `SIGUSR2` + `bindwith_reuseport` оставляет старые сессии на старом процессе |
 | Формат конфига | YAML или TOML | INI | Свой формат (lex/yacc) |
 | Человекочитаемые длительности и размеры (`30s`, `1h`, `256MB`) | Да | Нет (целые микросекунды / байты) | Нет |
 | Режим проверки конфига (`pg_doorman -t`) | Да | Нет | Нет |
@@ -135,7 +135,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | Лимит памяти (`max_memory_usage`) | Да | Нет | Нет |
 | Лимит TCP-буферов | Да (`tcp_socket_buffer_size` для клиентских TCP-сокетов и TCP-сокетов к PostgreSQL) | Да (`tcp_socket_buffer`) | Нет |
 
-См. [Обновление бинаря с переносом сессий](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
+См. [Горячая замена процесса с переносом сессий](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
 
 ## Протокол
 
@@ -158,4 +158,4 @@ PgCat намеренно опущен: у него центр тяжести —
 - **Нужен `transaction_timeout`, который применяет сам пулер.** Используйте PgBouncer 1.25+.
 - **Нужен горизонтальный шардинг внутри пулера.** Используйте PgCat.
 
-Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и обновление бинаря с миграцией живых сессий — PgDoorman ближе по профилю.
+Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и горячая замена процесса с миграцией живых сессий — PgDoorman ближе по профилю.
