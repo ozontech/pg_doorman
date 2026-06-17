@@ -40,7 +40,7 @@
 
 # Эксплуатация
 
-- [Обновление бинаря без остановки](tutorials/binary-upgrade.md)
+- [Обновление бинаря с переносом сессий](tutorials/binary-upgrade.md)
 - [Сигналы и перезагрузка](operations/signals.md)
 - [Fastpath и large objects](operations/fastpath-large-objects.md)
 - [Мониторинг query interner](operations/monitoring-interner.md)

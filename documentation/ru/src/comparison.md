@@ -135,7 +135,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | Лимит памяти (`max_memory_usage`) | Да | Нет | Нет |
 | Лимит TCP-буферов | Да (`tcp_socket_buffer_size` для клиентских TCP-сокетов и TCP-сокетов к PostgreSQL) | Да (`tcp_socket_buffer`) | Нет |
 
-См. [Обновление бинаря без остановки](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
+См. [Обновление бинаря с переносом сессий](tutorials/binary-upgrade.md), [Сигналы](operations/signals.md).
 
 ## Протокол
 
