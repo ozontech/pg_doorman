@@ -759,8 +759,8 @@ PAUSE → RECONNECT → RESUME — сначала пауза не даёт ст�
 <p>PgDoorman реагирует на стандартные Unix-сигналы для управления и контроля. Сигналы посылаются через <code>kill</code> (например, <code>kill -HUP &lt;pid&gt;</code>).</p>
 <div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Эффект</th></tr></thead><tbody>
 <tr><td><strong>SIGHUP</strong></td><td>Перечитывание конфигурации — эквивалент admin-команды <code>RELOAD</code>.</td></tr>
-<tr><td><strong>SIGUSR2</strong></td><td>Обновление бинаря и плавное завершение старого процесса. Валидирует новый бинарник флагом <code>-t</code>, запускает новый процесс, затем завершается. <strong>Рекомендуется для обновлений.</strong> См. <a href="binary-upgrade.html">Плавное обновление бинаря</a>.</td></tr>
-<tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): только плавное завершение (без обновления бинаря). <strong>Режим демона / без TTY</strong>: обновление бинаря и плавное завершение для совместимости со старыми установками.</td></tr>
+<tr><td><strong>SIGUSR2</strong></td><td>Горячая замена процесса. Валидирует новый бинарь и конфиг флагом <code>-t</code>, запускает новый процесс, передаёт ему слушающий сокет и переносит сессии, где это возможно. <strong>Рекомендуется для обновлений.</strong> См. <a href="binary-upgrade.html">Горячая замена процесса с переносом сессий</a>.</td></tr>
+<tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): только плавное завершение (без замены процесса). <strong>Режим демона / без TTY</strong>: горячая замена процесса для совместимости со старыми установками.</td></tr>
 <tr><td><strong>SIGTERM</strong></td><td>Немедленное завершение. Активные соединения обрываются.</td></tr>
 </tbody></table>
 </div><div id="admonition-Управление-процессом" class="admonition admonish-note" role="note" aria-labelledby="admonition-Управление-процессом-title">
@@ -771,7 +771,7 @@ PAUSE → RECONNECT → RESUME — сначала пауза не даёт ст�
 <a class="admonition-anchor-link" href="#admonition-Управление-процессом"></a>
 </div>
 <div>
-<p>В окружениях на базе systemd unit-файл по умолчанию использует <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>, чтобы запускать binary upgrade при <code>systemctl reload</code>.</p>
+<p>В окружениях на базе systemd unit-файл по умолчанию использует <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>, чтобы запускать горячую замену процесса при <code>systemctl reload</code>.</p>
 </div>
 </div>
 

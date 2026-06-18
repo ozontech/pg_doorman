@@ -189,11 +189,11 @@
 <tr><td>Server-side TLS к PostgreSQL (<code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Да (5 режимов)</td><td style="text-align: center">Да (<code>server_tls_*</code>, 6 режимов вкл. <code>prefer</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>mTLS к PostgreSQL (отправка клиентского сертификата на backend)</td><td style="text-align: center">Да (<code>server_tls_certificate</code> + <code>server_tls_private_key</code>)</td><td style="text-align: center">Да (<code>server_tls_key_file</code> + <code>server_tls_cert_file</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Hot reload server-side TLS-сертификатов</td><td style="text-align: center">Да (<code>SIGHUP</code>)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>, "new file contents will be used for new connections")</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Hot reload client-facing TLS-сертификатов</td><td style="text-align: center">Нет (требуется restart или binary upgrade)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Hot reload client-facing TLS-сертификатов</td><td style="text-align: center">Нет (требуется restart или горячая замена процесса)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Минимальная версия TLS настраивается</td><td style="text-align: center">Да (по умолчанию TLS 1.2)</td><td style="text-align: center">Да (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Настраивается, дефолты другие</td></tr>
 <tr><td>Direct TLS handshake (PostgreSQL 17, без <code>SSLRequest</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Контроль TLS 1.3 cipher suites</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Миграция TLS-сессии при binary upgrade</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, по запросу)</td><td style="text-align: center">Нет (TLS-соединения отбрасываются при online restart)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Миграция TLS-сессии при горячей замене процесса</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, по запросу)</td><td style="text-align: center">Нет (TLS-соединения отбрасываются при online restart)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="guides/tls.html">TLS</a>.</p>
@@ -269,7 +269,7 @@
 <p>См. <a href="reference/prometheus.html">Справочник Prometheus-метрик</a>, <a href="observability/admin-commands.html">Команды администратора</a>.</p>
 <h2 id="Эксплуатация"><a class="header" href="#Эксплуатация">Эксплуатация</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Обновление бинаря с миграцией сессий (TCP-сокет, cancel keys, prepared cache)</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, плюс TLS state со сборкой <code>tls-migration</code>)</td><td style="text-align: center">Нет: <code>-R</code> deprecated с 1.20; rolling restart через <code>so_reuseport</code> оставляет старые сессии на старом процессе</td><td style="text-align: center">Нет: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> оставляет старые сессии на старом процессе</td></tr>
+<tr><td>Горячая замена процесса с миграцией сессий (TCP-сокет, cancel keys, prepared cache)</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, плюс TLS state со сборкой <code>tls-migration</code>)</td><td style="text-align: center">Нет: <code>-R</code> deprecated с 1.20; rolling restart через <code>so_reuseport</code> оставляет старые сессии на старом процессе</td><td style="text-align: center">Нет: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> оставляет старые сессии на старом процессе</td></tr>
 <tr><td>Формат конфига</td><td style="text-align: center">YAML или TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Свой формат (lex/yacc)</td></tr>
 <tr><td>Человекочитаемые длительности и размеры (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (целые микросекунды / байты)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Режим проверки конфига (<code>pg_doorman -t</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
@@ -280,7 +280,7 @@
 <tr><td>Лимит TCP-буферов</td><td style="text-align: center">Да (<code>tcp_socket_buffer_size</code> для клиентских TCP-сокетов и TCP-сокетов к PostgreSQL)</td><td style="text-align: center">Да (<code>tcp_socket_buffer</code>)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
-<p>См. <a href="tutorials/binary-upgrade.html">Плавное обновление бинаря</a>, <a href="operations/signals.html">Сигналы</a>.</p>
+<p>См. <a href="tutorials/binary-upgrade.html">Горячая замена процесса с переносом сессий</a>, <a href="operations/signals.html">Сигналы</a>.</p>
 <h2 id="Протокол"><a class="header" href="#Протокол">Протокол</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>Simple query</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
@@ -301,7 +301,7 @@
 <li><strong>Нужен <code>transaction_timeout</code>, который применяет сам пулер.</strong> Используйте PgBouncer 1.25+.</li>
 <li><strong>Нужен горизонтальный шардинг внутри пулера.</strong> Используйте PgCat.</li>
 </ul>
-<p>Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и обновление бинаря с миграцией живых сессий — PgDoorman ближе по профилю.</p>
+<p>Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и горячая замена процесса с миграцией живых сессий — PgDoorman ближе по профилю.</p>
 
                     </main>
 

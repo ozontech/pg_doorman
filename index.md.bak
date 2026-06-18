@@ -6,52 +6,52 @@ A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replaceme
 
 ## Headline features
 
-```admonish success title="Built-in diagnostic console"
-A diagnostic console embedded in the pg_doorman binary, served on the same port as `/metrics`. It gives operators the incident view that `/metrics` and the psql admin console expose only in pieces: pool saturation, latency percentiles, SQLSTATE breakdowns, long-running queries, prepared-cache and query-interner state, process memory, cgroup limits, per-worker CPU, and a live log tail.
+```admonish success title="Anonymous Parse Caching"
+In the extended protocol, many drivers send short parameterised queries as an unnamed `Parse`. PgDoorman rewrites that `Parse` on the PostgreSQL side to an internal `DOORMAN_<N>` name and keeps the mapping in the pool. Later `Bind`s for the same query shape reuse prepared backend state.
 
-The console is for live diagnosis, not a replacement for long-term Prometheus/Grafana monitoring.
+That cuts repeated PostgreSQL planner work on hot OLTP paths without application changes. PgBouncer 1.21+ and Odyssey can track named prepared statements, but they forward anonymous `Parse` unchanged; PgDoorman covers the driver-default case.
 
-Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when `[web].ui = true` and `general.admin_password` is non-default; a fresh install with the placeholder password keeps the listener at `/metrics` only and logs a `WARN`.
+The cache is bounded: anonymous entries expire after idle timeout, and named entries are freed after their last reference. `SHOW INTERNER` exposes query-text memory; Prometheus metrics expose hits, misses, and evictions.
 
-[Read more →](guides/web-ui.md)
+[Read more →](tutorials/prepared-statements.md)
 ```
 
 ```admonish success title="Pool Coordinator"
-PgDoorman caps total backend connections per database. When `max_db_connections` is reached, the coordinator evicts an idle connection from the user with the most spare capacity, ranking candidates by p95 transaction time so the slowest pools yield first. A reserve pool absorbs short bursts; per-user `min_guaranteed_pool_size` keeps critical workloads off the eviction list.
+When several user pools share one database, the global limit should protect PostgreSQL, not just queue clients. PgDoorman enforces `max_db_connections`: once the cap is reached, the coordinator closes an idle connection from a pool with spare capacity and gives the slot to a client waiting for a backend.
 
-PgBouncer's `max_db_connections` has no eviction or fairness — when the cap is reached, clients queue until existing connections close on their own idle timeout. Odyssey has no equivalent setting.
+Donors are ranked by excess idle connections. On a tie, the pool with the higher p95 transaction time yields first: fast pools keep more reuse chances, while evicting an idle connection from a slower pool hurts less. The reserve pool absorbs short bursts, and `min_guaranteed_pool_size` protects critical workloads from eviction.
+
+PgBouncer's `max_db_connections` sets a shared cap, but it does not redistribute already-open idle connections between pools. Odyssey has no direct equivalent.
 
 [Read more →](concepts/pool-coordinator.md)
 ```
 
 ```admonish success title="Patroni-assisted Fallback"
-When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman polls the Patroni REST API (`GET /cluster`), picks a live cluster member (priority `sync_standby` → `replica`), and routes new connections there. The local backend enters cooldown; fallback connections inherit a short lifetime so the pool returns to local as soon as it recovers.
+When PgDoorman runs next to PostgreSQL and the local server disappears during a Patroni switchover, new backend connections temporarily go to another live cluster member. PgDoorman chooses the target through the Patroni REST API (`GET /cluster`): `sync_standby` first, then `replica`.
 
-Set `patroni_api_urls` and `fallback_cooldown` in `[general]` and it applies to every pool. No HAProxy or `consul-template` in front of the pooler.
+The local server enters cooldown, and fallback connections get a short lifetime. Once the local node is reachable again, the pool returns to it without a separate HAProxy or `consul-template` in front of the pooler. `patroni_api_urls` and `fallback_cooldown` are configured in `[general]`.
 
 [Read more →](tutorials/patroni-assisted-fallback.md)
 ```
 
-```admonish success title="Graceful Binary Upgrade"
-Update PgDoorman without stopping the listener. Idle client sessions can move to the new process, which avoids a reconnect wave and reduces repeated `auth`/SCRAM handshakes against PostgreSQL. Clients inside a transaction stay on the old process until they go idle.
+```admonish success title="Hot Process Handoff with Session Migration"
+Before `SIGUSR2` or `UPGRADE`, operators can replace the binary and config on disk. PgDoorman validates that pair with `-t`, starts a child process with it, passes the listening socket to the child, and keeps the old process serving existing clients while eligible sessions migrate.
 
-On `SIGUSR2` the old process hands each idle client's TCP socket to the new one through `SCM_RIGHTS` — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the `tls-migration` build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.
+The new process receives `connection_id`, the cancel key, PostgreSQL session parameters, backend authentication state, and the client prepared-statement cache. From the application's point of view the connection stays open: no reconnect, no repeated `auth`/SCRAM, and no lost prepared statements. If the new backend connection has not prepared a statement yet, PgDoorman sends the needed `Parse` on the first `Bind`.
 
-PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport` rolling restart) and Odyssey's online restart (`SIGUSR2` + `bindwith_reuseport`) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.
+In foreground mode, non-TLS TCP sessions move through `SCM_RIGHTS`. TLS sessions migrate only on a Linux build with `tls-migration` and the same `tls_certificate`/`tls_private_key`; distro packages and the Docker image are built without it, so TLS clients drain. Clients inside a transaction stay on the old process and move after `COMMIT` or `ROLLBACK`. PgBouncer (`-R`, deprecated since 1.20, or rolling restart via `so_reuseport`) and Odyssey (`SIGUSR2` + `bindwith_reuseport`) leave old sessions in the old process until clients disconnect.
 
 [Read more →](tutorials/binary-upgrade.md)
 ```
 
-```admonish success title="Anonymous Parse Caching"
-In extended protocol, many drivers send short parameterised queries as `Parse` with an empty statement name. Without a remap, that hot path keeps paying PostgreSQL planner CPU and repeated backend `Parse` work on every reuse.
+```admonish success title="Built-in Diagnostic Console"
+PgDoorman serves the web console on the same address and port as `/metrics`. It is a local incident panel, not a replacement for long-term Prometheus/Grafana monitoring.
 
-PgDoorman rewrites the empty name to an internal `DOORMAN_<N>` on the backend and keeps the mapping in the pool. PostgreSQL sees a named prepared statement, so later `Bind`s for the same query shape can reuse prepared backend state across one client and across clients sharing the pool. The primary value is performance: less planner work and fewer backend Parses on repeated OLTP queries.
+One screen shows pool saturation, p95/p99 query, transaction, and checkout latency, SQLSTATE errors, long-running queries, prepared-statement and query-interner state, the log tail, CPU by `tokio-worker`, and process memory (`jemalloc`, `/proc/self/status`, text/libs, stacks, swap).
 
-PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for **named** statements; an anonymous `Parse` is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.
+The console can run Pause, Resume, Reconnect, and Reload for one pool or the whole instance. Other views are read-only. The UI is enabled only when `[web].ui = true` and `general.admin_password` is set to a non-placeholder value; otherwise PgDoorman keeps only `/metrics` and logs a `WARN`.
 
-To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, `SHOW INTERNER` exposes interner size, and Prometheus metrics expose hits, misses, and evictions.
-
-[Read more →](tutorials/prepared-statements.md)
+[Read more →](guides/web-ui.md)
 ```
 
 ## Why PgDoorman
@@ -74,7 +74,7 @@ To keep that optimization operationally safe, the cache is bounded and observabl
 | Patroni-assisted fallback (built-in)                     |          Yes          |                 No                  |             No             |
 | Pre-replacement on `server_lifetime` expiry              |          Yes          |                 No                  |             No             |
 | Stale backend detection inside a transaction             | Yes (immediate `08006`) |     No (waits for TCP keepalive)    | No (waits for TCP keepalive) |
-| Binary upgrade with session migration                    | Yes (`SCM_RIGHTS`, TLS state opt-in) | No (sessions stay on old process) | No (sessions stay on old process) |
+| Hot process handoff with idle-session migration          | Yes, via `SCM_RIGHTS`; TLS state with `tls-migration` and same cert/key | No (sessions stay on old process) | No (sessions stay on old process) |
 | Backend TLS to PostgreSQL                                |   Yes (5 modes, hot reload via `SIGHUP`) | Yes (`server_tls_*`, hot reload via `RELOAD`) |             No             |
 | Auth: SCRAM passthrough (no plaintext password)          | Yes (`ClientKey` extracted from proof) | Yes (encrypted SCRAM secret via `auth_query`/`userlist.txt`, since 1.14) |            Yes             |
 | Auth: JWT (RSA-SHA256)                                   |          Yes          |                 No                  |             No             |

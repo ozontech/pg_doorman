@@ -162,18 +162,18 @@
 <p>Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Совместимая замена для <a href="https://www.pgbouncer.org/">PgBouncer</a> и <a href="https://github.com/yandex/odyssey">Odyssey</a>, альтернатива <a href="https://github.com/postgresml/pgcat">PgCat</a>. Три года в промышленной эксплуатации у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.</p>
 <p><a href="tutorials/installation.html">Скачать PgDoorman 3.10.7</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Бенчмарки</a></p>
 <h2 id="Ключевые-возможности"><a class="header" href="#Ключевые-возможности">Ключевые возможности</a></h2>
-<div id="admonition-Встроенная-диагностическая-консоль" class="admonition admonish-success" role="note" aria-labelledby="admonition-Встроенная-диагностическая-консоль-title">
+<div id="admonition-Кеш-анонимного-parse" class="admonition admonish-success" role="note" aria-labelledby="admonition-Кеш-анонимного-parse-title">
 <div class="admonition-title">
-<div id="admonition-Встроенная-диагностическая-консоль-title">
-<p>Встроенная диагностическая консоль</p>
+<div id="admonition-Кеш-анонимного-parse-title">
+<p>Кеш анонимного Parse</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-Встроенная-диагностическая-консоль"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-Кеш-анонимного-parse"></a>
 </div>
 <div>
-<p>PgDoorman может отдавать веб-консоль на том же адресе и порту, что и <code>/metrics</code>. Это локальная панель для быстрой диагностики процесса и пулов, а не замена долгосрочному мониторингу в Prometheus/Grafana.</p>
-<p>На одном экране собраны основные сигналы для разбора инцидента: насыщение пулов, p95/p99 задержки запросов, транзакций и ожидания соединения, ошибки по SQLSTATE, долгие запросы, состояние кеша prepared statements, query interner, хвост лога, CPU по потокам tokio-worker и память процесса (<code>jemalloc</code>, <code>/proc/self/status</code>, код/библиотеки, стеки, swap).</p>
-<p>Из консоли можно выполнить Pause, Resume, Reconnect и Reload для одного пула или всего инстанса. Остальные экраны доступны только для чтения. UI включается только при <code>[web].ui = true</code> и непустом <code>general.admin_password</code>, отличном от <code>admin</code>; иначе pg_doorman оставляет только <code>/metrics</code> и пишет <code>WARN</code> в лог.</p>
-<p><a href="guides/web-ui.html">Подробнее →</a></p>
+<p>В extended protocol многие драйверы отправляют короткие параметризованные запросы как <code>Parse</code> без имени statement. PgDoorman переименовывает такой <code>Parse</code> на стороне PostgreSQL в служебный <code>DOORMAN_&lt;N&gt;</code> и хранит соответствие в пуле. Следующие <code>Bind</code> для той же формы запроса используют уже подготовленное состояние.</p>
+<p>Это снижает повторную работу планировщика PostgreSQL на горячих OLTP-запросах без изменений в приложении. PgBouncer 1.21+ и Odyssey работают с именованными prepared statements, но анонимный <code>Parse</code> передают как есть; PgDoorman закрывает этот частый сценарий у драйверов по умолчанию.</p>
+<p>Кеш не растёт бесконтрольно: анонимные записи истекают по таймауту бездействия, именованные освобождаются после последней ссылки. <code>SHOW INTERNER</code> показывает память текстов запросов, а метрики Prometheus — попадания, промахи и вытеснения.</p>
+<p><a href="tutorials/prepared-statements.html">Подробнее →</a></p>
 </div>
 </div>
 <div id="admonition-Координатор-пулов" class="admonition admonish-success" role="note" aria-labelledby="admonition-Координатор-пулов-title">
@@ -184,8 +184,9 @@
 <a class="admonition-anchor-link" href="index.html#admonition-Координатор-пулов"></a>
 </div>
 <div>
-<p>PgDoorman ограничивает суммарное число серверных соединений к одной базе через <code>max_db_connections</code>. Если лимит уже выбран, координатор может освободить свободное соединение у пула с запасом и отдать слот клиенту, который ждёт соединение.</p>
-<p>Резервный пул сглаживает короткие всплески, а <code>min_guaranteed_pool_size</code> защищает важные нагрузки от вытеснения. В PgBouncer <code>max_db_connections</code> задаёт общий лимит, но не перераспределяет уже открытые свободные соединения между пулами; в Odyssey прямого аналога нет.</p>
+<p>Когда несколько пользовательских пулов работают с одной базой, общий лимит должен защищать PostgreSQL, а не просто ставить клиентов в очередь. PgDoorman держит потолок через <code>max_db_connections</code>: если лимит выбран, координатор закрывает свободное соединение у пула с запасом и отдаёт слот клиенту, который ждёт подключение к PostgreSQL.</p>
+<p>Доноры ранжируются по излишку свободных соединений. При равном излишке первым уступает пул с более высоким p95 времени транзакции: быстрые пулы сохраняют больше шансов на переиспользование, а у медленных вытеснение свободного соединения меньше мешает работе. Резервный пул сглаживает короткие всплески, а <code>min_guaranteed_pool_size</code> защищает важные нагрузки от вытеснения.</p>
+<p>В PgBouncer <code>max_db_connections</code> задаёт общий лимит, но не перераспределяет уже открытые свободные соединения между пулами. В Odyssey прямого аналога нет.</p>
 <p><a href="concepts/pool-coordinator.html">Подробнее →</a></p>
 </div>
 </div>
@@ -197,38 +198,37 @@
 <a class="admonition-anchor-link" href="index.html#admonition-fallback-через-patroni"></a>
 </div>
 <div>
-<p>Если PgDoorman запущен рядом с PostgreSQL и локальный сервер пропадает во время Patroni switchover, пулер может временно направлять новые серверные соединения на другой живой узел кластера. Для выбора узла используется Patroni REST API (<code>GET /cluster</code>), с приоритетом <code>sync_standby</code> перед <code>replica</code>.</p>
+<p>Если PgDoorman запущен рядом с PostgreSQL и локальный сервер пропадает во время Patroni switchover, новые серверные соединения временно уходят на другой живой узел кластера. PgDoorman выбирает узел через Patroni REST API (<code>GET /cluster</code>): сначала <code>sync_standby</code>, затем <code>replica</code>.</p>
 <p>Локальный сервер уходит в период охлаждения, а fallback-соединения получают короткий lifetime. Когда локальный узел снова доступен, пул возвращается на него без отдельного HAProxy или <code>consul-template</code> перед пулером. Настройки <code>patroni_api_urls</code> и <code>fallback_cooldown</code> задаются в <code>[general]</code>.</p>
 <p><a href="tutorials/patroni-assisted-fallback.html">Подробнее →</a></p>
 </div>
 </div>
-<div id="admonition-Плавное-обновление-бинаря" class="admonition admonish-success" role="note" aria-labelledby="admonition-Плавное-обновление-бинаря-title">
+<div id="admonition-Горячая-замена-процесса-с-переносом-сессий" class="admonition admonish-success" role="note" aria-labelledby="admonition-Горячая-замена-процесса-с-переносом-сессий-title">
 <div class="admonition-title">
-<div id="admonition-Плавное-обновление-бинаря-title">
-<p>Плавное обновление бинаря</p>
+<div id="admonition-Горячая-замена-процесса-с-переносом-сессий-title">
+<p>Горячая замена процесса с переносом сессий</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-Плавное-обновление-бинаря"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-Горячая-замена-процесса-с-переносом-сессий"></a>
 </div>
 <div>
-<p>PgDoorman поддерживает переход на новый бинарь по <code>SIGUSR2</code>: новый процесс начинает принимать соединения, а старый передаёт ему свободных клиентов без повторного TCP-подключения. Это снижает всплеск <code>auth</code>/SCRAM к PostgreSQL и позволяет обновлять пулер без полной остановки трафика.</p>
-<p>Свободная сессия переезжает как тот же клиентский сокет через <code>SCM_RIGHTS</code>, вместе с ключами отмены запросов и состоянием кеша prepared statements. Клиенты внутри транзакции остаются на старом процессе до завершения транзакции и мигрируют, когда снова становятся свободными. Перенос TLS-состояния OpenSSL доступен только в Linux-сборке с фичей <code>tls-migration</code>; по умолчанию она выключена.</p>
-<p>У PgBouncer (<code>-R</code>, устарел с 1.20, или rolling restart через <code>so_reuseport</code>) и Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) перезапуск без остановки приёма в основном переводит новые подключения на новый процесс; старые сессии остаются на прежнем до отключения клиентов. Отличие PgDoorman здесь — перенос свободных сессий и подготовленного состояния между процессами.</p>
+<p>Перед <code>SIGUSR2</code> или <code>UPGRADE</code> можно заменить бинарь и конфиг на диске. PgDoorman проверяет эту комбинацию через <code>-t</code>, запускает дочерний процесс уже с ней, передаёт ему слушающий сокет, а старый процесс продолжает обслуживать существующих клиентов и переносит мигрируемые сессии.</p>
+<p>В новый процесс уходят <code>connection_id</code>, ключ отмены запроса, параметры PostgreSQL-сессии, состояние аутентификации к PostgreSQL и клиентский кеш prepared statements. Новый процесс восстанавливает клиента в том же пуле. Для приложения соединение не рвётся: без переподключения, повторного <code>auth</code>/SCRAM и потери prepared statements. Если на новом серверном соединении statement ещё не подготовлен, PgDoorman отправит нужный <code>Parse</code> при первом <code>Bind</code>.</p>
+<p>В foreground-режиме TCP-сессии без TLS передаются через <code>SCM_RIGHTS</code>. TLS-сессии мигрируют только в Linux-сборке с фичей <code>tls-migration</code> и теми же <code>tls_certificate</code>/<code>tls_private_key</code>; в обычных пакетах и Docker-образе она выключена, поэтому TLS-клиенты дренируются. Клиенты внутри транзакции остаются на старом процессе и переезжают после <code>COMMIT</code> или <code>ROLLBACK</code>. У PgBouncer (<code>-R</code>, устарел с 1.20, или rolling restart через <code>so_reuseport</code>) и Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) старые сессии остаются в старом процессе до отключения клиентов.</p>
 <p><a href="tutorials/binary-upgrade.html">Подробнее →</a></p>
 </div>
 </div>
-<div id="admonition-Кеш-parse-для-анонимных-prepared-statements" class="admonition admonish-success" role="note" aria-labelledby="admonition-Кеш-parse-для-анонимных-prepared-statements-title">
+<div id="admonition-Встроенная-диагностическая-веб-консоль" class="admonition admonish-success" role="note" aria-labelledby="admonition-Встроенная-диагностическая-веб-консоль-title">
 <div class="admonition-title">
-<div id="admonition-Кеш-parse-для-анонимных-prepared-statements-title">
-<p>Кеш Parse для анонимных prepared statements</p>
+<div id="admonition-Встроенная-диагностическая-веб-консоль-title">
+<p>Встроенная диагностическая веб-консоль</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-Кеш-parse-для-анонимных-prepared-statements"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-Встроенная-диагностическая-веб-консоль"></a>
 </div>
 <div>
-<p>В extended protocol многие драйверы отправляют <code>Parse</code> с пустым именем для коротких параметризованных запросов. Без подмены такой запрос на горячем пути снова и снова платит CPU планировщика PostgreSQL и повторный <code>Parse</code> на бэкенде.</p>
-<p>PgDoorman назначает такому <code>Parse</code> служебное имя вида <code>DOORMAN_&lt;N&gt;</code> на стороне PostgreSQL и хранит соответствие в пуле. PostgreSQL видит именованный prepared statement, а последующие <code>Bind</code> для той же формы запроса могут использовать уже подготовленное состояние. Выигрыш основной: меньше работы планировщика и меньше повторных <code>Parse</code> на бэкенде для повторяющихся OLTP-запросов. Приложению не нужно переводить драйвер на явные имена statement.</p>
-<p>PgBouncer 1.21+ и Odyssey умеют работать с именованными prepared statements в transaction mode. PgDoorman дополнительно обрабатывает безымянные prepared statements, которые часто встречаются у драйверов по умолчанию.</p>
-<p>Чтобы оптимизация производительности не превращалась в неконтролируемую память, кеш имеет ограничения и жизненный цикл. Анонимные записи истекают по таймауту бездействия, именованные освобождаются, когда на них больше нет ссылок. <code>SHOW INTERNER</code> показывает память текстов запросов, а метрики Prometheus — попадания, промахи и вытеснения.</p>
-<p><a href="tutorials/prepared-statements.html">Подробнее →</a></p>
+<p>PgDoorman отдаёт веб-консоль на том же адресе и порту, что и <code>/metrics</code>. Это локальная панель для разбора инцидента, а не замена долгосрочному мониторингу в Prometheus/Grafana.</p>
+<p>На одном экране видны насыщение пулов, p95/p99 задержки запросов, транзакций и ожидания соединения, ошибки по SQLSTATE, долгие запросы, состояние prepared statements и query interner, хвост лога, CPU по потокам <code>tokio-worker</code> и память процесса (<code>jemalloc</code>, <code>/proc/self/status</code>, код/библиотеки, стеки, swap).</p>
+<p>Из консоли можно выполнить Pause, Resume, Reconnect и Reload для одного пула или всего инстанса. Остальные экраны доступны только для чтения. Веб-интерфейс включается только при <code>[web].ui = true</code> и непустом <code>general.admin_password</code>, отличном от <code>admin</code>; иначе PgDoorman оставляет только <code>/metrics</code> и пишет <code>WARN</code> в лог.</p>
+<p><a href="guides/web-ui.html">Подробнее →</a></p>
 </div>
 </div>
 <h2 id="Почему-pgdoorman"><a class="header" href="#Почему-pgdoorman">Почему PgDoorman</a></h2>
@@ -249,7 +249,7 @@
 <tr><td>Переключение на резервный узел через Patroni</td><td style="text-align: center">Да, встроено</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Опережающая замена стареющих серверных соединений</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Обрыв серверного соединения во время транзакции</td><td style="text-align: center">Да, возвращает <code>08006</code> без ожидания TCP keepalive</td><td style="text-align: center">Нет, ждёт TCP keepalive</td><td style="text-align: center">Нет, ждёт TCP keepalive</td></tr>
-<tr><td>Обновление бинаря с переносом свободных сессий</td><td style="text-align: center">Да, через <code>SCM_RIGHTS</code>; TLS-состояние при сборке <code>tls-migration</code></td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td></tr>
+<tr><td>Горячая замена процесса с переносом свободных сессий</td><td style="text-align: center">Да, через <code>SCM_RIGHTS</code>; TLS-состояние при сборке <code>tls-migration</code></td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td><td style="text-align: center">Нет, старые сессии остаются в старом процессе</td></tr>
 <tr><td>TLS-соединение от пулера к PostgreSQL</td><td style="text-align: center">Да, 5 режимов и reload по <code>SIGHUP</code></td><td style="text-align: center">Да, <code>server_tls_*</code> и reload по <code>RELOAD</code></td><td style="text-align: center">Нет</td></tr>
 <tr><td>SCRAM passthrough без открытого пароля в конфиге</td><td style="text-align: center">Да, извлекает <code>ClientKey</code> из <code>SCRAM proof</code></td><td style="text-align: center">Да, зашифрованный SCRAM secret через <code>auth_query</code>/<code>userlist.txt</code>, с 1.14</td><td style="text-align: center">Да</td></tr>
 <tr><td>JWT-аутентификация (RSA-SHA256)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
@@ -318,7 +318,7 @@ pools:
 <li>Мигрируете с PgBouncer или Odyssey? Прочитайте <a href="comparison.html">Сравнение</a> и <a href="authentication/overview.html">Аутентификацию</a>.</li>
 <li>Используете Patroni? См. <a href="tutorials/patroni-assisted-fallback.html">Fallback через Patroni</a> и <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</li>
 <li>Готовитесь к промышленной эксплуатации? Прочитайте <a href="tutorials/pool-pressure.html">Пул под нагрузкой</a> и <a href="concepts/pool-coordinator.html">Координатор пулов</a>.</li>
-<li>Эксплуатируете PgDoorman? См. <a href="tutorials/binary-upgrade.html">Обновление бинаря</a>, <a href="operations/signals.html">Сигналы</a>, <a href="tutorials/troubleshooting.html">Диагностику проблем</a>.</li>
+<li>Эксплуатируете PgDoorman? См. <a href="tutorials/binary-upgrade.html">Горячую замену процесса</a>, <a href="operations/signals.html">Сигналы</a>, <a href="tutorials/troubleshooting.html">Диагностику проблем</a>.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="pgdoorman-vs-pgbouncer-vs-odyssey"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey">PgDoorman vs PgBouncer vs Odyssey</a></h1>
 <p>Сравнительная матрица фич для выбора пулера соединений PostgreSQL. Каждое утверждение про PgBouncer привязано к <a href="https://www.pgbouncer.org/config.html">config reference</a> и <a href="https://www.pgbouncer.org/changelog.html">changelog</a>; каждое утверждение про Odyssey — к <a href="https://github.com/yandex/odyssey/tree/master/docs">docs</a> проекта.</p>
@@ -349,11 +349,11 @@ pools:
 <tr><td>Server-side TLS к PostgreSQL (<code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Да (5 режимов)</td><td style="text-align: center">Да (<code>server_tls_*</code>, 6 режимов вкл. <code>prefer</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>mTLS к PostgreSQL (отправка клиентского сертификата на backend)</td><td style="text-align: center">Да (<code>server_tls_certificate</code> + <code>server_tls_private_key</code>)</td><td style="text-align: center">Да (<code>server_tls_key_file</code> + <code>server_tls_cert_file</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Hot reload server-side TLS-сертификатов</td><td style="text-align: center">Да (<code>SIGHUP</code>)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>, "new file contents will be used for new connections")</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Hot reload client-facing TLS-сертификатов</td><td style="text-align: center">Нет (требуется restart или binary upgrade)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Hot reload client-facing TLS-сертификатов</td><td style="text-align: center">Нет (требуется restart или горячая замена процесса)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Минимальная версия TLS настраивается</td><td style="text-align: center">Да (по умолчанию TLS 1.2)</td><td style="text-align: center">Да (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Настраивается, дефолты другие</td></tr>
 <tr><td>Direct TLS handshake (PostgreSQL 17, без <code>SSLRequest</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Контроль TLS 1.3 cipher suites</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Миграция TLS-сессии при binary upgrade</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, по запросу)</td><td style="text-align: center">Нет (TLS-соединения отбрасываются при online restart)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Миграция TLS-сессии при горячей замене процесса</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, по запросу)</td><td style="text-align: center">Нет (TLS-соединения отбрасываются при online restart)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="guides/tls.html">TLS</a>.</p>
@@ -429,7 +429,7 @@ pools:
 <p>См. <a href="reference/prometheus.html">Справочник Prometheus-метрик</a>, <a href="observability/admin-commands.html">Команды администратора</a>.</p>
 <h2 id="Эксплуатация"><a class="header" href="#Эксплуатация">Эксплуатация</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Обновление бинаря с миграцией сессий (TCP-сокет, cancel keys, prepared cache)</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, плюс TLS state со сборкой <code>tls-migration</code>)</td><td style="text-align: center">Нет: <code>-R</code> deprecated с 1.20; rolling restart через <code>so_reuseport</code> оставляет старые сессии на старом процессе</td><td style="text-align: center">Нет: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> оставляет старые сессии на старом процессе</td></tr>
+<tr><td>Горячая замена процесса с миграцией сессий (TCP-сокет, cancel keys, prepared cache)</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, плюс TLS state со сборкой <code>tls-migration</code>)</td><td style="text-align: center">Нет: <code>-R</code> deprecated с 1.20; rolling restart через <code>so_reuseport</code> оставляет старые сессии на старом процессе</td><td style="text-align: center">Нет: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> оставляет старые сессии на старом процессе</td></tr>
 <tr><td>Формат конфига</td><td style="text-align: center">YAML или TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Свой формат (lex/yacc)</td></tr>
 <tr><td>Человекочитаемые длительности и размеры (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (целые микросекунды / байты)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Режим проверки конфига (<code>pg_doorman -t</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
@@ -440,7 +440,7 @@ pools:
 <tr><td>Лимит TCP-буферов</td><td style="text-align: center">Да (<code>tcp_socket_buffer_size</code> для клиентских TCP-сокетов и TCP-сокетов к PostgreSQL)</td><td style="text-align: center">Да (<code>tcp_socket_buffer</code>)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
-<p>См. <a href="tutorials/binary-upgrade.html">Плавное обновление бинаря</a>, <a href="operations/signals.html">Сигналы</a>.</p>
+<p>См. <a href="tutorials/binary-upgrade.html">Горячая замена процесса с переносом сессий</a>, <a href="operations/signals.html">Сигналы</a>.</p>
 <h2 id="Протокол"><a class="header" href="#Протокол">Протокол</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>Simple query</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
@@ -461,7 +461,7 @@ pools:
 <li><strong>Нужен <code>transaction_timeout</code>, который применяет сам пулер.</strong> Используйте PgBouncer 1.25+.</li>
 <li><strong>Нужен горизонтальный шардинг внутри пулера.</strong> Используйте PgCat.</li>
 </ul>
-<p>Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и обновление бинаря с миграцией живых сессий — PgDoorman ближе по профилю.</p>
+<p>Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и горячая замена процесса с миграцией живых сессий — PgDoorman ближе по профилю.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Обзор"><a class="header" href="#Обзор">Обзор</a></h1>
 <h2 id="Что-делает-pgdoorman"><a class="header" href="#Что-делает-pgdoorman">Что делает PgDoorman</a></h2>
 <p>PgDoorman сидит между приложениями и PostgreSQL. Для приложения он выглядит как сервер PostgreSQL (тот же wire-протокол, та же строка подключения для <code>psql</code>); внутри он мультиплексирует много клиентских сессий на гораздо меньший набор реальных серверных соединений.</p>
@@ -471,7 +471,7 @@ pools:
     App3[Приложение C] --&gt; Pooler
     Pooler --&gt; DB[(PostgreSQL)]
 </pre>
-<p>Изначально PgDoorman был форкнут из <a href="https://github.com/postgresml/pgcat">PgCat</a>, но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и обновление бинаря с миграцией живых сессий. Сейчас это самостоятельная кодовая база.</p>
+<p>Изначально PgDoorman был форкнут из <a href="https://github.com/postgresml/pgcat">PgCat</a>, но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и горячая замена процесса с миграцией живых сессий. Сейчас это самостоятельная кодовая база.</p>
 <h2 id="Зачем-вообще-пулер"><a class="header" href="#Зачем-вообще-пулер">Зачем вообще пулер</a></h2>
 <p>Каждое соединение к PostgreSQL стоит серверу около 10 МБ RAM, отдельный процесс и время на каждый handshake (auth, SCRAM, разрешение <code>search_path</code>). Без пулера приложение, открывающее N короткоживущих соединений в секунду, платит N×время-handshake. Пулер позволяет тем же N клиентам переиспользовать небольшой набор долгоживущих серверных соединений, и стоимость handshake оплачивается один раз на соединение с PostgreSQL, а не один раз на клиента.</p>
 <p>Конкретные эффекты:</p>
@@ -518,7 +518,7 @@ pools:
 <li><a href="tutorials/installation.html">Установка</a> — установить pg_doorman из пакетов, исходников или Docker.</li>
 <li><a href="tutorials/basic-usage.html">Базовое использование</a> — минимальный конфиг, первое подключение, типичные грабли.</li>
 <li><a href="tutorials/../concepts/pool-coordinator.html">Координатор пулов</a> — когда одна база делится между несколькими пользовательскими пулами.</li>
-<li><a href="tutorials/binary-upgrade.html">Плавное обновление бинаря</a> — заменить бинарник в промышленной эксплуатации без потери живых сессий.</li>
+<li><a href="tutorials/binary-upgrade.html">Горячая замена процесса с переносом сессий</a> — заменить процесс в промышленной эксплуатации и перенести мигрируемые сессии.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Установка-pgdoorman"><a class="header" href="#Установка-pgdoorman">Установка PgDoorman</a></h1>
 <p>PgDoorman работает на Linux и macOS. Для промышленной эксплуатации рекомендуем собирать самим — так вы контролируете версию Rust, целевую платформу и зависимости. Также доступны готовые пакеты из репозиториев и статические бинарники. Docker — только для тестов.</p>
@@ -539,12 +539,12 @@ sudo install -m 0755 target/release/pg_doorman /usr/local/bin/pg_doorman
 <p><code>cargo build --release</code> собирает оптимизированный бинарник в <code>target/release/pg_doorman</code>. Требования к окружению и процесс разработки описаны в <a href="tutorials/./contributing.html">Участие в проекте</a>.</p>
 <h3 id="Фичи-cargo"><a class="header" href="#Фичи-cargo">Фичи Cargo</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Фича</th><th>По умолчанию</th><th>Эффект</th></tr></thead><tbody>
-<tr><td><code>tls-migration</code></td><td>выкл</td><td>Vendored OpenSSL 3.5.5 с патчем, позволяющим TLS-клиентам пережить обновление бинарника. <strong>Нужен для обновления TLS-клиентов без простоя.</strong></td></tr>
+<tr><td><code>tls-migration</code></td><td>выкл</td><td>Vendored OpenSSL 3.5.5 с патчем, позволяющим переносить TLS-клиентов при горячей замене процесса. <strong>Нужен, если TLS-клиенты должны мигрировать без переподключения.</strong></td></tr>
 <tr><td><code>pam</code></td><td>выкл</td><td>Поддержка аутентификации PAM (Linux).</td></tr>
 </tbody></table>
 </div>
 <h3 id="Сборка-с-миграцией-tls-клиентов"><a class="header" href="#Сборка-с-миграцией-tls-клиентов">Сборка с миграцией TLS-клиентов</a></h3>
-<p>По умолчанию TLS-клиенты не могут перейти на новый процесс при обновлении бинарника — они получают ошибку <code>58006</code> и переподключаются. Чтобы соединения переходили на новый процесс без разрыва, соберите с фичей <code>tls-migration</code>:</p>
+<p>По умолчанию TLS-клиенты не могут перейти на новый процесс при горячей замене процесса — они получают ошибку <code>58006</code> и переподключаются. Чтобы TLS-соединения переходили на новый процесс без разрыва, соберите с фичей <code>tls-migration</code>:</p>
 <pre><code class="language-bash">cargo build --release --features tls-migration
 </code></pre>
 <p>Сборка использует vendored OpenSSL 3.5.5 с патчем, который экспортирует и заново импортирует состояние TLS-шифров (ключи, IV, sequence numbers, TLS 1.3 traffic secrets) при передаче соединений между процессами. Зашифрованные клиенты остаются на том же TCP-соединении без повторного TLS handshake.</p>
@@ -607,8 +607,8 @@ sudo mv pg_doorman /usr/local/bin/
 </code></pre>
 <p><code>CMD</code> образа по умолчанию запускает <code>pg_doorman</code> без аргументов. При <code>WORKDIR /etc/pg_doorman</code> это означает конфиг <code>/etc/pg_doorman/pg_doorman.toml</code>. Если монтируете YAML, передайте путь явно, как в примере выше.</p>
 <p>Пробрасывайте <code>6432</code> для PostgreSQL-протокола. Если в конфиге включён <code>web.enabled</code>, дополнительно пробросьте <code>9127</code> для <code>/metrics</code> и веб-консоли; без этого флага listener не поднимается. Путь к конфигу можно задать позиционным аргументом или переменной <code>CONFIG_FILE</code>; также доступны <code>LOG_LEVEL</code> (по умолчанию <code>info</code>), <code>LOG_FORMAT</code> (<code>text</code>, <code>structured</code> или <code>debug</code>) и <code>NO_COLOR</code>.</p>
-<p>В Dockerfile задан <code>STOPSIGNAL SIGTERM</code>, поэтому <code>docker stop</code> отправляет <code>pg_doorman</code> обычный сигнал остановки контейнера. Не используйте <code>SIGINT</code> для остановки контейнера: вне TTY этот сигнал запускает binary upgrade, что для контейнерного запуска обычно приводит к завершению PID 1.</p>
-<p>Публичный образ собран без фич <code>tls-migration</code> и <code>pam</code>. Обычный TLS для клиентских и серверных соединений не зависит от <code>tls-migration</code>; эта фича нужна только для переноса TLS-сессий при обновлении бинарника. Для TLS migration или PAM соберите свой образ из публичного <code>Dockerfile</code>, добавив <code>--features tls-migration</code> и/или <code>pam</code> в шаг <code>cargo build --release</code>.</p>
+<p>В Dockerfile задан <code>STOPSIGNAL SIGTERM</code>, поэтому <code>docker stop</code> отправляет <code>pg_doorman</code> обычный сигнал остановки контейнера. Не используйте <code>SIGINT</code> для остановки контейнера: вне TTY этот сигнал запускает горячую замену процесса, что для контейнерного запуска обычно приводит к завершению PID 1.</p>
+<p>Публичный образ собран без фич <code>tls-migration</code> и <code>pam</code>. Обычный TLS для клиентских и серверных соединений не зависит от <code>tls-migration</code>; эта фича нужна только для переноса TLS-сессий при горячей замене процесса. Для TLS migration или PAM соберите свой образ из публичного <code>Dockerfile</code>, добавив <code>--features tls-migration</code> и/или <code>pam</code> в шаг <code>cargo build --release</code>.</p>
 <p><code>docker-compose.yaml</code> с PostgreSQL в качестве sidecar лежит в <a href="https://github.com/ozontech/pg_doorman/tree/master/example"><code>example/</code></a> — для smoke-тестов.</p>
 <h2 id="Проверка-установки"><a class="header" href="#Проверка-установки">Проверка установки</a></h2>
 <pre><code class="language-bash">pg_doorman --version
@@ -621,7 +621,7 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c "SHOW VERSION;"
 <li><a href="tutorials/./basic-usage.html">Базовое использование</a> — первый конфиг, admin-консоль, мониторинг.</li>
 <li><a href="tutorials/../authentication/overview.html">Аутентификация</a> — выбор подходящего метода.</li>
 <li><a href="tutorials/../operations/signals.html">Сигналы и перезагрузка</a> — сигналы, reload, интеграция с systemd.</li>
-<li><a href="tutorials/./binary-upgrade.html">Плавное обновление бинаря</a> — замена бинарника без потери клиентов.</li>
+<li><a href="tutorials/./binary-upgrade.html">Горячая замена процесса с переносом сессий</a> — новый бинарь и конфиг с переносом мигрируемых клиентов.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Базовое-использование-pgdoorman"><a class="header" href="#Базовое-использование-pgdoorman">Базовое использование PgDoorman</a></h1>
 <p>Сквозной разбор: ключи командной строки, минимальный конфиг, admin-консоль и эксплуатационные команды (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>). Эта страница — вторая по порядку чтения после <a href="tutorials/overview.html">Обзора</a> и <a href="tutorials/installation.html">Установки</a>.</p>
@@ -1222,8 +1222,8 @@ PAUSE → RECONNECT → RESUME — сначала пауза не даёт ст�
 <p>PgDoorman реагирует на стандартные Unix-сигналы для управления и контроля. Сигналы посылаются через <code>kill</code> (например, <code>kill -HUP &lt;pid&gt;</code>).</p>
 <div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Эффект</th></tr></thead><tbody>
 <tr><td><strong>SIGHUP</strong></td><td>Перечитывание конфигурации — эквивалент admin-команды <code>RELOAD</code>.</td></tr>
-<tr><td><strong>SIGUSR2</strong></td><td>Обновление бинаря и плавное завершение старого процесса. Валидирует новый бинарник флагом <code>-t</code>, запускает новый процесс, затем завершается. <strong>Рекомендуется для обновлений.</strong> См. <a href="tutorials/binary-upgrade.html">Плавное обновление бинаря</a>.</td></tr>
-<tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): только плавное завершение (без обновления бинаря). <strong>Режим демона / без TTY</strong>: обновление бинаря и плавное завершение для совместимости со старыми установками.</td></tr>
+<tr><td><strong>SIGUSR2</strong></td><td>Горячая замена процесса. Валидирует новый бинарь и конфиг флагом <code>-t</code>, запускает новый процесс, передаёт ему слушающий сокет и переносит сессии, где это возможно. <strong>Рекомендуется для обновлений.</strong> См. <a href="tutorials/binary-upgrade.html">Горячая замена процесса с переносом сессий</a>.</td></tr>
+<tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): только плавное завершение (без замены процесса). <strong>Режим демона / без TTY</strong>: горячая замена процесса для совместимости со старыми установками.</td></tr>
 <tr><td><strong>SIGTERM</strong></td><td>Немедленное завершение. Активные соединения обрываются.</td></tr>
 </tbody></table>
 </div><div id="admonition-Управление-процессом" class="admonition admonish-note" role="note" aria-labelledby="admonition-Управление-процессом-title">
@@ -1234,7 +1234,7 @@ PAUSE → RECONNECT → RESUME — сначала пауза не даёт ст�
 <a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-Управление-процессом"></a>
 </div>
 <div>
-<p>В окружениях на базе systemd unit-файл по умолчанию использует <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>, чтобы запускать binary upgrade при <code>systemctl reload</code>.</p>
+<p>В окружениях на базе systemd unit-файл по умолчанию использует <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>, чтобы запускать горячую замену процесса при <code>systemctl reload</code>.</p>
 </div>
 </div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Аутентификация-1"><a class="header" href="#Аутентификация-1">Аутентификация</a></h1>
@@ -1738,7 +1738,7 @@ host    all all 0.0.0.0/0 reject
 <p>Для разработки сертификат может быть самоподписанным; в промышленной эксплуатации обычно используют Let's Encrypt или внутренний CA.</p>
 <h3 id="Перезагрузка-клиентская-сторона"><a class="header" href="#Перезагрузка-клиентская-сторона">Перезагрузка (клиентская сторона)</a></h3>
 <p>Клиентские сертификаты загружаются при старте. Их смена требует рестарта процесса. Для клиентского TLS перезагрузки по <code>SIGHUP</code> нет.</p>
-<p>Для ротации сертификатов без простоя смотрите <a href="guides/../tutorials/binary-upgrade.html">плавное обновление бинаря</a>.</p>
+<p>Горячая замена процесса может загрузить новый сертификат и ключ для новых входящих TLS-подключений, но это не бесшовная ротация для уже открытых TLS-сессий. Для переноса TLS-сессий оба процесса должны использовать те же <code>tls_certificate</code> и <code>tls_private_key</code>, а сборка должна быть Linux + <code>tls-migration</code>; при смене этих файлов TLS-клиенты дренируются и переподключаются.</p>
 <h3 id="Политика-шифров"><a class="header" href="#Политика-шифров">Политика шифров</a></h3>
 <p>Минимум TLS 1.2 применяется на этапе handshake. PgDoorman <strong>не</strong> задаёт явный список шифров — эффективные шифры берутся из системной сборки OpenSSL. Если нужен жёсткий список, настройте его системно (<code>/etc/ssl/openssl.cnf</code>) или соберите OpenSSL с нужной политикой.</p>
 <p>Direct TLS handshake (PostgreSQL 17, без <code>SSLRequest</code>) не поддерживается. Для управления шифрами TLS 1.3 или direct TLS из PostgreSQL 17 используйте PgBouncer 1.25+.</p>
@@ -1790,7 +1790,7 @@ host    all all 0.0.0.0/0 reject
 <h2 id="Куда-дальше-4"><a class="header" href="#Куда-дальше-4">Куда дальше</a></h2>
 <ul>
 <li>Настройка нового кластера? Смотрите <a href="guides/../tutorials/installation.html">Установку</a>.</li>
-<li>Ротация сертификатов? Смотрите <a href="guides/../tutorials/binary-upgrade.html">плавное обновление бинаря</a> и <a href="guides/../operations/signals.html">Сигналы</a>.</li>
+<li>Ротация сертификатов? Смотрите <a href="guides/../tutorials/binary-upgrade.html">горячую замену процесса с переносом сессий</a> и <a href="guides/../operations/signals.html">Сигналы</a>. Для переноса TLS-сессий нужна Linux-сборка с <code>tls-migration</code>.</li>
 <li>Hardening существующего развёртывания? Сочетайте с <a href="guides/../authentication/hba.html">pg_hba.conf</a>: принудительный <code>hostssl</code> для нелокальных соединений.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="Режимы-пула-1"><a class="header" href="#Режимы-пула-1">Режимы пула</a></h1>
@@ -4527,15 +4527,22 @@ cargo test --test patroni_proxy_bdd
 <li>Убедитесь, что порог <code>max_lag_in_bytes</code> не превышается.</li>
 <li>Включите debug-логирование, чтобы увидеть детальный жизненный цикл соединений.</li>
 </ol>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="Обновление-бинарника-без-переподключения"><a class="header" href="#Обновление-бинарника-без-переподключения">Обновление бинарника без переподключения</a></h1>
-<p>pg_doorman умеет заменить исполняемый файл на работающем сервере по
-<code>SIGUSR2</code>. Свободные клиенты передаются новому процессу через
-Unix-сокет вместе с ключами отмены запросов и кешем prepared statements.
-Клиент остаётся на том же TCP-соединении и не проходит повторное
-подключение.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="Горячая-замена-процесса-с-переносом-сессий"><a class="header" href="#Горячая-замена-процесса-с-переносом-сессий">Горячая замена процесса с переносом сессий</a></h1>
+<p>Перед <code>SIGUSR2</code> или admin-командой <code>UPGRADE</code> можно заменить бинарь и
+конфиг на диске. Работающий процесс проверит эту комбинацию через <code>-t</code>,
+запустит дочерний процесс с теми же аргументами запуска, передаст ему
+слушающий сокет и переведёт на него новые подключения.</p>
+<p>Старый процесс продолжает обслуживать уже подключённых клиентов и
+переносит свободные TCP-сессии без TLS в новый процесс через Unix-сокет.
+Клиент остаётся на том же TCP-соединении: вместе с файловым
+дескриптором передаются ключ отмены запроса, параметры
+PostgreSQL-сессии и кеш prepared statements.</p>
 <p>Клиенты внутри транзакции продолжают работать на старом процессе и
 переезжают, когда транзакция завершится. Для приложений это убирает
-волну переподключений, а для PostgreSQL — всплеск SCRAM-аутентификаций.</p>
+волну переподключений, а для PostgreSQL — всплеск <code>auth</code>/SCRAM.</p>
+<p>TLS-сессии мигрируют только в Linux-сборке с фичей <code>tls-migration</code>.
+Дистрибутивные пакеты и Docker-образ собраны без неё, поэтому TLS-клиенты
+при такой замене дренируются и переподключаются к новому процессу.</p>
 <div id="admonition-Чем-это-отличается-от-pgbouncer--odyssey" class="admonition admonish-info" role="note" aria-labelledby="admonition-Чем-это-отличается-от-pgbouncer--odyssey-title">
 <div class="admonition-title">
 <div id="admonition-Чем-это-отличается-от-pgbouncer--odyssey-title">
@@ -4569,18 +4576,19 @@ Linux-сборке с <code>tls-migration</code> может перенести �
 бинарник раскладывают без пакетного менеджера.</p>
 </div>
 </div>
-<pre><code class="language-bash"># 1. Установите новый бинарник по пути, из которого запущен сервис.
+<pre><code class="language-bash"># 1. Установите новый бинарник по пути, из которого запущен сервис,
+#    и при необходимости обновите конфиг на диске.
 install -m 0755 pg_doorman_new /usr/bin/pg_doorman
 
-# 2. Проверьте, что новый бинарник принимает текущий конфиг, до того
-#    как запускать обновление. SIGUSR2 тоже прогоняет `-t` и отменяет
-#    обновление при ошибке, но проверка здесь даёт шанс починить конфиг,
+# 2. Проверьте, что новый процесс стартует с этим конфигом, до того
+#    как запускать замену. SIGUSR2 тоже прогоняет `-t` и отменяет
+#    замену при ошибке, но проверка здесь даёт шанс починить конфиг,
 #    не трогая работающий сервер.
 /usr/bin/pg_doorman -t /etc/pg_doorman/pg_doorman.toml
 
-# 3. Запустите обновление. С `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
+# 3. Запустите замену процесса. С `ExecReload=/bin/kill -SIGUSR2 $MAINPID`
 #    в юните `systemctl reload` отправляет SIGUSR2 и запускает
-#    обновление бинарника. Дальше pg_doorman проверяет конфиг,
+#    горячую замену процесса. Дальше pg_doorman проверяет конфиг,
 #    запускает дочерний процесс, мигрирует состояние где возможно и
 #    дренирует старый процесс. systemd шлёт сигнал в MainPID, поэтому
 #    выбирается ровно один процесс, даже если на хосте есть
@@ -4617,13 +4625,13 @@ psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'  # отвечает новый про
 процесса-супервизора и шлите сигнал ему напрямую.</p>
 </div>
 </div>
-<p>То же обновление можно запустить из консоли администратора:</p>
+<p>Ту же замену процесса можно запустить из консоли администратора:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
 <p><code>UPGRADE</code> шлёт <code>SIGUSR2</code> запущенному процессу — тот же путь, что и
 <code>kill -USR2</code>. Успешный ответ команды означает, что сигнал отправлен, а
 не что проверка и миграция уже закончились.</p>
-<h2 id="Как-работает-обновление"><a class="header" href="#Как-работает-обновление">Как работает обновление</a></h2>
+<h2 id="Как-работает-замена"><a class="header" href="#Как-работает-замена">Как работает замена</a></h2>
 <pre><code>                        SIGUSR2
                            |
                            v
@@ -4661,10 +4669,11 @@ psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'  # отвечает новый про
 </code></pre>
 <h3 id="Фаза-1-Проверка-конфига"><a class="header" href="#Фаза-1-Проверка-конфига">Фаза 1: Проверка конфига</a></h3>
 <p>Работающий процесс берёт путь, из которого стартовал сам, и запускает
-его с <code>-t</code> и текущим конфигом. После <code>install</code> из быстрого старта этот
-путь уже указывает на новый бинарник, поэтому проверяется именно тот
-процесс, который должен принять трафик. Если проверка проваливается,
-обновление отменяется, а старый процесс продолжает обслуживать трафик.
+его с <code>-t</code> и текущим конфигом. После <code>install</code> и правки конфига из
+быстрого старта этот путь уже указывает на новый бинарник и новый файл
+конфига, поэтому проверяется именно процесс, который должен принять
+трафик. Если проверка проваливается,
+замена отменяется, а старый процесс продолжает обслуживать трафик.
 В логах появляется баннер:</p>
 <pre><code>!!!  BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED  !!!
 !!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!
@@ -4750,7 +4759,7 @@ psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'  # отвечает новый про
 <h2 id="Миграция-tls-сессий"><a class="header" href="#Миграция-tls-сессий">Миграция TLS-сессий</a></h2>
 <p>По умолчанию TLS-клиенты не мигрируют — зашифрованная сессия
 требует ключевой материал, который живёт внутри автомата OpenSSL.
-Такие клиенты дренируются при обновлении: соединение закрывается при
+Такие клиенты дренируются при замене процесса: соединение закрывается при
 истечении <code>shutdown_timeout</code>, клиент переподключается к новому процессу.</p>
 <p>Опциональная сборка с <code>tls-migration</code> решает эту проблему. Патченный
 OpenSSL экспортирует состояние симметричного шифрования, передаёт его
@@ -4847,8 +4856,8 @@ PostgreSQL-нагрузок этот порог практически недо�
 </ul>
 <h2 id="Сигналы"><a class="header" href="#Сигналы">Сигналы</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Поведение</th></tr></thead><tbody>
-<tr><td><code>SIGUSR2</code></td><td>Обновление бинарника + дренирование старого процесса. <strong>Рекомендуемый для всех режимов.</strong></td></tr>
-<tr><td><code>SIGINT</code></td><td>В foreground + TTY (Ctrl+C): только завершение, без обновления. В режиме демона или без TTY: обновление бинарника для совместимости со старыми установками.</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Горячая замена процесса + дренирование старого процесса. <strong>Рекомендуемый для всех режимов.</strong></td></tr>
+<tr><td><code>SIGINT</code></td><td>В foreground + TTY (Ctrl+C): только завершение, без замены процесса. В режиме демона или без TTY: горячая замена процесса для совместимости со старыми установками.</td></tr>
 <tr><td><code>SIGTERM</code></td><td>Немедленный выход. Транзакции обрываются. Все клиенты отключаются.</td></tr>
 <tr><td><code>SIGHUP</code></td><td>Перечитать конфигурацию без перезапуска. Без простоя.</td></tr>
 <tr><td><code>UPGRADE</code> (admin)</td><td>Отправляет SIGUSR2 текущему процессу. Тот же эффект.</td></tr>
@@ -4856,21 +4865,21 @@ PostgreSQL-нагрузок этот порог практически недо�
 </div>
 <blockquote>
 <p><strong>Поведение <code>SIGINT</code> для совместимости:</strong>
-<code>SIGINT</code> запускает обновление бинарника в режиме демона или без TTY
+<code>SIGINT</code> запускает горячую замену процесса в режиме демона или без TTY
 (например, под systemd). В интерактивном терминале Ctrl+C останавливает
 процесс без запуска нового. Используйте <code>kill -USR2</code> или <code>UPGRADE</code> в
-консоли администратора для обновления в foreground-режиме.</p>
+консоли администратора для горячей замены в foreground-режиме.</p>
 </blockquote>
 <h2 id="Режим-демона-и-foreground-режим"><a class="header" href="#Режим-демона-и-foreground-режим">Режим демона и foreground-режим</a></h2>
 <div class="table-wrapper"><table><thead><tr><th></th><th>Foreground</th><th>Режим демона</th></tr></thead><tbody>
 <tr><td>Миграция клиентов через передачу fd</td><td>Да (<code>socketpair</code>)</td><td>Нет</td></tr>
 <tr><td>Свободные клиенты сохраняются</td><td>Да</td><td>Нет (закрываются при выходе старого процесса)</td></tr>
 <tr><td>Клиенты внутри транзакции</td><td>Завершают транзакцию, затем мигрируют</td><td>Работают до таймаута, затем закрываются</td></tr>
-<tr><td>Запуск нового процесса</td><td>Наследует файловый дескриптор listener</td><td>Запускается независимо</td></tr>
+<tr><td>Запуск нового процесса</td><td>Наследует файловый дескриптор слушающего сокета</td><td>Запускается независимо</td></tr>
 <tr><td>Рекомендуется для</td><td>systemd, контейнеры, Kubernetes</td><td>Старые установки</td></tr>
 </tbody></table>
 </div>
-<p>Для обновления без простоя и с миграцией клиентов запускайте pg_doorman
+<p>Для горячей замены процесса с миграцией клиентов запускайте pg_doorman
 в foreground-режиме. systemd управляет жизненным циклом процесса.
 Используйте <code>Type=notify</code>: юнит становится <code>active</code> только после
 сигнала готовности от pg_doorman, а новый процесс при <code>SIGUSR2</code>
@@ -4881,20 +4890,20 @@ Type=notify
 # отправить READY=1 и MAINPID=&lt;new_pid&gt; во время передачи управления.
 NotifyAccess=exec
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
-# `systemctl reload` запускает обновление бинарника: проверка конфига,
+# `systemctl reload` запускает горячую замену процесса: проверка конфига,
 # новый процесс, миграция клиентов где возможно, затем дренирование
 # старого процесса по shutdown_timeout из конфига pg_doorman.
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
-# `systemctl stop` — немедленное завершение. Это не путь обновления,
+# `systemctl stop` — немедленное завершение. Это не путь горячей замены,
 # и он не ждёт миграции активных транзакций.
 ExecStop=/bin/kill -SIGTERM $MAINPID
-# При обновлении новый дочерний процесс становится MainPID через sd_notify.
+# При горячей замене новый дочерний процесс становится MainPID через sd_notify.
 # KillMode=mixed при обычном stop шлёт SIGTERM только в MainPID, а
 # оставшиеся процессы cgroup добивает SIGKILL только после TimeoutStopSec.
 KillMode=mixed
 TimeoutStopSec=60
 # Не перезапускать сервис после чистой ручной остановки или после выхода
-# старого процесса, который успешно передал трафик новому при обновлении.
+# старого процесса, который успешно передал трафик новому при замене.
 Restart=on-failure
 Nice=-15
 # pg_doorman активно использует дескрипторы: каждый клиент и каждый
@@ -4911,7 +4920,7 @@ SyslogIdentifier=pg_doorman
 </code></pre>
 <p><code>systemctl reload pg_doorman</code> отправляет <code>SIGUSR2</code>; нулевой код выхода
 означает только, что сигнал доставлен. Затем pg_doorman прогоняет <code>-t</code>
-на новом бинарнике, отменяет обновление при битом конфиге, иначе
+на новом бинарнике, отменяет замену при битом конфиге, иначе
 порождает новый процесс и дренирует старый. <code>UPGRADE;</code> из админ-консоли
 идёт по тому же пути. Окно дренирования задаёт <code>shutdown_timeout</code> в
 <code>pg_doorman.toml</code>; <code>TimeoutStopSec</code> относится к обычному
@@ -4919,7 +4928,7 @@ SyslogIdentifier=pg_doorman
 мигрировавшие сессии.</p>
 <p>Продакшен-установки часто добавляют сверху ограничения ресурсов:
 <code>MemoryMax=</code>, <code>CPUAffinity=2,3,4,5,6,7,8,9</code>. Это зависит от нагрузки
-и не меняет контракт обновления.</p>
+и не меняет контракт горячей замены.</p>
 <h2 id="Конфигурация-12"><a class="header" href="#Конфигурация-12">Конфигурация</a></h2>
 <h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
 <p>Максимальное время ожидания завершения транзакций перед принудительным
@@ -4944,11 +4953,11 @@ shutdown_timeout = 60000  # миллисекунды
 <p>Клиентский TLS-материал <strong>не</strong> перезагружается по <code>SIGHUP</code> (это
 делает только серверный TLS, см. <a href="tutorials/../guides/tls.html">горячую перезагрузку TLS</a>).
 Не совмещайте ротацию сертификата для входящих клиентских TLS-соединений
-с обновлением, где вы ожидаете миграцию TLS-сессий. Если файлы
+с горячей заменой, где вы ожидаете миграцию TLS-сессий. Если файлы
 отличаются между старым и новым процессом, импорт TLS-состояния падает,
 и затронутые клиенты переподключаются даже с включённым
 <code>tls-migration</code>. Ротируйте этот сертификат в окно, где переподключения
-допустимы, либо оставьте те же файлы на время обновления бинарника и
+допустимы, либо оставьте те же файлы на время горячей замены процесса и
 меняйте сертификат позже через рестарт.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
 <p>Кеш prepared statements на уровне пула. Напрямую на миграцию не
@@ -4960,11 +4969,11 @@ shutdown_timeout = 60000  # миллисекунды
 конфиг имеет меньшее значение, LRU вытесняет лишние анонимные записи.
 Именованные записи не ограничены этим параметром и мигрируют целиком.</p>
 <h2 id="Откат"><a class="header" href="#Откат">Откат</a></h2>
-<p>У обновления бинарника нет отдельного пути отмены. Для отката положите
-предыдущий бинарник на тот же путь и запустите ещё одно обновление через
+<p>У горячей замены процесса нет отдельного пути отмены. Для отката положите
+предыдущий бинарник на тот же путь и запустите ещё одну замену через
 <code>SIGUSR2</code>. Если проверка конфига провалится, текущий процесс продолжит
 обслуживать трафик. Если новый процесс уже принял трафик, откат
-проходит как обычное обновление в обратную сторону.</p>
+проходит как обычная горячая замена в обратную сторону.</p>
 <p>Не используйте <code>systemctl restart</code> или <code>SIGTERM</code> для отката, если
 переподключения недопустимы: оба пути закрывают клиентские сессии, а не
 мигрируют их.</p>
@@ -4989,7 +4998,7 @@ INFO  migration receiver done: migration socket closed
 INFO  migration receiver: stopped
 </code></pre>
 <h3 id="prometheus-метрики-1"><a class="header" href="#prometheus-метрики-1">Prometheus-метрики</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Значение при обновлении</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Значение при замене процесса</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_pools_clients{status="active"}</code></td><td>Должна упасть до 0 на старом процессе</td></tr>
 <tr><td><code>pg_doorman_pools_clients{status="idle"}</code></td><td>Падает по мере миграции клиентов</td></tr>
 <tr><td><code>pg_doorman_connections_total{type="total"}</code></td><td>Новый процесс принимает свежие подключения; используйте <code>rate()</code> / <code>increase()</code></td></tr>
@@ -5004,7 +5013,7 @@ SHOW CLIENTS;
 <h2 id="Диагностика-2"><a class="header" href="#Диагностика-2">Диагностика</a></h2>
 <h3 id="Клиент-получил-58006-или-отключился-вместо-миграции"><a class="header" href="#Клиент-получил-58006-или-отключился-вместо-миграции">Клиент получил 58006 или отключился вместо миграции</a></h3>
 <p><strong>Ctrl+C в foreground-режиме.</strong> <code>SIGINT</code> в TTY означает завершение без
-обновления. Используйте <code>kill -USR2</code> или <code>UPGRADE</code> в консоли
+горячей замены. Используйте <code>kill -USR2</code> или <code>UPGRADE</code> в консоли
 администратора.</p>
 <p><strong>Режим демона.</strong> В режиме демона нет миграции через файловые
 дескрипторы. Существующие клиенты остаются на старом процессе и
@@ -5019,7 +5028,7 @@ SHOW CLIENTS;
 административную сессию на старом процессе.</p>
 <p><strong>Принудительный выход:</strong> <code>kill -TERM &lt;old_pid&gt;</code> отправляет <code>SIGTERM</code>
 и завершает процесс без ожидания миграции.</p>
-<h3 id="tls-соединение-оборвалось-после-обновления"><a class="header" href="#tls-соединение-оборвалось-после-обновления">TLS-соединение оборвалось после обновления</a></h3>
+<h3 id="tls-соединение-оборвалось-после-замены-процесса"><a class="header" href="#tls-соединение-оборвалось-после-замены-процесса">TLS-соединение оборвалось после замены процесса</a></h3>
 <p><strong>Бинарник собран без <code>--features tls-migration</code>.</strong> TLS-клиенты
 дренируются вместо миграции. Пересоберите с <code>--features tls-migration</code>.</p>
 <p><strong>Запуск не на Linux.</strong> Миграция TLS работает только на Linux.</p>
@@ -5052,7 +5061,7 @@ TLS-соединений. Если нужна миграция TLS-сессий,
 <a href="https://github.com/lib/pq/issues/939">issue</a>.</p>
 </blockquote>
 <h2 id="Чек-лист-перед-продакшеном"><a class="header" href="#Чек-лист-перед-продакшеном">Чек-лист перед продакшеном</a></h2>
-<p>Перед выкатом обновления бинарника:</p>
+<p>Перед выкатом горячей замены процесса:</p>
 <ul>
 <li><input disabled="" type="checkbox"/>
 Запуск в <strong>foreground-режиме</strong> (не <code>daemon</code>) для миграции через файловые дескрипторы</li>
@@ -5063,14 +5072,14 @@ TLS-соединений. Если нужна миграция TLS-сессий,
 Если используете TLS: сборка с <code>--features tls-migration</code>,
 оба процесса используют одинаковые файлы сертификата и ключа</li>
 <li><input disabled="" type="checkbox"/>
-Протестировать обновление на staging: открыть сессию, отправить
+Протестировать замену на staging: открыть сессию, отправить
 SIGUSR2, убедиться что сессия продолжает работать</li>
 <li><input disabled="" type="checkbox"/>
 В systemd-юните указано <code>Type=notify</code> с <code>NotifyAccess=exec</code>,
-<code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code> (тогда <code>systemctl     reload</code> запускает обновление бинарника с проверкой конфига),
+<code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code> (тогда <code>systemctl     reload</code> запускает горячую замену процесса с проверкой конфига),
 <code>KillMode=mixed</code> и <code>Restart=on-failure</code></li>
 <li><input disabled="" type="checkbox"/>
-Мониторинг логов на ошибки миграции после первого обновления в
+Мониторинг логов на ошибки миграции после первой замены в
 продакшене</li>
 <li><input disabled="" type="checkbox"/>
 Подтвердить что старый процесс завершился (PID-файл или <code>pgrep</code>)</li>
@@ -5099,7 +5108,7 @@ SIGUSR2, убедиться что сессия продолжает работ�
 <div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Эффект</th><th>Существующие соединения</th><th>Когда применять</th></tr></thead><tbody>
 <tr><td><code>SIGHUP</code></td><td>Перезагрузить конфиг с диска.</td><td>Сохраняются.</td><td>Подкрутить пулы, ротировать серверные TLS-сертификаты, отредактировать <code>pg_hba.conf</code>.</td></tr>
 <tr><td><code>SIGTERM</code></td><td>Немедленное завершение.</td><td>Закрываются.</td><td>Остановка сервиса, когда переподключения допустимы.</td></tr>
-<tr><td><code>SIGUSR2</code></td><td>Обновление бинарника и дренирование старого процесса.</td><td>Мигрируют в новый процесс, где это возможно.</td><td>Замена бинарника без простоя.</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Горячая замена процесса: новый бинарь и конфиг, затем дренирование старого процесса.</td><td>Мигрируют в новый процесс, где это возможно; TLS требует <code>tls-migration</code>.</td><td>Раскатить изменения, которым нужен новый процесс.</td></tr>
 <tr><td><code>SIGINT</code></td><td>Зависит от TTY (см. ниже).</td><td>По-разному.</td><td>Ctrl+C при разработке; устарело для промышленной эксплуатации.</td></tr>
 </tbody></table>
 </div>
@@ -5122,7 +5131,7 @@ SIGUSR2, убедиться что сессия продолжает работ�
 значение применяется только при приёме нового клиентского TCP-сокета
 или открытии нового TCP-сокета к PostgreSQL.</li>
 <li>TLS-сертификаты для входящих клиентских подключений — нужен перезапуск
-процесса. Не ротируйте их во время обновления, где нужна миграция
+процесса. Не ротируйте их во время горячей замены, где нужна миграция
 TLS-сессий.</li>
 <li>Число рабочих потоков и параметры рантайма Tokio.</li>
 </ul>
@@ -5133,37 +5142,37 @@ TLS-сессий.</li>
 <p>pg_doorman логирует, сколько клиентов ещё в транзакциях, и выходит. Он
 не ждёт <code>shutdown_timeout</code> и не мигрирует активные транзакции. Все
 клиентские соединения закрываются при выходе процесса.</p>
-<p><code>shutdown_timeout</code> относится к дренированию при обновлении бинарника
+<p><code>shutdown_timeout</code> относится к дренированию при горячей замене процесса
 через <code>SIGUSR2</code>, а не к обычному завершению по <code>SIGTERM</code>.</p>
-<h2 id="Обновление-бинарника-sigusr2"><a class="header" href="#Обновление-бинарника-sigusr2">Обновление бинарника (<code>SIGUSR2</code>)</a></h2>
+<h2 id="Горячая-замена-процесса-sigusr2"><a class="header" href="#Горячая-замена-процесса-sigusr2">Горячая замена процесса (<code>SIGUSR2</code>)</a></h2>
 <pre><code class="language-bash">kill -USR2 $(pidof pg_doorman)
 </code></pre>
-<p>Рекомендуемый способ заменить бинарник, не теряя клиентов:</p>
+<p>Рекомендуемый способ заменить процесс, не теряя мигрируемых клиентов:</p>
 <ol>
-<li>Замените бинарник на диске новой версией через атомарный <code>rename</code>.</li>
+<li>Замените бинарник и/или конфиг на диске.</li>
 <li>Отправьте <code>SIGUSR2</code> работающему процессу.</li>
-<li>Текущий процесс проверяет новый бинарник через <code>-t</code>.</li>
-<li>Текущий процесс порождает дочерний с новым бинарником, передаёт ему слушающий сокет и продолжает обслуживать существующих клиентов до их завершения.</li>
+<li>Текущий процесс проверяет новый бинарник с конфигом через <code>-t</code>.</li>
+<li>Текущий процесс порождает дочерний процесс с теми же аргументами запуска, передаёт ему слушающий сокет и продолжает обслуживать существующих клиентов до миграции или завершения.</li>
 <li>Новые клиенты сразу подключаются к дочернему процессу.</li>
-<li>Старый процесс выходит, когда последняя клиентская транзакция завершится (или по <code>shutdown_timeout</code>).</li>
+<li>Старый процесс выходит, когда клиенты мигрировали или отключились (или по <code>shutdown_timeout</code>).</li>
 </ol>
 <p>Дочерний процесс отправляет <code>sd_notify MAINPID=&lt;new_pid&gt;</code>, чтобы юниты
 systemd с <code>Type=notify</code> корректно отслеживали новый главный PID.</p>
-<p>Если при обновлении изменён <code>general.tcp_socket_buffer_size</code>, новый
+<p>Если при горячей замене изменён <code>general.tcp_socket_buffer_size</code>, новый
 процесс применяет его к мигрировавшим клиентским TCP-сокетам при
 восстановлении клиента. Backend-сокеты через <code>SCM_RIGHTS</code> не передаются:
 новые backend-соединения получают настройку при открытии, а старые
 остаются в старом процессе до дренирования.</p>
-<p>Полный протокол, миграцию TLS и откат смотрите в <a href="operations/../tutorials/binary-upgrade.html">обновлении бинарника без переподключения</a>.</p>
+<p>Полный протокол, миграцию TLS и откат смотрите в <a href="operations/../tutorials/binary-upgrade.html">горячей замене процесса с переносом сессий</a>.</p>
 <h2 id="sigint-ctrlc"><a class="header" href="#sigint-ctrlc"><code>SIGINT</code> (Ctrl+C)</a></h2>
 <p><code>SIGINT</code> зависит от контекста:</p>
 <ul>
 <li><strong>На переднем плане с TTY</strong> (разработка, <code>cargo run</code>): только завершение работы.</li>
-<li><strong>В режиме демона или без TTY</strong>: запускает обновление бинарника и
+<li><strong>В режиме демона или без TTY</strong>: запускает горячую замену процесса и
 дренирование старого процесса, как <code>SIGUSR2</code>, для совместимости со
 старыми установками.</li>
 </ul>
-<p>Путь обновления через <code>SIGINT</code> существует ради обратной совместимости с инсталляциями, которые отправляют <code>SIGINT</code> из init-скриптов. Новые инсталляции должны явно использовать <code>SIGUSR2</code> для обновления и <code>SIGTERM</code> для остановки.</p>
+<p>Путь горячей замены через <code>SIGINT</code> существует ради обратной совместимости с инсталляциями, которые отправляют <code>SIGINT</code> из init-скриптов. Новые инсталляции должны явно использовать <code>SIGUSR2</code> для горячей замены и <code>SIGTERM</code> для остановки.</p>
 <h2 id="Интеграция-с-systemd"><a class="header" href="#Интеграция-с-systemd">Интеграция с systemd</a></h2>
 <p>pg_doorman поддерживает <code>Type=notify</code>. Поставляемый юнит <code>pg_doorman.service</code> запускает бинарник в основном процессе и уведомляет systemd через <code>sd_notify</code>:</p>
 <pre><code class="language-ini">[Service]
@@ -5181,9 +5190,9 @@ User=postgres
 Group=postgres
 LimitNOFILE=65536
 </code></pre>
-<p><code>sd_notify READY=1</code> отправляется после привязки слушающего сокета и инициализации пулов. <code>sd_notify MAINPID=&lt;child&gt;</code> отправляется при обновлении бинарника, чтобы systemd корректно отслеживал новый процесс.</p>
-<p>С таким юнитом <code>systemctl reload pg_doorman</code> означает обновление
-бинарника (<code>SIGUSR2</code>), а не перечитывание конфига (<code>SIGHUP</code>). Если нужно
+<p><code>sd_notify READY=1</code> отправляется после привязки слушающего сокета и инициализации пулов. <code>sd_notify MAINPID=&lt;child&gt;</code> отправляется при горячей замене процесса, чтобы systemd корректно отслеживал новый процесс.</p>
+<p>С таким юнитом <code>systemctl reload pg_doorman</code> означает горячую замену
+процесса (<code>SIGUSR2</code>), а не перечитывание конфига (<code>SIGHUP</code>). Если нужно
 только перечитать конфиг, используйте <code>kill -HUP &lt;pid&gt;</code>.</p>
 <p>Если переходите с <code>Type=forking</code> + <code>--daemon</code>, уберите <code>--daemon</code> и переключитесь на <code>Type=notify</code> — меньше движущихся частей и корректное отслеживание готовности. Старые инсталляции с <code>--daemon</code> продолжают работать, но не получают преимуществ <code>sd_notify</code>.</p>
 <h2 id="Режим-демона"><a class="header" href="#Режим-демона">Режим демона</a></h2>
@@ -5193,7 +5202,7 @@ LimitNOFILE=65536
 </code></pre>
 <h2 id="Куда-дальше-6"><a class="header" href="#Куда-дальше-6">Куда дальше</a></h2>
 <ul>
-<li><a href="operations/../tutorials/binary-upgrade.html">Обновление бинарника без переподключения</a> — полный протокол обновления с миграцией TLS.</li>
+<li><a href="operations/../tutorials/binary-upgrade.html">Горячая замена процесса с переносом сессий</a> — полный протокол замены с миграцией TLS.</li>
 <li><a href="operations/../tutorials/troubleshooting.html">Диагностика</a> — что проверить, когда перезагрузка не подхватывает изменения.</li>
 <li><a href="operations/../guides/tls.html">TLS</a> — семантика перезагрузки серверных сертификатов по <code>SIGHUP</code>.</li>
 </ul>
@@ -5446,9 +5455,9 @@ Bind в следующей пачке, поднимите TTL (с 60 до 300, �
 <pre><code class="language-bash">pg_doorman -t /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
 <h2 id="Клиенты-получают-58006-pooler-is-shut-down-now"><a class="header" href="#Клиенты-получают-58006-pooler-is-shut-down-now">Клиенты получают <code>58006</code> (<code>pooler is shut down now</code>)</a></h2>
-<p>Пул выключается, либо обновление бинаря было запущено в режиме демона. Посмотрите серверные логи рядом с временем ошибки:</p>
+<p>Пул выключается, либо горячая замена процесса была запущена в режиме демона. Посмотрите серверные логи рядом с временем ошибки:</p>
 <ul>
-<li><code>Got SIGUSR2, starting binary upgrade …</code> — идёт обновление бинаря. В foreground-режиме свободные клиенты должны мигрировать прозрачно; <code>58006</code> получают только клиенты, оставшиеся в транзакции после <code>shutdown_timeout</code>. В режиме демона миграции через файловые дескрипторы нет, и каждый клиент получает <code>58006</code> при закрытии соединения. См. <a href="tutorials/binary-upgrade.html#%D0%94%D0%B8%D0%B0%D0%B3%D0%BD%D0%BE%D1%81%D1%82%D0%B8%D0%BA%D0%B0">Плавное обновление бинаря → Диагностика</a>.</li>
+<li><code>Got SIGUSR2, starting binary upgrade …</code> — идёт горячая замена процесса. В foreground-режиме свободные TCP-клиенты без TLS должны мигрировать прозрачно; TLS-клиенты мигрируют только со сборкой <code>tls-migration</code>. <code>58006</code> получают клиенты, оставшиеся в транзакции после <code>shutdown_timeout</code>. В режиме демона миграции через файловые дескрипторы нет, и каждый клиент получает <code>58006</code> при закрытии соединения. См. <a href="tutorials/binary-upgrade.html#%D0%94%D0%B8%D0%B0%D0%B3%D0%BD%D0%BE%D1%81%D1%82%D0%B8%D0%BA%D0%B0">Горячая замена процесса с переносом сессий → Диагностика</a>.</li>
 <li>Нет строки <code>SIGUSR2</code> в логе — кто-то прислал <code>SIGTERM</code> или <code>SIGINT</code>, и пулер выключился без замены. Проверьте systemd-юнит, конкретный pid и operator runbook.</li>
 </ul>
 <p>Если <code>58006</code> пришёл во время плановой замены — для этой подмножества клиентов это ожидаемое поведение. Настройте connection pool приложения на retry при transient-ошибках.</p>
@@ -6508,7 +6517,7 @@ TCP retransmission timeout, когда keepalive не помогает (напр
 <p>Ненулевое значение вызывает <code>setsockopt(SO_RCVBUF/SO_SNDBUF)</code> один раз для каждого настраиваемого TCP-сокета. Это отключает автонастройку для этого сокета и задаёт фиксированные лимиты буферов отправки и приёма. Linux внутренне удваивает запрошенные значения — см. <code>man 7 socket</code> — и может ограничить их через <code>net.core.rmem_max</code> / <code>net.core.wmem_max</code>. Перед настройкой значений выше системного дефолта проверьте <code>/proc/sys/net/core/rmem_max</code> и <code>/proc/sys/net/core/wmem_max</code>. Применённые ядром значения видны через <code>getsockopt</code>, <code>ss -m</code> и <code>DEBUG</code>-логи pg_doorman.</p>
 <p>Примерная верхняя граница в Linux: <code>4 * tcp_socket_buffer_size * число_TCP_сокетов</code>. Pg_doorman задаёт буферы отправки и приёма, а Linux внутренне удваивает каждое значение. Например, <code>tcp_socket_buffer_size = 65536</code> даёт около 256 KiB лимитов на один TCP-сокет, то есть примерно 15 MiB на 60 TCP-сокетов без учёта накладных расходов <code>sk_buff</code>. Считайте и клиентские TCP-сокеты, и TCP-сокеты к PostgreSQL. Фактически занятая память всё равно зависит от данных в очередях.</p>
 <p>Этот параметр в первую очередь ограничивает память. Стартовый диапазон для OLTP внутри одного датацентра: <strong>64 KiB – 256 KiB</strong>. Не ставьте меньше 64 KiB без замеров. Для WAN, межзонального трафика, больших результатов запроса и массовой передачи данных может понадобиться большее значение или поведение по умолчанию с автонастройкой TCP.</p>
-<p>Значение применяется, когда pg_doorman настраивает TCP-сокет: к новым клиентским подключениям, новым TCP-соединениям к PostgreSQL и клиентским сокетам, восстановленным в новом процессе через <code>SCM_RIGHTS</code>. <code>SIGHUP</code> не пересматривает уже открытые сокеты. Чтобы применить новое значение к существующим сессиям, используйте binary upgrade для мигрирующих клиентов, <code>RECONNECT</code>/дренирование пулов для backend-сокетов или обычный рестарт, если переподключения допустимы.</p>
+<p>Значение применяется, когда pg_doorman настраивает TCP-сокет: к новым клиентским подключениям, новым TCP-соединениям к PostgreSQL и клиентским сокетам, восстановленным в новом процессе через <code>SCM_RIGHTS</code>. <code>SIGHUP</code> не пересматривает уже открытые сокеты. Чтобы применить новое значение к существующим сессиям, используйте горячую замену процесса для мигрирующих клиентов, <code>RECONNECT</code>/дренирование пулов для backend-сокетов или обычный рестарт, если переподключения допустимы.</p>
 <p>Это аналог параметра <code>tcp_socket_buffer</code> в PgBouncer. В Odyssey и PgCat аналога нет, они наследуют поведение автонастройки TCP в Linux.</p>
 <p>По умолчанию: <code>0</code>.</p>
 <h3 id="unix_socket_buffer_size"><a class="header" href="#unix_socket_buffer_size">unix_socket_buffer_size</a></h3>

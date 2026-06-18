@@ -182,7 +182,8 @@ rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> +
 picks up new connections, the old one drains until its existing clients
 disconnect. Sessions, prepared statements, and TLS state never cross
 processes. pg_doorman migrates the live socket via <code>SCM_RIGHTS</code>, plus the
-cipher state with the <code>tls-migration</code> build (Linux, opt-in).</p>
+cipher state with the <code>tls-migration</code> build when both processes use the
+same client-facing certificate and key (Linux, opt-in).</p>
 </div>
 </div>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>

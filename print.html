@@ -162,18 +162,18 @@
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
 <p><a href="tutorials/installation.html">Get PgDoorman 3.10.7</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
-<div id="admonition-built-in-diagnostic-console" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-diagnostic-console-title">
+<div id="admonition-anonymous-parse-caching" class="admonition admonish-success" role="note" aria-labelledby="admonition-anonymous-parse-caching-title">
 <div class="admonition-title">
-<div id="admonition-built-in-diagnostic-console-title">
-<p>Built-in diagnostic console</p>
+<div id="admonition-anonymous-parse-caching-title">
+<p>Anonymous Parse Caching</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-built-in-diagnostic-console"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-anonymous-parse-caching"></a>
 </div>
 <div>
-<p>A diagnostic console embedded in the pg_doorman binary, served on the same port as <code>/metrics</code>. It gives operators the incident view that <code>/metrics</code> and the psql admin console expose only in pieces: pool saturation, latency percentiles, SQLSTATE breakdowns, long-running queries, prepared-cache and query-interner state, process memory, cgroup limits, per-worker CPU, and a live log tail.</p>
-<p>The console is for live diagnosis, not a replacement for long-term Prometheus/Grafana monitoring.</p>
-<p>Pause / Resume / Reconnect / Reload act from the same page, scoped per pool or globally. Read-only otherwise. The console activates only when <code>[web].ui = true</code> and <code>general.admin_password</code> is non-default; a fresh install with the placeholder password keeps the listener at <code>/metrics</code> only and logs a <code>WARN</code>.</p>
-<p><a href="guides/web-ui.html">Read more →</a></p>
+<p>In the extended protocol, many drivers send short parameterised queries as an unnamed <code>Parse</code>. PgDoorman rewrites that <code>Parse</code> on the PostgreSQL side to an internal <code>DOORMAN_&lt;N&gt;</code> name and keeps the mapping in the pool. Later <code>Bind</code>s for the same query shape reuse prepared backend state.</p>
+<p>That cuts repeated PostgreSQL planner work on hot OLTP paths without application changes. PgBouncer 1.21+ and Odyssey can track named prepared statements, but they forward anonymous <code>Parse</code> unchanged; PgDoorman covers the driver-default case.</p>
+<p>The cache is bounded: anonymous entries expire after idle timeout, and named entries are freed after their last reference. <code>SHOW INTERNER</code> exposes query-text memory; Prometheus metrics expose hits, misses, and evictions.</p>
+<p><a href="tutorials/prepared-statements.html">Read more →</a></p>
 </div>
 </div>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
@@ -184,8 +184,9 @@
 <a class="admonition-anchor-link" href="index.html#admonition-pool-coordinator"></a>
 </div>
 <div>
-<p>PgDoorman caps total backend connections per database. When <code>max_db_connections</code> is reached, the coordinator evicts an idle connection from the user with the most spare capacity, ranking candidates by p95 transaction time so the slowest pools yield first. A reserve pool absorbs short bursts; per-user <code>min_guaranteed_pool_size</code> keeps critical workloads off the eviction list.</p>
-<p>PgBouncer's <code>max_db_connections</code> has no eviction or fairness — when the cap is reached, clients queue until existing connections close on their own idle timeout. Odyssey has no equivalent setting.</p>
+<p>When several user pools share one database, the global limit should protect PostgreSQL, not just queue clients. PgDoorman enforces <code>max_db_connections</code>: once the cap is reached, the coordinator closes an idle connection from a pool with spare capacity and gives the slot to a client waiting for a backend.</p>
+<p>Donors are ranked by excess idle connections. On a tie, the pool with the higher p95 transaction time yields first: fast pools keep more reuse chances, while evicting an idle connection from a slower pool hurts less. The reserve pool absorbs short bursts, and <code>min_guaranteed_pool_size</code> protects critical workloads from eviction.</p>
+<p>PgBouncer's <code>max_db_connections</code> sets a shared cap, but it does not redistribute already-open idle connections between pools. Odyssey has no direct equivalent.</p>
 <p><a href="concepts/pool-coordinator.html">Read more →</a></p>
 </div>
 </div>
@@ -197,38 +198,37 @@
 <a class="admonition-anchor-link" href="index.html#admonition-patroni-assisted-fallback"></a>
 </div>
 <div>
-<p>When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman polls the Patroni REST API (<code>GET /cluster</code>), picks a live cluster member (priority <code>sync_standby</code> → <code>replica</code>), and routes new connections there. The local backend enters cooldown; fallback connections inherit a short lifetime so the pool returns to local as soon as it recovers.</p>
-<p>Set <code>patroni_api_urls</code> and <code>fallback_cooldown</code> in <code>[general]</code> and it applies to every pool. No HAProxy or <code>consul-template</code> in front of the pooler.</p>
+<p>When PgDoorman runs next to PostgreSQL and the local server disappears during a Patroni switchover, new backend connections temporarily go to another live cluster member. PgDoorman chooses the target through the Patroni REST API (<code>GET /cluster</code>): <code>sync_standby</code> first, then <code>replica</code>.</p>
+<p>The local server enters cooldown, and fallback connections get a short lifetime. Once the local node is reachable again, the pool returns to it without a separate HAProxy or <code>consul-template</code> in front of the pooler. <code>patroni_api_urls</code> and <code>fallback_cooldown</code> are configured in <code>[general]</code>.</p>
 <p><a href="tutorials/patroni-assisted-fallback.html">Read more →</a></p>
 </div>
 </div>
-<div id="admonition-graceful-binary-upgrade" class="admonition admonish-success" role="note" aria-labelledby="admonition-graceful-binary-upgrade-title">
+<div id="admonition-hot-process-handoff-with-session-migration" class="admonition admonish-success" role="note" aria-labelledby="admonition-hot-process-handoff-with-session-migration-title">
 <div class="admonition-title">
-<div id="admonition-graceful-binary-upgrade-title">
-<p>Graceful Binary Upgrade</p>
+<div id="admonition-hot-process-handoff-with-session-migration-title">
+<p>Hot Process Handoff with Session Migration</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-graceful-binary-upgrade"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-hot-process-handoff-with-session-migration"></a>
 </div>
 <div>
-<p>Update PgDoorman without stopping the listener. Idle client sessions can move to the new process, which avoids a reconnect wave and reduces repeated <code>auth</code>/SCRAM handshakes against PostgreSQL. Clients inside a transaction stay on the old process until they go idle.</p>
-<p>On <code>SIGUSR2</code> the old process hands each idle client's TCP socket to the new one through <code>SCM_RIGHTS</code> — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the <code>tls-migration</code> build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.</p>
-<p>PgBouncer's online restart (<code>-R</code>, deprecated since 1.20; or <code>so_reuseport</code> rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.</p>
+<p>Before <code>SIGUSR2</code> or <code>UPGRADE</code>, operators can replace the binary and config on disk. PgDoorman validates that pair with <code>-t</code>, starts a child process with it, passes the listening socket to the child, and keeps the old process serving existing clients while eligible sessions migrate.</p>
+<p>The new process receives <code>connection_id</code>, the cancel key, PostgreSQL session parameters, backend authentication state, and the client prepared-statement cache. From the application's point of view the connection stays open: no reconnect, no repeated <code>auth</code>/SCRAM, and no lost prepared statements. If the new backend connection has not prepared a statement yet, PgDoorman sends the needed <code>Parse</code> on the first <code>Bind</code>.</p>
+<p>In foreground mode, non-TLS TCP sessions move through <code>SCM_RIGHTS</code>. TLS sessions migrate only on a Linux build with <code>tls-migration</code> and the same <code>tls_certificate</code>/<code>tls_private_key</code>; distro packages and the Docker image are built without it, so TLS clients drain. Clients inside a transaction stay on the old process and move after <code>COMMIT</code> or <code>ROLLBACK</code>. PgBouncer (<code>-R</code>, deprecated since 1.20, or rolling restart via <code>so_reuseport</code>) and Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) leave old sessions in the old process until clients disconnect.</p>
 <p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
 </div>
 </div>
-<div id="admonition-anonymous-parse-caching" class="admonition admonish-success" role="note" aria-labelledby="admonition-anonymous-parse-caching-title">
+<div id="admonition-built-in-diagnostic-console" class="admonition admonish-success" role="note" aria-labelledby="admonition-built-in-diagnostic-console-title">
 <div class="admonition-title">
-<div id="admonition-anonymous-parse-caching-title">
-<p>Anonymous Parse Caching</p>
+<div id="admonition-built-in-diagnostic-console-title">
+<p>Built-in Diagnostic Console</p>
 </div>
-<a class="admonition-anchor-link" href="index.html#admonition-anonymous-parse-caching"></a>
+<a class="admonition-anchor-link" href="index.html#admonition-built-in-diagnostic-console"></a>
 </div>
 <div>
-<p>In extended protocol, many drivers send short parameterised queries as <code>Parse</code> with an empty statement name. Without a remap, that hot path keeps paying PostgreSQL planner CPU and repeated backend <code>Parse</code> work on every reuse.</p>
-<p>PgDoorman rewrites the empty name to an internal <code>DOORMAN_&lt;N&gt;</code> on the backend and keeps the mapping in the pool. PostgreSQL sees a named prepared statement, so later <code>Bind</code>s for the same query shape can reuse prepared backend state across one client and across clients sharing the pool. The primary value is performance: less planner work and fewer backend Parses on repeated OLTP queries.</p>
-<p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.</p>
-<p>To keep that optimization operationally safe, the cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, <code>SHOW INTERNER</code> exposes interner size, and Prometheus metrics expose hits, misses, and evictions.</p>
-<p><a href="tutorials/prepared-statements.html">Read more →</a></p>
+<p>PgDoorman serves the web console on the same address and port as <code>/metrics</code>. It is a local incident panel, not a replacement for long-term Prometheus/Grafana monitoring.</p>
+<p>One screen shows pool saturation, p95/p99 query, transaction, and checkout latency, SQLSTATE errors, long-running queries, prepared-statement and query-interner state, the log tail, CPU by <code>tokio-worker</code>, and process memory (<code>jemalloc</code>, <code>/proc/self/status</code>, text/libs, stacks, swap).</p>
+<p>The console can run Pause, Resume, Reconnect, and Reload for one pool or the whole instance. Other views are read-only. The UI is enabled only when <code>[web].ui = true</code> and <code>general.admin_password</code> is set to a non-placeholder value; otherwise PgDoorman keeps only <code>/metrics</code> and logs a <code>WARN</code>.</p>
+<p><a href="guides/web-ui.html">Read more →</a></p>
 </div>
 </div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
@@ -249,7 +249,7 @@
 <tr><td>Patroni-assisted fallback (built-in)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Pre-replacement on <code>server_lifetime</code> expiry</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Stale backend detection inside a transaction</td><td style="text-align: center">Yes (immediate <code>08006</code>)</td><td style="text-align: center">No (waits for TCP keepalive)</td><td style="text-align: center">No (waits for TCP keepalive)</td></tr>
-<tr><td>Binary upgrade with session migration</td><td style="text-align: center">Yes (<code>SCM_RIGHTS</code>, TLS state opt-in)</td><td style="text-align: center">No (sessions stay on old process)</td><td style="text-align: center">No (sessions stay on old process)</td></tr>
+<tr><td>Hot process handoff with idle-session migration</td><td style="text-align: center">Yes, via <code>SCM_RIGHTS</code>; TLS state with <code>tls-migration</code> and same cert/key</td><td style="text-align: center">No (sessions stay on old process)</td><td style="text-align: center">No (sessions stay on old process)</td></tr>
 <tr><td>Backend TLS to PostgreSQL</td><td style="text-align: center">Yes (5 modes, hot reload via <code>SIGHUP</code>)</td><td style="text-align: center">Yes (<code>server_tls_*</code>, hot reload via <code>RELOAD</code>)</td><td style="text-align: center">No</td></tr>
 <tr><td>Auth: SCRAM passthrough (no plaintext password)</td><td style="text-align: center">Yes (<code>ClientKey</code> extracted from proof)</td><td style="text-align: center">Yes (encrypted SCRAM secret via <code>auth_query</code>/<code>userlist.txt</code>, since 1.14)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>Auth: JWT (RSA-SHA256)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
@@ -348,11 +348,11 @@ pools:
 <tr><td>Server-side TLS to PostgreSQL (<code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes (5 modes)</td><td style="text-align: center">Yes (<code>server_tls_*</code>, 6 modes incl. <code>prefer</code>)</td><td style="text-align: center">No</td></tr>
 <tr><td>mTLS to PostgreSQL (client cert sent to backend)</td><td style="text-align: center">Yes (<code>server_tls_certificate</code> + <code>server_tls_private_key</code>)</td><td style="text-align: center">Yes (<code>server_tls_key_file</code> + <code>server_tls_cert_file</code>)</td><td style="text-align: center">No</td></tr>
 <tr><td>Hot reload of server-side TLS certificates</td><td style="text-align: center">Yes (<code>SIGHUP</code>)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>, "new file contents will be used for new connections")</td><td style="text-align: center">No</td></tr>
-<tr><td>Hot reload of client-facing TLS certificates</td><td style="text-align: center">No (requires restart or binary upgrade)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Hot reload of client-facing TLS certificates</td><td style="text-align: center">No (<code>SIGHUP</code> unsupported; handoff loads new files for new connections only)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">No</td></tr>
 <tr><td>Minimum TLS version configurable</td><td style="text-align: center">Yes (defaults to TLS 1.2)</td><td style="text-align: center">Yes (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Configurable, defaults differ</td></tr>
 <tr><td>Direct TLS handshake (PostgreSQL 17, no <code>SSLRequest</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
 <tr><td>TLS 1.3 cipher control</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">No</td></tr>
-<tr><td>TLS session migration across binary upgrade</td><td style="text-align: center">Yes (<code>tls-migration</code> build, Linux, opt-in)</td><td style="text-align: center">No (TLS connections are dropped during online restart)</td><td style="text-align: center">No</td></tr>
+<tr><td>TLS session migration across binary upgrade</td><td style="text-align: center">Yes (Linux <code>tls-migration</code> build, same cert/key)</td><td style="text-align: center">No (TLS connections are dropped during online restart)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="guides/tls.html">TLS</a>.</p>
@@ -428,7 +428,7 @@ pools:
 <p>See <a href="reference/prometheus.html">Prometheus metrics reference</a>, <a href="observability/admin-commands.html">Admin commands</a>.</p>
 <h2 id="operations"><a class="header" href="#operations">Operations</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Binary upgrade with session migration (TCP socket, cancel keys, prepared cache)</td><td style="text-align: center">Yes (<code>SCM_RIGHTS</code>, plus TLS state with the <code>tls-migration</code> build)</td><td style="text-align: center">No: <code>-R</code> deprecated since 1.20; <code>so_reuseport</code> rolling restart drains old sessions in place</td><td style="text-align: center">No: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> drains old sessions in place</td></tr>
+<tr><td>Binary upgrade with session migration (TCP socket, cancel keys, prepared cache)</td><td style="text-align: center">Yes (<code>SCM_RIGHTS</code>, plus TLS state with Linux <code>tls-migration</code> and same cert/key)</td><td style="text-align: center">No: <code>-R</code> deprecated since 1.20; <code>so_reuseport</code> rolling restart drains old sessions in place</td><td style="text-align: center">No: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> drains old sessions in place</td></tr>
 <tr><td>Configuration format</td><td style="text-align: center">YAML or TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Own format (lex/yacc)</td></tr>
 <tr><td>Human-readable durations and sizes (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (integer microseconds / bytes)</td><td style="text-align: center">No</td></tr>
 <tr><td>Config test mode (<code>pg_doorman -t</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
@@ -1736,7 +1736,7 @@ host    all all 0.0.0.0/0 reject
 <p>The certificate may be self-signed for development; production deployments typically use Let's Encrypt or an internal CA.</p>
 <h3 id="reload-client-side"><a class="header" href="#reload-client-side">Reload (client side)</a></h3>
 <p>Client-side certificates are loaded at startup. Changing them requires a process restart. There is no <code>SIGHUP</code> reload for client-side TLS.</p>
-<p>For zero-downtime certificate rotation, see <a href="guides/../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
+<p>Hot process handoff can load a new certificate and key for new inbound TLS connections, but it is not seamless rotation for sessions that are already open. To migrate TLS sessions, both processes must use the same <code>tls_certificate</code> and <code>tls_private_key</code>, and PgDoorman must run as a Linux build with <code>tls-migration</code>; if those files change, TLS clients drain and reconnect.</p>
 <h3 id="cipher-policy"><a class="header" href="#cipher-policy">Cipher policy</a></h3>
 <p>Minimum TLS 1.2 enforced in the handshake. PgDoorman does <strong>not</strong> set an explicit cipher list — the effective ciphers come from the system OpenSSL build. If you need a hardened cipher list, configure it system-wide (<code>/etc/ssl/openssl.cnf</code>) or build OpenSSL with the policy you want.</p>
 <p>Direct TLS handshake (PG17, no <code>SSLRequest</code>) is not supported. For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.</p>
@@ -1788,7 +1788,7 @@ host    all all 0.0.0.0/0 reject
 <h2 id="where-to-next-3"><a class="header" href="#where-to-next-3">Where to next</a></h2>
 <ul>
 <li>New cluster setup? See <a href="guides/../tutorials/installation.html">Installation</a>.</li>
-<li>Rotating certificates? See <a href="guides/../tutorials/binary-upgrade.html">Binary Upgrade</a> and <a href="guides/../operations/signals.html">Signals</a>.</li>
+<li>Rotating certificates? See <a href="guides/../tutorials/binary-upgrade.html">Binary Upgrade</a> and <a href="guides/../operations/signals.html">Signals</a>. Client-facing TLS certificate rotation is not seamless for already-open TLS sessions.</li>
 <li>Hardening an existing deployment? Combine with <a href="guides/../authentication/hba.html">pg_hba.conf</a>: force <code>hostssl</code> for non-local connections.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="pool-modes-1"><a class="header" href="#pool-modes-1">Pool Modes</a></h1>
@@ -4410,7 +4410,8 @@ rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> +
 picks up new connections, the old one drains until its existing clients
 disconnect. Sessions, prepared statements, and TLS state never cross
 processes. pg_doorman migrates the live socket via <code>SCM_RIGHTS</code>, plus the
-cipher state with the <code>tls-migration</code> build (Linux, opt-in).</p>
+cipher state with the <code>tls-migration</code> build when both processes use the
+same client-facing certificate and key (Linux, opt-in).</p>
 </div>
 </div>
 <h2 id="quick-start-2"><a class="header" href="#quick-start-2">Quick start</a></h2>
