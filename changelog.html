@@ -161,6 +161,17 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3108"><a class="header" href="#3108">3.10.8</a></h3>
+<h4 id="cancelled-backend-startups-clear-their-server-stats-row"><a class="header" href="#cancelled-backend-startups-clear-their-server-stats-row">Cancelled backend startups clear their server stats row</a></h4>
+<p>Each backend startup attempt publishes a <code>SERVER_STATS</code> row before the
+PostgreSQL handshake finishes. If <code>connect_timeout</code> cancels pool checkout, or
+startup fails before a <code>Server</code> takes ownership, pg_doorman removes that row.
+<code>SHOW SERVERS</code>, <code>SHOW POOLS</code> (<code>sv_login</code>), <code>/api/servers</code>, and <code>/metrics</code> no
+longer show a long-lived <code>login</code> backend for a blackholed PostgreSQL address.</p>
+<p>When a local backend attempt fails and Patroni-assisted fallback is enabled,
+pg_doorman clears the local row before probing fallback candidates or waiting
+in retry backoff. Each visible <code>SHOW SERVERS</code> row now maps to an active startup
+attempt or an established server connection.</p>
 <h3 id="3107"><a class="header" href="#3107">3.10.7</a></h3>
 <h4 id="pgjdbc-largeobject-fastpath-calls-work-in-transaction-pooling"><a class="header" href="#pgjdbc-largeobject-fastpath-calls-work-in-transaction-pooling">pgjdbc LargeObject fastpath calls work in transaction pooling</a></h4>
 <p>pg_doorman now forwards PostgreSQL Fastpath <code>FunctionCall</code> (<code>F</code>) messages and
