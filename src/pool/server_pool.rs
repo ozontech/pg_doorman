@@ -414,22 +414,14 @@ impl ServerPool {
             self.address.host,
             self.address.port,
         );
-        // Resolve before any `ServerStats` is registered. The budget
-        // preflight can return `ServerStartupParameterRejection`; if we
-        // had already published the stats entry via `stats.register`,
-        // the `?` exit would leak that entry in `sv_login` forever
-        // because the disconnect path runs only after the spawn
-        // attempt produces a result. The resolved map and the TLS
-        // retry share the same Arc, so the plain attempt and the
-        // sslmode=allow retry still see one parameter set.
+        // Parameter-budget rejection happens before a server socket exists.
+        // Leave SERVER_STATS untouched so SHOW SERVERS never lists a backend
+        // startup that did not open a socket. The plain attempt and
+        // sslmode=allow retry share this resolved map.
         let startup_parameters = self.resolved_startup_parameters()?;
 
-        let stats = Arc::new(ServerStats::new(
-            self.address.clone(),
-            crate::utils::clock::now(),
-        ));
-
-        stats.register(stats.clone());
+        let (stats, registration) =
+            ServerStats::new_registered(self.address.clone(), crate::utils::clock::now());
 
         let result = startup_with_timeout(
             self.connect_timeout,
@@ -469,27 +461,23 @@ impl ServerPool {
             ),
             _ => false,
         };
-        let (result, active_stats) = if should_tls_retry {
+        let (result, active_registration) = if should_tls_retry {
             info!(
                 "plain connection rejected, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
                 self.address.username, self.address.pool_name,
                 self.address.host, self.address.port,
             );
-            // Disconnect the plain-attempt stats before registering the TLS-retry stats.
-            // Without this, both entries would remain in SERVER_STATS: the plain one
-            // as a ghost if the retry succeeds, or the retry one leaking if it fails.
-            stats.disconnect();
+            // The plain attempt ended; keep only the TLS retry row visible.
+            drop(registration);
+            drop(stats);
             let mut retry_address = self.address.clone();
             retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
                 mode: crate::config::tls::ServerTlsMode::Require,
                 connector: self.address.server_tls.connector.clone(),
                 cert_hash: self.address.server_tls.cert_hash,
             });
-            let retry_stats = Arc::new(ServerStats::new(
-                self.address.clone(),
-                crate::utils::clock::now(),
-            ));
-            retry_stats.register(retry_stats.clone());
+            let (retry_stats, retry_registration) =
+                ServerStats::new_registered(self.address.clone(), crate::utils::clock::now());
             let retry_result = startup_with_timeout(
                 self.connect_timeout,
                 &retry_address.host,
@@ -510,20 +498,22 @@ impl ServerPool {
                 ),
             )
             .await;
-            (retry_result, retry_stats)
+            (retry_result, retry_registration)
         } else {
-            (result, stats)
+            (result, registration)
         };
 
         match result {
             Ok(conn) => {
+                active_registration.release();
                 // Permit is released automatically when _permit goes out of scope
                 conn.stats.idle(0);
                 Ok(conn)
             }
             Err(err) => {
-                active_stats.disconnect();
-                // Local backend unreachable + Patroni-assisted fallback configured: route via fallback.
+                // The local attempt ended before fallback or backoff starts.
+                // Remove its login row before the next attempt publishes one.
+                drop(active_registration);
                 if is_backend_unreachable(&err) {
                     if let Some(ref fallback) = self.fallback_state {
                         fallback.blacklist();
@@ -1055,11 +1045,8 @@ impl ServerPool {
         fallback_address.host = target.host.clone();
         fallback_address.port = target.port;
 
-        let stats = Arc::new(ServerStats::new(
-            fallback_address.clone(),
-            crate::utils::clock::now(),
-        ));
-        stats.register(stats.clone());
+        let (stats, registration) =
+            ServerStats::new_registered(fallback_address.clone(), crate::utils::clock::now());
 
         // Startup parameters are resolved once per fallback round; each
         // candidate reuses the same per-pool cascade.
@@ -1097,7 +1084,7 @@ impl ServerPool {
             ),
             _ => false,
         };
-        let (result, active_stats) = if should_tls_retry {
+        let (result, active_registration) = if should_tls_retry {
             info!(
                 "[{}@{}] fallback: plain connection to {}:{} rejected, retrying with tls",
                 self.address.username,
@@ -1105,18 +1092,17 @@ impl ServerPool {
                 fallback_address.host,
                 fallback_address.port,
             );
-            stats.disconnect();
+            // The plain candidate ended; keep only the TLS retry row visible.
+            drop(registration);
+            drop(stats);
             let mut retry_address = fallback_address.clone();
             retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
                 mode: crate::config::tls::ServerTlsMode::Require,
                 connector: fallback_address.server_tls.connector.clone(),
                 cert_hash: fallback_address.server_tls.cert_hash,
             });
-            let retry_stats = Arc::new(ServerStats::new(
-                fallback_address.clone(),
-                crate::utils::clock::now(),
-            ));
-            retry_stats.register(retry_stats.clone());
+            let (retry_stats, retry_registration) =
+                ServerStats::new_registered(fallback_address.clone(), crate::utils::clock::now());
             let retry_result = startup_with_timeout(
                 fallback_timeout,
                 &retry_address.host,
@@ -1137,19 +1123,21 @@ impl ServerPool {
                 ),
             )
             .await;
-            (retry_result, retry_stats)
+            (retry_result, retry_registration)
         } else {
-            (result, stats)
+            (result, registration)
         };
 
         match result {
             Ok(mut conn) => {
+                active_registration.release();
                 conn.stats.idle(0);
                 conn.override_lifetime_ms = Some(target.lifetime_ms);
                 Ok(conn)
             }
             Err(err) => {
-                active_stats.disconnect();
+                // No Server owns this fallback candidate, so the startup
+                // registration removes its login row here.
                 Err(err)
             }
         }

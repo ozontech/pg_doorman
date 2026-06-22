@@ -1,5 +1,20 @@
 # Changelog
 
+### 3.10.8
+
+#### Cancelled backend startups clear their server stats row
+
+Each backend startup attempt publishes a `SERVER_STATS` row before the
+PostgreSQL handshake finishes. If `connect_timeout` cancels pool checkout, or
+startup fails before a `Server` takes ownership, pg_doorman removes that row.
+`SHOW SERVERS`, `SHOW POOLS` (`sv_login`), `/api/servers`, and `/metrics` no
+longer show a long-lived `login` backend for a blackholed PostgreSQL address.
+
+When a local backend attempt fails and Patroni-assisted fallback is enabled,
+pg_doorman clears the local row before probing fallback candidates or waiting
+in retry backoff. Each visible `SHOW SERVERS` row now maps to an active startup
+attempt or an established server connection.
+
 ### 3.10.7
 
 #### pgjdbc LargeObject fastpath calls work in transaction pooling

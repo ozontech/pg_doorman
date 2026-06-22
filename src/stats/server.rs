@@ -3,6 +3,7 @@ use super::{get_reporter, Reporter};
 use crate::config::Address;
 use crate::utils::clock;
 use iota::iota;
+use log::debug;
 use parking_lot::Mutex;
 use std::sync::atomic::*;
 use std::sync::Arc;
@@ -98,6 +99,41 @@ pub struct ServerStats {
 /// it from this sentinel.
 const NEVER_ACTIVE: u64 = 0;
 
+/// Tracks a `SERVER_STATS` row created for an in-progress backend startup.
+///
+/// Startup publishes the row before the PostgreSQL handshake finishes so
+/// `SHOW SERVERS` can report `login`. A completed startup calls `release()`
+/// and lets `Server::drop` remove the row later. If startup times out, fails,
+/// or retries through TLS, dropping this guard removes the transient row.
+///
+/// Drop takes the global `SERVER_STATS` write lock. Keep `stats::Collector`
+/// read sections short so mass timeouts do not block on long snapshots.
+#[must_use = "the registration is the only handle that keeps the SERVER_STATS row alive; drop it explicitly only when the row should disappear"]
+pub(crate) struct ServerStatsRegistration {
+    server_id: i32,
+    released: bool,
+}
+
+impl ServerStatsRegistration {
+    /// Marks the row as owned by `Server`; after release, Drop leaves
+    /// `SERVER_STATS` unchanged.
+    pub fn release(mut self) {
+        self.released = true;
+    }
+}
+
+impl Drop for ServerStatsRegistration {
+    fn drop(&mut self) {
+        if !self.released {
+            debug!(
+                "[server_id={}] removing startup SERVER_STATS row without Server ownership",
+                self.server_id
+            );
+            get_reporter().server_disconnecting(self.server_id);
+        }
+    }
+}
+
 /// Default implementation for ServerStats.
 ///
 /// Creates a new ServerStats instance with default values:
@@ -170,17 +206,11 @@ impl ServerStats {
             .store(Self::pack(state, wait), Ordering::Relaxed);
     }
 
-    /// Creates a new ServerStats instance with the specified address and connection time.
-    ///
-    /// This constructor initializes a new server statistics tracker with the provided
-    /// address and connection time. A random server ID is generated, and all counters
-    /// are initialized to zero.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - Address configuration for this server connection
-    /// * `connect_time` - Timestamp when the server connection was established
-    pub fn new(address: Address, connect_time: quanta::Instant) -> Self {
+    /// Creates an unregistered `ServerStats`. Production code reaches this
+    /// through `new_registered`, which pairs construction with publication.
+    /// Direct callers are limited to tests and helper code inside the crate
+    /// that must stay outside the global registry.
+    pub(crate) fn new(address: Address, connect_time: quanta::Instant) -> Self {
         Self {
             address,
             connect_time,
@@ -216,25 +246,40 @@ impl ServerStats {
     // Server lifecycle management
     // ------------------------------------------------------------------------------------------
 
-    /// Registers a server connection with the stats system.
+    /// Creates server stats in LOGIN state and publishes the row to
+    /// SERVER_STATS.
     ///
-    /// The stats system uses server_id to track and aggregate statistics from all sources
-    /// that relate to that server. This method should be called when a server connects.
+    /// The returned guard owns the row until startup succeeds. Call
+    /// `release()` after constructing `Server`; otherwise the guard removes
+    /// the row on drop.
     ///
-    /// # Arguments
-    ///
-    /// * `stats` - Arc-wrapped ServerStats instance to register
-    pub fn register(&self, stats: Arc<ServerStats>) {
-        self.reporter.server_register(self.server_id, stats);
-        self.login();
+    /// `server_id` collisions are retried before this function returns, so
+    /// each guard owns exactly one map slot.
+    pub(crate) fn new_registered(
+        address: Address,
+        connect_time: quanta::Instant,
+    ) -> (Arc<Self>, ServerStatsRegistration) {
+        loop {
+            let stats = Arc::new(Self::new(address.clone(), connect_time));
+            if stats
+                .reporter
+                .server_register(stats.server_id, Arc::clone(&stats))
+            {
+                stats.login();
+                let registration = ServerStatsRegistration {
+                    server_id: stats.server_id,
+                    released: false,
+                };
+                return (stats, registration);
+            }
+        }
     }
 
-    /// Reports that a server connection is disconnecting from the pooler.
-    ///
-    /// This method updates metrics on the pool regarding server usage and removes
-    /// the server from the stats tracking system.
+    /// Removes the row from SERVER_STATS. Called by `Server::drop` on
+    /// normal shutdown; the `ServerStatsRegistration` guard handles
+    /// removal on cancelled or failed startups.
     #[inline(always)]
-    pub fn disconnect(&self) {
+    pub(crate) fn disconnect(&self) {
         self.reporter.server_disconnecting(self.server_id);
     }
 
@@ -692,10 +737,8 @@ mod tests {
         assert_eq!(stats.process_id(), 123);
     }
 
-    #[test]
-    fn test_server_lifecycle_methods() {
-        // Create a test address
-        let address = Address {
+    fn make_lifecycle_address() -> Address {
+        Address {
             host: "test_host".to_string(),
             port: 5432,
             database: "test_db".to_string(),
@@ -705,36 +748,46 @@ mod tests {
             stats: Arc::new(AddressStats::default()),
             backend_auth: None,
             ..Address::default()
-        };
+        }
+    }
 
-        // Create a ServerStats with a fixed server_id for testing
-        let now = clock::now();
-        let stats = ServerStats::new(address.clone(), now);
+    #[test]
+    fn new_registered_row_disappears_when_startup_guard_drops() {
+        let (stats, registration) =
+            ServerStats::new_registered(make_lifecycle_address(), clock::now());
+        let server_id = stats.server_id();
 
-        // Set a known server_id for testing
-        let server_id = 54321;
-        let stats = ServerStats { server_id, ..stats };
+        assert!(get_server_stats().contains_key(&server_id));
+        assert_eq!(stats.state(), SERVER_STATE_LOGIN);
+        assert_eq!(*stats.application_name.lock(), "Undefined");
 
-        // Create an Arc-wrapped ServerStats for registration
-        let stats_arc = Arc::new(stats);
-
-        // Check that the server is not in the global registry before registration
+        drop(registration);
         assert!(!get_server_stats().contains_key(&server_id));
+    }
 
-        // Register the server
-        stats_arc.register(Arc::clone(&stats_arc));
+    #[test]
+    fn released_registration_survives_until_server_disconnect() {
+        let (stats, registration) =
+            ServerStats::new_registered(make_lifecycle_address(), clock::now());
+        let server_id = stats.server_id();
 
-        // Check that the server was registered in the global registry
+        registration.release();
         assert!(get_server_stats().contains_key(&server_id));
 
-        // Check that the state was set to LOGIN and application name to "Undefined"
-        assert_eq!(stats_arc.state(), SERVER_STATE_LOGIN);
-        assert_eq!(*stats_arc.application_name.lock(), "Undefined");
+        stats.disconnect();
+        assert!(!get_server_stats().contains_key(&server_id));
+    }
 
-        // Disconnect the server
-        stats_arc.disconnect();
+    #[test]
+    fn disconnect_after_startup_guard_drop_is_idempotent() {
+        let (stats, registration) =
+            ServerStats::new_registered(make_lifecycle_address(), clock::now());
+        let server_id = stats.server_id();
 
-        // Check that the server was removed from the global registry
+        drop(registration);
+        assert!(!get_server_stats().contains_key(&server_id));
+
+        stats.disconnect();
         assert!(!get_server_stats().contains_key(&server_id));
     }
 

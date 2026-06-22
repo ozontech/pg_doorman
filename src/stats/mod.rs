@@ -123,8 +123,21 @@ impl Reporter {
         CLIENT_STATS.write().remove(&client_id);
     }
 
-    fn server_register(&self, server_id: i32, stats: Arc<ServerStats>) {
-        SERVER_STATS.write().insert(server_id, stats);
+    /// Inserts one `SERVER_STATS` row unless another row already uses
+    /// `server_id`. The caller retries collisions so a startup guard never
+    /// owns another server's slot.
+    fn server_register(&self, server_id: i32, stats: Arc<ServerStats>) -> bool {
+        use std::collections::hash_map::Entry;
+        match SERVER_STATS.write().entry(server_id) {
+            Entry::Occupied(_) => {
+                warn!("[server_id={server_id}] server stats id collision, retrying with a new id");
+                false
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(stats);
+                true
+            }
+        }
     }
 
     fn server_disconnecting(&self, server_id: i32) {
