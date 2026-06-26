@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.10.8</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.11.0</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-anonymous-parse-caching" class="admonition admonish-success" role="note" aria-labelledby="admonition-anonymous-parse-caching-title">
 <div class="admonition-title">
@@ -7180,6 +7180,10 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="3110"><a class="header" href="#3110">3.11.0</a></h3>
+<h4 id="talos-can-route-through-client-specific-pools"><a class="header" href="#talos-can-route-through-client-specific-pools">Talos can route through client-specific pools</a></h4>
+<p>For <code>user=talos</code>, pg_doorman now selects the pool user in this order: <code>clientId</code>, <code>srv-&lt;clientId&gt;</code>, then the max token role (<code>owner</code>, <code>read_write</code>, <code>read_only</code>). Each Talos login logs the selected username and route.</p>
+<p>Backend <code>application_name</code> stays the Talos <code>clientId</code>, so <code>SHOW SERVERS</code> and <code>pg_stat_activity</code> still show the client service. Talos bypasses <code>pg_hba</code> for the resolved pool user; enforce per-service access in the token issuer policy or PostgreSQL grants.</p>
 <h3 id="3108"><a class="header" href="#3108">3.10.8</a></h3>
 <h4 id="cancelled-backend-startups-clear-their-server-stats-row"><a class="header" href="#cancelled-backend-startups-clear-their-server-stats-row">Cancelled backend startups clear their server stats row</a></h4>
 <p>Each backend startup attempt publishes a <code>SERVER_STATS</code> row before the
