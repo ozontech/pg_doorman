@@ -1,5 +1,15 @@
 # Changelog
 
+### 3.11.0
+
+#### Talos clients can route to a dedicated user-specific pool
+
+When a Talos JWT carries `clientId` (e.g. `billing-api`), pg_doorman now first looks for a pool user named exactly `billing-api`, then a service pool user `srv-billing-api`, before falling back to the maximum role from the token (`owner`, `read_write`, `read_only`). Operators get an info-level log line on every Talos auth that records the resolved username and the source (personal pool, service pool, or max-role fallback).
+
+The `application_name` on the backend stays the Talos `clientId`, so `SHOW SERVERS` and `pg_stat_activity` keep showing which client opened the connection regardless of which pool serves it.
+
+A Talos JWT continues to bypass `pg_hba` for the resolved backend user across all three routes. Access to personal pools is governed by the JWT issuer and `GRANT`s on the personal user; operators who used `pg_hba` rules for `billing-api`-style usernames must move those rules into JWT issuer policy or revoke `GRANT`s on the pool user.
+
 ### 3.10.8
 
 #### Cancelled backend startups clear their server stats row

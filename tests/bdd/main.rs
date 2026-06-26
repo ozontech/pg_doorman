@@ -17,6 +17,7 @@ mod postgres_helper;
 mod proc_inspect;
 mod service_helper;
 mod shell_helper;
+mod talos_helper;
 mod utils;
 mod world;
 

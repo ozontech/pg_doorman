@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 
 use crate::auth::authenticate;
 use crate::auth::hba::CheckResult;
-use crate::auth::talos::{extract_talos_token, talos_role_to_string};
+use crate::auth::talos::{extract_talos_token, log_talos_routing, resolve_talos_user};
 use crate::config::{check_hba, get_config};
 use crate::errors::{ClientIdentifier, Error};
 use crate::messages::constants::*;
@@ -309,8 +309,15 @@ where
                         return Err(Error::AuthError(format!("Invalid Talos token: {err:?}")));
                     }
                 };
-                client_identifier.application_name = token.client_id;
-                client_identifier.username = talos_role_to_string(token.role);
+                let resolved = resolve_talos_user(
+                    pool_name.as_str(),
+                    &token.client_id,
+                    token.role,
+                    crate::pool::pool_exists,
+                );
+                log_talos_routing(&token.client_id, pool_name.as_str(), token.role, &resolved);
+                client_identifier.application_name = token.client_id.clone();
+                client_identifier.username = resolved.username;
                 client_identifier.is_talos = true;
             }
         }

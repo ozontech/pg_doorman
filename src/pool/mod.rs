@@ -1216,6 +1216,15 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
         .cloned()
 }
 
+/// Returns true if the pool identified by `(db, user)` is registered.
+///
+/// Cheaper than `get_pool(db, user).is_some()` because it skips the
+/// `ConnectionPool` clone. Use for routing-discovery lookups where the
+/// caller only needs presence, not the pool itself.
+pub fn pool_exists(db: &str, user: &str) -> bool {
+    (*(*POOLS.load())).contains_key(&PoolIdentifier::new(db, user))
+}
+
 /// Get pool-level configuration by database name.
 /// Returns the Pool config if the database exists in configuration.
 /// Used by auth_query to find auth_query config when user is not in static config.
@@ -1240,6 +1249,12 @@ pub fn get_coordinator(db: &str) -> Option<Arc<pool_coordinator::PoolCoordinator
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pool_exists_returns_false_for_missing_entry() {
+        // POOLS is global; assert a clearly-nonexistent pair is absent.
+        assert!(!pool_exists("nonexistent_db", "nonexistent_user"));
+    }
 
     // --- per_user_overlay_hash tests ---
 
