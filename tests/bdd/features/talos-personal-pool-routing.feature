@@ -1,5 +1,5 @@
 @rust @rust-1 @talos-personal-pool-routing
-Feature: Talos clients route to personal or service pool by clientId
+Feature: Talos clientId pool routing
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -12,7 +12,7 @@ Feature: Talos clients route to personal or service pool by clientId
     And keypair 'talos1' generated for talos with kid 'kid-test'
 
   @personal-pool
-  Scenario: Personal pool user wins over max role
+  Scenario: clientId pool is preferred to role pool
     Given pg_doorman log capture enabled
     And pg_doorman started with config:
       """
@@ -42,10 +42,10 @@ Feature: Talos clients route to personal or service pool by clientId
       pool_size = 5
       """
     When we open Talos session 'c1' as client_id 'billing-api' role 'owner' database 'example_db' signed with 'talos1'
-    Then pg_doorman log contains "username=billing-api (personal pool found)"
+    Then pg_doorman log contains "username=billing-api route=personal_pool"
 
   @service-pool
-  Scenario: Service pool fallback when personal pool missing
+  Scenario: srv-clientId pool is used when clientId pool is absent
     Given pg_doorman log capture enabled
     And pg_doorman started with config:
       """
@@ -75,10 +75,10 @@ Feature: Talos clients route to personal or service pool by clientId
       pool_size = 5
       """
     When we open Talos session 'c1' as client_id 'billing-api' role 'owner' database 'example_db' signed with 'talos1'
-    Then pg_doorman log contains "username=srv-billing-api (service pool found)"
+    Then pg_doorman log contains "username=srv-billing-api route=service_pool"
 
   @fallback-max-role-owner
-  Scenario: Owner role fallback when no personal or service pool
+  Scenario: owner role is used when no clientId pool exists
     Given pg_doorman log capture enabled
     And pg_doorman started with config:
       """
@@ -103,10 +103,10 @@ Feature: Talos clients route to personal or service pool by clientId
       pool_size = 5
       """
     When we open Talos session 'c1' as client_id 'billing-api' role 'owner' database 'example_db' signed with 'talos1'
-    Then pg_doorman log contains "username=owner (no personal or service pool, fallback to max role)"
+    Then pg_doorman log contains "username=owner route=max_role"
 
   @fallback-max-role-read-write
-  Scenario: Read-write role fallback maps to read_write pool user
+  Scenario: read_write role maps to read_write pool user
     Given pg_doorman log capture enabled
     And pg_doorman started with config:
       """
@@ -131,10 +131,10 @@ Feature: Talos clients route to personal or service pool by clientId
       pool_size = 5
       """
     When we open Talos session 'c1' as client_id 'analytics' role 'read_write' database 'example_db' signed with 'talos1'
-    Then pg_doorman log contains "username=read_write (no personal or service pool, fallback to max role)"
+    Then pg_doorman log contains "username=read_write route=max_role"
 
   @application-name-stays-client-id
-  Scenario: SHOW SERVERS records a backend after Talos personal-pool routing
+  Scenario: SHOW SERVERS keeps the Talos clientId
     Given pg_doorman started with config:
       """
       [general]
@@ -163,7 +163,7 @@ Feature: Talos clients route to personal or service pool by clientId
     Then admin session "admin1" response should contain "billing-api"
 
   @mismatch-personal-but-read-only-token
-  Scenario: Personal pool wins even when token carries a lower role
+  Scenario: clientId pool is used for a read_only token
     Given pg_doorman log capture enabled
     And pg_doorman started with config:
       """
@@ -193,5 +193,4 @@ Feature: Talos clients route to personal or service pool by clientId
       pool_size = 5
       """
     When we open Talos session 'c1' as client_id 'billing-api' role 'read_only' database 'example_db' signed with 'talos1'
-    Then pg_doorman log contains "username=billing-api (personal pool found)"
-
+    Then pg_doorman log contains "username=billing-api route=personal_pool"

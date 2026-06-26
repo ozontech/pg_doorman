@@ -11,10 +11,8 @@ use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 
-/// Generates a temporary RSA keypair, stores the PEM paths under
-/// `world.vars` as `<NAME>_PUBKEY_PATH` / `<NAME>_PRIVKEY_PATH` and the
-/// `kid` as `<NAME>_KID`. The public key file stem equals the `kid` so
-/// pg_doorman's `load_talos_pub_key` registers it under that name.
+/// Generates an RSA keypair and stores its paths in `world.vars`.
+/// The public key file stem is the Talos `kid`.
 #[given(regex = r"^keypair '(.+)' generated for talos with kid '(.+)'$")]
 pub async fn generate_keypair(world: &mut DoormanWorld, name: String, kid: String) {
     let rsa = Rsa::generate(2048).expect("failed to generate RSA keypair");
@@ -44,10 +42,8 @@ pub async fn generate_keypair(world: &mut DoormanWorld, name: String, kid: Strin
     world.talos_priv_keys.push(priv_file);
 }
 
-/// Opens a Talos session: signs a JWT with the named keypair, sends it as
-/// the password for user `talos`, and stores the session for later steps.
-/// A FATAL ErrorResponse from pg_doorman panics this step (real failure);
-/// successful auth is the expected path for routing-validation scenarios.
+/// Opens a `user=talos` session with a freshly signed JWT.
+/// Any auth error fails the step.
 #[when(
     regex = r#"^we open Talos session '([^']+)' as client_id '([^']+)' role '([^']+)' database '([^']+)' signed with '([^']+)'$"#
 )]

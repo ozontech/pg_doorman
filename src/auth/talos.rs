@@ -47,20 +47,18 @@ pub async fn load_talos_pub_key(key_filename: String) -> Result<(), Error> {
     Ok(())
 }
 
-/// Which branch of `resolve_talos_user` produced the resolved username.
-/// Personal: a pool user matching the JWT clientId was found.
-/// ServicePool: a pool user named `srv-<clientId>` was found.
-/// MaxRole: neither matched; the user is the string form of the max role.
+/// Source used to choose a Talos pool user.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TalosUserSource {
+    /// Pool user equals the JWT `clientId`.
     Personal,
+    /// Pool user is `srv-<clientId>`.
     ServicePool,
+    /// Pool user is the max token role.
     MaxRole,
 }
 
-/// Routing decision for a Talos-authenticated client. `username` is the
-/// pool user pg_doorman should connect under; `source` records which
-/// branch picked it (audit + observability).
+/// Pool user selected for a Talos client.
 #[derive(Debug, Clone)]
 pub struct TalosResolution {
     pub username: String,
@@ -98,23 +96,14 @@ pub fn talos_role_to_string(r: Role) -> String {
     }
 }
 
-/// Returns true when `client_id` is safe to use as a pool user lookup key.
-/// Rejects empty strings and any byte below 0x20 or equal to 0x7F so a
-/// misconfigured issuer cannot smuggle control characters into the
-/// `SHOW SERVERS` view or a pool user name.
+/// Returns true when `client_id` can be used in pool lookup and logs.
 fn is_routable_client_id(client_id: &str) -> bool {
     !client_id.is_empty() && client_id.bytes().all(|b| b >= 0x20 && b != 0x7F)
 }
 
-/// Picks the backend pool user for a Talos-authenticated client.
+/// Selects a Talos pool user: `clientId`, `srv-<clientId>`, then max role.
 ///
-/// Order: personal pool (user = `client_id`), service pool (user =
-/// `srv-<client_id>`), then `talos_role_to_string(max_role)`. The
-/// closure signature is `(database, user) -> bool`.
-///
-/// Routing-only sanitization: empty or non-printable `client_id` falls
-/// back to `MaxRole` with a `warn!`. Auth is not rejected; the connection
-/// still proceeds via the max-role pool.
+/// Invalid `clientId` is ignored for routing, not for authentication.
 pub fn resolve_talos_user(
     pool_name: &str,
     client_id: &str,
@@ -137,7 +126,7 @@ pub fn resolve_talos_user(
         }
     } else if !client_id.is_empty() {
         log::warn!(
-            "[talos] client_id {client_id:?} rejected as routing key (contains control characters); falling back to max role"
+            "[talos] client_id {client_id:?} contains control characters; using max-role pool"
         );
     }
     TalosResolution {
@@ -146,21 +135,20 @@ pub fn resolve_talos_user(
     }
 }
 
-/// Emits one info-level audit line per Talos auth. Key=value format on a
-/// single line for grep. The token, `kid`, and `exp` are NOT logged.
+/// Logs the Talos routing choice without token material.
 pub fn log_talos_routing(client_id: &str, pool_name: &str, role: Role, resolved: &TalosResolution) {
-    let reason = match resolved.source {
-        TalosUserSource::Personal => "personal pool found",
-        TalosUserSource::ServicePool => "service pool found",
-        TalosUserSource::MaxRole => "no personal or service pool, fallback to max role",
+    let route = match resolved.source {
+        TalosUserSource::Personal => "personal_pool",
+        TalosUserSource::ServicePool => "service_pool",
+        TalosUserSource::MaxRole => "max_role",
     };
     log::info!(
-        "[talos] auth: client_id={} pool={} role={} → username={} ({})",
+        "[talos] auth: client_id={} pool={} role={} username={} route={}",
         client_id,
         pool_name,
         talos_role_to_string(role),
         resolved.username,
-        reason,
+        route,
     );
 }
 

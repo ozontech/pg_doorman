@@ -1218,9 +1218,7 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
 
 /// Returns true if the pool identified by `(db, user)` is registered.
 ///
-/// Cheaper than `get_pool(db, user).is_some()` because it skips the
-/// `ConnectionPool` clone. Use for routing-discovery lookups where the
-/// caller only needs presence, not the pool itself.
+/// Use this for routing checks that only need presence, not the pool clone.
 pub fn pool_exists(db: &str, user: &str) -> bool {
     (*(*POOLS.load())).contains_key(&PoolIdentifier::new(db, user))
 }
@@ -1252,7 +1250,7 @@ mod tests {
 
     #[test]
     fn pool_exists_returns_false_for_missing_entry() {
-        // POOLS is global; assert a clearly-nonexistent pair is absent.
+        // POOLS is global; use a pair no test should register.
         assert!(!pool_exists("nonexistent_db", "nonexistent_user"));
     }
 
