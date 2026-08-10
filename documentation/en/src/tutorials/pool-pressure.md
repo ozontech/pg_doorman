@@ -877,9 +877,50 @@ validator emits a warning at startup; act on it.
 
 ## Observability
 
-pg_doorman exposes pool pressure state through the admin console and
-through Prometheus. Both show the same counters; pick whichever fits
-your monitoring stack.
+pg_doorman exposes pool pressure state through three surfaces. The
+admin console and Prometheus carry the same counters, so pick whichever
+fits your monitoring stack. The periodic stats line is the only surface
+that reports the pool's internal accounting, described first below.
+
+### Periodic stats line
+
+The `servers=` group of the stats line reports the pool's own view of
+itself alongside the connections the stats registry knows about:
+
+```
+| servers=3 active=3 idle=0 tracked=3 waiters=0 |
+```
+
+| Field | Meaning |
+|---|---|
+| `servers` / `active` / `idle` | Backend connections registered in the stats registry, and their state. |
+| `tracked` | The pool's internal connection counter (`slots.size`) — how many connections the pool believes it holds. |
+| `waiters` | Length of the pool's direct-handoff queue. |
+
+**`tracked` and `servers` agree in steady state.** They are maintained
+by different code paths, so a single sample can differ by a connection
+caught mid-create or mid-close. A gap that persists across several
+samples is drift, and drift is worth investigating: `slots.size` gates
+background replenish (`slots.size >= max_size` skips the cycle) and the
+anticipation warm threshold (`scaling_warm_pool_ratio` of `pool_size`).
+Inflated past the threshold, the pool keeps parking clients on direct
+handoff instead of taking the create path — it stops growing on demand
+while looking busy but healthy from the outside. The counter resets only
+when the pool object is rebuilt, so a restart or a `RELOAD` that
+recreates the pool is what clears it.
+
+A pool showing `servers=3 … tracked=8` is in exactly that state: three
+backends serving the traffic, and a pool convinced it has eight.
+
+**`waiters` splits the wait.** `wait=` in the `clients` group counts
+every client between `waiting()` and getting a connection, whether it is
+blocked on the checkout semaphore or parked inside the pool; `waiters`
+is only the second group. A deep `waiters` queue means the pool is short
+of connections; `waiters` near zero with a large `wait=` means
+`pool_size` is the limit and each admitted client is served promptly.
+The number is a diagnostic, not an exact count — it also includes
+senders left behind by clients that already gave up, which are reaped
+only as connections return.
 
 ### Admin: `SHOW POOL_SCALING`
 

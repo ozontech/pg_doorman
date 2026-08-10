@@ -1504,6 +1504,7 @@ impl Pool {
             size: slots.size,
             available,
             waiting,
+            waiters: slots.waiters.len(),
         }
     }
 
@@ -1802,6 +1803,29 @@ impl Drop for BurstGateGuard<'_> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// A stalled pool and a healthy one of the same size report identical
+    /// `sv_active`/`sv_idle`; the depth of the direct-handoff queue is what
+    /// separates them, and nothing exposed it.
+    #[tokio::test]
+    async fn status_reports_direct_handoff_waiter_depth() {
+        let coord = pool_coordinator::PoolCoordinator::new(
+            "test_db".to_string(),
+            pool_coordinator::CoordinatorConfig {
+                max_db_connections: 0,
+                min_connection_lifetime_ms: 0,
+                reserve_pool_size: 0,
+                reserve_pool_timeout_ms: 0,
+            },
+        );
+        let pool = test_pool_with_coordinator(coord);
+        assert_eq!(pool.status().waiters, 0, "fresh pool has no parked clients");
+
+        let (tx, _rx) = oneshot::channel();
+        pool.inner.slots.lock().waiters.push_back(tx);
+
+        assert_eq!(pool.status().waiters, 1, "a parked client must be visible");
+    }
 
     // ------------------------------------------------------------------
     // BurstGateGuard — RAII burst gate slot

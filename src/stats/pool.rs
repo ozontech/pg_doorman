@@ -69,6 +69,20 @@ pub struct PoolStats {
     /// Number of server connections in the login phase
     pub sv_login: u64,
 
+    /// The pool's own connection counter (`slots.size`) — what the pool
+    /// believes it holds. Steady-state it equals `sv_active + sv_idle`.
+    /// A gap that persists across samples means pool accounting drifted,
+    /// which is silent but caps growth: `slots.size` gates both `replenish`
+    /// and the anticipation warm threshold.
+    pub tracked_size: u64,
+
+    /// Length of the pool's direct-handoff queue. Diagnostic, not exact:
+    /// it also counts senders left behind by clients that already gave up,
+    /// which `return_object` reaps lazily. Deep means the pool is short of
+    /// connections; near zero with a large `cl_waiting` means clients are
+    /// queued in front of the pool on the checkout semaphore instead.
+    pub waiters: u64,
+
     /// Maximum age in milliseconds among ACTIVE servers in this pool, taken at
     /// snapshot time. Zero when no server is ACTIVE. Sustained non-zero values
     /// indicate stuck checkouts.
@@ -260,6 +274,8 @@ impl PoolStats {
             sv_idle: 0,
             sv_used: 0,
             sv_login: 0,
+            tracked_size: 0,
+            waiters: 0,
             oldest_active_age_ms: 0,
             maxwait: 0,
             avg_query_count: 0,
@@ -568,6 +584,12 @@ impl PoolStats {
 
             // Pool size from config
             current.pool_size = pool.settings.user.pool_size;
+
+            // Pool-internal accounting, for cross-checking against the
+            // server-state counters gathered from the stats registry below.
+            let pool_status = pool.database.status();
+            current.tracked_size = pool_status.size as u64;
+            current.waiters = pool_status.waiters as u64;
 
             // Carry the underlying source identity so Prometheus
             // delta tracking can detect a `Pool::from_config` reload

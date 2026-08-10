@@ -14,6 +14,25 @@ the part of the `clientId` after the `|` separator. For a `clientId` of
 Selection order: `clientId`, `srv-<clientId>`, `srv-<service-name>`
 (for `s2i|`-prefixed `clientId`), then the max token role. 
 
+#### Pool accounting is visible in the stats line: `tracked` and `waiters`
+
+The periodic per-pool stats line gained two fields in its `servers=` group:
+
+```
+| servers=3 active=3 idle=0 tracked=3 waiters=0 |
+```
+
+`tracked` is the pool's own connection counter (`slots.size`), which
+should agree with `servers`. Nothing exposed it before, yet it gates both
+background replenish and the anticipation warm threshold — so a counter
+that drifts above reality makes a pool quietly stop growing while still
+looking healthy. `waiters` is the length of the direct-handoff queue,
+which separates "the pool is short of connections" from "`pool_size` is
+the limit". See the pool pressure tutorial for how to read them.
+
+The two fields are inserted mid-line, before `| query_ms`. `key=value`
+parsers are unaffected; anything relying on field position needs updating.
+
 ### 3.11.1
 
 #### Pool-level `sync_server_parameters` override

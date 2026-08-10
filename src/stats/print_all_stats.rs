@@ -19,7 +19,7 @@ pub fn print_all_stats() {
             info!(
                 "[{}@{}] qps={} tps={} \
                 | clients={} active={} idle={} wait={} \
-                | servers={} active={} idle={} \
+                | servers={} active={} idle={} tracked={} waiters={} \
                 | query_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
                 | xact_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
                 | wait_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
@@ -35,6 +35,8 @@ pub fn print_all_stats() {
                 total_servers,
                 pool_stats.sv_active,
                 pool_stats.sv_idle,
+                pool_stats.tracked_size,
+                pool_stats.waiters,
                 pool_stats.query_percentile.p50 as f64 / 1_000f64,
                 pool_stats.query_percentile.p90 as f64 / 1_000f64,
                 pool_stats.query_percentile.p95 as f64 / 1_000f64,

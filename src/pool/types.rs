@@ -124,6 +124,12 @@ pub struct Status {
 
     /// The number of futures waiting for an object.
     pub waiting: usize,
+
+    /// Length of the direct-handoff waiter queue — clients waiting inside
+    /// the pool, as opposed to blocked earlier on the checkout semaphore.
+    /// Diagnostic, not exact: senders left behind by clients that already
+    /// gave up stay queued until `return_object` reaps them.
+    pub waiters: usize,
 }
 
 /// Statistics regarding an object returned by the pool.
