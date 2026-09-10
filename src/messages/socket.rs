@@ -136,13 +136,13 @@ where
 {
     let (code, len) = read_message_header(stream).await?;
     let prev = CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
-    if (prev + len as i64) as u64 > max_memory_usage {
+    scopeguard::defer! {
         CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+    }
+    if (prev + len as i64) as u64 > max_memory_usage {
         return Err(Error::CurrentMemoryUsage);
     }
-    let result = read_message_data(stream, code, len).await;
-    CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
-    result
+    read_message_data(stream, code, len).await
 }
 
 /// Read a message into a reusable buffer. Returns the owned `BytesMut` via
@@ -177,8 +177,10 @@ where
     }
 
     let prev = CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
-    if (prev + len as i64) as u64 > max_memory_usage {
+    scopeguard::defer! {
         CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+    }
+    if (prev + len as i64) as u64 > max_memory_usage {
         return Err(Error::CurrentMemoryUsage);
     }
 
@@ -190,16 +192,12 @@ where
     buf.put_i32(len);
     buf.resize(total_len, 0);
 
-    let result = match stream.read_exact(&mut buf[5..]).await {
+    match stream.read_exact(&mut buf[5..]).await {
         Ok(_) => Ok(buf.split()),
         Err(err) => Err(Error::SocketError(format!(
             "Error reading message data from socket - Code: {code:?}, Error: {err:?}"
         ))),
-    };
-
-    CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
-
-    result
+    }
 }
 
 /// Read message body into a reusable buffer when header is already consumed.

@@ -540,6 +540,29 @@ pub async fn send_simple_query_to_session_without_waiting(
         .expect("Failed to send query");
 }
 
+#[when(regex = r#"^we send a SimpleQuery header with length (\d+) to session "([^"]+)"$"#)]
+pub async fn send_simple_query_header(world: &mut DoormanWorld, len: i32, session_name: String) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+    conn.send_message_header(b'Q', len)
+        .await
+        .expect("Failed to send query header");
+}
+
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" padded to (\d+) bytes to session "([^"]+)"$"#)]
+pub async fn send_padded_simple_query(
+    world: &mut DoormanWorld,
+    query: String,
+    len: usize,
+    session_name: String,
+) {
+    assert!(len >= query.len() + 5);
+    let padded = format!("{query}{}", " ".repeat(len - query.len() - 5));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+    conn.send_simple_query(&padded)
+        .await
+        .expect("Failed to send padded query");
+}
+
 #[when(
     regex = r#"^we send SimpleQuery "([^"]+)" to (\d+) sessions with prefix "([^"]+)" without waiting$"#
 )]
