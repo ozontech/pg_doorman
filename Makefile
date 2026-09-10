@@ -21,7 +21,7 @@ install: build
 	install -c -m 755 ./target/release/pg_doorman $(DESTDIR)/usr/bin/
 
 test:
-	cargo test --lib
+	cargo test --lib --test message_memory
 
 clippy:
 	cargo clippy -- --deny "warnings"
