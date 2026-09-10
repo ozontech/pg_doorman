@@ -2,6 +2,7 @@ use crate::pg_connection::PgConnection;
 use crate::world::DoormanWorld;
 use cucumber::{then, when};
 use log::info;
+use pg_doorman::messages::PgErrorMsg;
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::time::timeout;
@@ -555,12 +556,46 @@ pub async fn send_padded_simple_query(
     len: usize,
     session_name: String,
 ) {
-    assert!(len >= query.len() + 5);
-    let padded = format!("{query}{}", " ".repeat(len - query.len() - 5));
+    let padded = pad_simple_query(&query, len);
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
     conn.send_simple_query(&padded)
         .await
         .expect("Failed to send padded query");
+}
+
+fn pad_simple_query(query: &str, len: usize) -> String {
+    // The protocol length includes its four bytes and the query's trailing NUL.
+    assert!(len >= query.len() + 5);
+    format!("{query}{}", " ".repeat(len - query.len() - 5))
+}
+
+#[when(
+    regex = r#"^we wait for a (\d+)-byte query on session "([^"]+)" to exceed the memory limit$"#
+)]
+pub async fn wait_for_memory_limit(world: &mut DoormanWorld, len: usize, session_name: String) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+    let query = pad_simple_query("SELECT 1", len);
+    timeout(Duration::from_secs(5), async {
+        loop {
+            conn.send_simple_query(&query)
+                .await
+                .expect("Failed to send memory limit probe");
+            let messages = conn
+                .read_all_messages_until_ready()
+                .await
+                .expect("Failed to read memory limit probe response");
+            for (code, data) in messages {
+                if code == 'E' {
+                    let error = PgErrorMsg::parse(&data).expect("Invalid ErrorResponse");
+                    assert_eq!(error.code, "53200", "Unexpected error: {error}");
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Memory limit was not reached within 5 seconds");
 }
 
 #[when(
