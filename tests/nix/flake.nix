@@ -103,6 +103,9 @@
             odyssey
             pgbouncer
 
+            # Per-scenario LDAP/LDAPS directory and independent CLI clients
+            openldap
+
             # Node.js
             nodejs_22
             nodePackages.npm
@@ -262,6 +265,8 @@ EOF
                 "NPM_CONFIG_PREFIX=/root/.npm-global"
                 "JAVA_HOME=${pkgs.jdk21}"
                 "M2_HOME=${pkgs.maven}"
+                "LDAP_SLAPD_BIN=${pkgs.openldap}/libexec/slapd"
+                "LDAP_SCHEMA_DIR=${pkgs.openldap}/etc/schema"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig"
@@ -297,6 +302,8 @@ EOF
               export NPM_CONFIG_PREFIX="$HOME/.npm-global"
               export JAVA_HOME="${pkgs.jdk21}"
               export M2_HOME="${pkgs.maven}"
+              export LDAP_SLAPD_BIN="${pkgs.openldap}/libexec/slapd"
+              export LDAP_SCHEMA_DIR="${pkgs.openldap}/etc/schema"
 
               export PATH="$CARGO_HOME/bin:$GOPATH/bin:$NPM_CONFIG_PREFIX/bin:$PATH"
 

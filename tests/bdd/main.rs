@@ -7,6 +7,7 @@ mod fallback_helper;
 mod fuzz_client;
 mod fuzz_helper;
 mod generate_helper;
+mod ldap_helper;
 mod mock_patroni_helper;
 mod odyssey_helper;
 mod pg_connection;
@@ -135,6 +136,7 @@ fn main() {
                         odyssey_helper::stop_odyssey(child);
                     }
                     w.odyssey_process = None;
+                    ldap_helper::stop_ldap_servers(w);
                 }
                 Box::pin(async {})
             })

@@ -233,7 +233,7 @@ jobs:
           fi
 
   # Compile the BDD test binaries once and stash cargo's registry +
-  # target dir in GHA cache so the 23-way matrix below does not pay a
+  # target dir in GHA cache so the suite matrix below does not pay a
   # full `cargo download + compile` per suite. Default features cover
   # all suites except `tls-migration`, which builds in its own target
   # subdirectory because of the cargo features-hash. `CARGO_HOME` is
@@ -372,6 +372,7 @@ jobs:
           - { name: "Patroni proxy",                     cargo: "test --test patroni_proxy_bdd" }
           - { name: "Rollback",                          cargo: "test --test bdd -- --tags @rollback" }
           - { name: "Auth query",                        cargo: "test --test bdd -- --tags @auth-query" }
+          - { name: "LDAP infrastructure",               cargo: "test --test bdd -- --tags @ldap" }
           - { name: "Static passthrough",                cargo: "test --test bdd -- --tags @static-passthrough" }
           - { name: "Client migration (plain TCP)",      cargo: 'test --test bdd -- --tags "@client-migration and not @tls-migration"' }
           - { name: "Patroni-assisted fallback",         cargo: "test --test bdd -- --tags @patroni_fallback" }
