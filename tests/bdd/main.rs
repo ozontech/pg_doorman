@@ -7,6 +7,7 @@ mod fallback_helper;
 mod fuzz_client;
 mod fuzz_helper;
 mod generate_helper;
+mod greengage_helper;
 mod mock_patroni_helper;
 mod odyssey_helper;
 mod pg_connection;
@@ -62,6 +63,20 @@ fn main() {
         #[cfg(target_os = "linux")]
         let base_filter = not_todo_skip;
 
+        // Ordinary BDD runs do not require the optional Greengage service.
+        // Supplying its port opts in while the Given step verifies its identity.
+        let base_filter =
+            if std::env::var_os("GREENGAGE_PORT").is_some() || cli.tags_filter.is_some() {
+                base_filter
+            } else {
+                TagOperation::And(
+                    Box::new(base_filter),
+                    Box::new(TagOperation::Not(Box::new(TagOperation::Tag(
+                        "greengage".to_string(),
+                    )))),
+                )
+            };
+
         // Combine with existing tags filter if present
         cli.tags_filter = match cli.tags_filter.take() {
             Some(existing) => Some(TagOperation::And(Box::new(existing), Box::new(base_filter))),
@@ -103,10 +118,10 @@ fn main() {
                     world.slow_warning_abort = Some(slow_warning_task.abort_handle());
                 })
             })
-            .after(|_feature, _rule, _scenario, _finished, world| {
+            .after(|_feature, _rule, _scenario, _finished, mut world| {
                 // NOTE: We only stop the specific process from this scenario, NOT all pg_doorman processes
                 // because the next scenario's Background steps may have already started a new pg_doorman
-                if let Some(w) = world {
+                if let Some(w) = world.as_deref_mut() {
                     if let Some(abort_handle) = w.slow_warning_abort.take() {
                         abort_handle.abort();
                     }
@@ -136,7 +151,11 @@ fn main() {
                     }
                     w.odyssey_process = None;
                 }
-                Box::pin(async {})
+                Box::pin(async move {
+                    if let Some(w) = world {
+                        greengage_helper::drop_database(w).await;
+                    }
+                })
             })
             .run("tests/bdd/features")
             .await;

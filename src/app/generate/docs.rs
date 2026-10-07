@@ -230,6 +230,8 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "server_idle_check_timeout",
         "server_round_robin",
         "sync_server_parameters",
+        "cleanup_server_connections",
+        "cleanup_server_query",
         "tcp_so_linger",
         "tcp_no_delay",
         "tcp_keepalives_count",
@@ -286,6 +288,7 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
         "pool_mode",
         "log_client_parameter_status_changes",
         "cleanup_server_connections",
+        "cleanup_server_query",
         "scaling_warm_pool_ratio",
         "scaling_fast_retries",
         "max_db_connections",
@@ -490,7 +493,8 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Live aggregate of prepared-statement cache hits across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use `pg_doorman_servers_prepared_hits_total` for rates. |");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Live aggregate of prepared-statement cache misses across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use `pg_doorman_servers_prepared_misses_total` for rates. |");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits_total` | Counter form of prepared-statement cache hits across all backends of each pool, by user and database. Use `rate()` over this metric for hit throughput. |");
-    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses_total` | Counter form of prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statements_cache_size`. |\n");
+    let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses_total` | Counter form of prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statements_cache_size`. |");
+    let _ = writeln!(out, "| `pg_doorman_server_cleanup_total` | Counter by user, database and `result` (`ok` or `error`). Increments once per backend cleanup attempt that actually sent SQL to the backend: the built-in sequence in `adaptive`, `cleanup_server_query` in `always`, or a `ROLLBACK` of a transaction the client left open. In `off` mode only that `ROLLBACK` is counted, so a non-zero rate there means clients abandon transactions. `result=\"error\"` counts attempts that retired the backend: the cleanup query failed, timed out at `connect_timeout`, or left the backend not Idle. Checkins that needed no cleanup are not counted. The `database` label is the pool name. |\n");
 
     // Per-Client Prepared Statement Cache Metrics
     let _ = writeln!(out, "### Per-Client Prepared Statement Cache Metrics\n");

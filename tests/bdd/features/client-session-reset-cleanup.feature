@@ -1,28 +1,8 @@
 @rust @rust-3 @client-session-reset-cleanup
-Feature: Client session reset batch suppresses doorman-side cleanup
-  When a client (e.g. jackc/pgx on an internal context deadline) keeps the
-  server connection alive by running a self-cleanup batch such as
-
-      SET SESSION AUTHORIZATION DEFAULT;
-      RESET ALL;
-      CLOSE ALL;
-      UNLISTEN *;
-      SELECT pg_advisory_unlock_all();
-      DISCARD PLANS;
-      DISCARD SEQUENCES;
-      DISCARD TEMP;
-
-  pg_doorman must recognise that the session is already clean and skip the
-  checkin-time `RESET ROLE; RESET ALL; ...` round-trip it would otherwise send.
-  Without this recognition every dangling client query triples the traffic to
-  PostgreSQL: the original (stuck) query, the client's self-reset batch, and a
-  redundant pg_doorman reset.
-
-  Each scenario starts PostgreSQL with `log_statement = 'all'` and asserts the
-  absence or presence of pg_doorman's cleanup statements in the server log.
-  The `RESET ROLE` prefix is used as a marker because pg_doorman always prefixes
-  its cleanup batch with `RESET ROLE;` and clients from the real world do not
-  issue it.
+Feature: Cleanup after client session reset commands
+  Client reset commands suppress the corresponding built-in cleanup.
+  RESET ALL and per-parameter RESET share a command tag, so both suppress
+  the built-in RESET ALL.
 
   Background:
     Given PostgreSQL started with options "-c log_statement=all -c logging_collector=off" and pg_hba.conf:
@@ -61,24 +41,20 @@ Feature: Client session reset batch suppresses doorman-side cleanup
       [[pools.example_db_session.users]]
       username = "example_user_1"
       password = ""
-      pool_size = 2
+      pool_size = 1
       """
 
   @client-session-reset-cleanup-pgx-batch
-  Scenario: pgx-style session reset batch does not trigger a second server cleanup
+  Scenario: A pgx-style reset batch does not trigger a second RESET ALL
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
     # Warm the pool with a trivial query so that server auth and any startup
     # chatter is already in the log before we start asserting on it.
     And we send SimpleQuery "SELECT 1" to session "one"
-    And we sleep 100ms
     When we truncate PostgreSQL log
     # Exactly the batch jackc/pgx emits on an internal context deadline.
     And we send SimpleQuery "SET SESSION AUTHORIZATION DEFAULT; RESET ALL; CLOSE ALL; UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD PLANS; DISCARD SEQUENCES; DISCARD TEMP" to session "one"
-    And we sleep 300ms
-    # Client batch itself still shows up once — that is the one we expect.
+    # ReadyForQuery arrives after checkin; only the client's RESET ALL is logged.
     Then PostgreSQL log should contain exactly 1 occurrences of "RESET ALL"
-    # pg_doorman's checkin cleanup would have prefixed its batch with RESET ROLE.
-    # Its absence proves the second cleanup was suppressed.
     And PostgreSQL log should not contain "RESET ROLE"
 
   @client-session-reset-cleanup-real-set-still-cleans
@@ -139,23 +115,20 @@ Feature: Client session reset batch suppresses doorman-side cleanup
     And PostgreSQL log should not contain "RESET ROLE"
 
   @client-session-reset-cleanup-per-guc-reset
-  Scenario: Per-GUC RESET disarms set-cleanup
-    # PostgreSQL returns the same `RESET` tag for `RESET ALL` and `RESET foo`,
-    # so a per-GUC RESET after a SET on the same GUC leaves the session clean
-    # as far as pg_doorman is concerned. Documents the intentional trade-off:
-    # `SET a=1; SET b=2; RESET a;` would also be treated as clean, because
-    # pg_doorman only tracks a single cleanup bit and cannot distinguish which
-    # GUCs are still modified.
+  Scenario: Per-GUC RESET suppresses built-in RESET ALL
     When we create session "five" to pg_doorman as "example_user_1" with password "" and database "example_db_session"
-    And we send SimpleQuery "SELECT 1" to session "five"
-    And we sleep 100ms
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "five" and store backend_pid
     When we truncate PostgreSQL log
     And we send SimpleQuery "SET statement_timeout = 1000" to session "five"
     And we send SimpleQuery "RESET statement_timeout" to session "five"
     And we close session "five"
-    And we sleep 300ms
-    Then PostgreSQL log should contain "RESET statement_timeout"
+    # Pool size 1 makes the next checkout wait for the previous checkin.
+    And we create session "next" to pg_doorman as "example_user_1" with password "" and database "example_db_session"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "next" and store backend_pid
+    Then backend_pid from session "next" should equal backend_pid from session "five"
+    And PostgreSQL log should contain "RESET statement_timeout"
     And PostgreSQL log should not contain "RESET ROLE"
+    And PostgreSQL log should contain exactly 0 occurrences of "RESET ALL"
 
   @client-session-reset-cleanup-single-close-keeps-armed
   Scenario: Closing one named cursor does not disarm declare-cleanup

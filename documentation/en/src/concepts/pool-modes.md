@@ -2,7 +2,7 @@
 
 PgDoorman supports two pool modes: `transaction` and `session`. Set per pool, with optional per-user override.
 
-There is no `statement` mode. Statement pooling rotates the backend after every statement, which forces clients to give up multi-statement transactions and breaks the prepared-statement protocol entirely; PgDoorman invests its tuning (prepared-statement cache, direct handoff, strict-FIFO scheduling) in transaction mode instead. PgBouncer keeps `statement` mode for backward compatibility; Odyssey omits it.
+There is no `statement` mode.
 
 ## Transaction mode (recommended)
 
@@ -12,23 +12,11 @@ pools:
     pool_mode: "transaction"
 ```
 
-A backend connection is held for the duration of a transaction, then returned to the pool on `COMMIT`, `ROLLBACK`, or implicit completion.
+Supports:
 
-This is the mode that delivers PgDoorman's connection efficiency: a `pool_size` of 40 can serve thousands of clients as long as transactions are short.
-
-What works in transaction mode (where most poolers fail):
-
-- Prepared statements. PgDoorman caches them per-pool, remaps statement names across backend connections, and replays preparation transparently. Drivers that pin to `unnamed` statement (Go pgx, .NET Npgsql, Python asyncpg) work without configuration.
-- Pipelined batches and async `Flush` flow.
-- Cancel requests over TLS.
-- `LISTEN` / `NOTIFY` — but only inside a transaction. A `LISTEN` issued and then committed releases the backend, and any notifications delivered to it after that go to whichever client checks it out next, not to the original `LISTEN`-er. PgBouncer behaves the same way; if you need cross-transaction `LISTEN`, use session mode for that client.
-
-What does **not** work in transaction mode:
-
-- `SET` and `RESET` outside a transaction. Use session mode for clients that rely on session-level GUC changes (`SET TIME ZONE`, `SET search_path` once per connection).
-- Advisory locks held across transactions. Use session mode.
-- Cursors held outside transactions (`WITH HOLD`). Use session mode.
-- `SET LOCAL` works as expected — it is transaction-scoped.
+- Named and anonymous prepared statements.
+- Pipelined batches and asynchronous `Flush`.
+- Query cancellation over TLS.
 
 ## Session mode
 
@@ -38,16 +26,11 @@ pools:
     pool_mode: "session"
 ```
 
-A backend connection is held for the duration of the client session. Returned to the pool only when the client disconnects.
+Use for clients that need:
 
-Use this when:
-
-- The application uses session-scoped state (`SET search_path`, `SET TIME ZONE`).
-- The application uses `WITH HOLD` cursors.
-- The application uses advisory locks across transactions.
-- You are migrating an unmodified PgBouncer deployment that was using session mode and you want a like-for-like swap.
-
-In session mode, `pool_size` is effectively the maximum number of concurrent clients. Sizing matches PostgreSQL's `max_connections` minus reserves.
+- Session parameters (`SET search_path`, `SET TIME ZONE`).
+- `LISTEN` subscriptions.
+- `WITH HOLD` cursors and advisory locks held across transactions.
 
 ## Per-user override
 
@@ -71,26 +54,25 @@ Useful when one user (operations tooling, migrations) needs session semantics bu
 
 ## Cleanup on checkin
 
-Cleanup in transaction mode is **mutation-tracked**, not unconditional. PgDoorman watches each transaction for `SET`, `PREPARE`, and `DECLARE CURSOR`, and only when the backend returns to the pool with one of those flags set does it issue `RESET ALL`, `DEALLOCATE ALL`, or `CLOSE ALL` respectively. A read-only transaction skips cleanup entirely — that's a measurable win on hot OLTP paths.
+The default is `cleanup_server_connections: adaptive` without `cleanup_server_query`: pg_doorman cleans a session only when it sees the session state change, so the pooler's cached prepared statements survive a checkin.
 
-What gets reset when a flag fires:
+The built-in cleanup tracks five kinds of session state and answers with cleanup SQL:
 
-- `SET` flag → `RESET ALL` drops session-level GUCs and runs `pg_advisory_unlock_all` implicitly.
-- `PREPARE` flag → `DEALLOCATE ALL` drops PostgreSQL-side prepared statements that the driver named explicitly. PgDoorman's own prepared-statement cache survives the reset because it is keyed by query text, not by backend name.
-- `DECLARE CURSOR` flag → `CLOSE ALL` drops cursors.
+- `SET` → `RESET ALL`.
+- `DECLARE` cursor → `CLOSE ALL`.
+- SQL `PREPARE` → `DEALLOCATE ALL`. SQL `PREPARE` and an extended-protocol `Parse` share one statement namespace.
+- `LISTEN` → `UNLISTEN *`.
+- `CREATE TEMP TABLE` → `DISCARD TEMP`.
 
-`DEALLOCATE ALL` and `DISCARD ALL` issued by the client clear that client's prepared-statement cache (so the next `Parse` registers anew). The pool-level shared cache is not affected; other clients keep their entries.
+Every cleanup batch also releases advisory locks with `pg_advisory_unlock_all()`.
 
-To opt out of cleanup entirely (for performance, in tightly-controlled deployments):
+Not tracked: `SELECT ... INTO TEMP` and `CREATE TEMP TABLE AS SELECT` — they complete with the inner query's tag. Temporary objects created inside functions carry no tag. Use `always` with suitable SQL to release these.
 
-```yaml
-pools:
-  mydb:
-    pool_mode: "transaction"
-    cleanup_server_connections: false
-```
+In transaction pooling the backend returns to the pool after every query. A temporary table lives for one transaction; keep a transaction open across the statements that use it.
 
-Only do this if you are sure your application never leaks session state. The mutation-tracked default is already cheap when no mutation happened, so the opt-out is rarely worth the risk.
+`cleanup_server_query` replaces the built-in cleanup and requires `always`: your SQL runs on every checkin of a backend that served a client. It is incompatible with `adaptive`, and validation rejects that pairing. The mode costs the server one extra query per checkin. With `DISCARD ALL`, prepared statements are also removed and re-parsed after every checkin. `off` disables session cleanup. Open transactions are rolled back in every mode.
+
+See the [pool reference](../reference/pool.md#cleanup_server_connections) for the full list of tracked statements, limitations, and PostgreSQL and Greengage examples.
 
 ## Reference
 

@@ -448,6 +448,11 @@ where
             }
         }
 
+        let cleanup_result = if conn.custom_cleanup_enabled() {
+            conn.cleanup_after_response().await
+        } else {
+            Ok(())
+        };
         write_all_flush(&mut self.write, &response).await?;
 
         if !has_error_response(&response) && ends_with_idle_ready_for_query(&response) {
@@ -455,7 +460,7 @@ where
                 .set(snapshot.query.clone(), response.freeze());
         }
 
-        Ok(())
+        cleanup_result
     }
 
     /// Handle simple query (Q message).
@@ -880,13 +885,11 @@ where
                             // checkin_cleanup before give server to client.
                             match conn.checkin_cleanup().await {
                                 Ok(()) => break conn,
-                                Err(err) => {
-                                    warn!(
-                                        "[{}@{} #c{}] server cleanup error: {err}",
-                                        self.username, self.pool_name, self.connection_id,
-                                    );
-                                    continue;
-                                }
+                                // The error is already logged by checkin_cleanup, which also
+                                // marks the backend bad. Dropping `conn` closes it, so the
+                                // checkout retries with the next candidate instead of
+                                // reporting a pool failure to the client.
+                                Err(_) => continue,
                             };
                         }
                         Err(err) => {
@@ -1141,7 +1144,7 @@ where
                                 Err(err) => {
                                     self.stats.disconnect();
                                     self.connected_to_server = false;
-                                    server.checkin_cleanup().await?;
+                                    let _ = server.checkin_cleanup().await;
                                     self.release();
                                     return self.process_error(err).await;
                                 }
@@ -1184,7 +1187,7 @@ where
 
                         // Terminate
                         'X' => {
-                            server.checkin_cleanup().await?;
+                            let _ = server.checkin_cleanup().await;
                             self.stats.disconnect();
                             self.connected_to_server = false;
                             self.release();
@@ -1266,7 +1269,7 @@ where
                 if shutdown_in_progress {
                     server.mark_bad("graceful shutdown - releasing server connection");
                 } else if !server.is_async() {
-                    server.checkin_cleanup().await?;
+                    server.cleanup_after_response().await?;
                 }
                 if self.transaction_mode {
                     server

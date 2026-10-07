@@ -88,11 +88,28 @@ run_in_container() {
         --init
         -v "${PROJECT_ROOT}:/workspace"
         -w /workspace
-        --network host
-        --tmpfs /tmp:exec,mode=1777
+        --network "${GREENGAGE_CONTAINER:+container:}${GREENGAGE_CONTAINER:-host}"
+        --tmpfs "/tmp:exec,mode=1777"
         -e "POSTGRES_HOST=127.0.0.1"
         -e "POSTGRES_PORT=5432"
     )
+
+    if [ -n "${GREENGAGE_CONTAINER:-}" ]; then
+        docker_args+=(
+            -e "GREENGAGE_HOST=${GREENGAGE_HOST}"
+            -e "GREENGAGE_PORT=${GREENGAGE_PORT}"
+            -e "GREENGAGE_USER=${GREENGAGE_USER}"
+            -e "GREENGAGE_PASSWORD=${GREENGAGE_PASSWORD}"
+        )
+    fi
+
+    # CI reuses its prebuilt cargo cache; local runs can separate Linux artifacts.
+    local cargo_var
+    for cargo_var in CARGO_HOME CARGO_TARGET_DIR CARGO_NET_RETRY CARGO_HTTP_TIMEOUT CARGO_NET_OFFLINE; do
+        if [ -n "${!cargo_var:-}" ]; then
+            docker_args+=(-e "${cargo_var}=${!cargo_var}")
+        fi
+    done
 
     # Add -t for colored output if stdout is a terminal
     if [ -t 1 ]; then
@@ -161,7 +178,9 @@ run_bdd_tests() {
     fi
     cmd="${cmd} --test bdd"
     if [ -n "$tags" ]; then
-        cmd="${cmd} -- --tags ${tags}"
+        local quoted_tags
+        printf -v quoted_tags '%q' "$tags"
+        cmd="${cmd} -- --tags ${quoted_tags}"
     fi
 
     run_in_container "$cmd"
@@ -220,6 +239,7 @@ Commands:
     build                 Build pg_doorman inside container
 
     bdd [tags]           Run BDD/Cucumber tests (optionally with tags like @go, @python)
+    greengage [tags]     Run BDD against a disposable Greengage cluster (default: @greengage)
     test-go              Run Go client BDD tests
     test-rust            Run Rust client BDD tests
     test-python          Run Python client BDD tests
@@ -234,6 +254,8 @@ Environment variables:
     REPO                 Repository name (auto-detected from git)
     IMAGE_TAG            Image tag to use (default: latest)
     DEBUG                Enable debug output
+    GREENGAGE_IMAGE      Override the pinned Greengage Docker image
+    CARGO_TARGET_DIR     Override the target directory inside the test container
     BENCHER_API_TOKEN    API token for bencher.dev (for benchmark reporting)
     BENCHER_PROJECT      Bencher project name (default: pg-doorman)
     BENCHER_BRANCH       Bencher branch name (default: main)
@@ -244,6 +266,7 @@ Examples:
     $0 shell                   # Interactive shell
     $0 build                   # Build pg_doorman
     $0 bdd @go                 # Run BDD tests tagged with @go
+    $0 greengage               # Run Greengage cleanup tests in the Nix test runner
     $0 test-rust               # Run Rust client tests
 
 EOF
@@ -265,6 +288,16 @@ case "${1:-help}" in
     bdd)
         try_pull_image
         run_bdd_tests "${2:-}"
+        ;;
+    greengage)
+        try_pull_image
+        # shellcheck source=greengage.sh
+        source "${SCRIPT_DIR}/greengage.sh"
+        trap stop_greengage EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        start_greengage
+        run_bdd_tests "${2:-@greengage}"
         ;;
     test-go)
         try_pull_image

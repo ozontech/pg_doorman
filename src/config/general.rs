@@ -4,7 +4,7 @@ use ipnet::IpNet;
 use serde_derive::{Deserialize, Serialize};
 
 use super::tls;
-use super::{ByteSize, Duration, Include};
+use super::{ByteSize, CleanupMode, Duration, Include};
 use crate::auth::hba::PgHba;
 
 /// General configuration.
@@ -140,6 +140,13 @@ pub struct General {
 
     #[serde(default = "General::default_sync_server_parameters")] // False
     pub sync_server_parameters: bool,
+
+    #[serde(default)]
+    pub cleanup_server_connections: CleanupMode,
+
+    /// Default cleanup query; pools may override it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_server_query: Option<String>,
 
     #[serde(default = "General::default_worker_threads")]
     pub worker_threads: usize,
@@ -570,6 +577,8 @@ impl Default for General {
             log_client_connections: true,
             log_client_disconnections: true,
             sync_server_parameters: Self::default_sync_server_parameters(),
+            cleanup_server_connections: CleanupMode::Adaptive,
+            cleanup_server_query: None,
             tls_certificate: None,
             tls_private_key: None,
             tls_ca_cert: None,

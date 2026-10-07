@@ -406,7 +406,7 @@ impl ConnectionPool {
         }
 
         // Hashing each pool's effective config against (Pool, general
-        // startup_parameters baseline + sync_server_parameters) folds
+        // startup_parameters baseline + sync_server_parameters + reset query) folds
         // general-level GUC changes into the same reuse decision pg_doorman
         // already uses for pool-level changes. Without this, a SIGHUP that
         // only edits `general.startup_parameters` or
@@ -419,6 +419,8 @@ impl ConnectionPool {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             config.general.startup_parameters.hash(&mut hasher);
             config.general.sync_server_parameters.hash(&mut hasher);
+            config.general.cleanup_server_query.hash(&mut hasher);
+            config.general.cleanup_server_connections.hash(&mut hasher);
             hasher.finish()
         };
         // Load only; the hash is not advanced until the new pool map has
@@ -564,7 +566,10 @@ impl ConnectionPool {
                     user.clone(),
                     server_database.as_str(),
                     client_server_map.clone(),
-                    pool_config.cleanup_server_connections,
+                    pool_config.effective_cleanup_server_connections(&config.general),
+                    pool_config
+                        .effective_cleanup_server_query(&config.general)
+                        .map(str::to_owned),
                     pool_config.log_client_parameter_status_changes,
                     server_prepared_statements_cache_size,
                     application_name,
@@ -629,7 +634,8 @@ impl ConnectionPool {
                         life_time_ms: pool_config
                             .server_lifetime
                             .unwrap_or(config.general.server_lifetime.as_millis()),
-                        sync_server_parameters: pool_config.effective_sync_server_parameters(&config.general),
+                        sync_server_parameters: pool_config
+                            .effective_sync_server_parameters(&config.general),
                         min_guaranteed_pool_size: pool_config.min_guaranteed_pool_size.unwrap_or(0),
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
@@ -781,7 +787,10 @@ impl ConnectionPool {
                             shared_user.clone(),
                             server_database.as_str(),
                             client_server_map.clone(),
-                            pool_config.cleanup_server_connections,
+                            pool_config.effective_cleanup_server_connections(&config.general),
+                            pool_config
+                                .effective_cleanup_server_query(&config.general)
+                                .map(str::to_owned),
                             pool_config.log_client_parameter_status_changes,
                             server_prepared_statements_cache_size,
                             application_name,
@@ -858,7 +867,8 @@ impl ConnectionPool {
                                 life_time_ms: pool_config
                                     .server_lifetime
                                     .unwrap_or(config.general.server_lifetime.as_millis()),
-                                sync_server_parameters: pool_config.effective_sync_server_parameters(&config.general),
+                                sync_server_parameters: pool_config
+                                    .effective_sync_server_parameters(&config.general),
                                 min_guaranteed_pool_size: pool_config
                                     .min_guaranteed_pool_size
                                     .unwrap_or(0),
@@ -1520,6 +1530,8 @@ mod tests {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         general.startup_parameters.hash(&mut hasher);
         general.sync_server_parameters.hash(&mut hasher);
+        general.cleanup_server_query.hash(&mut hasher);
+        general.cleanup_server_connections.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -1604,6 +1616,31 @@ mod tests {
             compute_pool_fingerprint(&pool_after, &general),
             "Setting pool.sync_server_parameters must change fingerprint"
         );
+    }
+
+    #[test]
+    fn reload_general_cleanup_policy_changes_fingerprints() {
+        let pool = ConfigPool::default();
+        let before = General::default();
+        for after in [
+            General {
+                cleanup_server_query: Some("DISCARD ALL".into()),
+                ..General::default()
+            },
+            General {
+                cleanup_server_connections: crate::config::CleanupMode::Off,
+                ..General::default()
+            },
+        ] {
+            assert_ne!(
+                compute_pool_fingerprint(&pool, &before),
+                compute_pool_fingerprint(&pool, &after)
+            );
+            assert_ne!(
+                pool.hash_value() ^ compute_general_startup_hash(&before),
+                pool.hash_value() ^ compute_general_startup_hash(&after)
+            );
+        }
     }
 
     #[test]

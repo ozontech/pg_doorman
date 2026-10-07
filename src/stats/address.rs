@@ -104,6 +104,10 @@ pub struct AddressStats {
     /// new shard entry under a brief write lock.
     pub errors_by_sqlstate: DashMap<String, AtomicU64>,
 
+    /// Cleanup attempt counters shared by every backend of this address.
+    pub(crate) server_cleanup_ok: AtomicU64,
+    pub(crate) server_cleanup_error: AtomicU64,
+
     /// Process-unique identifier for this `AddressStats` instance.
     /// Every `Default::default()` mints a fresh value from a static
     /// monotonic counter. The Prometheus scrape path passes this into
@@ -140,6 +144,8 @@ impl Default for AddressStats {
             wait_histogram: Mutex::new(new_histogram()),
             p95_xact_time_us: AtomicU64::new(0),
             errors_by_sqlstate: DashMap::new(),
+            server_cleanup_ok: AtomicU64::new(0),
+            server_cleanup_error: AtomicU64::new(0),
             generation: next_address_stats_generation(),
         }
     }
@@ -232,6 +238,17 @@ impl IntoIterator for &AddressStats {
 }
 
 impl AddressStats {
+    /// Counts a cleanup attempt that reached the backend; skipped cleanup is not counted.
+    #[inline]
+    pub fn server_cleanup(&self, success: bool) {
+        let counter = if success {
+            &self.server_cleanup_ok
+        } else {
+            &self.server_cleanup_error
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Increments the transaction count in both total and current statistics.
     ///
     /// This method is called whenever a new transaction is started.

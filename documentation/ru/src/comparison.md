@@ -1,8 +1,6 @@
 # PgDoorman vs PgBouncer vs Odyssey
 
-Сравнительная матрица фич для выбора пулера соединений PostgreSQL. Каждое утверждение про PgBouncer привязано к [config reference](https://www.pgbouncer.org/config.html) и [changelog](https://www.pgbouncer.org/changelog.html); каждое утверждение про Odyssey — к [docs](https://github.com/yandex/odyssey/tree/master/docs) проекта.
-
-PgCat намеренно опущен: у него центр тяжести — шардинг и балансировка, а не drop-in замена PgBouncer, поэтому построчное сравнение вводит в заблуждение. Если нужен горизонтальный шардинг, см. [репозиторий PgCat](https://github.com/postgresml/pgcat).
+Сравнение возможностей пулеров PostgreSQL: pg_doorman, PgBouncer и Odyssey.
 
 Цифры из бенчмарков — [Бенчмарки](benchmarks.md).
 
@@ -73,7 +71,7 @@ PgCat намеренно опущен: у него центр тяжести —
 | `min_pool_size` (warm connections) | Да | Нет | Да |
 | Prepared statements в transaction mode | Да (именованные и анонимные, двухуровневый кеш, query interner) | Да (именованные, с 1.21, `max_prepared_statements`) | Да (именованные, `pool_reserve_prepared_statement`) |
 | Кеш анонимного `Parse` для производительности | Да (`DOORMAN_N`, переиспользование между клиентами пула) | Нет (анонимный `Parse` проходит без изменений) | Нет (требуются именованные prepared statements) |
-| Умная очистка при возврате соединения (пропустить `DEALLOCATE ALL`, если кеш не менялся) | Да (`RESET ALL` / `DEALLOCATE ALL` по факту мутаций) | Нет (всегда `DISCARD ALL`, если задан `server_reset_query`) | Да (auto) |
+| Очистка сессии | [`adaptive` (по умолчанию), `always`, `off`](reference/pool.md#cleanup_server_connections); свой SQL | `server_reset_query`; в transaction требуется [`server_reset_query_always=1`](https://www.pgbouncer.org/config.html#server_reset_query_always) | [`pool_discard` / `pool_smart_discard`](https://github.com/yandex/odyssey/blob/master/docs/configuration/rules.md#pool_discard) |
 | LISTEN / NOTIFY pinning в transaction mode | Нет | Нет | Экспериментально |
 | Cross-rule connection cap (`shared_pool`) | Нет | Нет | Да (с 1.5.1) |
 | Команды администратора `PAUSE` / `RESUME` / `RECONNECT` | Да | Да | Да (с 1.4.1) |
