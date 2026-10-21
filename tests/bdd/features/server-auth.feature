@@ -111,3 +111,53 @@ Feature: Server authentication tests
     Then the command should succeed
     And the command output should contain "PASS: TestServerAuthSCRAMOK"
     And the command output should contain "PASS: TestServerAuthSCRAMBAD"
+
+  # Regression test for https://github.com/ozontech/pg_doorman/pull/282:
+  # master parses the SASL initial response via String::from_utf8_lossy, so a
+  # client-first-message of 128+ bytes corrupts the fixed offsets and correct
+  # credentials are rejected with SQLSTATE 28P01.
+  Scenario: Test SCRAM client authentication with a long nonce
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all             all                                     trust
+      host    all             postgres        127.0.0.1/32            trust
+      host    all             all             127.0.0.1/32            trust
+      host    all             all             ::1/128                 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman hba file contains:
+      """
+      host all all 127.0.0.1/32 scram-sha-256
+      """
+    And self-signed SSL certificates are generated
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      connect_timeout = 5000
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [[pools.example_db.users]]
+      username = "example_user_scram"
+      password = "SCRAM-SHA-256$4096:p2j/1lMdQF6r1dD9I9f7PQ==$H3xt5yh7lwSq9zUPYwHovRu3FyUCCXchG/skydJRa9o=:5xU6Wj/GNg3UnN2uQIx3ezx7uZyzGeM5NrvSJRIxnlw="
+      server_username = "example_user_2"
+      server_password = "test"
+      pool_size = 10
+      """
+    When I run shell command:
+      """
+      export DATABASE_URL_SCRAM_LONG_NONCE="postgresql://example_user_scram:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      cd tests/go && go test -v -run "TestServerAuthSCRAMLongNonce" ./server-auth
+      """
+    Then the command should succeed
+    And the command output should contain "PASS: TestServerAuthSCRAMLongNonce"
