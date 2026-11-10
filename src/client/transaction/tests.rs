@@ -380,6 +380,84 @@ async fn cancellation_after_flush_error_never_returns_backend_to_pool() {
 }
 
 #[tokio::test]
+async fn client_disconnect_after_a_complete_send_drains_and_reuses_backend() {
+    let (transport, mut peer) = UnixStream::pair().unwrap();
+    let mut server = Server::for_test(StreamInner::UnixSocket { stream: transport });
+    let (output, application) = tokio::io::duplex(64);
+    drop(application);
+    let mut client = client(output);
+    client.transaction_mode = true;
+
+    let mut row = BytesMut::new();
+    row.put_i16(1);
+    row.put_i32(512);
+    row.resize(row.len() + 512, b'x');
+    let row = frame(b'D', &row);
+    let backend = async {
+        assert_eq!(read_frame(&mut peer).await, simple_query("SELECT 1"));
+        // Force a buffered response flush before ReadyForQuery. Every frame
+        // stays below the large-message streaming threshold.
+        for _ in 0..20 {
+            peer.write_all(&row).await.unwrap();
+        }
+        peer.write_all(&frame(b'C', b"SELECT 20\0")).await.unwrap();
+        peer.write_all(&ready_for_query(false)).await.unwrap();
+        assert_eq!(read_frame(&mut peer).await, simple_query(";"));
+        peer.write_all(&ready_for_query(false)).await.unwrap();
+    };
+    let exchange = async {
+        client
+            .execute_server_roundtrip(Some(&simple_query("SELECT 1")), &mut server)
+            .await
+            .unwrap();
+        assert!(!server.is_bad());
+        assert!(!server.is_data_available());
+        server.checkin_cleanup().await.unwrap();
+        client
+            .execute_server_roundtrip(Some(&simple_query(";")), &mut server)
+            .await
+            .unwrap();
+        assert!(!server.is_bad());
+    };
+    timeout(Duration::from_secs(1), async {
+        tokio::join!(backend, exchange);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn client_disconnect_does_not_reuse_backend_when_draining_fails() {
+    let (transport, mut peer) = UnixStream::pair().unwrap();
+    let mut server = Server::for_test(StreamInner::UnixSocket { stream: transport });
+    server.max_message_size = 0;
+    let (output, application) = tokio::io::duplex(64);
+    drop(application);
+    let mut client = client(output);
+    client.transaction_mode = true;
+
+    let backend = async move {
+        read_frame(&mut peer).await;
+        // The first response flush hits the disconnected client. Then the
+        // backend closes without ReadyForQuery, so draining must fail.
+        peer.write_all(&large_row()).await.unwrap();
+    };
+    let exchange = async {
+        assert!(client
+            .execute_server_roundtrip(Some(&simple_query("SELECT 1")), &mut server)
+            .await
+            .is_err());
+        assert!(server.is_bad());
+        assert!(server.checkin_cleanup().await.is_err());
+    };
+    timeout(Duration::from_secs(1), async {
+        tokio::join!(backend, exchange);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn client_disconnect_closes_backend_instead_of_waiting_to_drain() {
     let (transport, mut peer) = UnixStream::pair().unwrap();
     socket2::SockRef::from(&transport)

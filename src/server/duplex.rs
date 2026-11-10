@@ -8,6 +8,7 @@ use std::future::poll_fn;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -23,20 +24,26 @@ use super::stream::StreamInner;
 
 /// Both sides must finish. A protocol ErrorResponse is handled by `receive`,
 /// not returned as an I/O error: the writer still has to deliver Sync.
+/// `send_complete` lets the reader drain after a client disconnect only when
+/// the entire batch has been flushed. AtomicBool keeps the future Send.
 pub(crate) async fn send_while_receiving<W, F>(
     writer: &mut W,
     messages: &[u8],
     send_timeout: Duration,
+    send_complete: &AtomicBool,
     receive: F,
 ) -> Result<(), Error>
 where
     W: AsyncWrite + Unpin,
     F: Future<Output = Result<(), Error>>,
 {
+    send_complete.store(false, Ordering::Relaxed);
     let send = async {
         timeout(send_timeout, write_all_flush(writer, messages))
             .await
-            .map_err(|_| Error::FlushTimeout)?
+            .map_err(|_| Error::FlushTimeout)??;
+        send_complete.store(true, Ordering::Relaxed);
+        Ok::<(), Error>(())
     };
     tokio::try_join!(send, receive)?;
     Ok(())
@@ -154,10 +161,16 @@ mod tests {
             };
             if concurrent {
                 // Exercise the same coordinator used by the client roundtrip.
-                send_while_receiving(&mut writer, &request, Duration::from_secs(1), async {
-                    receive.await;
-                    Ok(())
-                })
+                send_while_receiving(
+                    &mut writer,
+                    &request,
+                    Duration::from_secs(1),
+                    &AtomicBool::new(false),
+                    async {
+                        receive.await;
+                        Ok(())
+                    },
+                )
                 .await
                 .unwrap();
             } else {
@@ -192,10 +205,17 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             ready.send(()).unwrap();
         };
-        let roundtrip = send_while_receiving(&mut writer, b"Q", Duration::from_millis(10), async {
-            wait.await.unwrap();
-            Ok(())
-        });
+        let send_complete = AtomicBool::new(false);
+        let roundtrip = send_while_receiving(
+            &mut writer,
+            b"Q",
+            Duration::from_millis(10),
+            &send_complete,
+            async {
+                wait.await.unwrap();
+                Ok(())
+            },
+        );
         let (_, result) = tokio::join!(peer, roundtrip);
         result.unwrap();
     }
@@ -210,10 +230,14 @@ mod tests {
             backend.read_exact(&mut received).await.unwrap();
             assert_eq!(received, request);
         };
-        let roundtrip =
-            send_while_receiving(&mut writer, &request, Duration::from_secs(1), async {
-                Ok(())
-            });
+        let send_complete = AtomicBool::new(false);
+        let roundtrip = send_while_receiving(
+            &mut writer,
+            &request,
+            Duration::from_secs(1),
+            &send_complete,
+            async { Ok(()) },
+        );
         let (_, result) = tokio::join!(peer, roundtrip);
         result.unwrap();
     }
@@ -225,6 +249,7 @@ mod tests {
             &mut writer,
             &[b'Q'; 4096],
             Duration::from_millis(20),
+            &AtomicBool::new(false),
             std::future::pending(),
         )
         .await;

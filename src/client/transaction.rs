@@ -2,7 +2,7 @@ use bytes::{BufMut, BytesMut};
 use log::{debug, error, info, warn};
 use std::future::{poll_fn, Future};
 use std::ops::DerefMut;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 use std::time::{Duration, SystemTime};
 
@@ -1325,6 +1325,7 @@ where
         let message = message.unwrap_or(&buffer);
         let mut writer = server.stream.writer();
         let mut response_in_progress = false;
+        let send_complete = AtomicBool::new(false);
 
         // If this future is dropped at any await, is_bad/checkin_cleanup will
         // discard the backend even if the reader happened to see ReadyForQuery.
@@ -1338,7 +1339,8 @@ where
             &mut writer,
             message,
             BACKEND_SEND_TIMEOUT,
-            self.receive_server_responses(server, &mut response_in_progress),
+            &send_complete,
+            self.receive_server_responses(server, &mut response_in_progress, &send_complete),
         )
         .await;
         *self.buffer = buffer;
@@ -1366,6 +1368,7 @@ where
         &mut self,
         server: &mut Server,
         response_in_progress: &mut bool,
+        send_complete: &AtomicBool,
     ) -> Result<(), Error> {
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
@@ -1426,14 +1429,36 @@ where
 
             // Write response to client
             self.stats.active_write();
-            write_all_flush(
+            if let Err(err) = write_all_flush(
                 &mut ResponseWriter {
                     inner: &mut self.write,
                     in_progress: response_in_progress,
                 },
                 &response,
             )
-            .await?;
+            .await
+            {
+                // Preserve backend reuse after a client disconnect only when
+                // the full batch was sent. Draining with a pending writer
+                // could wait for responses to commands it has not sent yet.
+                if !send_complete.load(Ordering::Relaxed)
+                    || server.is_async()
+                    || server.in_copy_mode()
+                {
+                    return Err(err);
+                }
+                warn!(
+                    "[{}@{} #c{}] write to client failed pid={}: {err}",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    server.get_process_id()
+                );
+                server.wait_available().await;
+                if server.bad || server.is_data_available() {
+                    return Err(err);
+                }
+            }
             *response_in_progress = false;
 
             self.stats.active_idle();
