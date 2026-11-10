@@ -1448,11 +1448,8 @@ where
                     return Err(err);
                 }
                 warn!(
-                    "[{}@{} #c{}] write to client failed pid={}: {err}",
-                    self.username,
-                    self.pool_name,
-                    self.connection_id,
-                    server.get_process_id()
+                    "[#c{}] write to client failed; draining backend response",
+                    self.connection_id
                 );
                 server.wait_available().await;
                 if server.bad || server.is_data_available() {
