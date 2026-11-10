@@ -75,7 +75,7 @@ where
             }
             Error::FlushTimeout => {
                 self.send_error_response(
-                    "Timeout while sending data to client. Please check your network connection.",
+                    "Timeout while sending data to PostgreSQL backend. Please reconnect.",
                     "08006",
                     err,
                 ).await

@@ -2,6 +2,7 @@
 
 pub(crate) mod authentication;
 pub(crate) mod cleanup;
+pub(crate) mod duplex;
 pub(crate) mod parameters;
 pub(crate) mod prepared_statements;
 pub(crate) mod protocol_io;

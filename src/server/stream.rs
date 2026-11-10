@@ -118,10 +118,19 @@ impl StreamInner {
     /// Waits until the server socket becomes readable (data or EOF/error).
     /// Cancel-safe: no data is consumed, only readiness notification.
     pub async fn readable(&self) -> std::io::Result<()> {
+        std::future::poll_fn(|cx| self.poll_read_ready(cx)).await
+    }
+
+    pub(crate) fn poll_read_ready(
+        &self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
         match self {
-            StreamInner::TCPPlain { stream } => stream.readable().await,
-            StreamInner::TCPTls { stream } => stream.get_ref().get_ref().get_ref().readable().await,
-            StreamInner::UnixSocket { stream } => stream.readable().await,
+            StreamInner::TCPPlain { stream } => stream.poll_read_ready(cx),
+            StreamInner::TCPTls { stream } => {
+                stream.get_ref().get_ref().get_ref().poll_read_ready(cx)
+            }
+            StreamInner::UnixSocket { stream } => stream.poll_read_ready(cx),
         }
     }
 

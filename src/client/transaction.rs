@@ -4,7 +4,7 @@ use std::future::{poll_fn, Future};
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::utils::clock::now;
 
@@ -14,6 +14,7 @@ use crate::app::server::{
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
+use crate::client::roundtrip::{send_flush_timeout_error, ResponseWriter, BACKEND_SEND_TIMEOUT};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
@@ -22,6 +23,7 @@ use crate::messages::{
     write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
+use crate::server::duplex::send_while_receiving;
 use crate::server::Server;
 use crate::utils::buffering_writer::BufferingWriter;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
@@ -136,6 +138,9 @@ use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_C
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
+
+#[cfg(test)]
+mod tests;
 
 /// RAII guard for CLIENTS_IN_TRANSACTIONS counter.
 /// Increments on creation, decrements on drop.
@@ -1066,16 +1071,11 @@ where
 
                     // Send BEGIN to server
                     if let Err(err) = server
-                        .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
+                        .send_and_flush_timeout(&begin_msg, BACKEND_SEND_TIMEOUT)
                         .await
                     {
                         if matches!(err, Error::FlushTimeout) {
-                            let _ = error_response_terminal(
-                                &mut self.write,
-                                "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
-                                "58006",
-                            )
-                            .await;
+                            send_flush_timeout_error(&mut self.write, false).await;
                         }
                         return Err(err);
                     }
@@ -1310,62 +1310,81 @@ where
         message: Option<&BytesMut>,
         server: &mut Server,
     ) -> Result<(), Error> {
+        if server.roundtrip_in_progress {
+            server.mark_bad("cannot resume an incomplete roundtrip");
+            return Err(Error::ProtocolSyncError(
+                "cannot resume an incomplete backend roundtrip".to_string(),
+            ));
+        }
         if !self.transaction_mode && self.session_xact_start.is_none() {
             self.session_xact_start = Some(crate::utils::clock::now());
         }
-        let message = message.unwrap_or(&self.buffer);
+        // Move the buffer out so the receive loop can borrow the client while
+        // the writer borrows the batch. Restore it afterwards to reuse capacity.
+        let buffer = std::mem::take(&mut *self.buffer);
+        let message = message.unwrap_or(&buffer);
+        let mut writer = server.stream.writer();
+        let mut response_in_progress = false;
 
-        // Send message with timeout
-        if let Err(err) = server
-            .send_and_flush_timeout(message, Duration::from_secs(5))
-            .await
-        {
+        // If this future is dropped at any await, is_bad/checkin_cleanup will
+        // discard the backend even if the reader happened to see ReadyForQuery.
+        server.roundtrip_in_progress = true;
+        server.stats.data_sent(message.len());
+        server.stats.wait_writing();
+        log_client_to_server(&self.addr_str, server.get_process_id(), message);
+        self.stats.active_idle();
+
+        let result = send_while_receiving(
+            &mut writer,
+            message,
+            BACKEND_SEND_TIMEOUT,
+            self.receive_server_responses(server, &mut response_in_progress),
+        )
+        .await;
+        *self.buffer = buffer;
+        server.stats.wait_idle();
+
+        if let Err(err) = result {
+            server.mark_bad(&format!(
+                "client {} roundtrip failed: {err}",
+                self.connection_id
+            ));
+            self.client_last_messages_in_tx.clear();
             if matches!(err, Error::FlushTimeout) {
-                // Send ErrorResponse to client before closing connection.
-                // Without this, the client gets a bare TCP RST which causes
-                // "protocol violation" in drivers like Npgsql.
-                // Use the same SQLSTATE 58006 and "pooler is shut down" pattern
-                // as graceful shutdown so that clients can detect reconnection.
-                let _ = error_response_terminal(
-                    &mut self.write,
-                    "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
-                    "58006",
-                )
-                .await;
+                send_flush_timeout_error(&mut self.write, response_in_progress).await;
             }
             return Err(err);
         }
 
-        // Debug log: client -> server
-        log_client_to_server(&self.addr_str, server.get_process_id(), message);
+        // Both directions have completed; only now can the caller release it.
+        server.roundtrip_in_progress = false;
+        server.last_activity = SystemTime::now();
+        Ok(())
+    }
 
+    async fn receive_server_responses(
+        &mut self,
+        server: &mut Server,
+        response_in_progress: &mut bool,
+    ) -> Result<(), Error> {
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
-
-        // Single initial state update
-        self.stats.active_idle();
 
         // Read all data the server has to offer, which can be multiple messages
         // buffered in 8 KiB chunks.
         loop {
-            let mut response = match server
-                .recv(&mut self.write, Some(&mut self.server_parameters))
-                .await
-            {
-                Ok(msg) => msg,
-                Err(err) => {
-                    server.wait_available().await;
-                    let mut msg = String::with_capacity(64);
-                    use std::fmt::Write;
-                    let _ = write!(
-                        msg,
-                        "server recv failed during client {} roundtrip: {:?}",
-                        self.addr, err
-                    );
-                    server.mark_bad(&msg);
-                    return Err(err);
-                }
-            };
+            let mut response = server
+                .recv(
+                    ResponseWriter {
+                        inner: &mut self.write,
+                        in_progress: response_in_progress,
+                    },
+                    Some(&mut self.server_parameters),
+                )
+                .await?;
+            // recv may stream a large message directly to the client. It
+            // returns successfully only after that complete message is sent.
+            *response_in_progress = false;
 
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position
@@ -1407,26 +1426,15 @@ where
 
             // Write response to client
             self.stats.active_write();
-            if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
-                warn!(
-                    "[{}@{} #c{}] write to client failed pid={}: {err_write}",
-                    self.username,
-                    self.pool_name,
-                    self.connection_id,
-                    server.get_process_id()
-                );
-                server.wait_available().await;
-                if server.is_async() || server.in_copy_mode() {
-                    server.mark_bad(
-                        format!(
-                            "failed to flush response to client {}: {:?}",
-                            self.addr, err_write
-                        )
-                        .as_str(),
-                    );
-                    return Err(err_write);
-                }
-            }
+            write_all_flush(
+                &mut ResponseWriter {
+                    inner: &mut self.write,
+                    in_progress: response_in_progress,
+                },
+                &response,
+            )
+            .await?;
+            *response_in_progress = false;
 
             self.stats.active_idle();
 
