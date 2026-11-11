@@ -10,6 +10,32 @@ To run all BDD tests:
 cargo test --test bdd
 ```
 
+## Backend batch regression
+
+Run the backend batch scenarios in the Linux test container:
+
+```bash
+make test-bdd TAGS=@backend-batch
+```
+
+They check a large request/response exchange, a paced 64-query batch directly
+against PostgreSQL, and the same paced batch through pg_doorman. The client
+drains replies immediately. Small backend socket buffers and `pg_sleep(0.150)`
+provide a controlled reproduction of a send deadline expiring despite replies
+arriving throughout the batch.
+
+The `@backend-batch-progress` scenario asserts successful completion and is
+currently expected to fail with `58006` after about five seconds. The other
+two scenarios are controls. This regression is included in `@rust` / `@rust-2`;
+until the deadline is fixed, those suites also fail on this scenario.
+
+```bash
+# Only the remaining deadline regression (currently fails):
+make test-bdd TAGS=@backend-batch-progress
+# Only the large request/response exchange:
+make test-bdd TAGS=@backend-duplex-large-batch
+```
+
 ## Debug Mode
 
 To enable verbose output during test execution, set the `DEBUG` environment variable:
