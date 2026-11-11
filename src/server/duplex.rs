@@ -11,11 +11,9 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncWrite, BufStream, ReadBuf};
-use tokio::time::timeout;
 
 use crate::errors::Error;
 use crate::messages::write_all_flush;
@@ -26,10 +24,11 @@ use super::stream::StreamInner;
 /// not returned as an I/O error: the writer still has to deliver Sync.
 /// `send_complete` lets the reader drain after a client disconnect only when
 /// the entire batch has been flushed. AtomicBool keeps the future Send.
+/// There is no batch send deadline: PostgreSQL can be executing earlier
+/// commands while the remaining request waits for socket capacity.
 pub(crate) async fn send_while_receiving<W, F>(
     writer: &mut W,
     messages: &[u8],
-    send_timeout: Duration,
     send_complete: &AtomicBool,
     receive: F,
 ) -> Result<(), Error>
@@ -39,9 +38,7 @@ where
 {
     send_complete.store(false, Ordering::Relaxed);
     let send = async {
-        timeout(send_timeout, write_all_flush(writer, messages))
-            .await
-            .map_err(|_| Error::FlushTimeout)??;
+        write_all_flush(writer, messages).await?;
         send_complete.store(true, Ordering::Relaxed);
         Ok::<(), Error>(())
     };
@@ -161,16 +158,10 @@ mod tests {
             };
             if concurrent {
                 // Exercise the same coordinator used by the client roundtrip.
-                send_while_receiving(
-                    &mut writer,
-                    &request,
-                    Duration::from_secs(1),
-                    &AtomicBool::new(false),
-                    async {
-                        receive.await;
-                        Ok(())
-                    },
-                )
+                send_while_receiving(&mut writer, &request, &AtomicBool::new(false), async {
+                    receive.await;
+                    Ok(())
+                })
                 .await
                 .unwrap();
             } else {
@@ -197,7 +188,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_timeout_does_not_limit_query_execution_time() {
+    async fn waits_for_the_response_after_the_send_completes() {
         let (mut writer, mut backend) = tokio::io::duplex(64);
         let (ready, wait) = tokio::sync::oneshot::channel();
         let peer = async {
@@ -206,16 +197,10 @@ mod tests {
             ready.send(()).unwrap();
         };
         let send_complete = AtomicBool::new(false);
-        let roundtrip = send_while_receiving(
-            &mut writer,
-            b"Q",
-            Duration::from_millis(10),
-            &send_complete,
-            async {
-                wait.await.unwrap();
-                Ok(())
-            },
-        );
+        let roundtrip = send_while_receiving(&mut writer, b"Q", &send_complete, async {
+            wait.await.unwrap();
+            Ok(())
+        });
         let (_, result) = tokio::join!(peer, roundtrip);
         result.unwrap();
     }
@@ -231,28 +216,45 @@ mod tests {
             assert_eq!(received, request);
         };
         let send_complete = AtomicBool::new(false);
-        let roundtrip = send_while_receiving(
-            &mut writer,
-            &request,
-            Duration::from_secs(1),
-            &send_complete,
-            async { Ok(()) },
-        );
+        let roundtrip =
+            send_while_receiving(&mut writer, &request, &send_complete, async { Ok(()) });
         let (_, result) = tokio::join!(peer, roundtrip);
         result.unwrap();
     }
 
     #[tokio::test]
-    async fn a_stalled_backend_times_out_even_if_the_reader_is_waiting() {
+    async fn a_reader_error_cancels_a_blocked_writer() {
         let (mut writer, _backend) = tokio::io::duplex(16);
-        let result = send_while_receiving(
-            &mut writer,
-            &[b'Q'; 4096],
-            Duration::from_millis(20),
-            &AtomicBool::new(false),
-            std::future::pending(),
+        let send_complete = AtomicBool::new(false);
+        let result = timeout(
+            Duration::from_secs(1),
+            send_while_receiving(&mut writer, &[b'Q'; 4096], &send_complete, async {
+                Err(Error::SocketError("backend read failed".into()))
+            }),
         )
-        .await;
-        assert!(matches!(result, Err(Error::FlushTimeout)));
+        .await
+        .expect("reader error did not cancel the blocked writer");
+        assert!(matches!(result, Err(Error::SocketError(_))));
+        assert!(!send_complete.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn a_writer_error_cancels_a_waiting_reader() {
+        let (mut writer, backend) = tokio::io::duplex(16);
+        drop(backend);
+        let send_complete = AtomicBool::new(false);
+        let result = timeout(
+            Duration::from_secs(1),
+            send_while_receiving(
+                &mut writer,
+                &[b'Q'; 4096],
+                &send_complete,
+                std::future::pending(),
+            ),
+        )
+        .await
+        .expect("writer error did not cancel the waiting reader");
+        assert!(matches!(result, Err(Error::SocketError(_))));
+        assert!(!send_complete.load(Ordering::Relaxed));
     }
 }

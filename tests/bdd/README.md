@@ -21,17 +21,20 @@ make test-bdd TAGS=@backend-batch
 They check a large request/response exchange, a paced 64-query batch directly
 against PostgreSQL, and the same paced batch through pg_doorman. The client
 drains replies immediately. Small backend socket buffers and `pg_sleep(0.150)`
-provide a controlled reproduction of a send deadline expiring despite replies
+make the transfer exceed the former five-second send deadline despite replies
 arriving throughout the batch.
 
-The `@backend-batch-progress` scenario asserts successful completion and is
-currently expected to fail with `58006` after about five seconds. The other
-two scenarios are controls. This regression is included in `@rust` / `@rust-2`;
-until the deadline is fixed, those suites also fail on this scenario.
+The `@backend-batch-progress` scenario asserts successful completion beyond
+five seconds. It previously failed with `58006` while rows were still arriving.
+The other two scenarios are controls. This regression is included in `@rust` /
+`@rust-2`. The `@backend-write-stall` scenarios also check recovery after freezing
+PostgreSQL for six seconds, for both an extended batch and a simple query.
 
 ```bash
-# Only the remaining deadline regression (currently fails):
+# Only the paced batch regression:
 make test-bdd TAGS=@backend-batch-progress
+# A paused backend resumes without losing the session:
+make test-bdd TAGS=@backend-write-stall
 # Only the large request/response exchange:
 make test-bdd TAGS=@backend-duplex-large-batch
 ```

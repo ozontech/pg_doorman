@@ -14,7 +14,6 @@ use crate::app::server::{
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
-use crate::client::roundtrip::{send_flush_timeout_error, ResponseWriter, BACKEND_SEND_TIMEOUT};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
@@ -1070,15 +1069,8 @@ where
                     );
 
                     // Send BEGIN to server
-                    if let Err(err) = server
-                        .send_and_flush_timeout(&begin_msg, BACKEND_SEND_TIMEOUT)
-                        .await
-                    {
-                        if matches!(err, Error::FlushTimeout) {
-                            send_flush_timeout_error(&mut self.write, false).await;
-                        }
-                        return Err(err);
-                    }
+                    server.roundtrip_in_progress = true;
+                    server.send_and_flush(&begin_msg).await?;
 
                     // Receive and discard response (client already got synthetic response)
                     // Using sink() to avoid forwarding to client
@@ -1098,6 +1090,7 @@ where
                             }
                         }
                     }
+                    server.roundtrip_in_progress = false;
 
                     // Reset query_start_at for the actual query
                     query_start_at = now();
@@ -1324,7 +1317,6 @@ where
         let buffer = std::mem::take(&mut *self.buffer);
         let message = message.unwrap_or(&buffer);
         let mut writer = server.stream.writer();
-        let mut response_in_progress = false;
         let send_complete = AtomicBool::new(false);
 
         // If this future is dropped at any await, is_bad/checkin_cleanup will
@@ -1338,9 +1330,8 @@ where
         let result = send_while_receiving(
             &mut writer,
             message,
-            BACKEND_SEND_TIMEOUT,
             &send_complete,
-            self.receive_server_responses(server, &mut response_in_progress, &send_complete),
+            self.receive_server_responses(server, &send_complete),
         )
         .await;
         *self.buffer = buffer;
@@ -1352,9 +1343,6 @@ where
                 self.connection_id
             ));
             self.client_last_messages_in_tx.clear();
-            if matches!(err, Error::FlushTimeout) {
-                send_flush_timeout_error(&mut self.write, response_in_progress).await;
-            }
             return Err(err);
         }
 
@@ -1367,7 +1355,6 @@ where
     async fn receive_server_responses(
         &mut self,
         server: &mut Server,
-        response_in_progress: &mut bool,
         send_complete: &AtomicBool,
     ) -> Result<(), Error> {
         // Pre-calculate fast release conditions (avoids repeated checks)
@@ -1377,17 +1364,8 @@ where
         // buffered in 8 KiB chunks.
         loop {
             let mut response = server
-                .recv(
-                    ResponseWriter {
-                        inner: &mut self.write,
-                        in_progress: response_in_progress,
-                    },
-                    Some(&mut self.server_parameters),
-                )
+                .recv(&mut self.write, Some(&mut self.server_parameters))
                 .await?;
-            // recv may stream a large message directly to the client. It
-            // returns successfully only after that complete message is sent.
-            *response_in_progress = false;
 
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position
@@ -1429,15 +1407,7 @@ where
 
             // Write response to client
             self.stats.active_write();
-            if let Err(err) = write_all_flush(
-                &mut ResponseWriter {
-                    inner: &mut self.write,
-                    in_progress: response_in_progress,
-                },
-                &response,
-            )
-            .await
-            {
+            if let Err(err) = write_all_flush(&mut self.write, &response).await {
                 // Preserve backend reuse after a client disconnect only when
                 // the full batch was sent. Draining with a pending writer
                 // could wait for responses to commands it has not sent yet.
@@ -1456,8 +1426,6 @@ where
                     return Err(err);
                 }
             }
-            *response_in_progress = false;
-
             self.stats.active_idle();
 
             // Early exit check

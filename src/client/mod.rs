@@ -6,7 +6,6 @@ mod error_handling;
 #[cfg(unix)]
 pub mod migration;
 mod protocol;
-mod roundtrip;
 mod startup;
 mod transaction;
 mod util;
