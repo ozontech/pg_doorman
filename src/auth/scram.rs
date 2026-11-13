@@ -59,14 +59,44 @@ macro_rules! parse_part {
     };
 }
 
-pub fn parse_client_first_message(password: Cow<str>) -> Result<ClientFirstMessage, Error> {
-    let data: &str;
-    if let Some(sub_password) = password.get(constants::SCRAM_SHA_256.len() + 4 + 1..password.len())
-    {
-        data = sub_password;
-    } else {
-        return Err(Error::ScramClientError("password length".to_string()));
+pub fn parse_sasl_initial_response(packet: &[u8]) -> Result<&str, Error> {
+    let mechanism = b"SCRAM-SHA-256\0";
+
+    // Validate SASL mechanism
+    let rest = packet
+        .strip_prefix(mechanism)
+        .ok_or_else(|| Error::ScramClientError("Invalid SASL mechanism".to_string()))?;
+
+    // Extract the 4-byte response length
+    let length_bytes: [u8; 4] = rest
+        .get(..4)
+        .ok_or_else(|| Error::ScramClientError("Missing SASL response length".to_string()))?
+        .try_into()
+        .map_err(|_| Error::ScramClientError("Invalid SASL response length".to_string()))?;
+
+    let length = i32::from_be_bytes(length_bytes);
+
+    if length < 0 {
+        return Err(Error::ScramClientError(
+            "Invalid negative SASL response length".to_string(),
+        ));
     }
+
+    // Extract SCRAM text from original binary bytes
+    let payload = &rest[4..];
+
+    if payload.len() != length as usize {
+        return Err(Error::ScramClientError(
+            "SASL response length mismatch".to_string(),
+        ));
+    }
+
+    std::str::from_utf8(payload)
+        .map_err(|_| Error::ScramClientError("Invalid SCRAM UTF-8".to_string()))
+}
+
+pub fn parse_client_first_message(password: Cow<str>) -> Result<ClientFirstMessage, Error> {
+    let data: &str = password.as_ref();
 
     let gs2_flag: char;
     let mut parts = data.split(',');
@@ -464,11 +494,10 @@ mod tests {
 
     #[test]
     fn good_parse_client_first_message() {
-        let result = parse_client_first_message(Cow::from(
-            "SCRAM-SHA-256\0\0\0\0 n,,n=,r=5DAkMQDUZpG/3GcwewTYJZbD",
-        ))
-        .unwrap();
-        assert_eq!("n=,r=5DAkMQDUZpG/3GcwewTYJZbD", result.client_first_bare);
+        let result =
+            parse_client_first_message(Cow::Borrowed("n,,n=,r=5DAkMQDUZpG/3GcwewTYJZbD")).unwrap();
+
+        assert_eq!(result.client_first_bare, "n=,r=5DAkMQDUZpG/3GcwewTYJZbD");
     }
 
     #[test]

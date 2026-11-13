@@ -19,8 +19,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::auth::jwt::get_user_name_from_jwt;
 use crate::auth::pam::pam_auth;
 use crate::auth::scram::{
-    parse_client_final_message, parse_client_first_message, parse_server_secret,
-    prepare_server_final_message, prepare_server_first_response,
+    parse_client_final_message, parse_client_first_message, parse_sasl_initial_response,
+    parse_server_secret, prepare_server_final_message, prepare_server_first_response,
 };
 use crate::config::BackendAuthMethod;
 use crate::config::{get_config, PoolMode};
@@ -481,9 +481,9 @@ where
     // scram auth.
     scram_start_challenge(write).await?;
     let first_message = read_password(read).await?;
-    let client_first_message = match parse_client_first_message(String::from_utf8_lossy(
-        &first_message,
-    )) {
+    let client_first_message = match parse_sasl_initial_response(&first_message)
+        .and_then(|payload| parse_client_first_message(std::borrow::Cow::Borrowed(payload)))
+    {
         Ok(client_first_message) => client_first_message,
         Err(err) => {
             warn!("[{username_from_parameters}@{pool_name}] SCRAM: client first message parse error from {client_addr}: {err}");
@@ -853,7 +853,9 @@ where
 
         scram_start_challenge(write).await?;
         let first_msg = read_password(read).await?;
-        let client_first = match parse_client_first_message(String::from_utf8_lossy(&first_msg)) {
+        let client_first = match parse_sasl_initial_response(&first_msg)
+            .and_then(|payload| parse_client_first_message(std::borrow::Cow::Borrowed(payload)))
+        {
             Ok(msg) => msg,
             Err(err) => {
                 warn!("[{username}@{pool_name}] auth_query: SCRAM client first message parse error: {err}");
