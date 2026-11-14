@@ -23,6 +23,7 @@ use crate::stats::ServerStats;
 
 use super::authentication::handle_authentication;
 use super::cleanup::CleanupState;
+use super::duplex::BackendStream;
 use super::parameters::ServerParameters;
 use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
 use super::{prepared_statements, protocol_io, startup_cancel};
@@ -42,7 +43,11 @@ pub struct Server {
     pub(crate) address: Address,
 
     /// Buffered TCP or Unix socket stream for communication with the PostgreSQL server.
-    pub(crate) stream: BufStream<StreamInner>,
+    pub(crate) stream: BackendStream,
+
+    /// Stays set if a roundtrip future is cancelled. Such a connection must
+    /// never be cleaned up or handed to another client.
+    pub(crate) roundtrip_in_progress: bool,
 
     /// Response buffer for accumulating server messages before forwarding them to the client.
     pub(crate) buffer: BytesMut,
@@ -290,14 +295,14 @@ impl Server {
     /// up to ReadyForQuery), so readable on the underlying socket correctly
     /// reflects new data from the server (e.g., FATAL after idle_in_transaction_session_timeout).
     pub async fn server_readable(&self) {
-        let _ = self.stream.get_ref().readable().await;
+        let _ = self.stream.readable().await;
     }
 
     /// Verify that server_readable() readiness is genuine, not spurious.
     /// Returns true if the connection is alive (WouldBlock = no real data).
     /// Returns false if the server sent data or closed the connection (dead).
     pub fn check_server_alive(&self) -> bool {
-        if self.stream.get_ref().is_tls() {
+        if self.stream.with_inner(|stream| stream.is_tls()) {
             // For TLS connections, readable() fires on raw TCP socket readiness.
             // Calling try_read() on the raw socket would consume bytes that the
             // TLS layer hasn't processed, corrupting the session.
@@ -310,7 +315,7 @@ impl Server {
         }
         let mut buf = [0u8; 1];
         matches!(
-            self.stream.get_ref().try_read(&mut buf),
+            self.stream.with_inner(|stream| stream.try_read(&mut buf)),
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
         )
     }
@@ -318,10 +323,7 @@ impl Server {
     /// Server & client are out of sync, we must discard this connection.
     /// This happens with clients that misbehave.
     pub fn is_bad(&self) -> bool {
-        if self.bad {
-            return self.bad;
-        };
-        false
+        self.bad || self.roundtrip_in_progress
     }
 
     /// Drains any remaining data from the server that hasn't been read yet.
@@ -397,6 +399,12 @@ impl Server {
     /// Perform any necessary cleanup before putting the server
     /// connection back in the pool
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
+        if self.roundtrip_in_progress {
+            self.mark_bad("returned with an incomplete roundtrip");
+            return Err(Error::ProtocolSyncError(
+                "backend returned with an incomplete roundtrip".to_string(),
+            ));
+        }
         self.pending_large_message = None;
         if self.in_copy_mode() {
             warn!(
@@ -1089,7 +1097,8 @@ impl Server {
 
                     let server = Server {
                         address: address.to_owned(),
-                        stream: BufStream::new(stream),
+                        stream: BackendStream::new(BufStream::new(stream)),
+                        roundtrip_in_progress: false,
                         buffer: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         read_buf: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         server_parameters,
@@ -1147,6 +1156,54 @@ impl Server {
     }
 }
 
+#[cfg(test)]
+impl Server {
+    /// Connected transport without startup/authentication, for wire-protocol
+    /// tests that control the peer and do not need a PostgreSQL installation.
+    pub(crate) fn for_test(stream: StreamInner) -> Self {
+        let connected_with_tls = stream.is_tls();
+        Self {
+            address: Address::default(),
+            stream: BackendStream::new(BufStream::with_capacity(64, 64, stream)),
+            roundtrip_in_progress: false,
+            buffer: BytesMut::new(),
+            read_buf: BytesMut::new(),
+            server_parameters: ServerParameters::new(),
+            process_id: 0,
+            secret_key: 0,
+            in_transaction: false,
+            data_available: false,
+            in_copy_mode: false,
+            async_mode: false,
+            expected_responses: 0,
+            bad: false,
+            cleanup_state: CleanupState::new(),
+            client_server_map: Default::default(),
+            connected_at: chrono::Utc::now().naive_utc(),
+            stats: Arc::new(ServerStats::new(
+                Address::default(),
+                crate::utils::clock::now(),
+            )),
+            application_name: String::new(),
+            last_activity: SystemTime::now(),
+            cleanup_connections: false,
+            log_client_parameter_status_changes: false,
+            prepared_statement_cache: None,
+            registering_prepared_statement: VecDeque::new(),
+            has_pending_cache_entries: false,
+            deferred_eviction_closes: Vec::new(),
+            connected_with_tls,
+            session_mode: false,
+            max_message_size: 1024,
+            pending_large_message: None,
+            close_reason: None,
+            override_lifetime_ms: None,
+            operator_managed_startup_keys: Arc::new(HashSet::new()),
+            last_sql_error: None,
+        }
+    }
+}
+
 impl Drop for Server {
     /// Try to do a clean shut down. Best effort because
     /// the socket is in non-blocking mode, so it may not be ready
@@ -1163,7 +1220,7 @@ impl Drop for Server {
             bytes.put_u8(b'X');
             bytes.put_i32(4);
 
-            match self.stream.get_mut().try_write(&bytes) {
+            match self.stream.with_inner(|stream| stream.try_write(&bytes)) {
                 Ok(5) => (),
                 Err(err) => warn!(
                     "[{}@{}] failed to send Terminate to server pid={}: {err}",

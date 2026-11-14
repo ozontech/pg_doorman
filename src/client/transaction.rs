@@ -2,9 +2,9 @@ use bytes::{BufMut, BytesMut};
 use log::{debug, error, info, warn};
 use std::future::{poll_fn, Future};
 use std::ops::DerefMut;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::utils::clock::now;
 
@@ -22,6 +22,7 @@ use crate::messages::{
     write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
+use crate::server::duplex::send_while_receiving;
 use crate::server::Server;
 use crate::utils::buffering_writer::BufferingWriter;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
@@ -136,6 +137,9 @@ use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_C
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
+
+#[cfg(test)]
+mod tests;
 
 /// RAII guard for CLIENTS_IN_TRANSACTIONS counter.
 /// Increments on creation, decrements on drop.
@@ -1065,20 +1069,8 @@ where
                     );
 
                     // Send BEGIN to server
-                    if let Err(err) = server
-                        .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
-                        .await
-                    {
-                        if matches!(err, Error::FlushTimeout) {
-                            let _ = error_response_terminal(
-                                &mut self.write,
-                                "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
-                                "58006",
-                            )
-                            .await;
-                        }
-                        return Err(err);
-                    }
+                    server.roundtrip_in_progress = true;
+                    server.send_and_flush(&begin_msg).await?;
 
                     // Receive and discard response (client already got synthetic response)
                     // Using sink() to avoid forwarding to client
@@ -1098,6 +1090,7 @@ where
                             }
                         }
                     }
+                    server.roundtrip_in_progress = false;
 
                     // Reset query_start_at for the actual query
                     query_start_at = now();
@@ -1310,62 +1303,69 @@ where
         message: Option<&BytesMut>,
         server: &mut Server,
     ) -> Result<(), Error> {
+        if server.roundtrip_in_progress {
+            server.mark_bad("cannot resume an incomplete roundtrip");
+            return Err(Error::ProtocolSyncError(
+                "cannot resume an incomplete backend roundtrip".to_string(),
+            ));
+        }
         if !self.transaction_mode && self.session_xact_start.is_none() {
             self.session_xact_start = Some(crate::utils::clock::now());
         }
-        let message = message.unwrap_or(&self.buffer);
+        // Move the buffer out so the receive loop can borrow the client while
+        // the writer borrows the batch. Restore it afterwards to reuse capacity.
+        let buffer = std::mem::take(&mut *self.buffer);
+        let message = message.unwrap_or(&buffer);
+        let mut writer = server.stream.writer();
+        let send_complete = AtomicBool::new(false);
 
-        // Send message with timeout
-        if let Err(err) = server
-            .send_and_flush_timeout(message, Duration::from_secs(5))
-            .await
-        {
-            if matches!(err, Error::FlushTimeout) {
-                // Send ErrorResponse to client before closing connection.
-                // Without this, the client gets a bare TCP RST which causes
-                // "protocol violation" in drivers like Npgsql.
-                // Use the same SQLSTATE 58006 and "pooler is shut down" pattern
-                // as graceful shutdown so that clients can detect reconnection.
-                let _ = error_response_terminal(
-                    &mut self.write,
-                    "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
-                    "58006",
-                )
-                .await;
-            }
+        // If this future is dropped at any await, is_bad/checkin_cleanup will
+        // discard the backend even if the reader happened to see ReadyForQuery.
+        server.roundtrip_in_progress = true;
+        server.stats.data_sent(message.len());
+        server.stats.wait_writing();
+        log_client_to_server(&self.addr_str, server.get_process_id(), message);
+        self.stats.active_idle();
+
+        let result = send_while_receiving(
+            &mut writer,
+            message,
+            &send_complete,
+            self.receive_server_responses(server, &send_complete),
+        )
+        .await;
+        *self.buffer = buffer;
+        server.stats.wait_idle();
+
+        if let Err(err) = result {
+            server.mark_bad(&format!(
+                "client {} roundtrip failed: {err}",
+                self.connection_id
+            ));
+            self.client_last_messages_in_tx.clear();
             return Err(err);
         }
 
-        // Debug log: client -> server
-        log_client_to_server(&self.addr_str, server.get_process_id(), message);
+        // Both directions have completed; only now can the caller release it.
+        server.roundtrip_in_progress = false;
+        server.last_activity = SystemTime::now();
+        Ok(())
+    }
 
+    async fn receive_server_responses(
+        &mut self,
+        server: &mut Server,
+        send_complete: &AtomicBool,
+    ) -> Result<(), Error> {
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
-
-        // Single initial state update
-        self.stats.active_idle();
 
         // Read all data the server has to offer, which can be multiple messages
         // buffered in 8 KiB chunks.
         loop {
-            let mut response = match server
+            let mut response = server
                 .recv(&mut self.write, Some(&mut self.server_parameters))
-                .await
-            {
-                Ok(msg) => msg,
-                Err(err) => {
-                    server.wait_available().await;
-                    let mut msg = String::with_capacity(64);
-                    use std::fmt::Write;
-                    let _ = write!(
-                        msg,
-                        "server recv failed during client {} roundtrip: {:?}",
-                        self.addr, err
-                    );
-                    server.mark_bad(&msg);
-                    return Err(err);
-                }
-            };
+                .await?;
 
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position
@@ -1407,27 +1407,25 @@ where
 
             // Write response to client
             self.stats.active_write();
-            if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
+            if let Err(err) = write_all_flush(&mut self.write, &response).await {
+                // Preserve backend reuse after a client disconnect only when
+                // the full batch was sent. Draining with a pending writer
+                // could wait for responses to commands it has not sent yet.
+                if !send_complete.load(Ordering::Relaxed)
+                    || server.is_async()
+                    || server.in_copy_mode()
+                {
+                    return Err(err);
+                }
                 warn!(
-                    "[{}@{} #c{}] write to client failed pid={}: {err_write}",
-                    self.username,
-                    self.pool_name,
-                    self.connection_id,
-                    server.get_process_id()
+                    "[#c{}] write to client failed; draining backend response",
+                    self.connection_id
                 );
                 server.wait_available().await;
-                if server.is_async() || server.in_copy_mode() {
-                    server.mark_bad(
-                        format!(
-                            "failed to flush response to client {}: {:?}",
-                            self.addr, err_write
-                        )
-                        .as_str(),
-                    );
-                    return Err(err_write);
+                if server.bad || server.is_data_available() {
+                    return Err(err);
                 }
             }
-
             self.stats.active_idle();
 
             // Early exit check

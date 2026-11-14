@@ -1,4 +1,5 @@
 mod auth_query_helper;
+mod batch_helper;
 mod binary_upgrade_fd_helper;
 mod blackhole_helper;
 mod doorman_helper;

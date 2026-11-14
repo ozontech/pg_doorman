@@ -61,8 +61,8 @@ tracing-subscriber = {version = "0.3.20", features = ["json", "env-filter", "std
 # adding a second JWT crate would only duplicate functionality and
 # pull extra transitive licenses (ring, ISC) into the vendor set.
 iota = {version = "0.2.3"}
-openssl = {version = "0.10.78"}
-openssl-sys = {version = "0.9.114"}
+openssl = {version = "0.10.82"}
+openssl-sys = {version = "0.9.118"}
 pam-client = {version = "0.5.0", optional = true}
 pin-project-lite = "0.2.16"
 postgres = "0.19.10"

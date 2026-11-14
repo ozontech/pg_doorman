@@ -188,7 +188,7 @@ impl std::fmt::Display for Error {
                 write!(f, "Connection rejected by HBA configuration: {msg}")
             }
             Error::PreparedStatementError => write!(f, "Error with prepared statement"),
-            Error::FlushTimeout => write!(f, "Timeout while flushing data to client"),
+            Error::FlushTimeout => write!(f, "Timeout while flushing data to PostgreSQL backend"),
             Error::MaxMessageSize => write!(f, "Message exceeds maximum allowed size"),
             Error::CurrentMemoryUsage => write!(f, "Operation would exceed memory limits"),
             Error::JWTPubKey(msg) => write!(f, "JWT public key error: {msg}"),
@@ -213,5 +213,18 @@ impl std::fmt::Display for Error {
 impl From<std::ffi::NulError> for Error {
     fn from(err: std::ffi::NulError) -> Self {
         Error::QueryError(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn flush_timeout_identifies_the_postgresql_backend() {
+        assert_eq!(
+            Error::FlushTimeout.to_string(),
+            "Timeout while flushing data to PostgreSQL backend"
+        );
     }
 }

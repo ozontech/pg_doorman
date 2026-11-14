@@ -1,0 +1,260 @@
+//! Independent read/write access to one buffered backend transport.
+//!
+//! Like `tokio::io::split`, the lock covers a single poll, never an await.
+//! Keeping the TLS stream and both buffers together also preserves the
+//! transport access needed by idle checks and best-effort Terminate.
+
+use std::future::poll_fn;
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
+use parking_lot::Mutex;
+use tokio::io::{AsyncRead, AsyncWrite, BufStream, ReadBuf};
+
+use crate::errors::Error;
+use crate::messages::write_all_flush;
+
+use super::stream::StreamInner;
+
+/// Both sides must finish. A protocol ErrorResponse is handled by `receive`,
+/// not returned as an I/O error: the writer still has to deliver Sync.
+/// `send_complete` lets the reader drain after a client disconnect only when
+/// the entire batch has been flushed. AtomicBool keeps the future Send.
+/// There is no batch send deadline: PostgreSQL can be executing earlier
+/// commands while the remaining request waits for socket capacity.
+pub(crate) async fn send_while_receiving<W, F>(
+    writer: &mut W,
+    messages: &[u8],
+    send_complete: &AtomicBool,
+    receive: F,
+) -> Result<(), Error>
+where
+    W: AsyncWrite + Unpin,
+    F: Future<Output = Result<(), Error>>,
+{
+    send_complete.store(false, Ordering::Relaxed);
+    let send = async {
+        write_all_flush(writer, messages).await?;
+        send_complete.store(true, Ordering::Relaxed);
+        Ok::<(), Error>(())
+    };
+    tokio::try_join!(send, receive)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub(crate) struct BackendStream<S = StreamInner> {
+    inner: Arc<Mutex<BufStream<S>>>,
+}
+
+pub(crate) struct BackendWriter<S> {
+    inner: Arc<Mutex<BufStream<S>>>,
+}
+
+impl<S: AsyncRead + AsyncWrite> BackendStream<S> {
+    pub(crate) fn new(stream: BufStream<S>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(stream)),
+        }
+    }
+
+    pub(crate) fn writer(&self) -> BackendWriter<S> {
+        BackendWriter {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    /// Synchronous transport operations only; the guard cannot escape.
+    pub(crate) fn with_inner<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
+        f(self.inner.lock().get_mut())
+    }
+}
+
+impl BackendStream {
+    pub(crate) async fn readable(&self) -> io::Result<()> {
+        poll_fn(|cx| self.with_inner(|stream| stream.poll_read_ready(cx))).await
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for BackendStream<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner.lock()).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for BackendStream<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut *self.inner.lock()).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner.lock()).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner.lock()).poll_shutdown(cx)
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for BackendWriter<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut *self.inner.lock()).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner.lock()).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner.lock()).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::timeout;
+
+    use super::*;
+
+    async fn exchange(concurrent: bool) {
+        let (transport, mut peer) = tokio::io::duplex(64);
+        let mut stream = BackendStream::new(BufStream::with_capacity(32, 32, transport));
+        let mut writer = stream.writer();
+        let request = vec![b'Q'; 4096];
+        let response = vec![b'D'; 4096];
+
+        let backend = async {
+            assert_eq!(peer.read_u8().await.unwrap(), b'Q');
+            // Produce a response before consuming the remaining request.
+            peer.write_all(&response).await.unwrap();
+            let mut rest = vec![0; request.len() - 1];
+            peer.read_exact(&mut rest).await.unwrap();
+            assert_eq!(rest, request[1..]);
+        };
+        let frontend = async {
+            let receive = async {
+                let mut received = vec![0; response.len()];
+                stream.read_exact(&mut received).await.unwrap();
+                assert_eq!(received, response);
+            };
+            if concurrent {
+                // Exercise the same coordinator used by the client roundtrip.
+                send_while_receiving(&mut writer, &request, &AtomicBool::new(false), async {
+                    receive.await;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            } else {
+                writer.write_all(&request).await.unwrap();
+                writer.flush().await.unwrap();
+                receive.await;
+            }
+        };
+        tokio::join!(backend, frontend);
+    }
+
+    #[tokio::test]
+    async fn reads_responses_while_a_large_request_is_still_being_written() {
+        timeout(Duration::from_secs(2), exchange(true))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn sequential_exchange_deadlocks_with_the_same_bounded_transport() {
+        assert!(timeout(Duration::from_millis(50), exchange(false))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn waits_for_the_response_after_the_send_completes() {
+        let (mut writer, mut backend) = tokio::io::duplex(64);
+        let (ready, wait) = tokio::sync::oneshot::channel();
+        let peer = async {
+            assert_eq!(backend.read_u8().await.unwrap(), b'Q');
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            ready.send(()).unwrap();
+        };
+        let send_complete = AtomicBool::new(false);
+        let roundtrip = send_while_receiving(&mut writer, b"Q", &send_complete, async {
+            wait.await.unwrap();
+            Ok(())
+        });
+        let (_, result) = tokio::join!(peer, roundtrip);
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_early_response_boundary_does_not_cancel_pending_writes() {
+        let (mut writer, mut backend) = tokio::io::duplex(16);
+        let request = vec![b'H'; 4096];
+        let peer = async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let mut received = vec![0; request.len()];
+            backend.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, request);
+        };
+        let send_complete = AtomicBool::new(false);
+        let roundtrip =
+            send_while_receiving(&mut writer, &request, &send_complete, async { Ok(()) });
+        let (_, result) = tokio::join!(peer, roundtrip);
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reader_error_cancels_a_blocked_writer() {
+        let (mut writer, _backend) = tokio::io::duplex(16);
+        let send_complete = AtomicBool::new(false);
+        let result = timeout(
+            Duration::from_secs(1),
+            send_while_receiving(&mut writer, &[b'Q'; 4096], &send_complete, async {
+                Err(Error::SocketError("backend read failed".into()))
+            }),
+        )
+        .await
+        .expect("reader error did not cancel the blocked writer");
+        assert!(matches!(result, Err(Error::SocketError(_))));
+        assert!(!send_complete.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn a_writer_error_cancels_a_waiting_reader() {
+        let (mut writer, backend) = tokio::io::duplex(16);
+        drop(backend);
+        let send_complete = AtomicBool::new(false);
+        let result = timeout(
+            Duration::from_secs(1),
+            send_while_receiving(
+                &mut writer,
+                &[b'Q'; 4096],
+                &send_complete,
+                std::future::pending(),
+            ),
+        )
+        .await
+        .expect("writer error did not cancel the waiting reader");
+        assert!(matches!(result, Err(Error::SocketError(_))));
+        assert!(!send_complete.load(Ordering::Relaxed));
+    }
+}
