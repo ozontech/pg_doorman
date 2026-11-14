@@ -20,6 +20,7 @@ mod tests;
 
 // Re-exports
 pub(crate) use handler::write_metrics_response;
+pub(crate) use metrics::{adhoc_query_metrics, AdhocQueryMetrics};
 pub use metrics::{
     observe_anonymous_eviction, observe_backend_create_phase, observe_pool_query_microseconds,
     observe_pool_transaction_microseconds, observe_pool_wait_microseconds, observe_streaming_bytes,
@@ -387,6 +388,45 @@ pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL: Lazy<IntCounte
         REGISTRY.register(Box::new(counter.clone())).unwrap();
         counter
     });
+
+pub(crate) static ADHOC_CANDIDATE_PARSES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_adhoc_candidate_parses_total",
+            "Cumulative first-seen Parse candidates by user and database. Approximate SQL novelty, not confirmed one-off queries or executions; Bloom false positives can suppress candidates.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static ADHOC_OBSERVED_PARSES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_adhoc_observed_parses_total",
+            "Cumulative Parse messages observed while adhoc_query_tracking is enabled, including when prepared-statement handling is disabled, by user and database. Denominator for the adhoc candidate Parse ratio.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static ADHOC_FILTER_RESETS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_adhoc_filter_resets_total",
+            "Cumulative Bloom shard resets at 25 percent bit occupancy, by user and database. Reset shards forget history and may count established queries as new candidates.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
 
 /// Wall-clock duration of each phase of backend connection setup, split
 /// by phase. Phases are disjoint and additive:

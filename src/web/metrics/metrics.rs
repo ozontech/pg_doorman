@@ -336,6 +336,48 @@ pub fn observe_anonymous_eviction(user: &str, database: &str) {
         .inc();
 }
 
+/// Cached per-pool counter handles. Resolve labels once when the tracker
+/// is created so each Parse only increments its atomic counters.
+#[derive(Clone, Debug)]
+pub(crate) struct AdhocQueryMetrics {
+    candidates: prometheus::IntCounter,
+    observed: prometheus::IntCounter,
+    resets: prometheus::IntCounter,
+}
+
+impl AdhocQueryMetrics {
+    #[inline]
+    pub(crate) fn observe_parse(&self, is_candidate: bool) {
+        self.observed.inc();
+        if is_candidate {
+            self.candidates.inc();
+        }
+    }
+
+    #[inline]
+    pub(crate) fn observe_filter_reset(&self) {
+        self.resets.inc();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn counts(&self) -> (u64, u64, u64) {
+        (
+            self.candidates.get(),
+            self.observed.get(),
+            self.resets.get(),
+        )
+    }
+}
+
+pub(crate) fn adhoc_query_metrics(user: &str, database: &str) -> AdhocQueryMetrics {
+    let labels = &[user, database];
+    AdhocQueryMetrics {
+        candidates: super::ADHOC_CANDIDATE_PARSES_TOTAL.with_label_values(labels),
+        observed: super::ADHOC_OBSERVED_PARSES_TOTAL.with_label_values(labels),
+        resets: super::ADHOC_FILTER_RESETS_TOTAL.with_label_values(labels),
+    }
+}
+
 fn update_server_metrics() {
     SHOW_SERVERS_PREPARED_HITS.reset();
     SHOW_SERVERS_PREPARED_MISSES.reset();
@@ -1227,6 +1269,55 @@ mod tests {
         let before = child.get_sample_count();
         super::observe_pool_query_microseconds(user, database, 0);
         assert_eq!(child.get_sample_count(), before + 1);
+    }
+
+    #[test]
+    fn adhoc_counters_export_counter_type_and_pool_labels() {
+        use prometheus::proto::MetricType;
+
+        let user = "adhoc_export_user";
+        let database = "adhoc_export_db";
+        let metrics = super::adhoc_query_metrics(user, database);
+        metrics.observe_parse(true);
+        metrics.observe_filter_reset();
+
+        let families = super::super::REGISTRY.gather();
+        for (name, expected) in [
+            (
+                "pg_doorman_adhoc_candidate_parses_total",
+                metrics.candidates.get(),
+            ),
+            (
+                "pg_doorman_adhoc_observed_parses_total",
+                metrics.observed.get(),
+            ),
+            ("pg_doorman_adhoc_filter_resets_total", metrics.resets.get()),
+        ] {
+            let family = families
+                .iter()
+                .find(|family| family.name() == name)
+                .unwrap_or_else(|| panic!("missing metric family {name}"));
+            assert_eq!(family.type_(), MetricType::COUNTER);
+            let metric = family
+                .get_metric()
+                .iter()
+                .find(|metric| {
+                    metric
+                        .get_label()
+                        .iter()
+                        .any(|label| label.name() == "user" && label.value() == user)
+                        && metric
+                            .get_label()
+                            .iter()
+                            .any(|label| label.name() == "database" && label.value() == database)
+                })
+                .expect("missing pool label tuple");
+            assert_eq!(metric.get_label().len(), 2);
+            assert_eq!(
+                metric.counter.as_ref().expect("counter value").value(),
+                expected as f64
+            );
+        }
     }
 
     #[test]

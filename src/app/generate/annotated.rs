@@ -900,6 +900,14 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     }
     w.blank();
 
+    write_field_comment(w, fi, "general", "adhoc_query_tracking");
+    w.kv(
+        fi,
+        "adhoc_query_tracking",
+        &w.bool_val(g.adhoc_query_tracking),
+    );
+    w.blank();
+
     write_field_comment(w, fi, "general", "query_interner_gc_interval_seconds");
     w.kv(
         fi,

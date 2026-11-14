@@ -214,6 +214,12 @@ pub struct General {
     #[serde(default = "General::default_prepared_statements")]
     pub prepared_statements: bool,
 
+    /// Track approximate first-seen Parse hashes per pool. Prepared handling
+    /// reuses its existing hash; passthrough hashes raw SQL bytes with XXH3.
+    /// Live-reloadable; each enabled pool uses a 2 MiB Bloom bit array.
+    #[serde(default)]
+    pub adhoc_query_tracking: bool,
+
     #[serde(default = "General::default_prepared_statements_cache_size")]
     pub prepared_statements_cache_size: usize,
 
@@ -592,6 +598,7 @@ impl Default for General {
             server_idle_check_timeout: Self::default_server_idle_check_timeout(),
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
+            adhoc_query_tracking: false,
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
             server_prepared_statements_cache_size: None,
             client_anonymous_prepared_cache_size: None,
@@ -769,6 +776,25 @@ client_anonymous_prepared_cache_size: 512
     fn server_cache_size_defaults_to_none() {
         let g = General::default();
         assert!(g.server_prepared_statements_cache_size.is_none());
+    }
+
+    #[test]
+    fn adhoc_tracking_is_opt_in_and_roundtrips_both_formats() {
+        let defaults = General::default();
+        assert!(!defaults.adhoc_query_tracking);
+
+        let yaml = serde_yaml::to_string(&defaults).unwrap();
+        let yaml_without_flag = yaml.replace("adhoc_query_tracking: false\n", "");
+        let parsed: General = serde_yaml::from_str(&yaml_without_flag).unwrap();
+        assert!(!parsed.adhoc_query_tracking);
+
+        let mut enabled = defaults;
+        enabled.adhoc_query_tracking = true;
+        let parsed: General =
+            serde_yaml::from_str(&serde_yaml::to_string(&enabled).unwrap()).unwrap();
+        assert!(parsed.adhoc_query_tracking);
+        let parsed: General = toml::from_str(&toml::to_string(&enabled).unwrap()).unwrap();
+        assert!(parsed.adhoc_query_tracking);
     }
 
     #[test]

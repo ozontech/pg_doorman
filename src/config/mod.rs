@@ -882,6 +882,10 @@ pub async fn parse(path: &str) -> Result<(), Error> {
 }
 
 pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, Error> {
+    // Admin, REST and SIGHUP reloads must commit config/pools/tracker state in
+    // the same order. This lock is never acquired by the query hot path.
+    static RELOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _reload = RELOAD_LOCK.lock().await;
     let old_config = get_config();
 
     match parse(&old_config.path).await {
@@ -906,7 +910,12 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     // /metrics on this same scrape.
     crate::web::metrics::refresh_static_info_metrics();
 
-    if old_config != new_config {
+    if old_config != new_config
+        || crate::pool::adhoc::tracking_enabled() != new_config.general.adhoc_query_tracking
+    {
+        // A pool build can fail after parse has published CONFIG. Retry a
+        // requested tracker transition on the next reload even if that file
+        // is unchanged, rather than leaving the committed flag stale forever.
         info!("Config changed, reloading");
         ConnectionPool::from_config(client_server_map).await?;
         Ok(true)

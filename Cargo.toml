@@ -126,6 +126,10 @@ name = "hash_benchmarks"
 
 [[bench]]
 harness = false
+name = "adhoc_benchmarks"
+
+[[bench]]
+harness = false
 name = "cache_benchmarks"
 
 [[bench]]
