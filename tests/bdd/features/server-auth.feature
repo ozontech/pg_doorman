@@ -106,7 +106,7 @@ Feature: Server authentication tests
       """
       export DATABASE_URL_SCRAM_AUTH_OK="postgresql://example_user_scram:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
       export DATABASE_URL_SCRAM_AUTH_BAD="postgresql://example_user_scram_bad@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "TestServerAuthSCRAM" ./server-auth
+      cd tests/go && go test -v '-run=^TestServerAuthSCRAM(OK|BAD)$' ./server-auth
       """
     Then the command should succeed
     And the command output should contain "PASS: TestServerAuthSCRAMOK"
