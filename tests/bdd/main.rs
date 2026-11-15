@@ -1,3 +1,4 @@
+mod adhoc_tracking_helper;
 mod auth_query_helper;
 mod binary_upgrade_fd_helper;
 mod blackhole_helper;

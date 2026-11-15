@@ -458,6 +458,13 @@ impl PgConnection {
         Ok(())
     }
 
+    /// Frame a payload verbatim, including malformed bodies for protocol tests.
+    pub async fn send_raw_message(&mut self, code: u8, payload: &[u8]) -> tokio::io::Result<()> {
+        self.stream.write_u8(code).await?;
+        self.stream.write_i32((payload.len() + 4) as i32).await?;
+        self.stream.write_all(payload).await
+    }
+
     pub async fn send_parse(&mut self, name: &str, query: &str) -> tokio::io::Result<()> {
         let mut msg = Vec::new();
         msg.extend_from_slice(name.as_bytes());

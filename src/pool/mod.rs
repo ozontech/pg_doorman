@@ -28,6 +28,8 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 
 pub use crate::server::PreparedStatementCache;
 
+#[doc(hidden)]
+pub mod adhoc;
 mod auth_query_state;
 mod check_query_cache;
 mod dynamic;
@@ -329,6 +331,10 @@ pub struct ConnectionPool {
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
 
+    /// Shared across pool clones and config reloads, including clones retained
+    /// by established clients. Its Bloom array exists only while enabled.
+    pub(crate) adhoc_query_tracking: Arc<adhoc::AdhocQueryControl>,
+
     /// Per-pool cache for the response to `general.pooler_check_query`.
     /// Populated on the first matching SimpleQuery from any client; subsequent
     /// matches answer from this cache without touching the backend. The cache
@@ -629,7 +635,8 @@ impl ConnectionPool {
                         life_time_ms: pool_config
                             .server_lifetime
                             .unwrap_or(config.general.server_lifetime.as_millis()),
-                        sync_server_parameters: pool_config.effective_sync_server_parameters(&config.general),
+                        sync_server_parameters: pool_config
+                            .effective_sync_server_parameters(&config.general),
                         min_guaranteed_pool_size: pool_config.min_guaranteed_pool_size.unwrap_or(0),
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
@@ -639,6 +646,10 @@ impl ConnectionPool {
                             config.general.worker_threads,
                         ))),
                     },
+                    adhoc_query_tracking: adhoc::register_pool_tracker(PoolIdentifier::new(
+                        pool_name,
+                        &user.username,
+                    )),
                     check_query_cache: Arc::new(CheckQueryCache::new()),
                     coordinator: coordinators.get(pool_name).cloned(),
                     replenish_failures: Arc::new(AtomicU32::new(0)),
@@ -858,7 +869,8 @@ impl ConnectionPool {
                                 life_time_ms: pool_config
                                     .server_lifetime
                                     .unwrap_or(config.general.server_lifetime.as_millis()),
-                                sync_server_parameters: pool_config.effective_sync_server_parameters(&config.general),
+                                sync_server_parameters: pool_config
+                                    .effective_sync_server_parameters(&config.general),
                                 min_guaranteed_pool_size: pool_config
                                     .min_guaranteed_pool_size
                                     .unwrap_or(0),
@@ -870,6 +882,7 @@ impl ConnectionPool {
                                     config.general.worker_threads,
                                 ))),
                             },
+                            adhoc_query_tracking: adhoc::register_pool_tracker(identifier.clone()),
                             check_query_cache: Arc::new(CheckQueryCache::new()),
                             coordinator: coordinators.get(pool_name).cloned(),
                             replenish_failures: Arc::new(AtomicU32::new(0)),
@@ -1018,6 +1031,10 @@ impl ConnectionPool {
         // PREVIOUS_GENERAL_STARTUP_HASH alone so the next reload still
         // sees the old value and re-evaluates the change correctly.
         PREVIOUS_GENERAL_STARTUP_HASH.store(general_startup_hash, Ordering::Relaxed);
+        // Commit instrumentation only after the complete pool rebuild succeeds.
+        // This does not participate in backend pool fingerprints, and updates
+        // controls still held by existing clients as well as published pools.
+        adhoc::set_tracking_enabled(config.general.adhoc_query_tracking);
         Ok(())
     }
 
@@ -1614,6 +1631,24 @@ mod tests {
             compute_pool_fingerprint(&pool, &general),
             compute_pool_fingerprint(&pool, &general),
             "Same config must produce identical fingerprint"
+        );
+    }
+
+    #[test]
+    fn adhoc_tracking_toggle_preserves_backend_pool_fingerprints() {
+        let pool = ConfigPool::default();
+        let before = General::default();
+        let mut after = before.clone();
+        after.adhoc_query_tracking = true;
+        assert_eq!(
+            compute_pool_fingerprint(&pool, &before),
+            compute_pool_fingerprint(&pool, &after),
+            "Toggling instrumentation must not replace static backends"
+        );
+        assert_eq!(
+            pool.hash_value() ^ compute_general_startup_hash(&before),
+            pool.hash_value() ^ compute_general_startup_hash(&after),
+            "Toggling instrumentation must not invalidate dynamic pools"
         );
     }
 

@@ -125,6 +125,29 @@ pg_doorman экспортирует следующие метрики:
 | `pg_doorman_clients_prepared_anonymous_entries` | Gauge с лейблами `user` и `database`. Сумма Anonymous-записей по кешам всех подключённых клиентов. Anonymous-часть каждого клиента ограничена `client_anonymous_prepared_cache_size`, поэтому значение приближается максимум к `connected_clients * cache_size`. |
 | `pg_doorman_clients_prepared_anonymous_evictions_total` | Накопительный счётчик вытеснений из Anonymous LRU, с лейблами `user` и `database`. Устойчивая ненулевая скорость означает, что `client_anonymous_prepared_cache_size` мал для нагрузки и LRU вытесняет записи быстрее, чем приложение успевает их повторно использовать. |
 
+### Кандидаты adhoc по новизне Parse
+
+Включите `general.adhoc_query_tracking`, чтобы измерять приблизительную долю впервые
+замеченных `Parse`, в том числе при выключенном `prepared_statements`. При включённой
+обработке prepared statements используется готовый хеш SQL, OID типов параметров
+и стартовых параметров планировщика. При выключенной через XXH3-64 хешируются
+только исходные байты SQL, без имени statement, OID параметров и состояния планировщика.
+Один и тот же SQL может иметь разную идентичность в двух режимах. Эти счётчики
+измеряют новизну, а не выполнения или подтверждённые одноразовые запросы.
+Simple Query и повторные Bind/Execute без Parse не учитываются.
+
+| Метрика | Описание |
+|---------|----------|
+| `pg_doorman_adhoc_candidate_parses_total` | Counter с лейблами `user` и `database`. Число Parse, хеша которых не было в Bloom-фильтре до добавления. Первый Parse обычного повторяемого запроса тоже кандидат; ложные срабатывания фильтра могут скрыть кандидатов. |
+| `pg_doorman_adhoc_observed_parses_total` | Counter с лейблами `user` и `database`. Все Parse, наблюдавшиеся при включённом учёте, в том числе при выключенной обработке prepared statements. Знаменатель для доли candidate Parse. |
+| `pg_doorman_adhoc_filter_resets_total` | Counter с лейблами `user` и `database`. Число очисток шардов при заполнении 25% битов. Очистка забывает историю, поэтому ранее встречавшиеся запросы могут снова стать кандидатами. |
+
+Доля кандидатов на пул:
+`rate(pg_doorman_adhoc_candidate_parses_total[5m]) / rate(pg_doorman_adhoc_observed_parses_total[5m])`.
+Если наблюдаемых Parse нет, у отношения нет значения. Все три счётчика сохраняют
+накопленные значения при очистке фильтра и включении/отключении учёта через RELOAD.
+Учёт продолжается и при выключенном HTTP listener.
+
 ### Метрики query interner
 
 Query interner общий для процесса. У этих метрик нет лейблов пула, пользователя или базы; для привязки к нагрузке смотрите метрики prepared statements выше и WARN-строки о synthetic miss.

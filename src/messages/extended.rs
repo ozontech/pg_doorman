@@ -203,14 +203,12 @@ impl Parse {
         if self.query.len() >= 64 {
             let mut hasher = Xxh3::default();
             hasher.write(self.query.as_bytes());
-            hasher.write_i16(self.num_params);
             hasher.write(self.param_types.as_slice().as_bytes());
             hasher.write_u64(planner_param_hash);
             hasher.finish()
         } else {
             let mut hasher = DefaultHasher::new();
             hasher.write(self.query.as_bytes());
-            hasher.write_i16(self.num_params);
             hasher.write(self.param_types.as_slice().as_bytes());
             hasher.write_u64(planner_param_hash);
             hasher.finish()

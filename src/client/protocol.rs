@@ -1,8 +1,10 @@
 use bytes::{BufMut, BytesMut};
 use log::{debug, log_enabled, trace, warn, Level};
 use std::convert::TryInto;
+use std::ffi::CStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::errors::Error;
 use crate::messages::{error_response, Bind, Close, Describe, Parse};
@@ -29,6 +31,16 @@ fn synthetic_miss_should_warn() -> bool {
     } else {
         false
     }
+}
+
+/// Borrow the SQL C string after the Parse header and statement name, without
+/// allocating a Parse or decoding the SQL into a UTF-8 string. Unreadable
+/// messages are left to PostgreSQL; tracking must not change passthrough.
+fn parse_query_slice(message: &[u8]) -> Option<&[u8]> {
+    let payload = message.get(5..)?;
+    let name = CStr::from_bytes_until_nul(payload).ok()?;
+    let query = CStr::from_bytes_until_nul(&payload[name.to_bytes_with_nul().len()..]).ok()?;
+    Some(query.to_bytes())
 }
 
 use super::core::{
@@ -150,6 +162,11 @@ where
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
+            if let Some(tracker) = pool.adhoc_query_tracking.load().as_ref() {
+                if let Some(query) = parse_query_slice(&message) {
+                    tracker.observe(xxh3_64(query));
+                }
+            }
             debug!(
                 "[{}@{} #c{}] prepared statements disabled, forwarding Parse as-is",
                 self.username, self.pool_name, self.connection_id,
@@ -179,6 +196,8 @@ where
         // different server-side prepared statements.
         let planner_hash = self.server_parameters.planner_param_hash();
         let hash = parse.get_hash_with_planner_params(planner_hash);
+
+        pool.adhoc_query_tracking.observe(hash);
 
         // Always use pool cache to get shared Arc<Parse> (saves memory for async clients too)
         let name_arg = if client_given_name.is_empty() {
@@ -724,5 +743,49 @@ where
         self.prepared.pending_close_complete = 0;
         self.prepared.skipped_parses.clear();
         self.prepared.parses_sent_in_batch = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_query_slice_borrows_sql_for_named_and_unnamed_statements() {
+        let query = "SELECT 'привет' /* a longer query that uses the same borrowed SQL slice */";
+        for types in [&[][..], &[23][..], &[25, 25][..]] {
+            let parse = Parse::from_parts(query, types);
+            for name in ["", "statement_name", "имя"] {
+                let message = parse.to_bytes_with_name(name).unwrap();
+                let slice = parse_query_slice(&message).unwrap();
+                assert_eq!(slice, query.as_bytes());
+                assert_eq!(slice.as_ptr(), message[5 + name.len() + 1..].as_ptr());
+            }
+        }
+    }
+
+    #[test]
+    fn parse_query_slice_accepts_empty_and_non_utf8_sql() {
+        let empty = Parse::from_parts("", &[])
+            .to_bytes_with_name("empty")
+            .unwrap();
+        assert_eq!(parse_query_slice(&empty).unwrap(), b"");
+
+        // SQL bytes may use a client encoding other than UTF-8.
+        let message = b"P\0\0\0\x09\0\xff\0\0\0";
+        assert_eq!(parse_query_slice(message).unwrap(), b"\xff");
+    }
+
+    #[test]
+    fn parse_query_slice_skips_unreadable_messages_without_panicking() {
+        for message in [
+            &b""[..],
+            &b"P\0\0\0"[..],
+            &b"P\0\0\0\x04"[..],
+            &b"P\0\0\0\x08name"[..],
+            &b"P\0\0\0\x08\0SQL"[..],
+        ] {
+            assert!(parse_query_slice(message).is_none());
+        }
     }
 }

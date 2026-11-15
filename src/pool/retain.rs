@@ -346,6 +346,10 @@ mod tests {
             config_hash: 0,
             per_user_startup_overlay_hash: crate::pool::empty_overlay_hash(),
             prepared_statement_cache: None,
+            adhoc_query_tracking: Arc::new(super::super::adhoc::AdhocQueryControl::new(
+                super::super::PoolIdentifier::new("test_db", "test_user"),
+                false,
+            )),
             check_query_cache: Arc::new(crate::pool::CheckQueryCache::new()),
             coordinator: None,
             replenish_failures: Arc::new(AtomicU32::new(0)),

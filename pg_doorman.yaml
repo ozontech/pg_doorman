@@ -320,6 +320,12 @@ general:
   # Default: not set (inherits prepared_statements_cache_size)
   # client_anonymous_prepared_cache_size: 8192
 
+  # Track first-seen Parse candidates, including when prepared_statements is disabled.
+  # Uses one 2 MiB Bloom bitmap per pool, split into 64 shards; four bit probes per hash.
+  # A shard resets at 25% bit occupancy. RELOAD enables/disables tracking for existing clients.
+  # Default: false
+  adhoc_query_tracking: false
+
   # How often (seconds) the query interner runs its mark-and-sweep GC.
   # The sweep tick is gc_interval / 4 so a marked entry has a quarter-interval
   # to be touched (and unmarked) before the next eviction pass.

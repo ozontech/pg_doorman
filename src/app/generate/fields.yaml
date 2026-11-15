@@ -945,6 +945,49 @@ fields:
         cached for the lifetime of the client connection.
       default: "not set (inherits prepared_statements_cache_size)"
 
+    adhoc_query_tracking:
+      config:
+        en: |
+          Track first-seen Parse candidates, including when prepared_statements is disabled.
+          Uses one 2 MiB Bloom bitmap per pool, split into 64 shards; four bit probes per hash.
+          A shard resets at 25% bit occupancy. RELOAD enables/disables tracking for existing clients.
+        ru: |
+          Считать впервые замеченные Parse как кандидатов adhoc, в том числе при выключенном prepared_statements.
+          Один Bloom-фильтр на пул: 2 МиБ, 64 шарда, четыре битовые позиции на хеш.
+          Шард сбрасывается при заполнении 25% битов. RELOAD включает/отключает учёт и для текущих клиентов.
+      doc: |
+        Enables approximate first-seen query tracking for extended-protocol `Parse` messages,
+        including when `prepared_statements` is disabled.
+        Each enabled pool shares one 2 MiB Bloom bitmap across its clients, split into 64 shards.
+        Four bit positions are derived from the query hash. With prepared-statement handling enabled,
+        the existing hash is reused without hashing SQL again. With it disabled, SQL bytes are sliced
+        directly from the message and hashed once with XXH3-64, without decoding a full `Parse`.
+        Each observed `Parse` increments `pg_doorman_adhoc_observed_parses_total`; a hash absent from
+        the filter also increments `pg_doorman_adhoc_candidate_parses_total` and is inserted.
+
+        The counters measure **Parse novelty**, not query executions or confirmed one-off queries.
+        The first occurrence of an ordinary reusable query is also a candidate. Later `Bind` or
+        `Execute` messages without a new `Parse` do not change these counters. Simple Query traffic
+        is outside this measurement. With `prepared_statements` enabled, query identity includes SQL
+        text, parameter type OIDs, and startup planner parameters. With it disabled, identity is based
+        only on the raw SQL bytes, excluding the statement name, parameter OIDs, and planner state.
+        The same SQL can therefore have different identities in the two modes. Whitespace or literal
+        changes can produce a new identity in either mode. Bloom false positives can hide new candidates.
+
+        A shard is cleared when its set bits reach 25% of capacity, incrementing
+        `pg_doorman_adhoc_filter_resets_total`. Clearing forgets that shard's history, so queries seen
+        before a reset can be counted as candidates again. All three counters have `user` and `database`
+        labels and retain their totals through filter resets and tracking toggles; a process restart
+        restarts the counters. Use candidate Parse rate divided by observed Parse rate for the novelty
+        ratio, rather than the overall query counter, which counts different protocol events.
+
+        **Live-reloadable:** `RELOAD` applies enable/disable changes to existing clients without
+        recreating backend pools. Enabling starts with an empty filter; disabling releases its bitmap
+        after in-flight observations finish. An unchanged enabled setting preserves filter history.
+        Tracking is independent of `web.enabled`; that setting controls whether `/metrics` is served.
+        The default is disabled, with no Bloom bitmap allocated.
+      default: "false"
+
     query_interner_gc_interval_seconds:
       config:
         en: |

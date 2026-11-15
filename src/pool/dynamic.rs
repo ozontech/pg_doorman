@@ -265,6 +265,9 @@ pub fn create_dynamic_pool(
                 config.general.worker_threads,
             ))),
         },
+        adhoc_query_tracking: super::adhoc::register_pool_tracker(PoolIdentifier::new(
+            pool_name, username,
+        )),
         check_query_cache: Arc::new(CheckQueryCache::new()),
         coordinator: get_coordinator(pool_name),
         replenish_failures: Arc::new(AtomicU32::new(0)),

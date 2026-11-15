@@ -246,6 +246,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "prepared_statements_cache_size",
         "server_prepared_statements_cache_size",
         "client_anonymous_prepared_cache_size",
+        "adhoc_query_tracking",
         "query_interner_gc_interval_seconds",
         "query_interner_anon_idle_ttl_seconds",
         "message_size_to_be_stream",
@@ -500,6 +501,16 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_named_entries` | Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends `DEALLOCATE`. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer. |");
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_anonymous_entries` | Gauge by user and database. Sum of Anonymous entries across every connected client's cache. Each client's Anonymous part is capped at `client_anonymous_prepared_cache_size`, so this gauge approaches at most `connected_clients * cache_size`. |");
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_anonymous_evictions_total` | Counter by user and database. Cumulative count of Anonymous LRU evictions across all clients of the pool. A sustained non-zero rate signals that `client_anonymous_prepared_cache_size` is too small for the workload and the LRU is recycling entries faster than the application reuses them. The counter is monotonic per pool; an upgrade restarts it from zero. |\n");
+
+    // Adhoc Parse candidate metrics
+    let _ = writeln!(out, "### Adhoc Parse Candidate Metrics\n");
+    let _ = writeln!(out, "Enable `general.adhoc_query_tracking` to measure approximate first-seen Parse traffic, including when `prepared_statements` is disabled. Enabled prepared-statement handling reuses its existing hash of SQL, parameter type OIDs, and startup planner parameters. Disabled handling hashes only raw SQL bytes with XXH3-64, excluding statement names, parameter OIDs, and planner state. The two modes can therefore assign different identities to the same SQL. These counters report novelty, not executions or confirmed one-off queries. Simple Query traffic and repeated Bind/Execute without Parse are excluded.\n");
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_adhoc_candidate_parses_total` | Counter by user and database. Parse hashes absent from the Bloom filter before insertion. Ordinary reusable queries are candidates on first sight too; Bloom false positives can suppress candidates. |");
+    let _ = writeln!(out, "| `pg_doorman_adhoc_observed_parses_total` | Counter by user and database. All Parse messages observed while tracking is enabled, including when prepared-statement handling is disabled. Use this counter as the denominator for candidate Parse share. |");
+    let _ = writeln!(out, "| `pg_doorman_adhoc_filter_resets_total` | Counter by user and database. Shards cleared after reaching 25% bit occupancy. Clearing forgets history and can make previously seen queries candidates again. |\n");
+    let _ = writeln!(out, "Candidate share per pool: `rate(pg_doorman_adhoc_candidate_parses_total[5m]) / rate(pg_doorman_adhoc_observed_parses_total[5m])`. The ratio has no value when no Parse messages were observed. All three counters remain cumulative through filter resets and RELOAD enable/disable changes. Tracking continues when the HTTP listener is disabled.\n");
 
     // Query Interner Metrics
     let _ = writeln!(out, "### Query Interner Metrics\n");
