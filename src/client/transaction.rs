@@ -575,7 +575,7 @@ where
             // 2. Flush was sent to server, but server has nothing to flush
             // 3. Server won't respond, causing a hang
             // By sending synthetic ParseComplete here, we satisfy client's expectation
-            if !self.prepared.skipped_parses.is_empty() {
+            if !self.prepared.skipped_parses.is_empty() && self.prepared.batch_operations.len() == 0 {
                 let count = self.prepared.skipped_parses.len();
                 debug!(
                     "[{}@{} #c{}] flush: injecting {} synthetic ParseComplete for cached Parse",
@@ -587,7 +587,6 @@ where
                 }
                 write_all_flush(&mut self.write, &synthetic_response).await?;
                 self.prepared.skipped_parses.clear();
-                self.prepared.batch_operations.clear();
             }
         } else {
             // For Sync, exit async mode
