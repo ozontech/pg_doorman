@@ -587,6 +587,7 @@ where
                 }
                 write_all_flush(&mut self.write, &synthetic_response).await?;
                 self.prepared.skipped_parses.clear();
+                self.prepared.batch_operations.clear();
             }
         } else {
             // For Sync, exit async mode
