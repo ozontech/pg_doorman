@@ -674,6 +674,18 @@ fields:
         In Kubernetes, set this explicitly — automatic CPU detection may report the host's cores instead of the container's limit.
       default: "4"
 
+    thread_per_core:
+      config:
+        en: "Pin each client connection to a dedicated current-thread Tokio worker. Requires restart."
+        ru: "Закрепить каждое клиентское соединение за отдельным current-thread Tokio worker. Требуется перезапуск."
+      doc: |
+        Experimental thread-per-core client scheduling. Accept, control plane and
+        maintenance stay on the multi-thread runtime; client connections are
+        handed once to fixed current-thread workers. Backend pool affinity is
+        required for transaction pooling so backend readiness stays on the same
+        runtime. Restart is required.
+      default: "false"
+
     worker_cpu_affinity_pinning:
       config:
         en: "Bind each worker thread to a separate CPU core. By default, worker threads are not bound to any specific CPU."

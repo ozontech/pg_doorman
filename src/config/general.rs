@@ -144,6 +144,9 @@ pub struct General {
     #[serde(default = "General::default_worker_threads")]
     pub worker_threads: usize,
 
+    #[serde(default)]
+    pub thread_per_core: bool,
+
     #[serde(default = "General::default_proxy_copy_data_timeout")] // 15_000
     pub proxy_copy_data_timeout: Duration,
 
@@ -554,6 +557,7 @@ impl Default for General {
             scaling_fast_retries: Self::default_scaling_fast_retries(),
             scaling_max_parallel_creates: Self::default_scaling_max_parallel_creates(),
             worker_threads: Self::default_worker_threads(),
+            thread_per_core: false,
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),
             worker_stack_size: None,
             max_blocking_threads: None,

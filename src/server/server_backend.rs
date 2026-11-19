@@ -44,6 +44,9 @@ pub struct Server {
     /// Buffered TCP or Unix socket stream for communication with the PostgreSQL server.
     pub(crate) stream: BufStream<StreamInner>,
 
+    /// Client worker whose Tokio reactor owns this socket; None for the shared runtime.
+    pub(crate) worker_id: Option<usize>,
+
     /// Response buffer for accumulating server messages before forwarding them to the client.
     pub(crate) buffer: BytesMut,
 
@@ -1090,6 +1093,7 @@ impl Server {
                     let server = Server {
                         address: address.to_owned(),
                         stream: BufStream::new(stream),
+                        worker_id: crate::app::client_workers::current_worker_id(),
                         buffer: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         read_buf: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         server_parameters,

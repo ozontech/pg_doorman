@@ -12,6 +12,7 @@ use std::{
 use log::{debug, warn};
 use rand::Rng as _;
 
+use crate::app::client_workers::current_worker_id;
 use crate::utils::clock;
 
 use parking_lot::Mutex;
@@ -125,12 +126,24 @@ impl fmt::Debug for Object {
 }
 
 /// Internal slots storage.
+struct Waiter<T> {
+    sender: oneshot::Sender<T>,
+    worker_id: Option<usize>,
+}
+
+impl<T> Waiter<T> {
+    fn new(sender: oneshot::Sender<T>) -> Self {
+        Self {
+            sender,
+            worker_id: current_worker_id(),
+        }
+    }
+}
+
 struct Slots {
     vec: VecDeque<ObjectInner>,
-    /// Direct-handoff queue: waiters blocked on a oneshot receiver.
-    /// `return_object` pops the oldest sender and delivers the connection
-    /// directly, bypassing the idle VecDeque entirely.
-    waiters: VecDeque<oneshot::Sender<ObjectInner>>,
+    /// Direct-handoff queue. Fixed-worker backends use only matching waiters.
+    waiters: VecDeque<Waiter<ObjectInner>>,
     size: usize,
     max_size: usize,
 }
@@ -326,6 +339,19 @@ fn push_idle(queue_mode: QueueMode, vec: &mut VecDeque<ObjectInner>, inner: Obje
     }
 }
 
+fn take_waiter<T>(
+    waiters: &mut VecDeque<Waiter<T>>,
+    worker_id: Option<usize>,
+) -> Option<Waiter<T>> {
+    match worker_id {
+        Some(id) => waiters
+            .iter()
+            .position(|waiter| waiter.worker_id == Some(id))
+            .and_then(|position| waiters.remove(position)),
+        None => waiters.pop_front(),
+    }
+}
+
 impl PoolInner {
     /// Try to take a burst gate slot. On success, bumps `creates_started`
     /// and returns a guard that releases the slot on drop.
@@ -506,7 +532,15 @@ impl PoolInner {
     async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
         let obj_inner = {
             let mut slots = self.slots.lock();
-            slots.vec.pop_front()
+            match current_worker_id() {
+                // A socket belongs to the reactor where it was created.
+                Some(worker_id) => slots
+                    .vec
+                    .iter()
+                    .position(|inner| inner.obj.worker_id == Some(worker_id))
+                    .and_then(|position| slots.vec.remove(position)),
+                None => slots.vec.pop_front(),
+            }
         };
 
         let Some(mut inner) = obj_inner else {
@@ -549,10 +583,10 @@ impl PoolInner {
     fn return_object(&self, mut inner: ObjectInner) {
         let mut slots = self.slots.lock();
 
-        // Direct handoff: send to the oldest registered waiter.
-        // Waiters whose receiver was dropped (timeout) are skipped.
-        while let Some(sender) = slots.waiters.pop_front() {
-            match sender.send(inner) {
+        // Direct handoff to the oldest waiter, restricted to the owning worker
+        // when the backend belongs to a fixed worker.
+        while let Some(waiter) = take_waiter(&mut slots.waiters, inner.obj.worker_id) {
+            match waiter.sender.send(inner) {
                 Ok(()) => {
                     drop(slots);
                     // Restore the returning client's semaphore permit.
@@ -718,7 +752,7 @@ impl Pool {
             // connection delivered to rx can be silently dropped when
             // on_create or sleep wins the race — leaking slots.size.
             let (tx, mut rx) = oneshot::channel();
-            self.inner.slots.lock().waiters.push_back(tx);
+            self.inner.slots.lock().waiters.push_back(Waiter::new(tx));
             let on_create = self.inner.create_done.notified();
 
             tokio::select! {
@@ -965,7 +999,7 @@ impl Pool {
                 let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
                 let (tx, rx) = oneshot::channel();
-                self.inner.slots.lock().waiters.push_back(tx);
+                self.inner.slots.lock().waiters.push_back(Waiter::new(tx));
 
                 match tokio::time::timeout(effective_budget, rx).await {
                     Ok(Ok(inner)) => {
@@ -1399,6 +1433,11 @@ impl Pool {
     /// Returns the number of connections successfully created.
     /// Stops on the first creation failure to avoid hammering a failing server.
     pub async fn replenish(&self, count: usize) -> usize {
+        // shortcut: fixed-worker pools are demand-filled because a control-runtime
+        // socket cannot acquire worker affinity; add worker-side prewarm if needed.
+        if crate::config::config_arc().general.thread_per_core && current_worker_id().is_none() {
+            return 0;
+        }
         let mut created = 0;
         for _ in 0..count {
             // Check if there's still room in the pool
@@ -1644,6 +1683,10 @@ impl Pool {
     /// Check if a connection approaching lifetime expiry should trigger
     /// a background pre-replacement, and spawn the task if so.
     fn maybe_trigger_pre_replacement(&self, metrics: &Metrics) {
+        // A background replacement would belong to the control runtime, not this worker.
+        if current_worker_id().is_some() {
+            return;
+        }
         // Quick checks that don't need a lock.
         if metrics.lifetime_ms < PRE_REPLACE_MIN_LIFETIME_MS {
             return;
@@ -2321,6 +2364,34 @@ mod tests {
     // ------------------------------------------------------------------
     // Direct handoff — oneshot channel mechanics
     // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fixed_handoff_selects_only_matching_worker() {
+        let (tx0, _rx0) = oneshot::channel::<u32>();
+        let (tx1, rx1) = oneshot::channel::<u32>();
+        let (tx2, _rx2) = oneshot::channel::<u32>();
+        let mut waiters = VecDeque::from([
+            Waiter {
+                sender: tx0,
+                worker_id: Some(0),
+            },
+            Waiter {
+                sender: tx1,
+                worker_id: Some(1),
+            },
+            Waiter {
+                sender: tx2,
+                worker_id: Some(0),
+            },
+        ]);
+
+        let waiter = take_waiter(&mut waiters, Some(1)).unwrap();
+        waiter.sender.send(42).unwrap();
+        assert_eq!(rx1.await.unwrap(), 42);
+        assert_eq!(waiters.len(), 2);
+        assert!(take_waiter(&mut waiters, Some(3)).is_none());
+        assert_eq!(waiters.len(), 2);
+    }
 
     #[tokio::test]
     async fn direct_handoff_delivers_to_oldest_waiter() {
