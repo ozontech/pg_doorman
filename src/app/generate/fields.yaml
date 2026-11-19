@@ -679,11 +679,8 @@ fields:
         en: "Pin each client connection to a dedicated current-thread Tokio worker. Requires restart."
         ru: "Закрепить каждое клиентское соединение за отдельным current-thread Tokio worker. Требуется перезапуск."
       doc: |
-        Experimental thread-per-core client scheduling. Accept, control plane and
-        maintenance stay on the multi-thread runtime; client connections are
-        handed once to fixed current-thread workers. Backend pool affinity is
-        required for transaction pooling so backend readiness stays on the same
-        runtime. Restart is required.
+        Keep each client connection and its backend on the same worker thread.
+        This can reduce scheduling overhead on dedicated physical cores. Restart is required.
       default: "false"
 
     worker_cpu_affinity_pinning:
