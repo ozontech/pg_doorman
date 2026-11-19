@@ -125,14 +125,25 @@ impl fmt::Debug for Object {
     }
 }
 
-struct IdleSlots {
-    vec: VecDeque<ObjectInner>,
-    waiters: VecDeque<oneshot::Sender<ObjectInner>>,
+/// Internal slots storage.
+struct Waiter<T> {
+    sender: oneshot::Sender<T>,
+    worker_id: Option<usize>,
 }
 
-/// Internal slots storage.
+impl<T> Waiter<T> {
+    fn new(sender: oneshot::Sender<T>) -> Self {
+        Self {
+            sender,
+            worker_id: current_worker_id(),
+        }
+    }
+}
+
 struct Slots {
-    idle: IdleSlots,
+    vec: VecDeque<ObjectInner>,
+    /// Direct-handoff queue. Fixed-worker backends use only matching waiters.
+    waiters: VecDeque<Waiter<ObjectInner>>,
     size: usize,
     max_size: usize,
 }
@@ -140,8 +151,8 @@ struct Slots {
 impl fmt::Debug for Slots {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Slots")
-            .field("vec_len", &self.idle.vec.len())
-            .field("waiters_len", &self.idle.waiters.len())
+            .field("vec_len", &self.vec.len())
+            .field("waiters_len", &self.waiters.len())
             .field("size", &self.size)
             .field("max_size", &self.max_size)
             .finish()
@@ -214,8 +225,6 @@ pub struct ScalingStatsSnapshot {
 struct PoolInner {
     server_pool: ServerPool,
     slots: Mutex<Slots>,
-    /// Fixed-mode idle/direct-handoff shards; empty in shared mode.
-    worker_slots: Vec<Mutex<IdleSlots>>,
     /// Number of users currently holding or waiting for objects.
     users: AtomicUsize,
     semaphore: Semaphore,
@@ -330,108 +339,20 @@ fn push_idle(queue_mode: QueueMode, vec: &mut VecDeque<ObjectInner>, inner: Obje
     }
 }
 
-#[inline(always)]
-fn return_idle(queue_mode: QueueMode, slots: &mut IdleSlots, mut inner: ObjectInner) -> bool {
-    while let Some(sender) = slots.waiters.pop_front() {
-        match sender.send(inner) {
-            Ok(()) => return true,
-            Err(returned) => inner = returned,
-        }
+fn take_waiter<T>(
+    waiters: &mut VecDeque<Waiter<T>>,
+    worker_id: Option<usize>,
+) -> Option<Waiter<T>> {
+    match worker_id {
+        Some(id) => waiters
+            .iter()
+            .position(|waiter| waiter.worker_id == Some(id))
+            .and_then(|position| waiters.remove(position)),
+        None => waiters.pop_front(),
     }
-    push_idle(queue_mode, &mut slots.vec, inner);
-    false
-}
-
-fn partition_idle(
-    slots: &mut IdleSlots,
-    evicted: &mut Vec<ObjectInner>,
-    mut keep: impl FnMut(&ObjectInner) -> bool,
-) {
-    let mut retained = VecDeque::with_capacity(slots.vec.capacity());
-    for obj in slots.vec.drain(..) {
-        if keep(&obj) {
-            retained.push_back(obj);
-        } else {
-            evicted.push(obj);
-        }
-    }
-    slots.vec = retained;
 }
 
 impl PoolInner {
-    fn register_waiter(&self, sender: oneshot::Sender<ObjectInner>) {
-        if let Some(slots) = current_worker_id().and_then(|id| self.worker_slots.get(id)) {
-            slots.lock().waiters.push_back(sender);
-        } else {
-            self.slots.lock().idle.waiters.push_back(sender);
-        }
-    }
-
-    fn take_idle(&self) -> Option<ObjectInner> {
-        if let Some(slots) = current_worker_id().and_then(|id| self.worker_slots.get(id)) {
-            slots.lock().vec.pop_front()
-        } else {
-            self.slots.lock().idle.vec.pop_front()
-        }
-    }
-
-    fn push_idle_object(&self, inner: ObjectInner) {
-        if let Some(slots) = inner.obj.worker_id.and_then(|id| self.worker_slots.get(id)) {
-            push_idle(self.config.queue_mode, &mut slots.lock().vec, inner);
-        } else {
-            let mut slots = self.slots.lock();
-            push_idle(self.config.queue_mode, &mut slots.idle.vec, inner);
-        }
-    }
-
-    fn for_each_idle(&self, mut f: impl FnMut(&mut IdleSlots)) {
-        if self.worker_slots.is_empty() {
-            f(&mut self.slots.lock().idle);
-        } else {
-            for slots in &self.worker_slots {
-                f(&mut slots.lock());
-            }
-        }
-    }
-
-    fn idle_len(&self) -> usize {
-        if self.worker_slots.is_empty() {
-            self.slots.lock().idle.vec.len()
-        } else {
-            self.worker_slots
-                .iter()
-                .map(|slots| slots.lock().vec.len())
-                .sum()
-        }
-    }
-
-    fn waiting_len(&self) -> usize {
-        if self.worker_slots.is_empty() {
-            self.slots.lock().idle.waiters.len()
-        } else {
-            self.worker_slots
-                .iter()
-                .map(|slots| slots.lock().waiters.len())
-                .sum()
-        }
-    }
-
-    fn waiting_len_locked(&self, slots: &Slots) -> usize {
-        if self.worker_slots.is_empty() {
-            slots.idle.waiters.len()
-        } else {
-            self.waiting_len()
-        }
-    }
-
-    fn idle_empty_locked(&self, slots: &Slots) -> bool {
-        if self.worker_slots.is_empty() {
-            slots.idle.vec.is_empty()
-        } else {
-            self.idle_len() == 0
-        }
-    }
-
     /// Try to take a burst gate slot. On success, bumps `creates_started`
     /// and returns a guard that releases the slot on drop.
     fn try_acquire_burst_gate(&self) -> Option<BurstGateGuard<'_>> {
@@ -548,7 +469,7 @@ impl PoolInner {
         {
             let mut slots = self.slots.lock();
             slots.size += 1;
-            push_idle(self.config.queue_mode, &mut slots.idle.vec, inner);
+            push_idle(self.config.queue_mode, &mut slots.vec, inner);
         }
 
         // No semaphore.add_permits needed: return_object now always
@@ -609,7 +530,18 @@ impl PoolInner {
     }
 
     async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
-        let obj_inner = self.take_idle();
+        let obj_inner = {
+            let mut slots = self.slots.lock();
+            match current_worker_id() {
+                // A socket belongs to the reactor where it was created.
+                Some(worker_id) => slots
+                    .vec
+                    .iter()
+                    .position(|inner| inner.obj.worker_id == Some(worker_id))
+                    .and_then(|position| slots.vec.remove(position)),
+                None => slots.vec.pop_front(),
+            }
+        };
 
         let Some(mut inner) = obj_inner else {
             return RecycleOutcome::Empty;
@@ -648,17 +580,37 @@ impl PoolInner {
     }
 
     #[inline(always)]
-    fn return_object(&self, inner: ObjectInner) {
-        let handed_off =
-            if let Some(slots) = inner.obj.worker_id.and_then(|id| self.worker_slots.get(id)) {
-                return_idle(self.config.queue_mode, &mut slots.lock(), inner)
-            } else {
-                return_idle(self.config.queue_mode, &mut self.slots.lock().idle, inner)
-            };
-        self.semaphore.add_permits(1);
-        if !handed_off {
-            self.notify_return_observers();
+    fn return_object(&self, mut inner: ObjectInner) {
+        let mut slots = self.slots.lock();
+
+        // Direct handoff to the oldest waiter, restricted to the owning worker
+        // when the backend belongs to a fixed worker.
+        while let Some(waiter) = take_waiter(&mut slots.waiters, inner.obj.worker_id) {
+            match waiter.sender.send(inner) {
+                Ok(()) => {
+                    drop(slots);
+                    // Restore the returning client's semaphore permit.
+                    // The waiter holds its OWN permit (from acquire_semaphore),
+                    // so this is not double-counting — it compensates for the
+                    // permit.forget() when this connection was last wrapped.
+                    // Without this, each handoff permanently drains one permit
+                    // because the returning client re-enters timeout_get and
+                    // acquires a NEW permit, but the old one was never restored.
+                    self.semaphore.add_permits(1);
+                    return;
+                }
+                Err(returned_inner) => {
+                    // Receiver dropped (timeout) — try the next waiter.
+                    inner = returned_inner;
+                }
+            }
         }
+
+        // No waiters — normal path.
+        push_idle(self.config.queue_mode, &mut slots.vec, inner);
+        drop(slots);
+        self.semaphore.add_permits(1);
+        self.notify_return_observers();
     }
 
     /// Wake peer-pool coordinator waiter after a connection lands in
@@ -800,7 +752,7 @@ impl Pool {
             // connection delivered to rx can be silently dropped when
             // on_create or sleep wins the race — leaking slots.size.
             let (tx, mut rx) = oneshot::channel();
-            self.inner.register_waiter(tx);
+            self.inner.slots.lock().waiters.push_back(Waiter::new(tx));
             let on_create = self.inner.create_done.notified();
 
             tokio::select! {
@@ -822,7 +774,9 @@ impl Pool {
             // called add_permits(1), so calling return_object again
             // would double-count the permit.
             if let Ok(inner) = rx.try_recv() {
-                self.inner.push_idle_object(inner);
+                let mut slots = self.inner.slots.lock();
+                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
+                drop(slots);
                 self.inner.notify_return_observers();
             }
 
@@ -876,7 +830,7 @@ impl Pool {
                     self.inner.pool_name,
                     self.inner.username,
                     slots.size,
-                    self.inner.waiting_len_locked(&slots),
+                    slots.waiters.len(),
                     info,
                 );
                 return Err(PoolError::DbLimitExhausted(info));
@@ -1014,7 +968,7 @@ impl Pool {
         // a natural throttle preventing one pool from grabbing all permits.
         let capacity_deficit = self.inner.coordinator.is_none() && {
             let slots = self.inner.slots.lock();
-            self.inner.idle_empty_locked(&slots) && slots.size < slots.max_size
+            slots.vec.is_empty() && slots.size < slots.max_size
         };
 
         // Direct handoff via oneshot channel.
@@ -1045,7 +999,7 @@ impl Pool {
                 let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
                 let (tx, rx) = oneshot::channel();
-                self.inner.register_waiter(tx);
+                self.inner.slots.lock().waiters.push_back(Waiter::new(tx));
 
                 match tokio::time::timeout(effective_budget, rx).await {
                     Ok(Ok(inner)) => {
@@ -1085,25 +1039,11 @@ impl Pool {
             inner: Arc::new(PoolInner {
                 server_pool: builder.server_pool,
                 slots: Mutex::new(Slots {
-                    idle: IdleSlots {
-                        vec: VecDeque::with_capacity(builder.config.max_size),
-                        waiters: VecDeque::new(),
-                    },
+                    vec: VecDeque::with_capacity(builder.config.max_size),
+                    waiters: VecDeque::new(),
                     size: 0,
                     max_size: builder.config.max_size,
                 }),
-                worker_slots: if crate::config::config_arc().general.thread_per_core {
-                    (0..crate::config::config_arc().general.worker_threads)
-                        .map(|_| {
-                            Mutex::new(IdleSlots {
-                                vec: VecDeque::new(),
-                                waiters: VecDeque::new(),
-                            })
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                },
                 users: AtomicUsize::new(0),
                 semaphore: Semaphore::new(builder.config.max_size),
                 config: builder.config,
@@ -1140,7 +1080,7 @@ impl Pool {
                 "[{}@{}] checkout timeout at phase=semaphore elapsed={}ms size={} max={} waiters={} semaphore_avail={}",
                 self.inner.pool_name, self.inner.username,
                 start.elapsed().as_millis(), slots.size, slots.max_size,
-                self.inner.waiting_len_locked(&slots), self.inner.semaphore.available_permits(),
+                slots.waiters.len(), self.inner.semaphore.available_permits(),
             );
         })?;
 
@@ -1176,7 +1116,7 @@ impl Pool {
                     self.inner.pool_name, self.inner.username,
                     start.elapsed().as_millis(), slots.size,
                     self.inner.inflight_creates.load(Ordering::Relaxed),
-                    self.inner.waiting_len_locked(&slots),
+                    slots.waiters.len(),
                 );
                 return Err(PoolError::Timeout(TimeoutType::Wait));
             }
@@ -1220,24 +1160,10 @@ impl Pool {
 
         // Shrink pool
         if max_size < old_max_size {
-            let idle_len = if self.inner.worker_slots.is_empty() {
-                slots.idle.vec.len()
-            } else {
-                self.inner.idle_len()
-            };
-            let mut excess = idle_len.saturating_sub(max_size);
-            if self.inner.worker_slots.is_empty() {
-                while excess > 0 && slots.idle.vec.pop_back().is_some() {
+            while slots.vec.len() > max_size {
+                if slots.vec.pop_back().is_some() {
                     slots.size = slots.size.saturating_sub(1);
-                    excess -= 1;
                 }
-            } else {
-                self.inner.for_each_idle(|idle| {
-                    while excess > 0 && idle.vec.pop_back().is_some() {
-                        slots.size = slots.size.saturating_sub(1);
-                        excess -= 1;
-                    }
-                });
             }
             // Reduce semaphore permits
             let permits_to_remove = old_max_size - max_size;
@@ -1245,19 +1171,18 @@ impl Pool {
                 .inner
                 .semaphore
                 .try_acquire_many(permits_to_remove as u32);
-            if self.inner.worker_slots.is_empty() {
-                let mut vec = VecDeque::with_capacity(max_size);
-                for obj in slots.idle.vec.drain(..) {
-                    vec.push_back(obj);
-                }
-                slots.idle.vec = vec;
+            // Reallocate vec
+            let mut vec = VecDeque::with_capacity(max_size);
+            for obj in slots.vec.drain(..) {
+                vec.push_back(obj);
             }
+            slots.vec = vec;
         }
 
         // Grow pool
         if max_size > old_max_size {
             let additional = max_size - old_max_size;
-            slots.idle.vec.reserve_exact(additional);
+            slots.vec.reserve_exact(additional);
             self.inner.semaphore.add_permits(additional);
         }
     }
@@ -1271,11 +1196,27 @@ impl Pool {
     /// briefly takes an internal mutex). Holding `slots.lock()` across these
     /// blocks any peer caller trying to recycle from the same pool.
     pub fn retain(&self, f: impl Fn(&Server, Metrics) -> bool) {
-        let mut evicted = Vec::new();
-        self.inner.for_each_idle(|slots| {
-            partition_idle(slots, &mut evicted, |obj| f(&obj.obj, obj.metrics));
-        });
-        self.inner.slots.lock().size -= evicted.len();
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
+            // Common case on a healthy retain cycle: nothing to evict.
+            // Skip the partition + allocation pair entirely.
+            if guard.vec.iter().all(|obj| f(&obj.obj, obj.metrics)) {
+                return;
+            }
+            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+            let mut evicted = Vec::new();
+            for obj in guard.vec.drain(..) {
+                if f(&obj.obj, obj.metrics) {
+                    keep.push_back(obj);
+                } else {
+                    evicted.push(obj);
+                }
+            }
+            guard.vec = keep;
+            guard.size -= evicted.len();
+            evicted
+        };
+        // Lock released here. Syscalls and notify_one fire below, off-lock.
         drop(evicted);
     }
 
@@ -1292,44 +1233,73 @@ impl Pool {
         should_close: impl Fn(&Server, &Metrics) -> bool,
         max_to_close: usize,
     ) -> usize {
-        let cutoff = if max_to_close == 0 {
-            None
-        } else {
-            let mut ages = Vec::new();
-            self.inner.for_each_idle(|slots| {
-                ages.extend(
-                    slots
-                        .vec
-                        .iter()
-                        .filter(|obj| should_close(&obj.obj, &obj.metrics))
-                        .map(|obj| obj.metrics.age().as_millis()),
-                );
-            });
-            if ages.is_empty() {
-                return 0;
-            }
-            ages.sort_unstable_by(|a, b| b.cmp(a));
-            Some(ages[max_to_close.min(ages.len()) - 1])
-        };
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
 
-        let mut evicted = Vec::new();
-        let mut remaining = max_to_close;
-        self.inner.for_each_idle(|slots| {
-            partition_idle(slots, &mut evicted, |obj| {
-                if !should_close(&obj.obj, &obj.metrics) {
-                    return true;
+            if max_to_close == 0 {
+                // Early exit when nothing matches — avoid the partition
+                // allocation in the frequent "retain cycle sees no stale
+                // connections" case.
+                if !guard
+                    .vec
+                    .iter()
+                    .any(|obj| should_close(&obj.obj, &obj.metrics))
+                {
+                    return 0;
                 }
-                if let Some(cutoff) = cutoff {
-                    if remaining == 0 || obj.metrics.age().as_millis() < cutoff {
-                        return true;
+                // Unlimited — partition every matching object out of the vec.
+                let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+                let mut evicted = Vec::new();
+                for obj in guard.vec.drain(..) {
+                    if should_close(&obj.obj, &obj.metrics) {
+                        evicted.push(obj);
+                    } else {
+                        keep.push_back(obj);
                     }
-                    remaining -= 1;
                 }
-                false
-            });
-        });
-        self.inner.slots.lock().size -= evicted.len();
+                guard.vec = keep;
+                guard.size -= evicted.len();
+                evicted
+            } else {
+                // Pre-walk to identify the oldest `max_to_close` candidates.
+                // We do not extract here — only collect (index, age) pairs.
+                let mut candidates: Vec<(usize, u128)> = guard
+                    .vec
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, obj)| should_close(&obj.obj, &obj.metrics))
+                    .map(|(idx, obj)| (idx, obj.metrics.age().as_millis()))
+                    .collect();
+
+                if candidates.is_empty() {
+                    return 0;
+                }
+
+                // Sort by age descending (oldest first — highest age value)
+                candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+                let to_close: std::collections::HashSet<usize> = candidates
+                    .into_iter()
+                    .take(max_to_close)
+                    .map(|(idx, _)| idx)
+                    .collect();
+
+                let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+                let mut evicted = Vec::with_capacity(to_close.len());
+                for (idx, obj) in guard.vec.drain(..).enumerate() {
+                    if to_close.contains(&idx) {
+                        evicted.push(obj);
+                    } else {
+                        keep.push_back(obj);
+                    }
+                }
+                guard.vec = keep;
+                guard.size -= evicted.len();
+                evicted
+            }
+        };
         let closed = evicted.len();
+        // Lock released here. Drops below run off-lock.
         drop(evicted);
         closed
     }
@@ -1375,27 +1345,23 @@ impl Pool {
             None => return 0,
         };
         let mut upgraded = 0;
-        let mut saturated = false;
-        self.inner.for_each_idle(|slots| {
-            if saturated {
-                return;
+        let mut guard = self.inner.slots.lock();
+        for obj in guard.vec.iter_mut() {
+            let Some(permit) = obj.coordinator_permit.as_mut() else {
+                continue;
+            };
+            if !permit.is_reserve {
+                continue;
             }
-            for obj in slots.vec.iter_mut() {
-                let Some(permit) = obj.coordinator_permit.as_mut() else {
-                    continue;
-                };
-                if !permit.is_reserve {
-                    continue;
-                }
-                if coordinator.try_upgrade_reserve_to_main() {
-                    permit.is_reserve = false;
-                    upgraded += 1;
-                } else {
-                    saturated = true;
-                    break;
-                }
+            if coordinator.try_upgrade_reserve_to_main() {
+                permit.is_reserve = false;
+                upgraded += 1;
+            } else {
+                // Main is saturated too; no point walking the rest of the
+                // vec looking for another reserve entry to upgrade.
+                break;
             }
-        });
+        }
         upgraded
     }
 
@@ -1413,18 +1379,46 @@ impl Pool {
     /// is released, so the peer pool's eviction syscalls and coordinator
     /// notifications do not stall concurrent recyclers.
     pub fn close_idle_reserve_connections(&self, min_lifetime_ms: u64) -> usize {
-        let mut evicted = Vec::new();
-        self.inner.for_each_idle(|slots| {
-            partition_idle(slots, &mut evicted, |obj| {
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
+            // Common case on pools with `reserve_pool_size = 0` or with
+            // reserve connections still within `min_connection_lifetime`:
+            // nothing to close. Skip the partition allocation.
+            let has_stale_reserve = guard.vec.iter().any(|obj| {
                 let is_reserve = obj
                     .coordinator_permit
                     .as_ref()
                     .is_some_and(|p| p.is_reserve);
-                !is_reserve || obj.metrics.last_used().as_millis() < u128::from(min_lifetime_ms)
+                is_reserve && obj.metrics.last_used().as_millis() >= u128::from(min_lifetime_ms)
             });
-        });
-        self.inner.slots.lock().size -= evicted.len();
+            if !has_stale_reserve {
+                return 0;
+            }
+            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+            let mut evicted = Vec::new();
+            for obj in guard.vec.drain(..) {
+                let is_reserve = obj
+                    .coordinator_permit
+                    .as_ref()
+                    .is_some_and(|p| p.is_reserve);
+                if !is_reserve {
+                    keep.push_back(obj);
+                    continue;
+                }
+                // Close reserve connections idle longer than min_connection_lifetime
+                let idle = obj.metrics.last_used().as_millis();
+                if idle < u128::from(min_lifetime_ms) {
+                    keep.push_back(obj);
+                } else {
+                    evicted.push(obj);
+                }
+            }
+            guard.vec = keep;
+            guard.size -= evicted.len();
+            evicted
+        };
         let closed = evicted.len();
+        // Lock released here. Reserve permit drops fire below.
         drop(evicted);
         closed
     }
@@ -1515,7 +1509,7 @@ impl Pool {
                     break;
                 }
                 slots.size += 1;
-                push_idle(self.inner.config.queue_mode, &mut slots.idle.vec, inner);
+                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
             }
 
             created += 1;
@@ -1724,7 +1718,7 @@ impl Pool {
             // If the pool has plenty of idle connections it can absorb the
             // loss of one to lifetime expiry without a spike.
             let idle_pct = if slots.size > 0 {
-                slots.idle.vec.len() * 100 / slots.size
+                slots.vec.len() * 100 / slots.size
             } else {
                 100
             };
@@ -2370,6 +2364,34 @@ mod tests {
     // ------------------------------------------------------------------
     // Direct handoff — oneshot channel mechanics
     // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn fixed_handoff_selects_only_matching_worker() {
+        let (tx0, _rx0) = oneshot::channel::<u32>();
+        let (tx1, rx1) = oneshot::channel::<u32>();
+        let (tx2, _rx2) = oneshot::channel::<u32>();
+        let mut waiters = VecDeque::from([
+            Waiter {
+                sender: tx0,
+                worker_id: Some(0),
+            },
+            Waiter {
+                sender: tx1,
+                worker_id: Some(1),
+            },
+            Waiter {
+                sender: tx2,
+                worker_id: Some(0),
+            },
+        ]);
+
+        let waiter = take_waiter(&mut waiters, Some(1)).unwrap();
+        waiter.sender.send(42).unwrap();
+        assert_eq!(rx1.await.unwrap(), 42);
+        assert_eq!(waiters.len(), 2);
+        assert!(take_waiter(&mut waiters, Some(3)).is_none());
+        assert_eq!(waiters.len(), 2);
+    }
 
     #[tokio::test]
     async fn direct_handoff_delivers_to_oldest_waiter() {
