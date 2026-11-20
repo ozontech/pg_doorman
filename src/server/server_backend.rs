@@ -1,6 +1,7 @@
 // Implementation of the PostgreSQL server (database) protocol.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
@@ -1148,6 +1149,25 @@ impl Server {
                 }
             };
         }
+    }
+}
+
+impl Server {
+    /// Transfer an idle backend socket to the worker that now owns the object.
+    pub async fn rebind_to_current_worker(&mut self) -> io::Result<bool> {
+        let target = crate::app::client_workers::current_worker_id();
+        if self.worker_id == target {
+            return Ok(false);
+        }
+        let target = target.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "cannot rebind a pooled backend outside a fixed worker",
+            )
+        })?;
+        self.stream.get_mut().rebind_to_current_worker().await?;
+        self.worker_id = Some(target);
+        Ok(true)
     }
 }
 

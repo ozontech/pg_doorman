@@ -332,7 +332,7 @@ fn burst_gate_budget(xact_p99_us: u64) -> Duration {
 /// Push a connection into the idle queue respecting the configured
 /// queue mode (FIFO/LIFO). Caller must hold the slots lock.
 #[inline(always)]
-fn push_idle(queue_mode: QueueMode, vec: &mut VecDeque<ObjectInner>, inner: ObjectInner) {
+fn push_idle<T>(queue_mode: QueueMode, vec: &mut VecDeque<T>, inner: T) {
     match queue_mode {
         QueueMode::Fifo => vec.push_back(inner),
         QueueMode::Lifo => vec.push_front(inner),
@@ -350,6 +350,63 @@ fn take_waiter<T>(
             .and_then(|position| waiters.remove(position)),
         None => waiters.pop_front(),
     }
+}
+
+/// Restore a handoff which won the race with a timeout/select teardown.
+/// The sender already restored the semaphore permit; only idle ownership is
+/// restored here, so this must not call `return_object` or add permits again.
+fn restore_late_handoff<T>(
+    queue_mode: QueueMode,
+    idle: &mut VecDeque<T>,
+    rx: &mut oneshot::Receiver<T>,
+) -> bool {
+    // The caller holds slots.lock(): closing here makes a later sender fail
+    // and return the object instead of delivering into an abandoned receiver.
+    rx.close();
+    match rx.try_recv() {
+        Ok(inner) => {
+            push_idle(queue_mode, idle, inner);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Take an idle object without assigning a fixed-worker socket to the shared
+/// control runtime. The common shared-mode front hit stays O(1).
+fn take_idle_for_worker<T>(
+    slots: &mut VecDeque<T>,
+    worker_id: Option<usize>,
+    owner: impl Fn(&T) -> Option<usize>,
+) -> Option<T> {
+    match worker_id {
+        Some(worker_id) => slots
+            .iter()
+            .position(|obj| owner(obj) == Some(worker_id))
+            .and_then(|i| slots.remove(i))
+            .or_else(|| slots.pop_front()),
+        None if slots.front().is_some_and(|obj| owner(obj).is_none()) => slots.pop_front(),
+        None => slots
+            .iter()
+            .position(|obj| owner(obj).is_none())
+            .and_then(|i| slots.remove(i)),
+    }
+}
+
+/// Prefer a waiter on the socket's current worker, then use a foreign fixed
+/// worker. A control-runtime waiter has no reactor affinity and must not
+/// receive a fixed-worker socket.
+fn take_waiter_for_return<T>(
+    waiters: &mut VecDeque<Waiter<T>>,
+    worker_id: Option<usize>,
+) -> Option<Waiter<T>> {
+    take_waiter(waiters, worker_id).or_else(|| match worker_id {
+        Some(_) => waiters
+            .iter()
+            .position(|waiter| waiter.worker_id.is_some())
+            .and_then(|position| waiters.remove(position)),
+        None => None,
+    })
 }
 
 impl PoolInner {
@@ -532,15 +589,13 @@ impl PoolInner {
     async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
         let obj_inner = {
             let mut slots = self.slots.lock();
-            match current_worker_id() {
-                // A socket belongs to the reactor where it was created.
-                Some(worker_id) => slots
-                    .vec
-                    .iter()
-                    .position(|inner| inner.obj.worker_id == Some(worker_id))
-                    .and_then(|position| slots.vec.remove(position)),
-                None => slots.vec.pop_front(),
-            }
+            // A socket belongs to the reactor where it was created. Prefer
+            // local idle backends; a foreign one is rebound below, outside
+            // the slots lock, before it can be used. The control runtime only
+            // receives sockets which already belong to it.
+            take_idle_for_worker(&mut slots.vec, current_worker_id(), |inner| {
+                inner.obj.worker_id
+            })
         };
 
         let Some(mut inner) = obj_inner else {
@@ -548,25 +603,23 @@ impl PoolInner {
         };
 
         let skip_lifetime = self.under_pressure();
+        let recycle = async {
+            inner
+                .obj
+                .rebind_to_current_worker()
+                .await
+                .map_err(|_| RecycleError::StaticMessage("Backend rebind failed"))?;
+            self.server_pool
+                .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
+                .await
+        };
 
         let recycle_result = match timeouts.recycle {
-            Some(duration) => {
-                match tokio::time::timeout(
-                    duration,
-                    self.server_pool
-                        .recycle(&mut inner.obj, &inner.metrics, skip_lifetime),
-                )
-                .await
-                {
-                    Ok(r) => r,
-                    Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                }
-            }
-            None => {
-                self.server_pool
-                    .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
-                    .await
-            }
+            Some(duration) => match tokio::time::timeout(duration, recycle).await {
+                Ok(r) => r,
+                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+            },
+            None => recycle.await,
         };
 
         match recycle_result {
@@ -583,9 +636,8 @@ impl PoolInner {
     fn return_object(&self, mut inner: ObjectInner) {
         let mut slots = self.slots.lock();
 
-        // Direct handoff to the oldest waiter, restricted to the owning worker
-        // when the backend belongs to a fixed worker.
-        while let Some(waiter) = take_waiter(&mut slots.waiters, inner.obj.worker_id) {
+        // Prefer the owning worker, then hand off to a foreign fixed worker.
+        while let Some(waiter) = take_waiter_for_return(&mut slots.waiters, inner.obj.worker_id) {
             match waiter.sender.send(inner) {
                 Ok(()) => {
                     drop(slots);
@@ -773,10 +825,11 @@ impl Pool {
             // the original return_object that sent it here already
             // called add_permits(1), so calling return_object again
             // would double-count the permit.
-            if let Ok(inner) = rx.try_recv() {
+            let restored = {
                 let mut slots = self.inner.slots.lock();
-                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
-                drop(slots);
+                restore_late_handoff(self.inner.config.queue_mode, &mut slots.vec, &mut rx)
+            };
+            if restored {
                 self.inner.notify_return_observers();
             }
 
@@ -998,10 +1051,10 @@ impl Pool {
                     .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
                 let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
-                let (tx, rx) = oneshot::channel();
+                let (tx, mut rx) = oneshot::channel();
                 self.inner.slots.lock().waiters.push_back(Waiter::new(tx));
 
-                match tokio::time::timeout(effective_budget, rx).await {
+                match tokio::time::timeout(effective_budget, &mut rx).await {
                     Ok(Ok(inner)) => {
                         self.inner
                             .scaling_stats
@@ -1012,6 +1065,17 @@ impl Pool {
                         }
                     }
                     _ => {
+                        let restored = {
+                            let mut slots = self.inner.slots.lock();
+                            restore_late_handoff(
+                                self.inner.config.queue_mode,
+                                &mut slots.vec,
+                                &mut rx,
+                            )
+                        };
+                        if restored {
+                            self.inner.notify_return_observers();
+                        }
                         self.inner
                             .scaling_stats
                             .anticipation_wakes_timeout
@@ -1646,26 +1710,23 @@ impl Pool {
         timeouts: &Timeouts,
     ) -> Result<ObjectInner, ()> {
         let skip_lifetime = self.inner.under_pressure();
-        let recycle_result = match timeouts.recycle {
-            Some(duration) => {
-                match tokio::time::timeout(
-                    duration,
-                    self.inner
-                        .server_pool
-                        .recycle(&mut inner.obj, &inner.metrics, skip_lifetime),
-                )
+        let recycle = async {
+            inner
+                .obj
+                .rebind_to_current_worker()
                 .await
-                {
-                    Ok(r) => r,
-                    Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                }
-            }
-            None => {
-                self.inner
-                    .server_pool
-                    .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
-                    .await
-            }
+                .map_err(|_| RecycleError::StaticMessage("Backend rebind failed"))?;
+            self.inner
+                .server_pool
+                .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
+                .await
+        };
+        let recycle_result = match timeouts.recycle {
+            Some(duration) => match tokio::time::timeout(duration, recycle).await {
+                Ok(r) => r,
+                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+            },
+            None => recycle.await,
         };
         match recycle_result {
             Ok(()) => {
@@ -2361,6 +2422,56 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn late_handoff_is_restored_after_timeout_without_double_permit() {
+        let (tx, mut rx) = oneshot::channel();
+        assert!(tokio::time::timeout(Duration::ZERO, &mut rx).await.is_err());
+
+        // The sender completed after the timeout future was dropped.
+        tx.send(42).unwrap();
+        let mut idle = VecDeque::new();
+        assert!(restore_late_handoff(QueueMode::Fifo, &mut idle, &mut rx));
+        assert_eq!(idle.pop_front(), Some(42));
+        assert!(!restore_late_handoff(QueueMode::Fifo, &mut idle, &mut rx));
+
+        let (late_tx, mut late_rx) = oneshot::channel();
+        assert!(tokio::time::timeout(Duration::ZERO, &mut late_rx)
+            .await
+            .is_err());
+        assert!(!restore_late_handoff(
+            QueueMode::Fifo,
+            &mut idle,
+            &mut late_rx
+        ));
+        assert!(late_tx.send(99).is_err());
+        assert!(idle.is_empty());
+    }
+
+    #[test]
+    fn idle_selection_prefers_local_then_uses_foreign() {
+        let mut slots = VecDeque::from([(Some(1), 10), (Some(2), 20), (Some(1), 30)]);
+        assert_eq!(
+            take_idle_for_worker(&mut slots, Some(1), |entry| entry.0).map(|entry| entry.1),
+            Some(10)
+        );
+        assert_eq!(
+            take_idle_for_worker(&mut slots, Some(3), |entry| entry.0).map(|entry| entry.1),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn control_selection_never_takes_fixed_worker_idle() {
+        let mut slots = VecDeque::from([(Some(1), 10), (None, 20), (Some(2), 30)]);
+        assert_eq!(
+            take_idle_for_worker(&mut slots, None, |entry| entry.0).map(|entry| entry.1),
+            Some(20)
+        );
+        assert!(take_idle_for_worker(&mut slots, None, |entry| entry.0).is_none());
+        assert_eq!(slots.len(), 2);
+        assert!(slots.iter().all(|entry| entry.0.is_some()));
+    }
+
     // ------------------------------------------------------------------
     // Direct handoff — oneshot channel mechanics
     // ------------------------------------------------------------------
@@ -2391,6 +2502,35 @@ mod tests {
         assert_eq!(waiters.len(), 2);
         assert!(take_waiter(&mut waiters, Some(3)).is_none());
         assert_eq!(waiters.len(), 2);
+    }
+
+    #[test]
+    fn foreign_handoff_skips_control_waiters_and_preserves_fifo() {
+        let (tx_control, _rx_control) = oneshot::channel::<u32>();
+        let (tx1, _rx1) = oneshot::channel::<u32>();
+        let (tx2, _rx2) = oneshot::channel::<u32>();
+        let mut waiters = VecDeque::from([
+            Waiter {
+                sender: tx_control,
+                worker_id: None,
+            },
+            Waiter {
+                sender: tx1,
+                worker_id: Some(1),
+            },
+            Waiter {
+                sender: tx2,
+                worker_id: Some(2),
+            },
+        ]);
+
+        let waiter = take_waiter_for_return(&mut waiters, Some(0)).unwrap();
+        assert_eq!(waiter.worker_id, Some(1));
+        let waiter = take_waiter_for_return(&mut waiters, Some(0)).unwrap();
+        assert_eq!(waiter.worker_id, Some(2));
+        assert!(take_waiter_for_return(&mut waiters, Some(0)).is_none());
+        assert_eq!(waiters.len(), 1);
+        assert_eq!(waiters[0].worker_id, None);
     }
 
     #[tokio::test]
