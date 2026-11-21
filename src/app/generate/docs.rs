@@ -216,6 +216,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "log_client_connections",
         "log_client_disconnections",
         "worker_threads",
+        "thread_per_core",
         "worker_cpu_affinity_pinning",
         "tokio_global_queue_interval",
         "tokio_event_interval",

@@ -731,6 +731,10 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     w.kv(fi, "worker_threads", &w.num_val(g.worker_threads));
     w.blank();
 
+    write_field_comment(w, fi, "general", "thread_per_core");
+    w.kv(fi, "thread_per_core", &w.bool_val(g.thread_per_core));
+    w.blank();
+
     write_field_comment(w, fi, "general", "worker_cpu_affinity_pinning");
     w.kv(
         fi,

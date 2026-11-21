@@ -42,6 +42,7 @@ const IMMUTABLES: &[&str] = &[
     "general.host",
     "general.port",
     "general.worker_threads",
+    "general.thread_per_core",
     "general.unix_socket_dir",
     "general.backlog",
     "web.host",
@@ -250,6 +251,7 @@ mod tests {
     #[test]
     fn is_immutable_key_matches_runtime_construction_fields() {
         assert!(super::is_immutable_key("general.worker_threads"));
+        assert!(super::is_immutable_key("general.thread_per_core"));
         assert!(super::is_immutable_key("general.unix_socket_dir"));
         assert!(super::is_immutable_key("general.backlog"));
     }

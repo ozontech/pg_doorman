@@ -1,4 +1,5 @@
 pub mod args;
+pub mod client_workers;
 pub mod config;
 pub mod errors;
 pub mod generate;

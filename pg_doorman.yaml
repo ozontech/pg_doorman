@@ -236,6 +236,10 @@ general:
   # Default: 4
   worker_threads: 4
 
+  # Pin each client connection to a dedicated current-thread Tokio worker. Requires restart.
+  # Default: false
+  thread_per_core: false
+
   # Bind each worker thread to a separate CPU core. By default, worker threads are not bound to any specific CPU.
   # Default: false
   worker_cpu_affinity_pinning: false

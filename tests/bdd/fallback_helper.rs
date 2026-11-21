@@ -102,6 +102,28 @@ pub async fn enable_log_capture(world: &mut DoormanWorld) {
     world.doorman_log_path = Some(path);
 }
 
+#[then("pg_doorman log shows backend migration between two workers")]
+pub async fn assert_backend_migration_between_workers(world: &mut DoormanWorld) {
+    let path = world
+        .doorman_log_path
+        .as_ref()
+        .expect("log capture not enabled");
+    let body = std::fs::read_to_string(path).expect("failed to read doorman log file");
+    let published = regex::Regex::new(r"local idle published to global: worker=(\d+)")
+        .unwrap()
+        .captures(&body)
+        .expect("no local-to-global publication");
+    let takeover = regex::Regex::new(r"global idle takeover: from_worker=(\d+) to_worker=(\d+)")
+        .unwrap()
+        .captures(&body)
+        .expect("no global-to-foreign-worker takeover");
+    assert_eq!(
+        published[1], takeover[1],
+        "publication and takeover sources differ"
+    );
+    assert_ne!(takeover[1], takeover[2], "backend did not change worker");
+}
+
 /// Substring assertion on captured pg_doorman log.
 #[then(expr = "pg_doorman log contains {string}")]
 pub async fn pg_doorman_log_contains(world: &mut DoormanWorld, needle: String) {

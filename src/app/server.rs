@@ -15,6 +15,7 @@ use tokio::signal::windows as win_signal;
 use tokio::{runtime::Builder, sync::mpsc};
 
 use crate::app::args::Args;
+use crate::app::client_workers::{ClientConnection, ClientDispatcher};
 use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
 use crate::messages::{configure_tcp_socket, configure_unix_socket};
@@ -281,7 +282,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
     let thread_id = AtomicUsize::new(0);
     let core_ids = core_affinity::get_core_ids().unwrap();
-    let mut worker_cpu_affinity_pinning = config.general.worker_cpu_affinity_pinning;
+    let mut worker_cpu_affinity_pinning =
+        config.general.worker_cpu_affinity_pinning && !config.general.thread_per_core;
     if core_ids.len() < 3 {
         worker_cpu_affinity_pinning = false
     }
@@ -309,6 +311,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
     if let Some(max_threads) = config.general.max_blocking_threads {
         runtime_builder.max_blocking_threads(max_threads);
     }
+
+    let client_dispatcher = if config.general.thread_per_core {
+        Some(ClientDispatcher::new(&config.general)?)
+    } else {
+        None
+    };
 
     let runtime = runtime_builder
         .on_thread_start(move || {
@@ -715,6 +723,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     migration_fd,
                     client_server_map.clone(),
                     tls_acceptor.clone(),
+                    client_dispatcher.clone(),
                 ));
             }
         }
@@ -874,6 +883,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
                     let log_client_disconnections = config.general.log_client_connections;
                     let max_connections = config.general.max_connections;
+                    let client_dispatcher = client_dispatcher.clone();
 
                     configure_tcp_socket(&socket);
                     tokio::task::spawn(async move {
@@ -886,6 +896,30 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                 error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                            return;
+                        }
+                        if let Some(dispatcher) = client_dispatcher.clone() {
+                            let stream = match socket.into_std() {
+                                Ok(stream) => stream,
+                                Err(err) => {
+                                    error!("[#c{connection_id}] failed to detach client socket: {err}");
+                                    CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                                    return;
+                                }
+                            };
+                            let connection = ClientConnection::Tcp {
+                                stream,
+                                client_server_map,
+                                admin_only,
+                                tls_acceptor,
+                                tls_rate_limiter,
+                                connection_id,
+                                peer: addr.to_string(),
+                            };
+                            if dispatcher.dispatch(connection).is_err() {
+                                error!("[#c{connection_id}] client worker is unavailable");
+                                CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                            }
                             return;
                         }
                         let start = Utc::now().naive_utc();
@@ -946,6 +980,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let config = get_config();
                     let log_client_disconnections = config.general.log_client_disconnections;
                     let max_connections = config.general.max_connections;
+                    let client_dispatcher = client_dispatcher.clone();
 
                     tokio::task::spawn(async move {
                         let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
@@ -961,6 +996,27 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                 warn!("[#c{connection_id}] unix client rejection response failed: {err}");
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                            return;
+                        }
+                        if let Some(dispatcher) = client_dispatcher.clone() {
+                            let stream = match socket.into_std() {
+                                Ok(stream) => stream,
+                                Err(err) => {
+                                    error!("[#c{connection_id}] failed to detach unix client socket: {err}");
+                                    CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                                    return;
+                                }
+                            };
+                            let connection = ClientConnection::Unix {
+                                stream,
+                                client_server_map,
+                                admin_only,
+                                connection_id,
+                            };
+                            if dispatcher.dispatch(connection).is_err() {
+                                error!("[#c{connection_id}] client worker is unavailable");
+                                CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                            }
                             return;
                         }
                         let start = Utc::now().naive_utc();
@@ -1581,7 +1637,7 @@ enum CleanupDecision {
 /// `Result<Option<ClientSessionInfo>, Error>` — same identity string,
 /// same elapsed-time rendering, same warn vs info split. Centralising
 /// it keeps the two remaining accept sites down to a single call.
-fn log_session_end(
+pub(crate) fn log_session_end(
     result: Result<Option<crate::client::ClientSessionInfo>, crate::errors::Error>,
     connection_id: u64,
     peer_label: &str,

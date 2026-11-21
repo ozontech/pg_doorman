@@ -1,6 +1,7 @@
 // Implementation of the PostgreSQL server (database) protocol.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
@@ -43,6 +44,9 @@ pub struct Server {
 
     /// Buffered TCP or Unix socket stream for communication with the PostgreSQL server.
     pub(crate) stream: BufStream<StreamInner>,
+
+    /// Client worker whose Tokio reactor owns this socket; None for the shared runtime.
+    pub(crate) worker_id: Option<usize>,
 
     /// Response buffer for accumulating server messages before forwarding them to the client.
     pub(crate) buffer: BytesMut,
@@ -1090,6 +1094,7 @@ impl Server {
                     let server = Server {
                         address: address.to_owned(),
                         stream: BufStream::new(stream),
+                        worker_id: crate::app::client_workers::current_worker_id(),
                         buffer: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         read_buf: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         server_parameters,
@@ -1144,6 +1149,25 @@ impl Server {
                 }
             };
         }
+    }
+}
+
+impl Server {
+    /// Transfer an idle backend socket to the worker that now owns the object.
+    pub async fn rebind_to_current_worker(&mut self) -> io::Result<bool> {
+        let target = crate::app::client_workers::current_worker_id();
+        if self.worker_id == target {
+            return Ok(false);
+        }
+        let target = target.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "cannot rebind a pooled backend outside a fixed worker",
+            )
+        })?;
+        self.stream.get_mut().rebind_to_current_worker().await?;
+        self.worker_id = Some(target);
+        Ok(true)
     }
 }
 

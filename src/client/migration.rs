@@ -997,6 +997,7 @@ pub async fn migration_receiver_task(
     socket_fd: RawFd,
     client_server_map: ClientServerMap,
     _tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
+    client_dispatcher: Option<crate::app::client_workers::ClientDispatcher>,
 ) {
     #[cfg(all(target_os = "linux", feature = "tls-migration"))]
     let tls_acceptor = _tls_acceptor;
@@ -1017,7 +1018,7 @@ pub async fn migration_receiver_task(
                         let csm = client_server_map.clone();
                         let acceptor = tls_acceptor.clone();
                         let tls_blob = _tls_blob;
-                        tokio::spawn(async move {
+                        crate::app::client_workers::spawn_client(&client_dispatcher, async move {
                             match reconstruct_tls_client(fd, state_buf, csm, &tls_blob, acceptor)
                                 .await
                             {
@@ -1056,7 +1057,7 @@ pub async fn migration_receiver_task(
                     continue;
                 }
                 let csm = client_server_map.clone();
-                tokio::spawn(async move {
+                crate::app::client_workers::spawn_client(&client_dispatcher, async move {
                     match reconstruct_client(fd, state_buf, csm).await {
                         Ok(mut client) => {
                             CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
