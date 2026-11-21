@@ -128,11 +128,28 @@ impl fmt::Debug for Object {
 struct Slots {
     vec: VecDeque<ObjectInner>,
     /// Direct-handoff queue: waiters blocked on a oneshot receiver.
-    /// `return_object` pops the oldest sender and delivers the connection
-    /// directly, bypassing the idle VecDeque entirely.
     waiters: VecDeque<oneshot::Sender<ObjectInner>>,
     size: usize,
     max_size: usize,
+}
+
+impl Slots {
+    /// Serve the oldest live waiter. Returns true if the backend became idle.
+    #[inline(always)]
+    fn publish(&mut self, queue_mode: QueueMode, mut inner: ObjectInner) -> bool {
+        while let Some(sender) = self.waiters.pop_front() {
+            match sender.send(inner) {
+                Ok(()) => return false,
+                Err(undelivered) => inner = undelivered,
+            }
+        }
+
+        match queue_mode {
+            QueueMode::Fifo => self.vec.push_back(inner),
+            QueueMode::Lifo => self.vec.push_front(inner),
+        }
+        true
+    }
 }
 
 impl fmt::Debug for Slots {
@@ -241,6 +258,29 @@ struct PoolInner {
     pre_replacements_in_flight: AtomicUsize,
 }
 
+struct HandoffReceiver<'a> {
+    receiver: oneshot::Receiver<ObjectInner>,
+    pool: &'a PoolInner,
+}
+
+impl Drop for HandoffReceiver<'_> {
+    fn drop(&mut self) {
+        // Close first so a concurrent publisher either gets the backend
+        // back from send() or leaves it here for us to recover.
+        self.receiver.close();
+        if let Ok(inner) = self.receiver.try_recv() {
+            let queued_idle = self
+                .pool
+                .slots
+                .lock()
+                .publish(self.pool.config.queue_mode, inner);
+            if queued_idle {
+                self.pool.notify_return_observers();
+            }
+        }
+    }
+}
+
 enum RecycleOutcome {
     Reused(Box<ObjectInner>),
     Failed,
@@ -316,17 +356,16 @@ fn burst_gate_budget(xact_p99_us: u64) -> Duration {
     Duration::from_millis(budget_ms)
 }
 
-/// Push a connection into the idle queue respecting the configured
-/// queue mode (FIFO/LIFO). Caller must hold the slots lock.
-#[inline(always)]
-fn push_idle(queue_mode: QueueMode, vec: &mut VecDeque<ObjectInner>, inner: ObjectInner) {
-    match queue_mode {
-        QueueMode::Fifo => vec.push_back(inner),
-        QueueMode::Lifo => vec.push_front(inner),
-    }
-}
-
 impl PoolInner {
+    fn register_waiter(&self) -> HandoffReceiver<'_> {
+        let (sender, receiver) = oneshot::channel();
+        self.slots.lock().waiters.push_back(sender);
+        HandoffReceiver {
+            receiver,
+            pool: self,
+        }
+    }
+
     /// Try to take a burst gate slot. On success, bumps `creates_started`
     /// and returns a guard that releases the slot on drop.
     fn try_acquire_burst_gate(&self) -> Option<BurstGateGuard<'_>> {
@@ -366,8 +405,7 @@ impl PoolInner {
     }
 
     /// Background pre-replacement: create one connection ahead of lifetime
-    /// expiry so the next checkout finds a warm replacement in the idle
-    /// queue instead of paying for a fresh create.
+    /// expiry so a checkout can use a warm replacement.
     ///
     /// Called via `tokio::spawn` from `Pool::trigger_pre_replacement`.
     /// On success the pool temporarily holds `max_size + 1` connections
@@ -438,19 +476,12 @@ impl PoolInner {
 
         let inner = self.new_object_inner(obj, coordinator_permit);
 
-        // Push to idle queue. Temporarily exceeds max_size by 1; returns
-        // to max_size when the old connection fails recycle.
+        // Temporarily exceeds max_size by 1 until the old connection is retired.
         {
             let mut slots = self.slots.lock();
             slots.size += 1;
-            push_idle(self.config.queue_mode, &mut slots.vec, inner);
+            slots.publish(self.config.queue_mode, inner);
         }
-
-        // No semaphore.add_permits needed: return_object now always
-        // restores the returning client's permit (both handoff and idle
-        // paths), so no extra permit is required to compensate for future
-        // handoff drain. The client checking out this pre-created
-        // connection will acquire its own permit normally.
 
         self.scaling_stats
             .pre_replacements_triggered
@@ -546,47 +577,19 @@ impl PoolInner {
     }
 
     #[inline(always)]
-    fn return_object(&self, mut inner: ObjectInner) {
-        let mut slots = self.slots.lock();
+    fn return_object(&self, inner: ObjectInner) {
+        let queued_idle = self.slots.lock().publish(self.config.queue_mode, inner);
 
-        // Direct handoff: send to the oldest registered waiter.
-        // Waiters whose receiver was dropped (timeout) are skipped.
-        while let Some(sender) = slots.waiters.pop_front() {
-            match sender.send(inner) {
-                Ok(()) => {
-                    drop(slots);
-                    // Restore the returning client's semaphore permit.
-                    // The waiter holds its OWN permit (from acquire_semaphore),
-                    // so this is not double-counting — it compensates for the
-                    // permit.forget() when this connection was last wrapped.
-                    // Without this, each handoff permanently drains one permit
-                    // because the returning client re-enters timeout_get and
-                    // acquires a NEW permit, but the old one was never restored.
-                    self.semaphore.add_permits(1);
-                    return;
-                }
-                Err(returned_inner) => {
-                    // Receiver dropped (timeout) — try the next waiter.
-                    inner = returned_inner;
-                }
-            }
-        }
-
-        // No waiters — normal path.
-        push_idle(self.config.queue_mode, &mut slots.vec, inner);
-        drop(slots);
+        // Restore the permit consumed by wrap_checkout. A waiter already
+        // holds its own permit.
         self.semaphore.add_permits(1);
-        self.notify_return_observers();
+        if queued_idle {
+            self.notify_return_observers();
+        }
     }
 
-    /// Wake peer-pool coordinator waiter after a connection lands in
-    /// `slots.vec` (the no-waiter path of `return_object`). The coordinator
-    /// Phase C waiter scans this pool's idle vec via `evict_one_idle` and
-    /// drops the returned connection to free a coordinator slot.
-    ///
-    /// Same-pool waiters (Phase B anticipation, burst gate) now receive
-    /// connections via the direct-handoff oneshot channel inside
-    /// `return_object` and never park on a Notify.
+    /// Wake the peer-pool coordinator waiter so it can check for an idle
+    /// backend to evict or take a newly freed coordinator slot.
     #[inline(always)]
     fn notify_return_observers(&self) {
         if let Some(coordinator) = self.coordinator.as_ref() {
@@ -661,7 +664,7 @@ impl Pool {
 
     /// Acquire a burst gate slot, waiting if necessary. While waiting,
     /// attempts to recycle idle connections and registers as a
-    /// direct-handoff waiter so a returning connection can be delivered
+    /// direct-handoff waiter so a ready connection can be delivered
     /// without entering the idle queue.
     async fn acquire_burst_gate(
         &self,
@@ -712,18 +715,13 @@ impl Pool {
                 continue;
             }
 
-            // Register a direct-handoff waiter AND listen on create_done.
-            // `biased;` ensures rx is always checked first: without it,
-            // tokio::select! randomly picks among ready branches, and a
-            // connection delivered to rx can be silently dropped when
-            // on_create or sleep wins the race — leaking slots.size.
-            let (tx, mut rx) = oneshot::channel();
-            self.inner.slots.lock().waiters.push_back(tx);
+            // Prefer a ready handoff when create_done or the timer also fires.
+            let mut waiter = self.inner.register_waiter();
             let on_create = self.inner.create_done.notified();
 
             tokio::select! {
                 biased;
-                result = &mut rx => {
+                result = &mut waiter.receiver => {
                     if let Ok(inner) = result {
                         if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
                             return BurstGateOutcome::Recycled(Box::new(inner));
@@ -734,17 +732,8 @@ impl Pool {
                 _ = tokio::time::sleep(BURST_BACKOFF) => {}
             }
 
-            // A connection could arrive between the poll of rx and the
-            // drop of the select future. Push it to idle directly —
-            // the original return_object that sent it here already
-            // called add_permits(1), so calling return_object again
-            // would double-count the permit.
-            if let Ok(inner) = rx.try_recv() {
-                let mut slots = self.inner.slots.lock();
-                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
-                drop(slots);
-                self.inner.notify_return_observers();
-            }
+            // Recover any late handoff before retrying the idle queue.
+            drop(waiter);
 
             // After wake — try recycle once before retrying the gate.
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
@@ -964,10 +953,9 @@ impl Pool {
                     .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
                 let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
-                let (tx, rx) = oneshot::channel();
-                self.inner.slots.lock().waiters.push_back(tx);
+                let mut waiter = self.inner.register_waiter();
 
-                match tokio::time::timeout(effective_budget, rx).await {
+                match tokio::time::timeout(effective_budget, &mut waiter.receiver).await {
                     Ok(Ok(inner)) => {
                         self.inner
                             .scaling_stats
@@ -1470,7 +1458,7 @@ impl Pool {
                     break;
                 }
                 slots.size += 1;
-                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
+                slots.publish(self.inner.config.queue_mode, inner);
             }
 
             created += 1;
@@ -2075,19 +2063,12 @@ mod tests {
     // notify_return_observers — covers both fast and slow return_object
     // ------------------------------------------------------------------
 
-    /// Builds a `Pool` whose `ServerPool` is never asked to `create()`.
-    /// Address/User defaults are fine because the test never opens a
-    /// real backend connection — it only exercises the in-memory notify
-    /// machinery on the resulting `PoolInner`.
-    fn test_pool_with_coordinator(coord: Arc<pool_coordinator::PoolCoordinator>) -> Pool {
-        use crate::config::{Address, User};
-        use dashmap::DashMap;
-
-        let server_pool = ServerPool::new(
-            Address::default(),
-            User::default(),
+    fn test_pool_builder(address: crate::config::Address) -> PoolBuilder {
+        Pool::builder(ServerPool::new(
+            address,
+            crate::config::User::default(),
             "test_db",
-            Arc::new(DashMap::new()),
+            Default::default(),
             false,
             false,
             0,
@@ -2100,13 +2081,16 @@ mod tests {
             Duration::from_secs(5),
             false,
             None,
-            Arc::new(std::collections::BTreeMap::new()),
-            Arc::new(std::collections::BTreeMap::new()),
-        );
-        Pool::builder(server_pool)
+            Default::default(),
+            Default::default(),
+        ))
+        .pool_name("test_db".to_string())
+        .username("test_user".to_string())
+    }
+
+    fn test_pool_with_coordinator(coord: Arc<pool_coordinator::PoolCoordinator>) -> Pool {
+        test_pool_builder(Default::default())
             .coordinator(Some(coord))
-            .pool_name("test_db".to_string())
-            .username("test_user".to_string())
             .build()
     }
 
@@ -2321,6 +2305,113 @@ mod tests {
     // ------------------------------------------------------------------
     // Direct handoff — oneshot channel mechanics
     // ------------------------------------------------------------------
+
+    async fn background_test_pool() -> Pool {
+        use pool_coordinator::{CoordinatorConfig, PoolCoordinator};
+        use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        // Checkouts only need PostgreSQL startup. Keep the sockets open
+        // until the pool drops them, with the listener owned by the runtime.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = crate::config::Address {
+            port: listener.local_addr().unwrap().port(),
+            ..Default::default()
+        };
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let startup_len = stream.read_u32().await.unwrap() as usize;
+                    let mut startup_body = vec![0; startup_len - 4];
+                    stream.read_exact(&mut startup_body).await.unwrap();
+                    let authentication_ok = b"R\0\0\0\x08\0\0\0\0";
+                    stream.write_all(authentication_ok).await.unwrap();
+                    stream
+                        .write_all(&crate::messages::ready_for_query(false))
+                        .await
+                        .unwrap();
+                    let _ = io::copy(&mut stream, &mut io::sink()).await;
+                });
+            }
+        });
+
+        let mut config = PoolConfig::new(2);
+        config.scaling.fast_retries = 0;
+        let coordinator = PoolCoordinator::new(
+            "test_db".into(),
+            CoordinatorConfig {
+                max_db_connections: 4,
+                min_connection_lifetime_ms: 0,
+                reserve_pool_size: 0,
+                reserve_pool_timeout_ms: 100,
+            },
+        );
+        test_pool_builder(address)
+            .config(config)
+            .coordinator(Some(coordinator))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn replenish_serves_a_waiting_checkout() {
+        let pool = background_test_pool().await;
+        let _held = pool.get().await.unwrap();
+        let mut waiting = Box::pin(pool.get());
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        assert_eq!(pool.inner.slots.lock().waiters.len(), 1);
+
+        assert_eq!(pool.replenish(1).await, 1);
+
+        {
+            let slots = pool.inner.slots.lock();
+            assert!(slots.vec.is_empty(), "replenish left a ready backend idle");
+            assert!(slots.waiters.is_empty());
+        }
+        let _connection = waiting.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pre_replace_serves_a_waiting_checkout_after_a_cancelled_waiter() {
+        let pool = background_test_pool().await;
+        let _held = pool.get().await.unwrap();
+        let mut cancelled = Box::pin(pool.get());
+        assert!(futures::poll!(cancelled.as_mut()).is_pending());
+        drop(cancelled);
+        let mut waiting = Box::pin(pool.get());
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        assert_eq!(pool.inner.slots.lock().waiters.len(), 2);
+
+        pool.inner.pre_replace_one().await;
+
+        {
+            let slots = pool.inner.slots.lock();
+            assert!(
+                slots.vec.is_empty(),
+                "pre-replacement left a ready backend idle"
+            );
+            assert!(slots.waiters.is_empty());
+        }
+        assert_eq!(pool.inner.semaphore.available_permits(), 0);
+        let _connection = waiting.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replenish_preserves_backend_when_handoff_is_cancelled() {
+        let pool = background_test_pool().await;
+        let _held = pool.get().await.unwrap();
+        let mut waiting = Box::pin(pool.get());
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        assert_eq!(pool.inner.slots.lock().waiters.len(), 1);
+
+        assert_eq!(pool.replenish(1).await, 1);
+        assert!(pool.inner.slots.lock().waiters.is_empty());
+        drop(waiting);
+
+        let slots = pool.inner.slots.lock();
+        assert_eq!(slots.size, 2);
+        assert_eq!(slots.vec.len(), 1, "cancelled checkout lost the backend");
+        assert_eq!(pool.inner.semaphore.available_permits(), 1);
+    }
 
     #[tokio::test]
     async fn direct_handoff_delivers_to_oldest_waiter() {
@@ -2801,15 +2892,9 @@ mod tests {
     // pre_replace_one does NOT inflate the semaphore
     // ------------------------------------------------------------------
     //
-    // pre_replace_one creates a new connection and pushes it to idle
-    // WITHOUT calling add_permits. The created connection sits in idle
-    // until a client checks it out via acquire_semaphore. If pre_replace_one
-    // incorrectly called add_permits, the semaphore would have more
-    // permits than max_size, allowing more concurrent checkouts than the
-    // pool can serve.
-    //
-    // We model the pre_replace_one contract: push to idle vec, bump
-    // slots.size, but do NOT touch the semaphore.
+    // pre_replace_one publishes a new connection and bumps slots.size.
+    // Adding a permit here would let more clients check out connections
+    // than the pool limit allows.
 
     #[tokio::test]
     async fn pre_replace_does_not_inflate_semaphore() {
@@ -2817,9 +2902,8 @@ mod tests {
         let semaphore = Semaphore::new(max_size);
         let initial_permits = semaphore.available_permits();
 
-        // Model pre_replace_one: creates a connection, pushes to idle,
-        // increments slots.size. No semaphore interaction.
-        // (In production code: slots.size += 1; push_idle(...))
+        // Model pre_replace_one publishing a connection and incrementing
+        // slots.size without touching the semaphore.
         // The semaphore is intentionally untouched.
 
         // Simulate 3 pre-replacements.

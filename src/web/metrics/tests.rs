@@ -63,39 +63,14 @@ async fn test_prometheus_server_basic() {
     };
 
     // Send a simple HTTP request
-    let request = "GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let request = "GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     stream.write_all(request.as_bytes()).await.unwrap();
 
-    // Read the response
     let mut response = Vec::new();
-    let mut buf = [0u8; 1024];
-
-    // Set a timeout for reading
-    match tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            match stream.read(&mut buf).await {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    response.extend_from_slice(&buf[..n]);
-                    if response.len() > 100 {
-                        // Just need enough to verify headers
-                        break;
-                    }
-                }
-                Err(e) => {
-                    panic!("Failed to read from socket: {e}");
-                }
-            }
-        }
-    })
-    .await
-    {
-        Ok(_) => {}
-        Err(_) => {
-            server_handle.abort();
-            panic!("Timed out reading response");
-        }
-    }
+    tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut response))
+        .await
+        .expect("Timed out reading response")
+        .expect("Failed to read response");
 
     // Convert response to string for easier inspection
     let response_str = String::from_utf8_lossy(&response);
