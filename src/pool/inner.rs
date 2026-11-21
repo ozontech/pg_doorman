@@ -1537,55 +1537,65 @@ impl Pool {
     ) -> usize {
         let evicted: Vec<ObjectInner> = {
             let mut guard = self.inner.slots.lock();
-            // Server addresses are stable until extraction below and identify
-            // candidates across both global and per-worker local queues.
-            let mut candidates: Vec<(usize, u128)> = guard
+            #[derive(Clone, Copy)]
+            enum Candidate {
+                Global(usize),
+                Local(usize, usize),
+            }
+
+            // Queue indices remain valid while the slots lock is held. Unlike
+            // object addresses, they do not change when drain/remove moves a value.
+            let mut candidates: Vec<(Candidate, u128)> = guard
                 .vec
                 .iter()
-                .chain(guard.local_idle.iter().flatten().map(|idle| &idle.inner))
-                .filter(|obj| should_close(obj))
-                .map(|obj| {
-                    (
-                        &obj.obj as *const Server as usize,
-                        obj.metrics.age().as_millis(),
-                    )
-                })
+                .enumerate()
+                .filter(|(_, obj)| should_close(obj))
+                .map(|(index, obj)| (Candidate::Global(index), obj.metrics.age().as_millis()))
                 .collect();
-            if candidates.is_empty() {
-                return 0;
+            for (worker, local) in guard.local_idle.iter().enumerate() {
+                candidates.extend(
+                    local
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, idle)| should_close(&idle.inner))
+                        .map(|(index, idle)| {
+                            (
+                                Candidate::Local(worker, index),
+                                idle.inner.metrics.age().as_millis(),
+                            )
+                        }),
+                );
             }
             candidates.sort_by(|a, b| b.1.cmp(&a.1));
-            let limit = if max_to_close == 0 {
-                usize::MAX
-            } else {
-                max_to_close
-            };
-            let to_close: std::collections::HashSet<usize> = candidates
-                .into_iter()
-                .take(limit)
-                .map(|(address, _)| address)
-                .collect();
+            if max_to_close > 0 {
+                candidates.truncate(max_to_close);
+            }
 
-            let mut evicted = Vec::with_capacity(to_close.len());
-            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
-            for obj in guard.vec.drain(..) {
-                if to_close.contains(&(&obj.obj as *const Server as usize)) {
-                    evicted.push(obj);
-                } else {
-                    keep.push_back(obj);
+            let mut global_indices = Vec::new();
+            let mut local_indices: Vec<Vec<usize>> =
+                (0..guard.local_idle.len()).map(|_| Vec::new()).collect();
+            for (candidate, _) in candidates {
+                match candidate {
+                    Candidate::Global(index) => global_indices.push(index),
+                    Candidate::Local(worker, index) => local_indices[worker].push(index),
                 }
             }
-            guard.vec = keep;
-            for local in &mut guard.local_idle {
-                let mut keep = VecDeque::with_capacity(local.capacity());
-                for idle in local.drain(..) {
-                    if to_close.contains(&(&idle.inner.obj as *const Server as usize)) {
-                        evicted.push(idle.inner);
-                    } else {
-                        keep.push_back(idle);
-                    }
+            global_indices.sort_unstable_by(|a, b| b.cmp(a));
+
+            let mut evicted = Vec::new();
+            for index in global_indices {
+                evicted.push(guard.vec.remove(index).expect("global idle index"));
+            }
+            for (worker, mut indices) in local_indices.into_iter().enumerate() {
+                indices.sort_unstable_by(|a, b| b.cmp(a));
+                for index in indices {
+                    evicted.push(
+                        guard.local_idle[worker]
+                            .remove(index)
+                            .expect("local idle index")
+                            .inner,
+                    );
                 }
-                *local = keep;
             }
             guard.size -= evicted.len();
             evicted
