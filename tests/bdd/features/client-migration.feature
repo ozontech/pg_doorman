@@ -11,7 +11,8 @@ Feature: Client migration during binary upgrade
       """
     And fixtures from "tests/fixture.sql" applied
 
-  Scenario: Idle client continues working after binary upgrade
+  @migration-thread-mode
+  Scenario Outline: Idle client continues working after binary upgrade with thread_per_core=<enabled>
     Given pg_doorman started with config:
       """
       [general]
@@ -22,6 +23,9 @@ Feature: Client migration during binary upgrade
       pg_hba.content = "host all all 127.0.0.1/32 trust"
       pool_mode = "transaction"
       shutdown_timeout = 5000
+      worker_threads = 2
+      worker_cpu_affinity_pinning = false
+      thread_per_core = <enabled>
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
@@ -45,6 +49,11 @@ Feature: Client migration during binary upgrade
     # The old pg_doorman process should be gone — the client was migrated
     And stored foreground PID "old_doorman" should not exist
     When we close session "migrated"
+
+    Examples:
+      | enabled |
+      | false   |
+      | true    |
 
   Scenario: Migrated session continues working after upgrade with multiple queries
     Given pg_doorman started with config:
