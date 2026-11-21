@@ -268,7 +268,7 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
     // For @bench scenarios, always use "info" level to avoid debug overhead
     let log_level = if world.is_bench {
         "info"
-    } else if is_debug_mode() {
+    } else if world.doorman_log_path.is_some() || is_debug_mode() {
         "debug"
     } else {
         "info"
@@ -552,7 +552,11 @@ pub async fn start_doorman_daemon_with_config(world: &mut DoormanWorld, step: &S
     world.doorman_config_file = Some(config_file);
 
     let doorman_binary = env!("CARGO_BIN_EXE_pg_doorman");
-    let log_level = if is_debug_mode() { "debug" } else { "info" };
+    let log_level = if world.doorman_log_path.is_some() || is_debug_mode() {
+        "debug"
+    } else {
+        "info"
+    };
 
     // Run with --daemon flag - parent process exits after daemon is ready
     let output = Command::new(doorman_binary)

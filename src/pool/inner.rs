@@ -448,6 +448,10 @@ fn schedule_local_publication(
                 (published, next)
             };
             if published > 0 {
+                debug!(
+                    "local idle published to global: worker={} count={}",
+                    worker_id, published
+                );
                 // Wake global starvation checks only; ownership moves through the queue.
                 global_idle_ready.notify_waiters();
             }
@@ -785,11 +789,20 @@ impl PoolInner {
         let skip_lifetime = self.under_pressure();
         let recycle = async {
             let inner = guard.inner_mut();
+            let previous_worker = inner.obj.worker_id;
             inner
                 .obj
                 .rebind_to_current_worker()
                 .await
                 .map_err(|_| RecycleError::StaticMessage("Backend rebind failed"))?;
+            if let (Some(from), Some(to)) = (previous_worker, current_worker_id()) {
+                if from != to {
+                    debug!(
+                        "global idle takeover: from_worker={} to_worker={}",
+                        from, to
+                    );
+                }
+            }
             self.server_pool
                 .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
                 .await
