@@ -85,10 +85,11 @@ async fn test_prometheus_server_basic() {
         "Response should have text/plain content type"
     );
 
-    // Verify response contains expected metrics
     assert!(
-        response_str.contains("pg_doorman_connection_count"),
-        "Response should contain connection count metric"
+        response_str
+            .lines()
+            .any(|line| line.starts_with("pg_doorman_connection_count{")),
+        "Response should contain a connection count sample"
     );
 
     // Clean up
