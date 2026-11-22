@@ -14,7 +14,9 @@ use crate::app::server::{
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
-use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
+use crate::client::util::{
+    is_standalone_begin, join_deferred_begin, strip_joined_begin_response, QUERY_DEALLOCATE,
+};
 use crate::errors::Error;
 use crate::messages::{
     deallocate_response, ends_with_idle_ready_for_query, error_response, error_response_terminal,
@@ -466,6 +468,7 @@ where
         message: &BytesMut,
         server: &mut Server,
         query_start_at: quanta::Instant,
+        suppress_begin_response: bool,
     ) -> Result<TransactionAction, Error> {
         // Simple query always ends with ReadyForQuery, so disable async mode
         // to wait for 'Z' instead of using expected_responses counter
@@ -478,7 +481,8 @@ where
         // hash into the next Sync.
         self.prepared.last_bound_for_top = None;
 
-        self.execute_server_roundtrip(Some(message), server).await?;
+        self.execute_server_roundtrip(Some(message), server, suppress_begin_response)
+            .await?;
         self.stats.query();
         server.stats.query(
             query_start_at.elapsed().as_micros() as u64,
@@ -507,7 +511,8 @@ where
 
         self.prepared.last_bound_for_top = None;
 
-        self.execute_server_roundtrip(Some(message), server).await?;
+        self.execute_server_roundtrip(Some(message), server, false)
+            .await?;
         self.stats.query();
         server.stats.query(
             query_start_at.elapsed().as_micros() as u64,
@@ -595,7 +600,7 @@ where
             server.set_expected_responses(0);
         }
 
-        self.execute_server_roundtrip(None, server).await?;
+        self.execute_server_roundtrip(None, server, false).await?;
 
         // Batch is complete — send deferred eviction Close messages.
         // These statements were evicted from the LRU during this batch but
@@ -1053,9 +1058,8 @@ where
                 }
                 server.set_async_mode(false);
 
-                // If we deferred BEGIN, send it to server first (without forwarding response to client)
-                // Client already received synthetic response, so we discard the real server response
-                if let Some(begin_msg) = pending_begin {
+                let mut suppress_begin_response = false;
+                let message = if let Some(begin_msg) = pending_begin {
                     debug!(
                         "[{}@{} #c{}] sending deferred BEGIN to server pid={}",
                         self.username,
@@ -1064,44 +1068,48 @@ where
                         server.get_process_id()
                     );
 
-                    // Send BEGIN to server
-                    if let Err(err) = server
-                        .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
-                        .await
-                    {
-                        if matches!(err, Error::FlushTimeout) {
-                            let _ = error_response_terminal(
-                                &mut self.write,
-                                "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
-                                "58006",
-                            )
-                            .await;
-                        }
-                        return Err(err);
-                    }
-
-                    // Receive and discard response (client already got synthetic response)
-                    // Using sink() to avoid forwarding to client
-                    loop {
-                        match server
-                            .recv(&mut tokio::io::sink(), Some(&mut self.server_parameters))
+                    if message[0] == b'Q' {
+                        suppress_begin_response = true;
+                        join_deferred_begin(begin_msg, &message)?
+                    } else {
+                        // Extended protocol and other message types retain the
+                        // separate BEGIN roundtrip and response suppression.
+                        if let Err(err) = server
+                            .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
                             .await
                         {
-                            Ok(_) => {
-                                if !server.is_data_available() {
-                                    break;
+                            if matches!(err, Error::FlushTimeout) {
+                                let _ = error_response_terminal(
+                                    &mut self.write,
+                                    "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
+                                    "58006",
+                                )
+                                .await;
+                            }
+                            return Err(err);
+                        }
+                        loop {
+                            match server
+                                .recv(&mut tokio::io::sink(), Some(&mut self.server_parameters))
+                                .await
+                            {
+                                Ok(_) => {
+                                    if !server.is_data_available() {
+                                        break;
+                                    }
+                                }
+                                Err(err) => {
+                                    server.mark_bad(&format!("deferred BEGIN failed: {}", err));
+                                    return Err(err);
                                 }
                             }
-                            Err(err) => {
-                                server.mark_bad(&format!("deferred BEGIN failed: {}", err));
-                                return Err(err);
-                            }
                         }
+                        query_start_at = now();
+                        message
                     }
-
-                    // Reset query_start_at for the actual query
-                    query_start_at = now();
-                }
+                } else {
+                    message
+                };
 
                 let mut initial_message = Some(message);
 
@@ -1172,8 +1180,15 @@ where
                     let action = match code {
                         // Query
                         'Q' => {
-                            self.handle_simple_query(&message, server, query_start_at)
-                                .await?
+                            let suppress_this_query = suppress_begin_response;
+                            suppress_begin_response = false;
+                            self.handle_simple_query(
+                                &message,
+                                server,
+                                query_start_at,
+                                suppress_this_query,
+                            )
+                            .await?
                         }
 
                         // FunctionCall
@@ -1309,6 +1324,7 @@ where
         &mut self,
         message: Option<&BytesMut>,
         server: &mut Server,
+        mut suppress_begin_response: bool,
     ) -> Result<(), Error> {
         if !self.transaction_mode && self.session_xact_start.is_none() {
             self.session_xact_start = Some(crate::utils::clock::now());
@@ -1366,6 +1382,14 @@ where
                     return Err(err);
                 }
             };
+
+            if suppress_begin_response {
+                if let Err(err) = strip_joined_begin_response(&mut response) {
+                    server.mark_bad(&format!("joined BEGIN response failed: {err}"));
+                    return Err(err);
+                }
+                suppress_begin_response = false;
+            }
 
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position

@@ -66,3 +66,37 @@ Feature: Deferred connection for standalone BEGIN
 
     # Now try to execute a query on main session - should receive connection close or error
     When we send SimpleQuery "select 1" to session "main" expecting connection close
+
+  @deferred-begin-joined-parse-error
+  Scenario: Joined BEGIN parse error recovers through ROLLBACK
+    When we create session "client" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN;" to session "client"
+    And we send SimpleQuery "SELCT 1" to session "client" and store response
+    Then session "client" should receive error containing "syntax error"
+    And session "client" should receive ReadyForQuery "I"
+
+    When we send SimpleQuery "ROLLBACK" to session "client" and store response
+    Then session "client" should receive CommandComplete "ROLLBACK"
+    And session "client" should receive ReadyForQuery "I"
+
+    When we send SimpleQuery "SELECT 42" to session "client" and store response
+    Then session "client" should receive DataRow with "42"
+    And session "client" should receive CommandComplete "SELECT 1"
+    And session "client" should receive ReadyForQuery "I"
+
+  @deferred-begin-joined-runtime-error
+  Scenario: Joined BEGIN runtime error recovers through ROLLBACK
+    When we create session "client" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN;" to session "client"
+    And we send SimpleQuery "SELECT 1/0" to session "client" and store response
+    Then session "client" should receive error containing "division by zero"
+    And session "client" should receive ReadyForQuery "E"
+
+    When we send SimpleQuery "ROLLBACK" to session "client" and store response
+    Then session "client" should receive CommandComplete "ROLLBACK"
+    And session "client" should receive ReadyForQuery "I"
+
+    When we send SimpleQuery "SELECT 42" to session "client" and store response
+    Then session "client" should receive DataRow with "42"
+    And session "client" should receive CommandComplete "SELECT 1"
+    And session "client" should receive ReadyForQuery "I"
