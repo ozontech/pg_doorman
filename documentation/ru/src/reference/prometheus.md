@@ -114,6 +114,7 @@ pg_doorman экспортирует следующие метрики:
 | `pg_doorman_servers_prepared_misses` | Текущая сумма промахов prepared statements по активным бэкендам пула, с лейблами `user` и `database`. Gauge может уменьшаться при ротации бэкендов; для `rate()` используйте `pg_doorman_servers_prepared_misses_total`. |
 | `pg_doorman_servers_prepared_hits_total` | Накопительный счётчик попаданий в кеш prepared statements по всем бэкендам пула, с лейблами `user` и `database`. Используйте `rate()` для скорости попаданий. |
 | `pg_doorman_servers_prepared_misses_total` | Накопительный счётчик промахов prepared statements по всем бэкендам пула, с лейблами `user` и `database`. Устойчивая ненулевая скорость означает, что запросы часто готовятся заново или кеш `server_prepared_statements_cache_size` слишком мал. |
+| `pg_doorman_server_write_idle_timeouts_total` | Счётчик обменов с бэкендом, прерванных по `server_write_idle_timeout`, с лейблом `cause`. `backend`: PostgreSQL перестал читать запрос. `client`: клиент перестал читать ответы, и обратное давление дошло до PostgreSQL через pg_doorman. Каждое увеличение — одно закрытое соединение с бэкендом и один отключённый клиент. |
 
 ### Метрики клиентского кеша prepared statements
 

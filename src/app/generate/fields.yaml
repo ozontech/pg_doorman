@@ -417,11 +417,25 @@ fields:
           0 — без ограничения.
       doc: |
         Maximum time a write to a PostgreSQL backend may make no progress before the exchange is aborted.
-        The countdown restarts after every successful write, so a large batch that keeps moving is not cut off.
-        When it fires, the backend connection is discarded and the client receives an ErrorResponse with SQLSTATE `58006`
-        when the client stream is still at a message boundary. Applies to query roundtrips and deferred `BEGIN`.
-        The value is captured when a backend connection is opened, so a RELOAD affects new backend connections only.
-        0 disables the timeout.
+        The countdown restarts every time the backend socket accepts data, so the limit is on a stalled backend,
+        not on the size of the request: a large batch that keeps moving is never cut off.
+
+        When the timeout fires, pg_doorman closes the backend connection, increments
+        `pg_doorman_server_write_idle_timeouts_total`, and logs the backend pid and the cause.
+        The client receives an ErrorResponse with SQLSTATE `58006` and its connection is closed.
+        The ErrorResponse is skipped when the client itself has stopped reading replies or when a reply
+        to it was cut off in the middle of a message. The timeout applies to query exchanges and to the deferred `BEGIN`.
+
+        The timeout can fire on a healthy backend in one case: an extended-protocol batch in which PostgreSQL
+        is executing an earlier `Execute`. The backend does not read the socket while it executes a statement,
+        so the rest of the batch that did not fit the socket buffer can wait to be written for longer than the timeout.
+        The client then receives error `58006`. To avoid this, set `server_write_idle_timeout` above `statement_timeout`:
+        PostgreSQL then cancels the long statement before the timeout fires.
+
+        The value is read when a backend connection is opened: after `RELOAD` it applies to new backend connections only.
+
+        Set to `0` to disable the timeout. A backend that stops reading then holds the client and its pool slot
+        until the connection is closed from outside.
       default: "5000 (5 sec)"
 
     proxy_copy_data_timeout:

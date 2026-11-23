@@ -1,5 +1,40 @@
 # Changelog
 
+### 3.11.3
+
+#### Large batches no longer stall, and the backend send timeout counts idle time only
+
+pg_doorman used to send a whole request to PostgreSQL before it read any
+reply. A batch larger than the socket buffers could stop both sides:
+PostgreSQL blocked on sending results nobody read and stopped reading the
+request. pg_doorman now reads replies while it sends the request.
+
+The send was also limited to five seconds in total, so a large batch that
+PostgreSQL accepted steadily was cut off with SQLSTATE `58006`. The limit
+is now on idle time and is configurable.
+
+- **New `server_write_idle_timeout` parameter** (`[general]`, default 5
+  seconds, `0` disables). It bounds the time a write to a backend makes no
+  progress; the countdown restarts every time the backend socket accepts
+  data. It can also fire on a healthy backend: in an extended-protocol
+  batch PostgreSQL does not read the rest of the batch while it executes
+  an earlier `Execute`, so a statement that runs longer than the timeout
+  stalls the write when the rest does not fit the socket buffer. After
+  `RELOAD` the new value applies to new
+  backend connections only.
+- **Behavior change**: a send that takes longer than five seconds but
+  keeps making progress is no longer aborted. `58006` with `flush timeout`
+  in the message is returned only after `server_write_idle_timeout` of no
+  write progress.
+- **New metric** `pg_doorman_server_write_idle_timeouts_total{cause}`.
+  `cause="backend"`: PostgreSQL stopped reading the request.
+  `cause="client"`: the client stopped reading replies, and the
+  backpressure reached PostgreSQL through pg_doorman.
+- The `ERROR` log line for the event now carries the backend pid, the
+  cause, and how many bytes of the request were sent.
+- A client that stopped reading replies gets a closed connection without
+  the ErrorResponse.
+
 ### 3.11.2
 
 #### Talos routes `s2i|`-prefixed clients through a service pool
