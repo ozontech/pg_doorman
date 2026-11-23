@@ -75,6 +75,13 @@ retain_connections_max = 3
 # Default: "60s"
 server_idle_check_timeout = 60000
 
+# Maximum time a write to a PostgreSQL backend may make no progress
+# before the exchange is aborted and the backend is discarded.
+# The countdown restarts after every successful write.
+# 0 means disabled (wait indefinitely).
+# Default: 5000 (5000 ms)
+server_write_idle_timeout = 5000
+
 # Time to wait for active transactions to finish during graceful shutdown.
 # Default: 10000 (10000 ms)
 shutdown_timeout = 10000

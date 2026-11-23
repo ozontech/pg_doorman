@@ -228,6 +228,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "retain_connections_time",
         "retain_connections_max",
         "server_idle_check_timeout",
+        "server_write_idle_timeout",
         "server_round_robin",
         "sync_server_parameters",
         "tcp_so_linger",
@@ -489,6 +490,7 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "|--------|-------------|");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Live aggregate of prepared-statement cache hits across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use `pg_doorman_servers_prepared_hits_total` for rates. |");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Live aggregate of prepared-statement cache misses across currently active backends of each pool, by user and database. This gauge can decrease when backends rotate; use `pg_doorman_servers_prepared_misses_total` for rates. |");
+    let _ = writeln!(out, "| `pg_doorman_server_write_idle_timeouts_total` | Counter of backend exchanges aborted by `server_write_idle_timeout`, by `cause`. `backend`: PostgreSQL stopped reading the request. `client`: the client stopped reading replies, and the backpressure reached PostgreSQL through pg_doorman. Each increment is one discarded backend connection and one closed client. Alert on a non-zero rate. |");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits_total` | Counter form of prepared-statement cache hits across all backends of each pool, by user and database. Use `rate()` over this metric for hit throughput. |");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses_total` | Counter form of prepared-statement cache misses across all backends of each pool, by user and database. A sustained non-zero rate signals queries that could benefit from being prepared, or from a larger `server_prepared_statements_cache_size`. |\n");
 

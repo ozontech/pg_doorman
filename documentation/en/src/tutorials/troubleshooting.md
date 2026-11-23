@@ -60,6 +60,15 @@ The pool is shutting down or the binary upgrade was issued in daemon mode. Check
 
 If the `58006` happened during a planned upgrade, this is expected for that subset of clients. Configure the application's connection pool to retry on transient errors.
 
+### `58006` with `flush timeout` in the message
+
+The pooler is not shutting down. The message `pooler is shut down now (flush timeout: server did not accept data within the timeout period)` means a write to the PostgreSQL backend made no progress for [`server_write_idle_timeout`](../reference/general.md#server_write_idle_timeout). pg_doorman closed that backend connection and the client; other clients are not affected.
+
+Find the cause in `pg_doorman_server_write_idle_timeouts_total{cause}` and in the `ERROR` log line for the event, which carries the pool, the client id, the backend pid, and how many bytes of the request were sent:
+
+- `cause="backend"` — PostgreSQL stopped reading the request. Check the backend pid from the log: a process that is stopped or stuck in uninterruptible I/O. The backend can also be healthy: in an extended-protocol batch PostgreSQL does not read the rest of the batch while it executes an earlier `Execute`. If that statement runs longer than the timeout and the rest of the batch does not fit the socket buffer, the timeout fires. In that case set `server_write_idle_timeout` above `statement_timeout`: PostgreSQL then cancels the long statement before the timeout fires.
+- `cause="client"` — the client sent a batch and stopped reading replies. PostgreSQL blocked on sending results and stopped reading the request. The client does not get the ErrorResponse, only a closed connection. Fix the client: it must read replies while it sends a large batch.
+
 ## Pool size too small
 
 **Symptom:** Queries take much longer end-to-end than they do when run directly against PostgreSQL.

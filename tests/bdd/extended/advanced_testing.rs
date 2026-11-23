@@ -129,11 +129,11 @@ pub async fn verify_clean_response_with_marker(
 }
 
 // =============================================================================
-// Flush timeout protocol violation test steps
+// Backend write stall test steps
 // =============================================================================
 
 /// Send Sync to a session without waiting for the server response.
-/// Used when we expect the server roundtrip to timeout (e.g., PostgreSQL is frozen).
+/// Used while PostgreSQL is frozen so another step can resume it before reading.
 #[when(regex = r#"^we send Sync to session "([^"]+)" without waiting for response$"#)]
 pub async fn send_sync_to_session_no_wait(world: &mut DoormanWorld, session_name: String) {
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
@@ -296,7 +296,7 @@ pub async fn send_large_parse_batch(
 
 /// Send a large SimpleQuery to a session to fill TCP send buffers.
 /// The query is padded with a SQL comment to reach the desired size.
-/// Does not wait for a response (used when we expect a flush timeout).
+/// Does not wait for a response, allowing a later step to resume PostgreSQL.
 #[when(
     regex = r#"^we send large SimpleQuery with (\d+)KB padding to session "([^"]+)" without waiting$"#
 )]
@@ -326,8 +326,49 @@ pub async fn send_large_simple_query_no_wait(
     }
 }
 
+#[then(
+    regex = r#"^session "([^"]+)" should finish with (\d+) ParseComplete and (\d+) DataRow messages within (\d+)ms$"#
+)]
+pub async fn verify_response_after_backend_resume(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_parses: usize,
+    expected_rows: usize,
+    timeout_ms: u64,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+    let (parses, rows) =
+        tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
+            let mut parses = 0;
+            let mut rows = 0;
+            loop {
+                let (kind, body) = conn
+                    .read_message()
+                    .await
+                    .expect("session closed during backend stall");
+                match kind {
+                    '1' => parses += 1,
+                    'D' => rows += 1,
+                    'E' => panic!(
+                        "unexpected backend stall error: {}",
+                        super::helpers::format_message_details(kind, &body)
+                    ),
+                    'Z' => {
+                        assert_eq!(body, [b'I'], "expected idle ReadyForQuery");
+                        return (parses, rows);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("session did not finish after PostgreSQL resumed");
+    assert_eq!(parses, expected_parses, "lost ParseComplete messages");
+    assert_eq!(rows, expected_rows, "lost DataRow messages");
+}
+
 /// Verify that the client received a proper ErrorResponse ('E') from pg_doorman
-/// when flush timeout occurred, rather than a bare TCP close / unexpected EOF.
+/// when `server_write_idle_timeout` fired, rather than a bare TCP close / unexpected EOF.
 ///
 /// The test PASSES if the client receives an ErrorResponse message.
 /// The test FAILS if the client gets only EOF/connection reset (protocol violation).

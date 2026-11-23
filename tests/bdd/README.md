@@ -10,6 +10,48 @@ To run all BDD tests:
 cargo test --test bdd
 ```
 
+## Backend batch regression
+
+Run the backend batch scenarios in the Linux test container:
+
+```bash
+make test-bdd TAGS=@backend-batch
+```
+
+They check a large request/response exchange, a paced 64-query batch directly
+against PostgreSQL, and the same paced batch through pg_doorman. The client
+drains replies immediately. Small backend socket buffers and `pg_sleep(0.150)`
+make the transfer take longer than five seconds, the default
+`server_write_idle_timeout`, while replies arrive throughout the batch. The
+timeout counts only the time a backend write makes no progress, so the batch
+must complete.
+
+The `@backend-batch-progress` scenario asserts successful completion beyond
+five seconds. It failed with `58006` while rows were still arriving when the
+limit covered the whole send. The other two scenarios are controls. This
+regression is included in `@rust` / `@rust-2`.
+
+The `@backend-write-stall` scenarios set `server_write_idle_timeout = 30000`
+and check recovery after freezing PostgreSQL for six seconds, for both an
+extended batch and a simple query.
+
+The `@flush-timeout` scenarios check the timeout itself with a low value:
+a frozen backend during an extended batch and during a simple query (the
+client gets `58006`, the metric reports `cause="backend"`), and a client that
+never reads replies (the connection is closed, the metric reports
+`cause="client"`, the pool slot is reusable).
+
+```bash
+# Only the paced batch regression:
+make test-bdd TAGS=@backend-batch-progress
+# A paused backend resumes without losing the session:
+make test-bdd TAGS=@backend-write-stall
+# The write idle timeout fires and reports its cause:
+make test-bdd TAGS=@flush-timeout
+# Only the large request/response exchange:
+make test-bdd TAGS=@backend-duplex-large-batch
+```
+
 ## Debug Mode
 
 To enable verbose output during test execution, set the `DEBUG` environment variable:

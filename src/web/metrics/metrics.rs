@@ -1054,6 +1054,16 @@ pub fn observe_streaming_bytes(user: &str, database: &str, kind: &str, bytes: u6
         .inc_by(bytes);
 }
 
+/// Records one backend exchange aborted by `server_write_idle_timeout`.
+/// `cause` must be one of the labels documented on
+/// `SERVER_WRITE_IDLE_TIMEOUTS_TOTAL` (`backend` or `client`).
+#[inline]
+pub fn record_server_write_idle_timeout(cause: &'static str) {
+    super::SERVER_WRITE_IDLE_TIMEOUTS_TOTAL
+        .with_label_values(&[cause])
+        .inc();
+}
+
 /// Records one client rejection at the listener / pre-auth stage.
 /// `reason` must be one of the labels documented on
 /// `LISTENER_REJECTIONS_TOTAL`; passing any other value still works but
