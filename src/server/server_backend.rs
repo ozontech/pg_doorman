@@ -49,6 +49,10 @@ pub struct Server {
     /// never be cleaned up or handed to another client.
     pub(crate) roundtrip_in_progress: bool,
 
+    /// `general.server_write_idle_timeout` captured when this connection was
+    /// opened; `None` when the timeout is disabled.
+    pub(crate) write_idle_timeout: Option<Duration>,
+
     /// Response buffer for accumulating server messages before forwarding them to the client.
     pub(crate) buffer: BytesMut,
 
@@ -1099,6 +1103,8 @@ impl Server {
                         address: address.to_owned(),
                         stream: BackendStream::new(BufStream::new(stream)),
                         roundtrip_in_progress: false,
+                        write_idle_timeout: Some(config.general.server_write_idle_timeout.as_std())
+                            .filter(|timeout| !timeout.is_zero()),
                         buffer: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         read_buf: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         server_parameters,
@@ -1166,6 +1172,7 @@ impl Server {
             address: Address::default(),
             stream: BackendStream::new(BufStream::with_capacity(64, 64, stream)),
             roundtrip_in_progress: false,
+            write_idle_timeout: None,
             buffer: BytesMut::new(),
             read_buf: BytesMut::new(),
             server_parameters: ServerParameters::new(),

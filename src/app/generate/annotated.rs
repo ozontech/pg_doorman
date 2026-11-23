@@ -557,6 +557,16 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         "",
     );
 
+    write_field_desc(w, fi, "general", "server_write_idle_timeout");
+    write_duration_value(
+        w,
+        fi,
+        "server_write_idle_timeout",
+        g.server_write_idle_timeout.as_millis(),
+        "5s",
+        "5000 ms",
+    );
+
     write_field_desc(w, fi, "general", "shutdown_timeout");
     write_duration_value(
         w,

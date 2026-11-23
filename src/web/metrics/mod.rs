@@ -23,8 +23,8 @@ pub(crate) use handler::write_metrics_response;
 pub use metrics::{
     observe_anonymous_eviction, observe_backend_create_phase, observe_pool_query_microseconds,
     observe_pool_transaction_microseconds, observe_pool_wait_microseconds, observe_streaming_bytes,
-    observe_streaming_event, record_interner_gc, record_listener_rejection, record_synthetic_miss,
-    refresh_static_info_metrics,
+    observe_streaming_event, record_interner_gc, record_listener_rejection,
+    record_server_write_idle_timeout, record_synthetic_miss, refresh_static_info_metrics,
 };
 
 // Define the metrics we want to expose
@@ -708,6 +708,31 @@ pub(crate) static POOLER_CHECK_QUERY_BACKEND_TOTAL: Lazy<IntCounter> = Lazy::new
         "Pooler check queries forwarded to PostgreSQL because the per-pool \
          response cache was empty or the cached query no longer matches the \
          current general.pooler_check_query value.",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+/// Backend exchanges aborted by `general.server_write_idle_timeout`: the
+/// write to PostgreSQL made no progress for the whole timeout. Label `cause`:
+///
+/// - `backend` — PostgreSQL stopped reading while pg_doorman was still able
+///   to deliver replies (or had none to deliver): a stopped or stalled
+///   backend process, or a command that runs longer than the timeout while
+///   the rest of the batch does not fit the socket buffer.
+/// - `client` — the client stopped reading replies, so pg_doorman stopped
+///   reading them from PostgreSQL, which in turn stopped reading the request.
+pub(crate) static SERVER_WRITE_IDLE_TIMEOUTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_server_write_idle_timeouts_total",
+            "Backend exchanges aborted because a write to PostgreSQL made no \
+             progress for general.server_write_idle_timeout, by cause. Causes: \
+             'backend' (PostgreSQL stopped reading the request), 'client' (the \
+             client stopped reading replies and backpressure reached PostgreSQL).",
+        ),
+        &["cause"],
     )
     .unwrap();
     REGISTRY.register(Box::new(counter.clone())).unwrap();

@@ -566,3 +566,170 @@ async fn fast_release_waits_for_the_pending_writer() {
     .await
     .unwrap();
 }
+
+// ---- server_write_idle_timeout ---------------------------------------------
+
+const WRITE_IDLE: Duration = Duration::from_millis(200);
+
+fn write_idle_timeouts(cause: &str) -> u64 {
+    crate::web::metrics::SERVER_WRITE_IDLE_TIMEOUTS_TOTAL
+        .with_label_values(&[cause])
+        .get()
+}
+
+/// Backend transport with a small send buffer and the idle timeout armed.
+fn stalling_backend() -> (Server, UnixStream) {
+    let (transport, peer) = UnixStream::pair().unwrap();
+    socket2::SockRef::from(&transport)
+        .set_send_buffer_size(1024)
+        .unwrap();
+    socket2::SockRef::from(&peer)
+        .set_send_buffer_size(1024)
+        .unwrap();
+    let mut server = Server::for_test(StreamInner::UnixSocket { stream: transport });
+    server.write_idle_timeout = Some(WRITE_IDLE);
+    (server, peer)
+}
+
+#[tokio::test]
+async fn a_backend_that_stops_reading_fails_the_roundtrip_and_notifies_the_client() {
+    let (mut server, _peer) = stalling_backend();
+    let (output, mut application) = tokio::io::duplex(64 * 1024);
+    let mut client = client(output);
+    client.buffer.extend_from_slice(&batch());
+    let before = write_idle_timeouts("backend");
+
+    let started = tokio::time::Instant::now();
+    let result = timeout(
+        Duration::from_secs(5),
+        client.execute_server_roundtrip(None, &mut server),
+    )
+    .await
+    .expect("the idle timeout did not end a stalled backend write");
+
+    assert!(matches!(result, Err(crate::errors::Error::FlushTimeout)));
+    assert!(started.elapsed() >= WRITE_IDLE);
+    assert!(server.is_bad());
+    assert!(write_idle_timeouts("backend") > before);
+
+    // The client is at a message boundary and reading: it gets a terminal
+    // ErrorResponse instead of a bare connection close.
+    drop(client);
+    let mut received = Vec::new();
+    application.read_to_end(&mut received).await.unwrap();
+    assert_eq!(received.first(), Some(&b'E'));
+    assert!(received.windows(7).any(|window| window == b"C58006\0"));
+}
+
+#[tokio::test]
+async fn a_client_that_stops_reading_is_reported_as_the_cause() {
+    let (mut server, mut peer) = stalling_backend();
+    // 64 bytes of client buffer and nobody reading them: the reply stalls on
+    // the client, and the backend (like PostgreSQL blocked on its own send)
+    // stops reading the rest of the batch.
+    let (output, mut application) = tokio::io::duplex(64);
+    let mut client = client(output);
+    client.buffer.extend_from_slice(&batch());
+    let before = write_idle_timeouts("client");
+
+    let backend = async {
+        for _ in 0..3 {
+            read_frame(&mut peer).await;
+        }
+        peer.write_all(&large_row()).await.unwrap();
+        std::future::pending::<()>().await;
+    };
+    let result = timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = client.execute_server_roundtrip(None, &mut server) => result,
+            _ = backend => unreachable!(),
+        }
+    })
+    .await
+    .expect("the idle timeout did not end the stalled exchange");
+
+    assert!(matches!(result, Err(crate::errors::Error::FlushTimeout)));
+    assert!(server.is_bad());
+    assert!(write_idle_timeouts("client") > before);
+
+    // Nothing was appended to the half-written reply.
+    drop(client);
+    let mut received = Vec::new();
+    application.read_to_end(&mut received).await.unwrap();
+    assert_eq!(received.first(), Some(&b'D'));
+    assert!(!received.windows(5).any(|window| window == b"58006"));
+}
+
+#[tokio::test]
+async fn no_error_is_appended_to_a_reply_cut_off_halfway() {
+    let (mut server, mut peer) = stalling_backend();
+    let (output, mut application) = tokio::io::duplex(64 * 1024);
+    let mut client = client(output);
+    client.buffer.extend_from_slice(&batch());
+    let before = write_idle_timeouts("backend");
+
+    // The backend starts a large DataRow, delivers part of it and freezes.
+    // The client can read, but its stream is now in the middle of a message.
+    let row = large_row();
+    let backend = async {
+        for _ in 0..3 {
+            read_frame(&mut peer).await;
+        }
+        peer.write_all(&row[..1024]).await.unwrap();
+        std::future::pending::<()>().await;
+    };
+    let result = timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = client.execute_server_roundtrip(None, &mut server) => result,
+            _ = backend => unreachable!(),
+        }
+    })
+    .await
+    .expect("the idle timeout did not end the stalled exchange");
+
+    assert!(matches!(result, Err(crate::errors::Error::FlushTimeout)));
+    assert!(server.is_bad());
+    assert!(write_idle_timeouts("backend") > before);
+
+    drop(client);
+    let mut received = Vec::new();
+    application.read_to_end(&mut received).await.unwrap();
+    assert_eq!(received.first(), Some(&b'D'));
+    assert!(!received.windows(5).any(|window| window == b"58006"));
+}
+
+#[tokio::test]
+async fn a_disabled_write_idle_timeout_lets_a_paused_backend_resume() {
+    let (mut server, mut peer) = stalling_backend();
+    server.write_idle_timeout = None;
+    let (output, mut application) = tokio::io::duplex(64 * 1024);
+    let mut client = client(output);
+    let request = batch();
+    client.buffer.extend_from_slice(&request);
+
+    // The backend ignores the request for longer than WRITE_IDLE, then reads
+    // all of it and answers.
+    let backend = async {
+        tokio::time::sleep(WRITE_IDLE * 2).await;
+        let mut received = vec![0; request.len()];
+        peer.read_exact(&mut received).await.unwrap();
+        peer.write_all(&ready_for_query(false)).await.unwrap();
+    };
+    let exchange = async {
+        client
+            .execute_server_roundtrip(None, &mut server)
+            .await
+            .unwrap();
+    };
+    timeout(Duration::from_secs(5), async {
+        tokio::join!(backend, exchange);
+    })
+    .await
+    .unwrap();
+    assert!(!server.is_bad());
+
+    drop(client);
+    let mut received = Vec::new();
+    application.read_to_end(&mut received).await.unwrap();
+    assert_eq!(received.first(), Some(&b'Z'));
+}

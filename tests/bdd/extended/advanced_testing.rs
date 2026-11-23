@@ -367,6 +367,89 @@ pub async fn verify_response_after_backend_resume(
     assert_eq!(rows, expected_rows, "lost DataRow messages");
 }
 
+/// Verify that the client received a proper ErrorResponse ('E') from pg_doorman
+/// when `server_write_idle_timeout` fired, rather than a bare TCP close / unexpected EOF.
+///
+/// The test PASSES if the client receives an ErrorResponse message.
+/// The test FAILS if the client gets only EOF/connection reset (protocol violation).
+#[then(
+    regex = r#"^session "([^"]+)" should receive ErrorResponse or connection close with error$"#
+)]
+pub async fn verify_error_response_on_flush_timeout(
+    world: &mut DoormanWorld,
+    session_name: String,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    // Try to read any message with a timeout.
+    // We expect either:
+    // - ErrorResponse ('E') - correct behavior (what we want)
+    // - Connection reset / EOF - the bug (protocol violation for drivers like Npgsql)
+    let mut got_error_response = false;
+    let mut got_eof = false;
+    let mut messages_received = Vec::new();
+
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await {
+            Ok(Ok((msg_type, data))) => {
+                let desc = format!("type='{}' len={}", msg_type, data.len());
+                eprintln!("Session '{}': received message {}", session_name, desc);
+                messages_received.push((msg_type, data));
+
+                if msg_type == 'E' {
+                    got_error_response = true;
+                }
+                if msg_type == 'Z' {
+                    // ReadyForQuery - done reading
+                    break;
+                }
+            }
+            Ok(Err(e)) => {
+                // Connection error (EOF, reset, etc.)
+                eprintln!(
+                    "Session '{}': connection error (this is the bug - no ErrorResponse sent): {}",
+                    session_name, e
+                );
+                got_eof = true;
+                break;
+            }
+            Err(_) => {
+                // Timeout - no more messages
+                eprintln!(
+                    "Session '{}': read timeout (no more messages)",
+                    session_name
+                );
+                break;
+            }
+        }
+    }
+
+    // Store results for debugging
+    world
+        .session_messages
+        .insert(session_name.clone(), messages_received);
+
+    // The assertion: we MUST have received an ErrorResponse.
+    // If we only got EOF/reset, that's the protocol violation bug.
+    assert!(
+        got_error_response,
+        "Session '{}': expected ErrorResponse ('E') from pg_doorman on flush timeout, \
+         but got {}. This is the protocol violation bug - client receives bare TCP close \
+         without a proper PostgreSQL error message.",
+        session_name,
+        if got_eof {
+            "connection EOF/reset (no PostgreSQL message at all)"
+        } else {
+            "no ErrorResponse in received messages"
+        }
+    );
+
+    eprintln!(
+        "Session '{}': correctly received ErrorResponse on flush timeout",
+        session_name
+    );
+}
+
 /// Assert that the session received an ErrorResponse with the given SQLSTATE.
 /// Prefer messages already drained by `we send Sync`; fall back to the live
 /// socket for steps that have not drained the response yet.

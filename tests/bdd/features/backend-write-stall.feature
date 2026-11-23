@@ -1,7 +1,9 @@
-@rust @rust-1 @backend-write-stall @flush-timeout
+@rust @rust-1 @backend-write-stall
 Feature: Backend writes survive a temporary PostgreSQL stall
   A write that waits for socket capacity must resume when PostgreSQL resumes,
-  even when the pause exceeds the former five-second batch send deadline.
+  as long as the pause stays below server_write_idle_timeout. The timeout is
+  raised above the six-second pause here; with the default of five seconds
+  the same pause ends the exchange (see flush-timeout-protocol-violation).
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -19,6 +21,7 @@ Feature: Backend writes survive a temporary PostgreSQL stall
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 trust"
       prepared_statements = false
+      server_write_idle_timeout = 30000
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -32,7 +35,7 @@ Feature: Backend writes survive a temporary PostgreSQL stall
     When we create session "client1" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "SELECT 1" to session "client1"
 
-  @flush-timeout-basic
+  @backend-write-stall-batch
   Scenario: An extended batch completes after PostgreSQL resumes
     When we freeze PostgreSQL with SIGSTOP
     And we send large batch of 500 Parse messages with 16KB queries to session "client1"
@@ -42,7 +45,7 @@ Feature: Backend writes survive a temporary PostgreSQL stall
     Then session "client1" should finish with 500 ParseComplete and 0 DataRow messages within 15000ms
     And session "client1" should accept another query after the batch
 
-  @flush-timeout-simple-query
+  @backend-write-stall-simple-query
   Scenario: A simple query completes after PostgreSQL resumes
     When we freeze PostgreSQL with SIGSTOP
     And we send large SimpleQuery with 8192KB padding to session "client1" without waiting

@@ -403,6 +403,27 @@ fields:
       doc: "During graceful shutdown (SIGTERM), pg_doorman waits up to this long for in-flight transactions to complete before forcibly closing connections."
       default: "10000 (10 sec)"
 
+    server_write_idle_timeout:
+      config:
+        en: |
+          Maximum time a write to a PostgreSQL backend may make no progress
+          before the exchange is aborted and the backend is discarded.
+          The countdown restarts after every successful write.
+          0 means disabled (wait indefinitely).
+        ru: |
+          Максимальное время, в течение которого запись в бэкенд PostgreSQL
+          может не продвигаться, прежде чем обмен будет прерван, а соединение
+          с бэкендом закрыто. Отсчёт начинается заново после каждой успешной записи.
+          0 — без ограничения.
+      doc: |
+        Maximum time a write to a PostgreSQL backend may make no progress before the exchange is aborted.
+        The countdown restarts after every successful write, so a large batch that keeps moving is not cut off.
+        When it fires, the backend connection is discarded and the client receives an ErrorResponse with SQLSTATE `58006`
+        when the client stream is still at a message boundary. Applies to query roundtrips and deferred `BEGIN`.
+        The value is captured when a backend connection is opened, so a RELOAD affects new backend connections only.
+        0 disables the timeout.
+      default: "5000 (5 sec)"
+
     proxy_copy_data_timeout:
       config:
         en: "Timeout for COPY data operations."

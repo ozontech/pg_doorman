@@ -2,7 +2,7 @@ use bytes::{BufMut, BytesMut};
 use log::{debug, error, info, warn};
 use std::future::{poll_fn, Future};
 use std::ops::DerefMut;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::Poll;
 use std::time::{Duration, SystemTime};
 
@@ -22,11 +22,14 @@ use crate::messages::{
     write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
-use crate::server::duplex::send_while_receiving;
+use crate::server::duplex::{send_while_receiving, ClientWriteProbe};
 use crate::server::Server;
 use crate::utils::buffering_writer::BufferingWriter;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
-use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_CACHE_TOTAL};
+use crate::web::metrics::{
+    record_server_write_idle_timeout, POOLER_CHECK_QUERY_BACKEND_TOTAL,
+    POOLER_CHECK_QUERY_CACHE_TOTAL,
+};
 
 // =============================================================================
 // PostgreSQL Extended Query Protocol - Documentation
@@ -137,6 +140,23 @@ use crate::web::metrics::{POOLER_CHECK_QUERY_BACKEND_TOTAL, POOLER_CHECK_QUERY_C
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
+
+/// How long the terminal ErrorResponse about a backend write stall may take
+/// to reach the client before the connection is closed without it.
+const WRITE_STALL_NOTICE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// What was known about an exchange when `server_write_idle_timeout` fired.
+struct WriteStall {
+    /// The last write towards the client was left pending: the client is not
+    /// reading replies, so the stall originates on its side.
+    client_blocked: bool,
+    /// A reply was cut off halfway to the client (a large message was being
+    /// streamed), so nothing more can be written to it without breaking the
+    /// message framing.
+    client_mid_message: bool,
+    bytes_sent: usize,
+    bytes_total: usize,
+}
 
 #[cfg(test)]
 mod tests;
@@ -1070,7 +1090,27 @@ where
 
                     // Send BEGIN to server
                     server.roundtrip_in_progress = true;
-                    server.send_and_flush(&begin_msg).await?;
+                    let sent = match server.write_idle_timeout {
+                        Some(timeout) => server.send_and_flush_timeout(&begin_msg, timeout).await,
+                        None => server.send_and_flush(&begin_msg).await,
+                    };
+                    if let Err(err) = sent {
+                        if matches!(err, Error::FlushTimeout) {
+                            // Nothing is in flight towards the client here:
+                            // it only received the synthetic BEGIN response.
+                            self.report_write_stall(
+                                server,
+                                WriteStall {
+                                    client_blocked: false,
+                                    client_mid_message: false,
+                                    bytes_sent: 0,
+                                    bytes_total: begin_msg.len(),
+                                },
+                            )
+                            .await;
+                        }
+                        return Err(err);
+                    }
 
                     // Receive and discard response (client already got synthetic response)
                     // Using sink() to avoid forwarding to client
@@ -1318,6 +1358,10 @@ where
         let message = message.unwrap_or(&buffer);
         let mut writer = server.stream.writer();
         let send_complete = AtomicBool::new(false);
+        let bytes_sent = AtomicUsize::new(0);
+        let client_blocked = AtomicBool::new(false);
+        let bytes_total = message.len();
+        let write_idle_timeout = server.write_idle_timeout;
 
         // If this future is dropped at any await, is_bad/checkin_cleanup will
         // discard the backend even if the reader happened to see ReadyForQuery.
@@ -1331,13 +1375,27 @@ where
             &mut writer,
             message,
             &send_complete,
-            self.receive_server_responses(server, &send_complete),
+            write_idle_timeout,
+            &bytes_sent,
+            self.receive_server_responses(server, &send_complete, &client_blocked),
         )
         .await;
         *self.buffer = buffer;
         server.stats.wait_idle();
 
         if let Err(err) = result {
+            if matches!(err, Error::FlushTimeout) {
+                // The receive side was cancelled wherever it was waiting.
+                // `server.bad` is already set at this point only when it was
+                // streaming a large message to the client.
+                let stall = WriteStall {
+                    client_blocked: client_blocked.load(Ordering::Relaxed),
+                    client_mid_message: server.bad,
+                    bytes_sent: bytes_sent.load(Ordering::Relaxed),
+                    bytes_total,
+                };
+                self.report_write_stall(server, stall).await;
+            }
             server.mark_bad(&format!(
                 "client {} roundtrip failed: {err}",
                 self.connection_id
@@ -1352,10 +1410,54 @@ where
         Ok(())
     }
 
+    /// Accounts for a backend write that made no progress for
+    /// `server_write_idle_timeout`: metric, log line with the backend pid,
+    /// and a terminal ErrorResponse when the client can still take one.
+    /// The caller discards the backend and closes the client connection.
+    async fn report_write_stall(&mut self, server: &Server, stall: WriteStall) {
+        let cause = if stall.client_blocked {
+            "client"
+        } else {
+            "backend"
+        };
+        record_server_write_idle_timeout(cause);
+        error!(
+            "[{}@{} #c{}] backend write made no progress for {:?} pid={} cause={} sent={}/{} bytes",
+            self.username,
+            self.pool_name,
+            self.connection_id,
+            server.write_idle_timeout.unwrap_or_default(),
+            server.get_process_id(),
+            cause,
+            stall.bytes_sent,
+            stall.bytes_total,
+        );
+
+        // A client that is not reading cannot take the error either, and a
+        // reply cut off halfway leaves no message boundary to put it on.
+        if stall.client_blocked || stall.client_mid_message {
+            return;
+        }
+        // Without an ErrorResponse the client sees a bare connection close,
+        // which drivers like Npgsql report as a protocol violation. SQLSTATE
+        // 58006 and the "pooler is shut down" wording match graceful shutdown
+        // so that clients treat it as a reason to reconnect.
+        let _ = tokio::time::timeout(
+            WRITE_STALL_NOTICE_TIMEOUT,
+            error_response_terminal(
+                &mut self.write,
+                "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
+                "58006",
+            ),
+        )
+        .await;
+    }
+
     async fn receive_server_responses(
         &mut self,
         server: &mut Server,
         send_complete: &AtomicBool,
+        client_blocked: &AtomicBool,
     ) -> Result<(), Error> {
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
@@ -1364,7 +1466,10 @@ where
         // buffered in 8 KiB chunks.
         loop {
             let mut response = server
-                .recv(&mut self.write, Some(&mut self.server_parameters))
+                .recv(
+                    ClientWriteProbe::new(&mut self.write, client_blocked),
+                    Some(&mut self.server_parameters),
+                )
                 .await?;
 
             // Insert pending ParseComplete messages based on batch_operations order
@@ -1407,7 +1512,8 @@ where
 
             // Write response to client
             self.stats.active_write();
-            if let Err(err) = write_all_flush(&mut self.write, &response).await {
+            let mut client = ClientWriteProbe::new(&mut self.write, client_blocked);
+            if let Err(err) = write_all_flush(&mut client, &response).await {
                 // Preserve backend reuse after a client disconnect only when
                 // the full batch was sent. Draining with a pending writer
                 // could wait for responses to commands it has not sent yet.

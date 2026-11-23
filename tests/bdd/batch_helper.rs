@@ -97,8 +97,7 @@ async fn read_batch(
     }
 }
 
-#[when(regex = r#"^we exchange the following extended batch on session "([^"]+)":$"#)]
-pub async fn exchange_batch(world: &mut DoormanWorld, session: String, step: &Step) {
+fn batch_spec(step: &Step) -> BatchSpec {
     let table = step.table.as_ref().expect("batch parameters table missing");
     let mut parameters = serde_json::Map::new();
     for row in &table.rows {
@@ -114,6 +113,42 @@ pub async fn exchange_batch(world: &mut DoormanWorld, session: String, step: &St
     let spec: BatchSpec =
         serde_json::from_value(parameters.into()).expect("invalid batch parameters");
     assert!(spec.queries > 0 && spec.timeout_ms > 0);
+    spec
+}
+
+/// Send a whole batch and leave every reply unread, like a client that stopped
+/// consuming results. Replies larger than the socket buffers then block
+/// pg_doorman's write to this session.
+#[when(
+    regex = r#"^we send the following extended batch on session "([^"]+)" without reading replies:$"#
+)]
+pub async fn send_batch_without_reading(world: &mut DoormanWorld, session: String, step: &Step) {
+    let spec = batch_spec(step);
+    let conn = get_session(&mut world.named_sessions, &session);
+    timeout(
+        Duration::from_millis(spec.timeout_ms),
+        send_batch(conn, &spec),
+    )
+    .await
+    .expect("pg_doorman did not accept the batch in time")
+    .expect("failed to send the batch");
+}
+
+/// The session must end with a connection close (EOF or reset) rather than
+/// hang: read and discard whatever was already in flight until it does.
+#[then(regex = r#"^session "([^"]+)" should be closed by pg_doorman within (\d+)ms$"#)]
+pub async fn session_is_closed(world: &mut DoormanWorld, session: String, timeout_ms: u64) {
+    let conn = get_session(&mut world.named_sessions, &session);
+    timeout(Duration::from_millis(timeout_ms), async {
+        while conn.read_message().await.is_ok() {}
+    })
+    .await
+    .expect("session was not closed by pg_doorman");
+}
+
+#[when(regex = r#"^we exchange the following extended batch on session "([^"]+)":$"#)]
+pub async fn exchange_batch(world: &mut DoormanWorld, session: String, step: &Step) {
+    let spec = batch_spec(step);
     let conn = get_session(&mut world.named_sessions, &session);
     let started = Instant::now();
     let mut result = BatchReport::default();

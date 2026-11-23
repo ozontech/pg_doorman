@@ -135,6 +135,16 @@ pub struct General {
     #[serde(default = "General::default_server_idle_check_timeout")]
     pub server_idle_check_timeout: Duration,
 
+    /// Maximum time a write to a PostgreSQL backend may make no progress
+    /// (not a single byte accepted by the socket) before the exchange is
+    /// aborted and the backend connection is discarded. The countdown
+    /// restarts after every successful write, so a large but progressing
+    /// batch is never cut off. Applies to query roundtrips and deferred BEGIN.
+    /// 0 means disabled (wait indefinitely).
+    /// Default: 5s
+    #[serde(default = "General::default_server_write_idle_timeout")]
+    pub server_write_idle_timeout: Duration,
+
     #[serde(default = "General::default_server_round_robin")] // False
     pub server_round_robin: bool,
 
@@ -321,6 +331,10 @@ impl General {
 
     pub fn default_server_idle_check_timeout() -> Duration {
         Duration::from_secs(60) // 60 seconds
+    }
+
+    pub fn default_server_write_idle_timeout() -> Duration {
+        Duration::from_secs(5) // 5 seconds
     }
 
     pub fn default_connect_timeout() -> Duration {
@@ -590,6 +604,7 @@ impl Default for General {
             retain_connections_time: Self::default_retain_connections_time(),
             retain_connections_max: Self::default_retain_connections_max(),
             server_idle_check_timeout: Self::default_server_idle_check_timeout(),
+            server_write_idle_timeout: Self::default_server_write_idle_timeout(),
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
