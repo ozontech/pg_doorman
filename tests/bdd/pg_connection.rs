@@ -620,6 +620,13 @@ impl PgConnection {
         Ok(())
     }
 
+    pub async fn send_message_header(&mut self, code: u8, len: i32) -> tokio::io::Result<()> {
+        let mut header = [0; 5];
+        header[0] = code;
+        header[1..].copy_from_slice(&len.to_be_bytes());
+        self.stream.write_all(&header).await
+    }
+
     pub async fn read_all_messages_until_ready(
         &mut self,
     ) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {

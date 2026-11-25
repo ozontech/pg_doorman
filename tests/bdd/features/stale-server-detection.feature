@@ -58,6 +58,50 @@ Feature: Detect stale server connections during client idle in transaction
     Then we read SimpleQuery response from session "client2" within 5000ms
     Then session "client2" should receive DataRow with "2"
 
+  @cancelled-read-memory
+  Scenario: A backend exit releases memory reserved for an incomplete client message
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      max_memory_usage = 1536
+      worker_threads = 1
+      server_idle_check_timeout = 0
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "victim" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "victim" without waiting
+    Then we read SimpleQuery response from session "victim" within 2000ms
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "victim" and store backend_pid as "victim_pid"
+    And we create session "killer" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send a SimpleQuery header with length 1024 to session "victim"
+    And we create session "pressure" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we wait for a 1024-byte query on session "pressure" to exceed the memory limit
+    And we terminate backend "victim_pid" from session "victim" via session "killer"
+    Then we read SimpleQuery response from session "victim" within 5000ms
+    And session "victim" should receive error containing "server closed the connection unexpectedly" with code "08006"
+    When we create session "next" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 2" padded to 1024 bytes to session "next"
+    Then we read SimpleQuery response from session "next" within 5000ms
+    And session "next" should receive DataRow with "2"
+
   @stale-server-victim-connection-closed
   Scenario: Victim client connection is closed after server is killed
     # pg_doorman detects the dead server, sends ErrorResponse to the victim,

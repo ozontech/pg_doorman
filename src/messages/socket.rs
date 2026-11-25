@@ -129,6 +129,8 @@ where
     }
 }
 
+/// Read a message, reserving memory until the read completes or is dropped.
+/// If the future is dropped, discard the stream: part of a message may have been read.
 #[inline]
 pub async fn read_message<S>(stream: &mut S, max_memory_usage: u64) -> Result<BytesMut, Error>
 where
@@ -136,13 +138,13 @@ where
 {
     let (code, len) = read_message_header(stream).await?;
     let prev = CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
-    if (prev + len as i64) as u64 > max_memory_usage {
+    let _reservation = scopeguard::guard(len, |len| {
         CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+    });
+    if (prev + len as i64) as u64 > max_memory_usage {
         return Err(Error::CurrentMemoryUsage);
     }
-    let result = read_message_data(stream, code, len).await;
-    CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
-    result
+    read_message_data(stream, code, len).await
 }
 
 /// Read a message into a reusable buffer. Returns the owned `BytesMut` via
@@ -154,6 +156,9 @@ where
 /// allocation until exhausted. A buffer that grew past
 /// `REUSE_BUF_SHRINK_THRESHOLD` is dropped before the next read, so a single
 /// oversized message does not pin its allocation across the connection.
+///
+/// Dropping the future releases its memory reservation, but may leave a partial
+/// message consumed. Discard the stream afterwards.
 #[inline]
 pub async fn read_message_reuse<S>(
     stream: &mut S,
@@ -177,8 +182,10 @@ where
     }
 
     let prev = CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
-    if (prev + len as i64) as u64 > max_memory_usage {
+    let _reservation = scopeguard::guard(len, |len| {
         CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+    });
+    if (prev + len as i64) as u64 > max_memory_usage {
         return Err(Error::CurrentMemoryUsage);
     }
 
@@ -190,16 +197,12 @@ where
     buf.put_i32(len);
     buf.resize(total_len, 0);
 
-    let result = match stream.read_exact(&mut buf[5..]).await {
+    match stream.read_exact(&mut buf[5..]).await {
         Ok(_) => Ok(buf.split()),
         Err(err) => Err(Error::SocketError(format!(
             "Error reading message data from socket - Code: {code:?}, Error: {err:?}"
         ))),
-    };
-
-    CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
-
-    result
+    }
 }
 
 /// Read message body into a reusable buffer when header is already consumed.
