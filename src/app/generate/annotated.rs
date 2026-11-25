@@ -153,7 +153,8 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         connect_timeout: None,
         idle_timeout: None,
         server_lifetime: None,
-        cleanup_server_connections: true,
+        cleanup_server_connections: None,
+        cleanup_server_query: None,
         log_client_parameter_status_changes: false,
         application_name: None,
         prepared_statements_cache_size: None,
@@ -850,6 +851,26 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
+    write_field_comment(w, fi, "general", "cleanup_server_connections");
+    w.kv(
+        fi,
+        "cleanup_server_connections",
+        &serde_json::to_string(&g.cleanup_server_connections).unwrap(),
+    );
+    w.blank();
+
+    write_field_comment(w, fi, "general", "cleanup_server_query");
+    if let Some(query) = &g.cleanup_server_query {
+        w.kv(
+            fi,
+            "cleanup_server_query",
+            &serde_json::to_string(query).unwrap(),
+        );
+    } else {
+        w.commented_kv(fi, "cleanup_server_query", &w.str_val("DISCARD ALL"));
+    }
+    w.blank();
+
     write_field_desc(w, fi, "general", "message_size_to_be_stream");
     write_byte_size_value(
         w,
@@ -1379,11 +1400,27 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
     w.blank();
 
     write_field_comment(w, fi, "pool", "cleanup_server_connections");
-    w.kv(
-        fi,
-        "cleanup_server_connections",
-        &w.bool_val(pool.cleanup_server_connections),
-    );
+    if let Some(mode) = pool.cleanup_server_connections {
+        w.kv(
+            fi,
+            "cleanup_server_connections",
+            &serde_json::to_string(&mode).unwrap(),
+        );
+    } else {
+        w.commented_kv(fi, "cleanup_server_connections", &w.str_val("adaptive"));
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "pool", "cleanup_server_query");
+    if let Some(query) = &pool.cleanup_server_query {
+        w.kv(
+            fi,
+            "cleanup_server_query",
+            &serde_json::to_string(query).unwrap(),
+        );
+    } else {
+        w.commented_kv(fi, "cleanup_server_query", &w.str_val("DISCARD ALL"));
+    }
     w.blank();
 
     write_field_comment(w, fi, "pool", "sync_server_parameters");
@@ -2087,6 +2124,43 @@ fn write_byte_size_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_policy_roundtrips_both_formats() {
+        let mut config = Config::default();
+        config.general.cleanup_server_connections = crate::config::CleanupMode::Always;
+        config.general.cleanup_server_query = Some("DISCARD ALL".into());
+        let pool = Pool {
+            cleanup_server_connections: Some(crate::config::CleanupMode::Off),
+            cleanup_server_query: Some("RESET ALL;\nSELECT 'quoted \"value\"';".into()),
+            users: vec![User::default()],
+            ..Pool::default()
+        };
+        config.pools.insert("test".into(), pool);
+        for format in [ConfigFormat::Toml, ConfigFormat::Yaml] {
+            let text = generate_annotated_config(&config, format, false);
+            let parsed: Config = match format {
+                ConfigFormat::Toml => toml::from_str(&text).unwrap(),
+                ConfigFormat::Yaml => serde_yaml::from_str(&text).unwrap(),
+            };
+            assert_eq!(
+                parsed.general.cleanup_server_connections,
+                config.general.cleanup_server_connections
+            );
+            assert_eq!(
+                parsed.pools["test"].cleanup_server_connections,
+                config.pools["test"].cleanup_server_connections
+            );
+            assert_eq!(
+                parsed.general.cleanup_server_query,
+                config.general.cleanup_server_query
+            );
+            assert_eq!(
+                parsed.pools["test"].cleanup_server_query,
+                config.pools["test"].cleanup_server_query
+            );
+        }
+    }
 
     #[test]
     fn test_fields_yaml_parses() {

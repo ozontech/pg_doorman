@@ -2202,3 +2202,116 @@ pool_size = 10
     let pool = &config.pools["mydb"];
     assert_eq!(pool.sync_server_parameters, None);
 }
+
+#[test]
+fn cleanup_modes_parse_legacy_bools_and_serialize_strings() {
+    for (input, expected) in [
+        ("true", CleanupMode::Adaptive),
+        ("false", CleanupMode::Off),
+        ("\"off\"", CleanupMode::Off),
+        ("\"adaptive\"", CleanupMode::Adaptive),
+        ("\"always\"", CleanupMode::Always),
+    ] {
+        for (format, content) in [
+            (ConfigFormat::Toml, format!("[general]\nadmin_username = \"admin\"\nadmin_password = \"admin\"\ncleanup_server_connections = {input}\n[pools.test]\ncleanup_server_connections = {input}")),
+            (ConfigFormat::Yaml, format!("general:\n  admin_username: admin\n  admin_password: admin\n  cleanup_server_connections: {input}\npools:\n  test:\n    cleanup_server_connections: {input}")),
+        ] {
+            let config: Config = parse_config_content(&content, format).unwrap();
+            assert_eq!(config.general.cleanup_server_connections, expected);
+            assert_eq!(config.pools["test"].cleanup_server_connections, Some(expected));
+            assert!(serde_json::to_value(expected).unwrap().is_string());
+        }
+    }
+    for invalid in ["1", "\"true\"", "\"Adaptive\"", "\"auto\"", "\"\""] {
+        assert!(
+            toml::from_str::<General>(&format!("admin_username = \"admin\"\nadmin_password = \"admin\"\ncleanup_server_connections = {invalid}")).is_err()
+        );
+        assert!(serde_yaml::from_str::<General>(&format!(
+            "admin_username: admin\nadmin_password: admin\ncleanup_server_connections: {invalid}"
+        ))
+        .is_err());
+    }
+    assert_eq!(
+        serde_json::to_string(&CleanupMode::Adaptive).unwrap(),
+        "\"adaptive\""
+    );
+}
+
+#[tokio::test]
+async fn cleanup_policy_inheritance_validation_and_pool_hash() {
+    let mut config = Config::default();
+    config.pools.insert("test".into(), Pool::default());
+    assert_eq!(config.pools["test"].cleanup_server_connections, None);
+    assert_eq!(
+        config.pools["test"].effective_cleanup_server_connections(&config.general),
+        CleanupMode::Adaptive
+    );
+    let default_hash = config.pools["test"].hash_value();
+    config.general.cleanup_server_connections = CleanupMode::Always;
+    assert!(
+        matches!(config.validate().await, Err(Error::BadConfig(message))
+        if message.contains("pools.test.cleanup_server_connections") && message.contains("cleanup_server_query"))
+    );
+    config.pools.get_mut("test").unwrap().cleanup_server_query = Some("DISCARD ALL".into());
+    config.validate().await.unwrap(); // A pool query satisfies inherited Always.
+    assert_ne!(config.pools["test"].hash_value(), default_hash);
+    config.general.cleanup_server_query = Some("RESET ALL".into());
+    assert_eq!(
+        config.pools["test"].effective_cleanup_server_query(&config.general),
+        Some("DISCARD ALL")
+    );
+    config.pools.get_mut("test").unwrap().cleanup_server_query = None;
+    assert_eq!(
+        config.pools["test"].effective_cleanup_server_query(&config.general),
+        Some("RESET ALL")
+    );
+    config
+        .pools
+        .get_mut("test")
+        .unwrap()
+        .cleanup_server_connections = Some(CleanupMode::Adaptive);
+    assert_eq!(
+        config.pools["test"].effective_cleanup_server_connections(&config.general),
+        CleanupMode::Adaptive
+    );
+    config.general.cleanup_server_query = None;
+    config.validate().await.unwrap(); // Explicit adaptive overrides general Always without a query.
+    config
+        .pools
+        .get_mut("test")
+        .unwrap()
+        .cleanup_server_connections = Some(CleanupMode::Off);
+    config.general.cleanup_server_query = Some("DISCARD ALL".into());
+    config.validate().await.unwrap(); // Off ignores a valid inherited query.
+    for query in ["", " \t\n", "; ;\n;", "RESET ALL;\0DEALLOCATE ALL"] {
+        config.general.cleanup_server_query = Some(query.into());
+        assert!(
+            matches!(config.validate().await, Err(Error::BadConfig(message)) if message.contains("cleanup_server_query"))
+        );
+        config.general.cleanup_server_query = None;
+        config.pools.get_mut("test").unwrap().cleanup_server_query = Some(query.into());
+        assert!(
+            matches!(config.validate().await, Err(Error::BadConfig(message)) if message.contains("cleanup_server_query"))
+        );
+    }
+
+    // An adaptive pool rejects its own or an inherited query.
+    config.general.cleanup_server_connections = CleanupMode::Adaptive;
+    config.general.cleanup_server_query = Some("DISCARD ALL".into());
+    config
+        .pools
+        .get_mut("test")
+        .unwrap()
+        .cleanup_server_connections = Some(CleanupMode::Adaptive);
+    config.pools.get_mut("test").unwrap().cleanup_server_query = None;
+    assert!(
+        matches!(config.validate().await, Err(Error::BadConfig(message))
+            if message.contains("pools.test.cleanup_server_query") && message.contains("requires cleanup_server_connections = always"))
+    );
+    config.general.cleanup_server_query = None;
+    config.pools.get_mut("test").unwrap().cleanup_server_query = Some("DISCARD ALL".into());
+    assert!(
+        matches!(config.validate().await, Err(Error::BadConfig(message))
+            if message.contains("pools.test.cleanup_server_query") && message.contains("requires cleanup_server_connections = always"))
+    );
+}

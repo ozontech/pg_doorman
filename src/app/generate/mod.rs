@@ -139,7 +139,8 @@ pub fn generate_config_with_client(
                     connect_timeout: None,
                     idle_timeout: None,
                     server_lifetime: None,
-                    cleanup_server_connections: false,
+                    cleanup_server_connections: Some(crate::config::CleanupMode::Off),
+                    cleanup_server_query: None,
                     log_client_parameter_status_changes: false,
                     application_name: None,
                     server_host: config

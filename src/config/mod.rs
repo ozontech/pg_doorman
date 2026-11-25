@@ -54,6 +54,49 @@ pub use web::Web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Backend cleanup policy. Legacy booleans map to adaptive/off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CleanupMode {
+    Off,
+    #[default]
+    Adaptive,
+    Always,
+}
+
+impl<'de> serde::Deserialize<'de> for CleanupMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct CleanupModeVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CleanupModeVisitor {
+            type Value = CleanupMode;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a boolean or one of: off, adaptive, always")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(if value {
+                    CleanupMode::Adaptive
+                } else {
+                    CleanupMode::Off
+                })
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                match value {
+                    "off" => Ok(CleanupMode::Off),
+                    "adaptive" => Ok(CleanupMode::Adaptive),
+                    "always" => Ok(CleanupMode::Always),
+                    _ => Err(E::invalid_value(serde::de::Unexpected::Str(value), &self)),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(CleanupModeVisitor)
+    }
+}
+
 /// Configuration file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigFormat {
@@ -237,6 +280,19 @@ pub struct Config {
     pub include: Include,
 }
 
+fn validate_cleanup_server_query(query: &str) -> Result<(), Error> {
+    if query
+        .trim_matches(|c: char| c.is_whitespace() || c == ';')
+        .is_empty()
+        || query.contains('\0')
+    {
+        return Err(Error::BadConfig(
+            "cleanup_server_query must contain SQL and no NUL bytes".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn default_path() -> String {
         String::from("pg_doorman.toml")
@@ -381,8 +437,9 @@ impl Config {
                 pool_name, pool.server_host, pool.server_port
             );
             info!(
-                "[pool: {}] Cleanup server connections: {}",
-                pool_name, pool.cleanup_server_connections
+                "[pool: {}] Cleanup server connections: {:?}",
+                pool_name,
+                pool.effective_cleanup_server_connections(&self.general)
             );
             info!(
                 "[pool: {}] Connect timeout: {}",
@@ -423,6 +480,9 @@ impl Config {
 
     /// Validate the configuration.
     pub async fn validate(&mut self) -> Result<(), Error> {
+        if let Some(query) = &self.general.cleanup_server_query {
+            validate_cleanup_server_query(query)?;
+        }
         // Validate Talos
         self.talos.validate().await?;
 
@@ -762,8 +822,21 @@ impl Config {
             }
         }
 
-        for pool in self.pools.values_mut() {
+        for (name, pool) in &mut self.pools {
             pool.validate().await?;
+            let mode = pool.effective_cleanup_server_connections(&self.general);
+            let query = pool.effective_cleanup_server_query(&self.general);
+            if mode == CleanupMode::Always && query.is_none() {
+                return Err(Error::BadConfig(format!(
+                    "pools.{name}.cleanup_server_connections = always requires cleanup_server_query"
+                )));
+            }
+            if mode == CleanupMode::Adaptive && query.is_some() {
+                return Err(Error::BadConfig(format!(
+                    "pools.{name}.cleanup_server_query requires cleanup_server_connections = always; \
+                     adaptive uses built-in cleanup only"
+                )));
+            }
         }
 
         // Cross-config validation: coordinator timeouts vs query_wait_timeout

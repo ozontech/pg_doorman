@@ -284,6 +284,17 @@ general:
   # Default: false
   sync_server_parameters: false
 
+  # Session cleanup mode for all pools: off, adaptive, or always.
+  # Adaptive runs cleanup SQL only when the session state changed.
+  # Always runs cleanup_server_query on every checkin.
+  # Legacy false/true mean off/adaptive.
+  # Default: "adaptive"
+  cleanup_server_connections: "adaptive"
+
+  # Session cleanup SQL for the always mode. Not allowed with adaptive.
+  # Default: None (built-in adaptive cleanup)
+  # cleanup_server_query: "DISCARD ALL"
+
   # DataRow messages larger than this threshold are streamed to the client in small chunks
   # instead of being buffered entirely in memory. Prevents memory spikes on large rows.
   # Supports human-readable format: "1MB", "1M", or 1048576 (bytes)
@@ -605,11 +616,16 @@ pools:
     # Override global server_lifetime for this pool (in milliseconds).
     # server_lifetime: 300000
 
-    # Reset session state (SET, prepared statements, cursors) when returning a connection to pool.
-    # ROLLBACK for open transactions is always executed regardless of this setting.
-    # Prevents state leaking between clients in transaction mode.
-    # Default: true
-    cleanup_server_connections: true
+    # Override general.cleanup_server_connections: off, adaptive, or always.
+    # Adaptive runs cleanup SQL only when the session state changed.
+    # Always runs cleanup_server_query on every checkin. Off does not disable ROLLBACK.
+    # Default: None (uses global setting)
+    # cleanup_server_connections: "adaptive"
+
+    # Override general.cleanup_server_query with custom session cleanup SQL.
+    # Requires cleanup_server_connections = always; off does not use it.
+    # Default: None (uses global setting)
+    # cleanup_server_query: "DISCARD ALL"
 
     # Override global sync_server_parameters for this pool.
     # Default: None (uses global setting)

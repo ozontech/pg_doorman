@@ -812,6 +812,33 @@ fields:
         `application_name` setting instead.
       default: "false"
 
+    cleanup_server_connections:
+      config:
+        en: |
+          Session cleanup mode for all pools: off, adaptive, or always.
+          Adaptive runs cleanup SQL only when the session state changed.
+          Always runs cleanup_server_query on every checkin.
+          Legacy false/true mean off/adaptive.
+        ru: |
+          Режим очистки сессии для всех пулов: off, adaptive или always.
+          Adaptive выполняет SQL очистки только при изменении состояния сессии.
+          Always выполняет cleanup_server_query при каждом возврате соединения.
+          Старые false/true означают off/adaptive.
+      doc: |
+        Session cleanup mode for every pool, unless the pool overrides it. `cleanup_server_query` is accepted by
+        `always` only. Legacy `false` and `true` mean `off` and `adaptive`.
+        See [pool settings](pool.md#cleanup_server_connections) for mode selection and limitations.
+      default: '"adaptive"'
+
+    cleanup_server_query:
+      config:
+        en: "Session cleanup SQL for the always mode. Not allowed with adaptive."
+        ru: "SQL очистки сессии для режима always. С adaptive не допускается."
+      doc: |
+        Session cleanup SQL used by `always`. `adaptive` uses built-in cleanup and rejects a configured query.
+        See [pool settings](pool.md#cleanup_server_query) for examples and SQL requirements.
+      default: "None (built-in adaptive cleanup)"
+
     message_size_to_be_stream:
       config:
         en: |
@@ -1377,24 +1404,108 @@ fields:
       doc: "Override global sync_server_parameters for this pool. When enabled, client-sent session parameters (e.g. search_path, work_mem) are applied via SET queries on checkout. If not specified, the global setting is used."
       default: "None (uses global setting)"
 
+    cleanup_server_query:
+      config:
+        en: |
+          Override general.cleanup_server_query with custom session cleanup SQL.
+          Requires cleanup_server_connections = always; off does not use it.
+        ru: |
+          SQL очистки сессии вместо general.cleanup_server_query.
+          Требует cleanup_server_connections = always. В off не используется.
+      doc: |
+        SQL that replaces built-in cleanup. It runs on every checkin of a backend that served a client, and the
+        effective mode must be `always`: a pool in `adaptive` with its own or an inherited query is a configuration
+        error. In `off` the query is not used. A pool inherits `general.cleanup_server_query` unless it sets its own.
+
+        The query must reset session parameters and release prepared statements, cursors and other application
+        resources. It must not leave a transaction open or enter COPY mode. An error or a `connect_timeout` timeout
+        closes the server connection.
+
+        A good example is `cleanup_server_query = "DISCARD ALL"`, the query PgBouncer keeps as its default
+        `server_reset_query`. In PostgreSQL it is one command equivalent to `CLOSE ALL;
+        SET SESSION AUTHORIZATION DEFAULT; RESET ALL; DEALLOCATE ALL; UNLISTEN *;
+        SELECT pg_advisory_unlock_all(); DISCARD PLANS; DISCARD SEQUENCES; DISCARD TEMP`, so it is broader
+        than the built-in cleanup: it adds `SET SESSION AUTHORIZATION DEFAULT`, `DISCARD PLANS` and
+        `DISCARD SEQUENCES`. On Greengage `DISCARD ALL` has a quirk: it releases the temporary table
+        on the coordinator and leaves it on the segments. Example query for Greengage 7:
+
+        ```sql
+        CLOSE ALL;
+        SET SESSION AUTHORIZATION DEFAULT;
+        RESET ALL;
+        DEALLOCATE ALL;
+        UNLISTEN *;
+        SELECT pg_advisory_unlock_all();
+        DISCARD PLANS;
+        DISCARD SEQUENCES;
+        DISCARD TEMP
+        ```
+
+        `DISCARD TEMP` removes temporary tables from the coordinator and from the segments. Without it, temporary
+        objects and sequence state stay in the session.
+
+        The cost for prepared statements. `DISCARD ALL` also removes prepared statements. In transaction
+        pooling, a statement is re-parsed by every transaction that uses it. In session pooling, statements
+        are reused inside one client connection. If the workload relies on prepared statements, use `adaptive`.
+      default: "None (uses global setting)"
+
     cleanup_server_connections:
       config:
         en: |
-          Reset session state (SET, prepared statements, cursors) when returning a connection to pool.
-          ROLLBACK for open transactions is always executed regardless of this setting.
-          Prevents state leaking between clients in transaction mode.
+          Override general.cleanup_server_connections: off, adaptive, or always.
+          Adaptive runs cleanup SQL only when the session state changed.
+          Always runs cleanup_server_query on every checkin. Off does not disable ROLLBACK.
         ru: |
-          Сбрасывать состояние сессии (SET, prepared statements, курсоры) при возврате соединения в пул.
-          ROLLBACK для открытых транзакций выполняется всегда независимо от этой настройки.
-          Предотвращает утечку состояния между клиентами в транзакционном режиме.
+          Переопределить general.cleanup_server_connections: off, adaptive или always.
+          Adaptive выполняет SQL очистки только при изменении состояния сессии.
+          Always выполняет cleanup_server_query при каждом возврате соединения. Off не отключает ROLLBACK.
       doc: |
-        Controls whether pg_doorman resets session state when a connection is returned to the pool.
-        When enabled and the session was modified, pg_doorman sends: `RESET ROLE`, plus conditionally
-        `RESET ALL` (if SET was used), `DEALLOCATE ALL` (if PREPARE was used), `CLOSE ALL` (if cursors
-        were opened). Note: `ROLLBACK` for open transactions is always executed regardless of this setting.
-        Disable only if your application never uses SET, prepared statements, or cursors and you want
-        to save the cleanup roundtrip.
-      default: "true"
+        Session cleanup mode:
+
+        - `adaptive` (default): built-in cleanup, triggered by tracked session state changes. Ordinary queries,
+          including cached prepared statements, add no cleanup SQL. A `cleanup_server_query` here is a configuration
+          error.
+        - `always`: `cleanup_server_query` runs on every checkin of a backend that served a client. The query is
+          required.
+        - `off`: no session cleanup. ROLLBACK of an unfinished transaction still runs.
+
+        Built-in cleanup sends `RESET ROLE` and, when needed, `RESET ALL`, `DEALLOCATE ALL`, `CLOSE ALL`,
+        `UNLISTEN *` and `DISCARD TEMP`. A client that already sent `RESET ALL`, such as pgx, is not followed
+        by another `RESET ALL`. Every cleanup batch also releases advisory locks with
+        `pg_advisory_unlock_all()`. If the server lacks this function, the batch fails and the backend is
+        retired.
+
+        Tracked statements and the matching cleanup:
+
+        - `SET` → `RESET ALL`.
+        - `DECLARE` cursors → `CLOSE ALL`.
+        - SQL `PREPARE` and a prepared statement cache that no longer matches the server → `DEALLOCATE ALL`.
+          SQL `PREPARE` shares the server-side statement namespace with an extended-protocol `Parse`.
+        - `LISTEN` → `UNLISTEN *`. A client `UNLISTEN` does not suppress it: the command tag is shared by
+          `UNLISTEN ch` and `UNLISTEN *`, so a partial unsubscribe does not prove that no subscription remains.
+        - `CREATE TEMP TABLE` → `DISCARD TEMP`. The `CREATE TABLE` tag does not distinguish temp from permanent
+          tables, so a permanent `CREATE TABLE` arms `DISCARD TEMP` too; for permanent objects it is a no-op.
+          On Greengage `DISCARD TEMP` removes temporary tables from the coordinator and from the segments.
+          In transaction mode the backend returns to the pool after every query. A temporary table lives for one
+          transaction; keep a transaction open across the statements that use it, or use session mode.
+
+        Not tracked by `adaptive`:
+
+        - `SELECT ... INTO TEMP` and `CREATE TEMP TABLE AS SELECT`: current PostgreSQL completes them with the
+          inner query's tag, indistinguishable from a plain `SELECT`. On forks that still report the dedicated
+          tags, the cleanup arms. Temporary tables and sequences created inside functions carry no tag at all.
+        - Advisory locks: they carry no command tag, so a lock taken by a single statement does not arm cleanup.
+          When a batch runs for another reason, `pg_advisory_unlock_all()` releases them.
+
+        Use `always` with SQL that releases the untracked resources. `RESET` of a single parameter and `RESET ALL`
+        return the same tag, so a client that resets one parameter suppresses the following `RESET ALL`, and other
+        changed parameters may stay set. In `always`, client `RESET` and `DISCARD ALL` do not replace the
+        configured query.
+
+        Mode and query are inherited from `general` separately and validated together: `always` requires a query,
+        `adaptive` does not accept one. Legacy `true` and `false` mean `adaptive` and `off`.
+        A `RELOAD` applies a changed policy to new client connections.
+      default: "None (uses global setting)"
 
     prepared_statements_cache_size:
       config:

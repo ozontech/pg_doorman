@@ -46,6 +46,7 @@ pub fn update_metrics() {
 
     update_pool_metrics();
     update_pool_errors_metrics();
+    update_server_cleanup_metrics();
     update_server_metrics();
     update_auth_query_metrics();
     update_coordinator_metrics();
@@ -929,6 +930,42 @@ type PoolErrorsKey = (String, String, &'static str);
 
 static POOL_ERRORS_PREV: Lazy<CounterDeltaTracker<PoolErrorsKey>> =
     Lazy::new(CounterDeltaTracker::new);
+
+type ServerCleanupKey = (String, String, &'static str);
+static SERVER_CLEANUP_PREV: Lazy<CounterDeltaTracker<ServerCleanupKey>> =
+    Lazy::new(CounterDeltaTracker::new);
+
+fn update_server_cleanup_metrics() {
+    let mut current_keys = std::collections::HashSet::new();
+    for (identifier, pool) in crate::pool::get_all_pools().iter() {
+        let stats = &pool.address().stats;
+        for (result, source) in [
+            ("ok", &stats.server_cleanup_ok),
+            ("error", &stats.server_cleanup_error),
+        ] {
+            let key = (identifier.user.clone(), identifier.db.clone(), result);
+            let counter = super::SERVER_CLEANUP_TOTAL.with_label_values(&[
+                identifier.user.as_str(),
+                identifier.db.as_str(),
+                result,
+            ]);
+            SERVER_CLEANUP_PREV.observe(
+                &counter,
+                key.clone(),
+                stats.generation,
+                source.load(Ordering::Relaxed),
+            );
+            current_keys.insert(key);
+        }
+    }
+    for stale in SERVER_CLEANUP_PREV.drain_stale(&current_keys) {
+        let _ = super::SERVER_CLEANUP_TOTAL.remove_label_values(&[
+            stale.0.as_str(),
+            stale.1.as_str(),
+            stale.2,
+        ]);
+    }
+}
 
 fn update_pool_errors_metrics() {
     use crate::pool::get_all_pools;

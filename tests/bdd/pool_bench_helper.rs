@@ -15,7 +15,7 @@ fn is_pprof_enabled() -> bool {
     std::env::var("PPROF").map(|v| v == "1").unwrap_or(false)
 }
 
-use pg_doorman::config::{Address, User};
+use pg_doorman::config::{Address, CleanupMode, User};
 use pg_doorman::pool::{
     ClientServerMap, Pool, PoolConfig, QueueMode, ScalingConfig, ScalingStatsSnapshot, ServerPool,
     Timeouts,
@@ -63,9 +63,10 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         user,
         "postgres",
         client_server_map,
-        true,  // cleanup_connections
-        false, // log_client_parameter_status_changes
-        0,     // prepared_statement_cache_size
+        CleanupMode::Adaptive, // cleanup_connections
+        None,                  // cleanup_server_query
+        false,                 // log_client_parameter_status_changes
+        0,                     // prepared_statement_cache_size
         "pool_bench".to_string(),
         4,                       // max_concurrent_creates
         0,                       // lifetime_ms (0 = unlimited)
@@ -417,7 +418,8 @@ async fn setup_internal_pool_with_lifetimes(
         user,
         "postgres",
         client_server_map,
-        true,
+        CleanupMode::Adaptive,
+        None,
         false,
         0,
         "pool_bench".to_string(),

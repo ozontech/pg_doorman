@@ -12,7 +12,7 @@ use lru::LruCache;
 use tokio::io::{AsyncReadExt, BufStream};
 
 use crate::auth::scram_client::ScramSha256;
-use crate::config::{get_config, tls, Address, BackendAuthMethod, User};
+use crate::config::{config_arc, get_config, tls, Address, BackendAuthMethod, CleanupMode, User};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
@@ -109,7 +109,12 @@ pub struct Server {
 
     /// Configuration flag: if true, execute cleanup statements (RESET ALL, etc.) on dirty connections
     /// before returning them to the pool. If false, discard dirty connections instead.
-    cleanup_connections: bool,
+    cleanup_connections: CleanupMode,
+
+    pub(crate) cleanup_server_query: Option<String>,
+    // Backends that served client traffic in `always` mode are reset on checkin.
+    used_since_cleanup: bool,
+    pub(crate) resetting: bool,
 
     /// Configuration flag: if true, log when server parameters change for debugging purposes.
     pub(crate) log_client_parameter_status_changes: bool,
@@ -200,7 +205,7 @@ impl Server {
         // new ReadyForQuery.
         self.last_sql_error = None;
 
-        self.send_and_flush(&query).await?;
+        protocol_io::send_and_flush(self, &query).await?;
 
         let mut noop = tokio::io::sink();
         loop {
@@ -209,6 +214,9 @@ impl Server {
                 Err(err) => return Err(err),
             }
 
+            if self.resetting && self.in_copy_mode {
+                return Err(Error::QueryError("backend reset entered COPY mode".into()));
+            }
             if !self.data_available {
                 break;
             }
@@ -231,7 +239,7 @@ impl Server {
     pub async fn check_alive(&mut self, timeout: Duration) -> Result<(), Error> {
         let query = simple_query(";");
 
-        self.send_and_flush_timeout(&query, timeout).await?;
+        protocol_io::send_and_flush_timeout(self, &query, timeout).await?;
 
         let mut noop = tokio::io::sink();
         loop {
@@ -367,10 +375,12 @@ impl Server {
         messages: &BytesMut,
         duration: Duration,
     ) -> Result<(), Error> {
+        self.used_since_cleanup |= self.cleanup_connections == CleanupMode::Always;
         protocol_io::send_and_flush_timeout(self, messages, duration).await
     }
 
     pub async fn send_and_flush(&mut self, messages: &BytesMut) -> Result<(), Error> {
+        self.used_since_cleanup |= self.cleanup_connections == CleanupMode::Always;
         protocol_io::send_and_flush(self, messages).await
     }
 
@@ -397,12 +407,36 @@ impl Server {
     /// Perform any necessary cleanup before putting the server
     /// connection back in the pool
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
-        self.pending_large_message = None;
-        if self.in_copy_mode() {
+        let result = self.checkin_cleanup_inner().await;
+        if let Err(err) = &result {
+            self.bad = true;
+            // Protocol guards already reported their reason through mark_bad. A cleanup
+            // query failure has no other report, so this line covers both cases.
             warn!(
-                "[{}@{}] server returned in copy-mode pid={}",
+                "[{}@{}] server cleanup failed, retiring backend pid={}: {err}",
                 self.address.username, self.address.pool_name, self.process_id
             );
+        }
+        result
+    }
+
+    /// A maintenance failure must not replace an already completed query result.
+    /// Protocol errors detected before cleanup still propagate to the client.
+    pub(crate) async fn cleanup_after_response(&mut self) -> Result<(), Error> {
+        let response_complete = !self.in_transaction
+            && !self.in_copy_mode
+            && !self.data_available
+            && self.buffer.is_empty()
+            && !self.is_async();
+        match self.checkin_cleanup().await {
+            Err(_) if response_complete => Ok(()),
+            result => result,
+        }
+    }
+
+    async fn checkin_cleanup_inner(&mut self) -> Result<(), Error> {
+        self.pending_large_message = None;
+        if self.in_copy_mode() {
             self.mark_bad("returned in copy-mode");
             return Err(Error::ProtocolSyncError(format!(
                 "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool while still in COPY mode. This may indicate a client disconnected during a COPY operation.",
@@ -410,10 +444,6 @@ impl Server {
             )));
         }
         if self.is_data_available() {
-            warn!(
-                "[{}@{}] server returned with data available pid={}",
-                self.address.username, self.address.pool_name, self.process_id
-            );
             self.mark_bad("returned with data available");
             return Err(Error::ProtocolSyncError(format!(
                 "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool while still having data available. This may indicate a client disconnected before receiving all query results.",
@@ -421,16 +451,61 @@ impl Server {
             )));
         }
         if !self.buffer.is_empty() {
-            warn!(
-                "[{}@{}] server returned with non-empty buffer pid={}",
-                self.address.username, self.address.pool_name, self.process_id
-            );
-            self.mark_bad("returned with not-empty buffer");
+            self.mark_bad("returned with non-empty buffer");
             return Err(Error::ProtocolSyncError(format!(
                 "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool with a non-empty buffer. This may indicate a client disconnected before the server response was fully processed.",
                 self.address.host, self.address.database, self.address.username
             )));
         }
+        // The pool retires bad backends; do not send more SQL to them.
+        if self.bad {
+            return Ok(());
+        }
+        if self.custom_cleanup_enabled() {
+            let needs_cleanup = (self.cleanup_connections == CleanupMode::Always
+                && self.used_since_cleanup)
+                || self.cleanup_state.needs_cleanup()
+                || self.has_pending_cache_entries
+                || !self.deferred_eviction_closes.is_empty();
+            let query = self
+                .cleanup_server_query
+                .as_ref()
+                .filter(|_| needs_cleanup)
+                .cloned();
+            if query.is_some() || self.in_transaction() {
+                return self.reset_with_query(query.as_deref()).await;
+            }
+            return Ok(());
+        }
+
+        // off: only the ROLLBACK of a transaction the client left open.
+        // adaptive: that ROLLBACK plus the built-in session reset, and only when
+        // pg_doorman saw the session state change.
+        let needs_rollback = self.in_transaction();
+        let needs_session_reset = self.cleanup_connections != CleanupMode::Off
+            && (self.cleanup_state.needs_cleanup()
+                || self.has_pending_cache_entries
+                || !self.deferred_eviction_closes.is_empty());
+        if !needs_rollback && !needs_session_reset {
+            return Ok(());
+        }
+        self.bad = true;
+        self.resetting = true;
+        self.set_async_mode(false);
+        self.reset_expected_responses();
+        let result = self.cleanup_builtin(needs_session_reset).await;
+        self.resetting = false;
+        self.address.stats.server_cleanup(result.is_ok());
+        if result.is_ok() {
+            self.bad = false;
+        }
+        result
+    }
+
+    /// Built-in cleanup. The ROLLBACK runs in every mode. The RESET sequence runs
+    /// only when `session_reset` is set, so `CleanupMode::Off` reaches here with an
+    /// open transaction and the ROLLBACK is the whole cleanup.
+    async fn cleanup_builtin(&mut self, session_reset: bool) -> Result<(), Error> {
         // Client disconnected with an open transaction on the server connection.
         // Pgbouncer behavior is to close the server connection but that can cause
         // server connection thrashing if clients repeatedly do this.
@@ -464,14 +539,15 @@ impl Server {
         // to avoid leaking state between clients. For performance reasons we only
         // send `RESET ALL` if we think the session is altered instead of just sending
         // it before each checkin.
-        if self.cleanup_state.needs_cleanup() && self.cleanup_connections {
+        if session_reset {
             info!(
                 "[{}@{}] session state cleanup pid={}: {}",
                 self.address.username, self.address.pool_name, self.process_id, self.cleanup_state
             );
             let mut reset_string = String::from("RESET ROLE;");
+            let reset_all = self.cleanup_state.needs_cleanup_set;
 
-            if self.cleanup_state.needs_cleanup_set {
+            if reset_all {
                 reset_string.push_str("RESET ALL;");
             };
 
@@ -483,23 +559,86 @@ impl Server {
                 reset_string.push_str("CLOSE ALL;");
             };
 
+            if self.cleanup_state.needs_cleanup_listen {
+                reset_string.push_str("UNLISTEN *;");
+            };
+
+            // Advisory locks carry no command tag to track; release them in the
+            // same round trip whenever the cleanup batch is sent anyway. The
+            // ROLLBACK above releases transaction-level locks only, so a
+            // session-level advisory lock would otherwise outlive the client.
+            reset_string.push_str("SELECT pg_advisory_unlock_all();");
+
+            if self.cleanup_state.needs_cleanup_temp {
+                reset_string.push_str("DISCARD TEMP;");
+            };
+
             self.small_simple_query(&reset_string).await?;
-            if self.cleanup_state.needs_cleanup_prepare {
-                // flush prepared.
-                self.registering_prepared_statement.clear();
-                if self.prepared_statement_cache.is_some() {
-                    let cache_size = self.prepared_statement_cache.as_ref().unwrap().len();
-                    info!(
-                        "[{}@{}] clearing prepared statement cache pid={}: session state reset ({} entries)",
-                        self.address.username, self.address.pool_name, self.process_id, cache_size
-                    );
-                    self.prepared_statement_cache.as_mut().unwrap().clear();
-                }
+            if reset_all {
+                self.server_parameters.forget_untracked();
+            } else {
+                self.server_parameters.remove_param("role");
             }
             self.cleanup_state.reset();
         }
         self.in_transaction = false;
         self.in_copy_mode = false;
+        Ok(())
+    }
+
+    pub(crate) fn custom_cleanup_enabled(&self) -> bool {
+        self.cleanup_connections != CleanupMode::Off && self.cleanup_server_query.is_some()
+    }
+
+    async fn reset_with_query(&mut self, query: Option<&str>) -> Result<(), Error> {
+        // Failure or cancellation must never return a partially reset backend.
+        self.bad = true;
+        self.resetting = true;
+        self.set_async_mode(false);
+        self.reset_expected_responses();
+        let config = config_arc();
+        let timeout = config
+            .pools
+            .get(&self.address.pool_name)
+            .map(|pool| pool.effective_connect_timeout(&config.general))
+            .unwrap_or(config.general.connect_timeout.as_std());
+        let result = tokio::time::timeout(timeout, async {
+            if self.in_transaction {
+                self.small_simple_query("ROLLBACK").await?;
+                if self.in_transaction {
+                    return Err(Error::QueryError(
+                        "backend rollback did not finish Idle".into(),
+                    ));
+                }
+            }
+            if let Some(query) = query {
+                self.small_simple_query(query).await?;
+            }
+            if self.in_transaction || self.in_copy_mode || self.data_available {
+                return Err(Error::QueryError(
+                    "backend reset did not finish Idle".into(),
+                ));
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| Error::QueryError("backend reset timed out".into()))
+        .and_then(|result| result);
+        self.resetting = false;
+        self.address.stats.server_cleanup(result.is_ok());
+        result?;
+        if query.is_some() {
+            self.registering_prepared_statement.clear();
+            self.has_pending_cache_entries = false;
+            self.deferred_eviction_closes.clear();
+            if let Some(cache) = self.prepared_statement_cache.as_mut() {
+                cache.clear();
+            }
+            self.server_parameters.forget_untracked();
+            self.cleanup_state.reset();
+        }
+        self.used_since_cleanup = false;
+        self.bad = false;
         Ok(())
     }
 
@@ -803,7 +942,8 @@ impl Server {
         database: &str,
         client_server_map: ClientServerMap,
         stats: Arc<ServerStats>,
-        cleanup_connections: bool,
+        cleanup_connections: CleanupMode,
+        cleanup_server_query: Option<String>,
         log_client_parameter_status_changes: bool,
         server_prepared_statement_cache_size: usize,
         application_name: String,
@@ -1108,6 +1248,9 @@ impl Server {
                         application_name,
                         last_activity: SystemTime::now(),
                         cleanup_connections,
+                        cleanup_server_query,
+                        used_since_cleanup: false,
+                        resetting: false,
                         log_client_parameter_status_changes,
                         prepared_statement_cache: match server_prepared_statement_cache_size {
                             0 => None,

@@ -11,7 +11,6 @@ use std::path::Path;
 fn main() {
     let dist = Path::new("frontend/dist");
     println!("cargo:rerun-if-changed=frontend/dist");
-    println!("cargo:rerun-if-changed=frontend/dist/index.html");
     walk(dist);
 }
 

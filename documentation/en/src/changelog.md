@@ -1,5 +1,51 @@
 # Changelog
 
+### 3.12.0
+
+#### Configurable backend cleanup: `cleanup_server_connections` modes and `cleanup_server_query`
+
+`cleanup_server_connections` now accepts `off`, `adaptive` or `always`, in `[general]` and per pool.
+Legacy `false` and `true` keep working and mean `off` and `adaptive`.
+
+- `adaptive` (default): built-in cleanup, sent only when pg_doorman saw the session state change.
+- `always`: `cleanup_server_query` runs on every checkin of a backend that served a client. The query
+  is required.
+- `off`: no session cleanup. ROLLBACK of an unfinished transaction still runs.
+
+`cleanup_server_query` replaces the built-in `RESET ROLE` / `RESET ALL` / `DEALLOCATE ALL` /
+`CLOSE ALL` sequence with your own SQL. A good example is PgBouncer's default `server_reset_query`,
+`DISCARD ALL`. Validation checks the pair as a whole, with inherited values where a pool sets nothing.
+`always` without a query is an error. A query with an effective `adaptive` mode is an error.
+
+```toml
+[general]
+cleanup_server_connections = "always"
+cleanup_server_query = "DISCARD ALL"
+```
+
+A failed cleanup retires the backend instead of returning it to the pool with unknown session state.
+In `always` the configured query runs on every checkin. A client-side `RESET` or `DISCARD ALL` does not
+suppress it. In `adaptive` such a client reset suppresses the built-in cleanup.
+A cleanup query like `DISCARD ALL` also removes prepared statements: they are re-parsed after every
+checkin. Workloads that rely on prepared statements should stay in `adaptive`.
+`pg_doorman_server_cleanup_total` counts cleanup attempts per pool with `result="ok"` or
+`result="error"`. Pool-level `cleanup_server_connections` became optional in the config dump, so
+`SHOW` and config dumps omit the field when the pool does not set it.
+
+Adaptive detection covers more session state:
+
+- SQL `PREPARE` → `DEALLOCATE ALL` at checkin. SQL `PREPARE` and an extended-protocol `Parse` share one
+  server-side statement namespace; previously the next client on the same backend could fail with
+  `42P05 duplicate_prepared_statement`.
+- `LISTEN` → `UNLISTEN *` at checkin. A pooled backend's socket is not read, so queued notifications
+  were delivered to whichever client checked the backend out next.
+- `CREATE TEMP TABLE` → `DISCARD TEMP` at checkin. `SELECT ... INTO TEMP` and `CREATE TEMP TABLE AS SELECT`
+  complete with the inner query's tag and stay untracked. In transaction mode the backend returns to the pool
+  after every query. A temp table no longer survives the same client's next query; keep a transaction open or
+  use session mode to keep it longer.
+- Every cleanup batch releases advisory locks with `pg_advisory_unlock_all()`. Previously a session-level
+  advisory lock outlived the client that took it.
+
 ### 3.11.2
 
 #### Talos routes `s2i|`-prefixed clients through a service pool

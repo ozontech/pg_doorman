@@ -1,8 +1,6 @@
 # PgDoorman vs PgBouncer vs Odyssey
 
-Side-by-side feature matrix for choosing a PostgreSQL connection pooler. Every PgBouncer claim is anchored to its [config reference](https://www.pgbouncer.org/config.html) and [changelog](https://www.pgbouncer.org/changelog.html); every Odyssey claim is anchored to the project's [docs](https://github.com/yandex/odyssey/tree/master/docs).
-
-PgCat is intentionally omitted: its design centre is sharding/load-balancing rather than drop-in replacement of PgBouncer, so a row-by-row comparison is misleading. See the [PgCat repo](https://github.com/postgresml/pgcat) if you need horizontal sharding.
+Side-by-side feature matrix for choosing a PostgreSQL connection pooler: PgDoorman, PgBouncer and Odyssey.
 
 For benchmark numbers, see [Benchmarks](benchmarks.md).
 
@@ -73,7 +71,7 @@ See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md), [`patro
 | `min_pool_size` (warm connections) | Yes | No | Yes |
 | Prepared statements in transaction mode | Yes (named and anonymous, two-level cache, query interner) | Yes (named, since 1.21, `max_prepared_statements`) | Yes (named, `pool_reserve_prepared_statement`) |
 | Anonymous `Parse` cache for performance | Yes (`DOORMAN_N`, reused across clients in a pool) | No (anonymous `Parse` passes through unchanged) | No (named statements required) |
-| Smart cleanup on checkin (skip `DEALLOCATE ALL` if cache untouched) | Yes (mutation-tracking `RESET ALL` / `DEALLOCATE ALL` on demand) | No (always `DISCARD ALL` if `server_reset_query` set) | Yes (auto) |
+| Session cleanup | [`adaptive` (default), `always`, `off`](reference/pool.md#cleanup_server_connections); custom SQL | `server_reset_query`; transaction mode requires [`server_reset_query_always=1`](https://www.pgbouncer.org/config.html#server_reset_query_always) | [`pool_discard` / `pool_smart_discard`](https://github.com/yandex/odyssey/blob/master/docs/configuration/rules.md#pool_discard) |
 | LISTEN / NOTIFY pinning in transaction mode | No | No | Experimental |
 | Cross-rule connection cap (`shared_pool`) | No | No | Yes (since 1.5.1) |
 | `PAUSE` / `RESUME` / `RECONNECT` admin commands | Yes | Yes | Yes (since 1.4.1) |

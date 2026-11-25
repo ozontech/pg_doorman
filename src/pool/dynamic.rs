@@ -191,7 +191,10 @@ pub fn create_dynamic_pool(
         user.clone(),
         server_database.as_str(),
         client_server_map,
-        pool_config.cleanup_server_connections,
+        pool_config.effective_cleanup_server_connections(&config.general),
+        pool_config
+            .effective_cleanup_server_query(&config.general)
+            .map(str::to_owned),
         pool_config.log_client_parameter_status_changes,
         server_prepared_statements_cache_size,
         application_name,

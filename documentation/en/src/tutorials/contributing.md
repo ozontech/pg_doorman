@@ -93,6 +93,20 @@ make test-bdd TAGS=@admin-commands
 make shell
 ```
 
+### Greengage
+
+```bash
+make test-greengage
+```
+
+This starts Greengage 7.5.0 with a coordinator and two primary segments,
+then runs `@greengage` in the same Nix environment as the PostgreSQL tests.
+The Greengage image is pinned by digest in `tests/nix/greengage.sh`;
+ARM64 hosts use amd64 emulation. Each scenario gets a separate database,
+and the container is removed after the run. These tests also run in CI.
+
+Select a scenario with `make test-greengage TAGS=@greengage-cleanup-built-in`.
+
 ### Debug Mode
 
 Enable debug output with the `DEBUG=1` environment variable:
@@ -125,6 +139,7 @@ This is useful when:
 | `@java` | Java client tests (JDBC) |
 | `@php` | PHP client tests (PDO) |
 | `@rust` | Rust protocol-level tests |
+| `@greengage` | Connection cleanup on a real Greengage cluster |
 | `@auth-query` | Auth query authentication tests |
 | `@copy-protocol` | COPY protocol tests |
 | `@cancel` | Query cancellation tests |

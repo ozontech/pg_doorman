@@ -22,6 +22,8 @@ pub struct TestCommandResult {
 /// The World struct holds the state shared across all steps in a scenario.
 #[derive(Default, World)]
 pub struct DoormanWorld {
+    /// Per-scenario database on the opt-in, externally managed Greengage cluster.
+    pub greengage_database: Option<crate::greengage_helper::GreengageDatabase>,
     /// Temporary directory for PostgreSQL data
     pub pg_tmp_dir: Option<TempDir>,
     /// PostgreSQL port

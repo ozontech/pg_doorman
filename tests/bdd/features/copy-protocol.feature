@@ -110,25 +110,33 @@ Feature: COPY Protocol
   @copy-protocol-from-first
   Scenario: COPY FROM STDIN basic operation gives identical results
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    # A temporary table does not survive a checkin in transaction pooling:
+    # hold one lease with an explicit transaction for the whole scenario.
+    And we send SimpleQuery "BEGIN" to both
     And we send SimpleQuery "CREATE TEMP TABLE copy_test_pg (id int, name text)" to both
     And we send CopyFromStdin "COPY copy_test_pg FROM STDIN" with data "1\ttest1\n2\ttest2\n3\ttest3\n" to both
     And we send SimpleQuery "SELECT * FROM copy_test_pg ORDER BY id" to both
+    And we send SimpleQuery "COMMIT" to both
     Then we should receive identical messages from both
 
   @copy-protocol-from-second
   Scenario: COPY FROM STDIN with CSV format gives identical results
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to both
     And we send SimpleQuery "CREATE TEMP TABLE copy_test_csv (id int, name text)" to both
     And we send CopyFromStdin "COPY copy_test_csv FROM STDIN WITH (FORMAT CSV)" with data "1,test1\n2,test2\n" to both
     And we send SimpleQuery "SELECT * FROM copy_test_csv ORDER BY id" to both
+    And we send SimpleQuery "COMMIT" to both
     Then we should receive identical messages from both
 
   @copy-protocol-from-third
   Scenario: COPY FROM STDIN with empty data gives identical results
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to both
     And we send SimpleQuery "CREATE TEMP TABLE copy_test_empty (id int, name text)" to both
     And we send CopyFromStdin "COPY copy_test_empty FROM STDIN" with data "" to both
     And we send SimpleQuery "SELECT COUNT(*) FROM copy_test_empty" to both
+    And we send SimpleQuery "COMMIT" to both
     Then we should receive identical messages from both
 
   @copy-protocol-from-error-first
@@ -146,8 +154,10 @@ Feature: COPY Protocol
   @copy-protocol-from-error-third
   Scenario: COPY FROM STDIN with wrong column count gives identical error
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to both
     And we send SimpleQuery "CREATE TEMP TABLE copy_test_cols (id int, name text, value int)" to both
     And we send CopyFromStdin "COPY copy_test_cols FROM STDIN" with data "1\ttest\n" to both
+    And we send SimpleQuery "COMMIT" to both
     Then we should receive identical messages from both
 
   @copy-protocol-mixed-first

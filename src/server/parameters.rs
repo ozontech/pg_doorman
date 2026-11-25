@@ -38,6 +38,9 @@ static SET_FORBIDDEN_PARAMETERS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     s.insert("max_function_args");
     s.insert("data_checksums");
     s.insert("data_directory_mode");
+    // Greengage reports these at startup, but they cannot change per session.
+    s.insert("gp_server_version");
+    s.insert("gp_autovacuum_scope");
     // Database-level GUCs cannot vary per session.
     s.insert("lc_collate");
     s.insert("lc_ctype");
@@ -238,6 +241,14 @@ impl ServerParameters {
             self.planner_hash_cache
                 .store(PLANNER_HASH_UNSET, std::sync::atomic::Ordering::Relaxed);
         }
+    }
+
+    /// A full reset changes GUCs that PostgreSQL does not report in ParameterStatus.
+    pub(crate) fn forget_untracked(&mut self) {
+        self.parameters
+            .retain(|key, _| TRACKED_PARAMETERS.contains(key) || is_set_forbidden(key));
+        self.planner_hash_cache
+            .store(PLANNER_HASH_UNSET, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Diff the backend snapshot (`self`) against the client's desired
@@ -550,6 +561,27 @@ mod tests {
         let diff = backend.compare_params(&client);
         assert!(!diff.contains_key("is_superuser"));
         assert!(!diff.contains_key("user"));
+    }
+
+    #[test]
+    fn cleanup_sync_restores_startup_state_without_replaying_greengage_metadata() {
+        let mut backend = ServerParameters::new();
+        backend.set_param("gp_autovacuum_scope", "catalog", true);
+        backend.set_param("gp_server_version", "7.5.0", true);
+        backend.set_param("search_path", "startup_schema", true);
+        let client = backend.clone();
+
+        backend.forget_untracked();
+
+        assert_eq!(
+            backend.compare_params(&client),
+            HashMap::from([(
+                "search_path".to_string(),
+                ParamAction::SetTo("startup_schema".to_string()),
+            )])
+        );
+        // A client without these server-reported values must not RESET them.
+        assert!(backend.compare_params(&ServerParameters::new()).is_empty());
     }
 
     #[test]

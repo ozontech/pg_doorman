@@ -93,6 +93,20 @@ make test-bdd TAGS=@admin-commands
 make shell
 ```
 
+### Greengage
+
+```bash
+make test-greengage
+```
+
+Команда запускает Greengage 7.5.0 с координатором и двумя primary-сегментами,
+затем выполняет `@greengage` в том же Nix-окружении, что и тесты PostgreSQL.
+Образ Greengage закреплён по digest в `tests/nix/greengage.sh`;
+на ARM64 используется эмуляция amd64. Каждый сценарий получает отдельную БД,
+контейнер удаляется после прогона. Эти тесты также запускаются в CI.
+
+Для выбора сценария используйте `make test-greengage TAGS=@greengage-cleanup-built-in`.
+
 ### Debug-режим
 
 Включается переменной окружения `DEBUG=1`:
@@ -125,6 +139,7 @@ DEBUG=1 make test-bdd TAGS=@copy-protocol
 | `@java` | Тесты Java-клиентов (JDBC) |
 | `@php` | Тесты PHP-клиентов (PDO) |
 | `@rust` | Тесты на уровне протокола, написанные на Rust |
+| `@greengage` | Очистка соединений на реальном кластере Greengage |
 | `@auth-query` | Тесты auth query authentication |
 | `@copy-protocol` | Тесты COPY-протокола |
 | `@cancel` | Тесты отмены запросов |

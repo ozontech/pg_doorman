@@ -249,6 +249,24 @@ pub(crate) static SHOW_POOLS_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     counter
 });
 
+/// Counted per user and database in a static registry: retiring a backend does not reset the totals.
+pub(crate) static SERVER_CLEANUP_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_server_cleanup_total",
+            "Backend cleanup attempts per pool and user. Counted once when pg_doorman sent cleanup \
+             SQL to the backend: the built-in sequence in 'adaptive', cleanup_server_query in \
+             'always', or a ROLLBACK of a transaction the client left open. In 'off' only that \
+             ROLLBACK is counted. Result is 'ok' or 'error'; 'error' means the backend was retired. \
+             Checkins that needed no cleanup are not counted. The 'database' label is the pool name.",
+        ),
+        &["user", "database", "result"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 /// DEPRECATED: monotonic byte counter shipped as a Gauge. Prefer
 /// `pg_doorman_pools_bytes_total`. Scheduled for removal in 3.10.
 pub(crate) static SHOW_POOLS_BYTES: Lazy<GaugeVec> = Lazy::new(|| {

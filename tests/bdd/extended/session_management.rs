@@ -777,6 +777,69 @@ pub async fn send_flush_to_session(world: &mut DoormanWorld, session_name: Strin
     conn.send_flush().await.expect("Failed to send Flush");
 }
 
+// Flush has no ReadyForQuery. Read an explicit response barrier before the next send.
+#[when(regex = r#"^we read backend messages "([12DCETZ]+)" from session "([^"]+)"$"#)]
+pub async fn read_backend_messages(world: &mut DoormanWorld, tags: String, session_name: String) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+    let messages = timeout(Duration::from_secs(5), async {
+        let mut messages = Vec::new();
+        for tag in tags.chars() {
+            let message = conn.read_message().await.expect("Failed to read response");
+            assert_eq!(message.0, tag, "Unexpected backend message: {message:?}");
+            messages.push(message);
+        }
+        messages
+    })
+    .await
+    .expect("Timed out reading backend response barrier");
+    world.session_messages.insert(session_name, messages);
+}
+
+#[when(regex = r#"^we store backend_pid from last response of session "([^"]+)"$"#)]
+pub async fn store_response_backend_pid(world: &mut DoormanWorld, session_name: String) {
+    let (_, data) = world.session_messages[&session_name]
+        .iter()
+        .find(|(tag, _)| *tag == 'D')
+        .expect("No DataRow containing backend PID");
+    let pid = super::helpers::parse_datarow_fields(data)[0]
+        .parse::<i32>()
+        .expect("First DataRow field must be a backend PID");
+    println!("Session '{session_name}' backend_pid: {pid}");
+    world
+        .vars
+        .insert(format!("{session_name}_pid"), pid.to_string());
+    world.session_backend_pids.insert(session_name, pid);
+}
+
+#[when(regex = r#"^we store backend_pid from last response of session "([^"]+)" as "([^"]+)"$"#)]
+pub async fn store_named_backend_pid_from_response(
+    world: &mut DoormanWorld,
+    session_name: String,
+    pid_name: String,
+) {
+    store_response_backend_pid(world, session_name.clone()).await;
+    let pid = world.session_backend_pids[&session_name];
+    world
+        .named_backend_pids
+        .insert((session_name, pid_name), pid);
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive exactly one DataRow "([^"]+)"$"#)]
+pub async fn session_should_receive_exact_row(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected: String,
+) {
+    let rows: Vec<_> = world.session_messages[&session_name]
+        .iter()
+        .filter(|(tag, _)| *tag == 'D')
+        .map(|(_, data)| super::helpers::parse_datarow_fields(data))
+        .collect();
+    let expected = world.replace_placeholders(&expected);
+    let fields: Vec<_> = expected.split('|').collect();
+    assert_eq!(rows, vec![fields], "Unexpected DataRows for {session_name}");
+}
+
 #[when(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 #[then(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String) {
