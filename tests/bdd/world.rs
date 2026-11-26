@@ -22,6 +22,8 @@ pub struct TestCommandResult {
 /// The World struct holds the state shared across all steps in a scenario.
 #[derive(Default, World)]
 pub struct DoormanWorld {
+    /// Each fixture owns its foreground slapd process and temporary files.
+    pub ldap_servers: HashMap<String, crate::ldap_helper::LdapServer>,
     /// Temporary directory for PostgreSQL data
     pub pg_tmp_dir: Option<TempDir>,
     /// PostgreSQL port

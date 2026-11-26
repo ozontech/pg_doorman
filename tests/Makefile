@@ -1,7 +1,9 @@
 .PHONY: help local-build pull shell tests-build test-all test-bdd test-rust test-go test-python test-nodejs test-dotnet test-php clean
 
 REGISTRY ?= ghcr.io
-IMAGE_TAG ?= latest
+REPO ?= $(shell git -C $(PROJECT_ROOT) config --get remote.origin.url | sed 's#^.*github\.com[:/]##;s#\.git$$##')
+IMAGE_TAG ?= flake-$(shell cat $(TESTS_DIR)nix/flake.nix $(TESTS_DIR)nix/flake.lock | shasum -a 256 | cut -c1-16)
+export REGISTRY REPO IMAGE_TAG
 
 # Directory where this Makefile is located (works when included from parent)
 TESTS_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
@@ -26,16 +28,16 @@ local-build: ## Build Docker image locally using Docker (no Nix installation req
 		-v nix-build-cache:/nix \
 		-w /workspace/tests/nix \
 		nixos/nix:latest \
-		sh -c "nix --extra-experimental-features 'nix-command flakes' build .#dockerImage --show-trace && cp result /workspace/tests/nix/docker-image.tar.gz"
+		sh -c "nix --extra-experimental-features 'nix-command flakes' build path:.#dockerImage --no-write-lock-file --show-trace && cp result /workspace/tests/nix/docker-image.tar.gz"
 	@echo "[INFO] Loading image into Docker..."
 	@docker load < $(TESTS_DIR)nix/docker-image.tar.gz
 	@rm -f $(TESTS_DIR)nix/docker-image.tar.gz
-	@echo "[INFO] Tagging image as $(REGISTRY)/ozontech/pg_doorman/test-runner:$(IMAGE_TAG)"
-	@docker tag pg_doorman-test-env:latest $(REGISTRY)/ozontech/pg_doorman/test-runner:$(IMAGE_TAG)
+	@echo "[INFO] Tagging image as $(REGISTRY)/$(REPO)/test-runner:$(IMAGE_TAG)"
+	@docker tag pg_doorman-test-env:latest $(REGISTRY)/$(REPO)/test-runner:$(IMAGE_TAG)
 	@echo "[SUCCESS] Image built and tagged successfully!"
 	@echo "[INFO] You can now run: make build"
 
-pull: ## Pull the latest test image from registry
+pull: ## Pull the flake-tagged test image from registry
 	@$(TESTS_DIR)nix/run-tests.sh pull
 
 shell: ## Open interactive shell in test container
